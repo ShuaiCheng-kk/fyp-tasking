@@ -109,6 +109,8 @@ export async function PATCH(req: NextRequest) {
         owner_notes: (b.owner_notes as string | null) ?? null,
         clock_in_time: (b.clock_in_time as string | null) ?? null,
         clock_out_time: (b.clock_out_time as string | null) ?? null,
+        break_in_time: (b.break_in_time as string | null) ?? null,
+        break_out_time: (b.break_out_time as string | null) ?? null,
       })
       return NextResponse.json({ success: true, record })
     }

@@ -830,6 +830,8 @@ export default function OwnerAttendancePage() {
   const [reviewRecord, setReviewRecord] = useState<AttendanceDashboardRecord | null>(null)
   const [reviewClockIn, setReviewClockIn] = useState('')
   const [reviewClockOut, setReviewClockOut] = useState('')
+  const [reviewBreakIn, setReviewBreakIn] = useState('')
+  const [reviewBreakOut, setReviewBreakOut] = useState('')
   const [reviewActionLoading, setReviewActionLoading] = useState(false)
   const [reviewError, setReviewError] = useState('')
   const [cwWorkerStatus, setCwWorkerStatus] = useState<string | null>(null)
@@ -1553,6 +1555,8 @@ export default function OwnerAttendancePage() {
     setReviewRecord(row)
     setReviewClockIn(isoToAmPm(row.record?.owner_adjusted_clock_in_time ?? row.record?.clock_in_time))
     setReviewClockOut(isoToAmPm(row.record?.owner_adjusted_clock_out_time ?? row.record?.clock_out_time))
+    setReviewBreakIn(isoToAmPm(row.record?.break_in_time))
+    setReviewBreakOut(isoToAmPm(row.record?.break_out_time))
     setCwWorkerStatus(row.assignee_worker_status ?? 'active')
     setReviewError('')
     setReviewOpen(true)
@@ -1597,6 +1601,8 @@ export default function OwnerAttendancePage() {
           decision: 'modified',
           clock_in_time: toISO(reviewClockIn),
           clock_out_time: toISO(reviewClockOut),
+          break_in_time: toISO(reviewBreakIn),
+          break_out_time: toISO(reviewBreakOut),
         }),
       })
       const data = await res.json()
@@ -3766,6 +3772,32 @@ export default function OwnerAttendancePage() {
                     <label style={{ ...modalLabelStyle, marginBottom: 6 }}>Clock Out</label>
                     <div style={{ position: 'relative' }}>
                       <select value={reviewClockOut} onChange={e => setReviewClockOut(e.target.value)} style={selectStyle}>
+                        <option value="">-- select --</option>
+                        {TIME_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
+                      </select>
+                      <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: '#6B7280', fontSize: 12 }}>▾</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Editable break pair — same picker UI as Clock In/Out (UC56 direct modification). */}
+              {reviewRecord.record && (
+                <div style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div>
+                    <label style={{ ...modalLabelStyle, marginBottom: 6 }}>Break In</label>
+                    <div style={{ position: 'relative' }}>
+                      <select value={reviewBreakIn} onChange={e => setReviewBreakIn(e.target.value)} style={selectStyle}>
+                        <option value="">-- select --</option>
+                        {TIME_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
+                      </select>
+                      <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: '#6B7280', fontSize: 12 }}>▾</span>
+                    </div>
+                  </div>
+                  <div>
+                    <label style={{ ...modalLabelStyle, marginBottom: 6 }}>Break Out</label>
+                    <div style={{ position: 'relative' }}>
+                      <select value={reviewBreakOut} onChange={e => setReviewBreakOut(e.target.value)} style={selectStyle}>
                         <option value="">-- select --</option>
                         {TIME_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
                       </select>

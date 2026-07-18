@@ -141,6 +141,9 @@ test('dashboard surfaces the earliest not-yet-clocked-out assignment as the curr
     shift_date: '2030-05-01',
     supervisor: expect.objectContaining({ id: supervisor.userId }),
   })
+  // The timeline covers the next 7 days plus the current job itself — both seeded shifts are far
+  // beyond the window, so only the current one appears on it.
+  expect(body.dashboard.upcoming_jobs.map((j: { assignment_id: string }) => j.assignment_id)).toEqual([assignmentEarlyId])
 })
 
 test('clocking out of the current job switches the dashboard to the next chronological job', async ({ request }) => {
@@ -163,16 +166,19 @@ test('clocking out of the current job switches the dashboard to the next chronol
   const res = await request.get(`/api/casual/dashboard?user_id=${worker.authUserId}`)
   const body = await res.json()
   expect(body.dashboard.current_job.assignment_id).toBe(assignmentLateId)
+  // The clocked-out early job is outside the 7-day window, so the timeline moves on with it.
+  expect(body.dashboard.upcoming_jobs.map((j: { assignment_id: string }) => j.assignment_id)).toEqual([assignmentLateId])
 })
 
-test('attendance history reports the completed job with hours and hourly-rate pay, no approval status', async ({ request }) => {
+test('attendance history reports the completed job with hours and hourly-rate pay, no approval-chain fields', async ({ request }) => {
   const res = await request.get(`/api/casual/attendance?resource=history&user_id=${worker.authUserId}`)
   expect(res.status()).toBe(200)
   const body = await res.json()
   expect(body.success).toBe(true)
   const entry = body.history.find((h: { id: string }) => h.id === assignmentEarlyId)
-  expect(entry).toMatchObject({ hours: 8, pay: 120 })
-  expect(entry.status).toBeUndefined()
+  // status here is the worker-facing working/completed flag, not the employer approval chain —
+  // approval-chain fields (owner_status etc.) must never leak to the worker.
+  expect(entry).toMatchObject({ hours: 8, pay: 120, status: 'completed' })
   expect(entry.owner_status).toBeUndefined()
 })
 
@@ -232,7 +238,35 @@ test('one-off job: clock-out is blocked until the supervising Employee releases 
   expect(clockOut.status()).toBe(200)
 })
 
-test('messaging: Casual Worker and supervising Employee can exchange a two-way thread', async ({ request }) => {
+test('messaging is a work action: blocked before the Clock In window, wrong recipient rejected, open once the window starts', async ({ request }) => {
+  // At this point the current job is the far-future 2030-05-02 assignment — its Clock In window
+  // is closed, so sending must be rejected.
+  const blockedEarly = await request.post('/api/casual/messages', {
+    data: { user_id: worker.authUserId, other_user_id: supervisor.userId, company_id: seeded.companyId, content: 'Too early' },
+  })
+  expect(blockedEarly.status()).toBe(400)
+  expect((await blockedEarly.json()).message).toContain('30 minutes before your job starts')
+
+  // A shift that started 5 minutes ago becomes the current job (earlier than 2030-05-02) with an
+  // open window. Times are UTC-nominal like the app's own clock-in parsing; as with the other
+  // attendance specs this can misbehave when local-date and UTC-date disagree (00:00–08:00 SGT).
+  const startedJustNow = new Date(Date.now() - 5 * 60000)
+  const windowAssignmentId = await createShiftAssignment({
+    shiftDate: startedJustNow.toISOString().slice(0, 10),
+    startTime: startedJustNow.toISOString().slice(11, 19),
+    endTime: new Date(startedJustNow.getTime() + 8 * 3600000).toISOString().slice(11, 19),
+    supervisorEmployeeId: supervisor.userId,
+  })
+  const dash = await request.get(`/api/casual/dashboard?user_id=${worker.authUserId}`)
+  expect((await dash.json()).dashboard.current_job.assignment_id).toBe(windowAssignmentId)
+
+  // Only the current job's supervisor is a valid recipient.
+  const blockedRecipient = await request.post('/api/casual/messages', {
+    data: { user_id: worker.authUserId, other_user_id: otherEmployee.userId, company_id: seeded.companyId, content: 'Wrong person' },
+  })
+  expect(blockedRecipient.status()).toBe(400)
+  expect((await blockedRecipient.json()).message).toContain('supervisor of your current job')
+
   const send = await request.post('/api/casual/messages', {
     data: { user_id: worker.authUserId, other_user_id: supervisor.userId, company_id: seeded.companyId, content: 'On my way!' },
   })

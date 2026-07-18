@@ -109,13 +109,26 @@ export const recruitmentRepository = {
   },
 
   async getJobPostingById(id: string): Promise<JobPosting | null> {
+    // Company profile fields are joined live (same shape as /api/jobs/public) so detail views
+    // can render the Company Profile section; job_postings itself only snapshots company_name.
     const { data, error } = await supabase
       .from('job_postings')
-      .select('*')
+      .select('*, departments(name), companies(location, description, size, address, industry)')
       .eq('id', id)
       .single()
     if (error) return null
-    return data as JobPosting
+    const { departments, companies, ...rest } = data as any
+    const dept = Array.isArray(departments) ? departments[0] : departments
+    const co = Array.isArray(companies) ? companies[0] : companies
+    return {
+      ...rest,
+      department_name: dept?.name ?? null,
+      company_location: co?.location ?? null,
+      company_description: co?.description ?? null,
+      company_size: co?.size ?? null,
+      company_address: co?.address ?? null,
+      company_industry: co?.industry ?? null,
+    } as JobPosting
   },
 
   async createJobPosting(input: JobPostingInput): Promise<JobPosting> {

@@ -405,7 +405,11 @@ function ApplicationsContent() {
           </div>
         </div>
 
-        <section key={viewTab} style={{ ...sectionStyle, animation: 'blockSlideUp 0.24s ease-out both' }}>
+        {/* Keyed on loading too (not just viewTab): applications take an API round-trip to arrive,
+            so a fresh, animated section must mount right when `loading` flips false — keying on
+            viewTab alone would have this section (and its animation) already sitting on screen,
+            fully settled, well before the real cards show up. */}
+        <section key={loading ? 'loading' : viewTab} style={{ ...sectionStyle, animation: 'blockSlideUp 0.28s ease-out both' }}>
           {loading ? (
             <div style={emptyCardStyle}>Loading applications...</div>
           ) : error ? (

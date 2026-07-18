@@ -16,6 +16,7 @@ type SeededWorker = {
 let seeded: TestOwner
 let departmentId: string
 let assignmentId: string
+let historyAssignmentId: string
 let worker: SeededWorker
 let replacement: SeededWorker
 
@@ -92,7 +93,6 @@ test.beforeAll(async () => {
 })
 
 test.afterAll(async () => {
-  await admin.from('attendance_records').delete().eq('shift_assignment_id', assignmentId)
   await admin.from('shift_swap_requests').delete().eq('company_id', seeded.companyId)
   await admin.from('time_off_requests').delete().eq('company_id', seeded.companyId)
   await admin.from('employee_fixed_off_days').delete().eq('company_id', seeded.companyId)
@@ -100,6 +100,11 @@ test.afterAll(async () => {
   const { data: shiftRows } = await admin.from('shifts').select('id').eq('company_id', seeded.companyId)
   const shiftIds = (shiftRows ?? []).map((shift) => shift.id as string)
   if (shiftIds.length > 0) {
+    const { data: assignmentRows } = await admin.from('shift_assignments').select('id').in('shift_id', shiftIds)
+    const assignmentIds = (assignmentRows ?? []).map((assignment) => assignment.id as string)
+    if (assignmentIds.length > 0) {
+      await admin.from('attendance_records').delete().in('shift_assignment_id', assignmentIds)
+    }
     await admin.from('shift_assignments').delete().in('shift_id', shiftIds)
     await admin.from('shifts').delete().in('id', shiftIds)
   }
@@ -152,6 +157,78 @@ test('UC49 clock in, clock out, and view own attendance overview', async ({ requ
   )
 })
 
+test('UC49 resource=history lists completed and still-working records with supervisor details', async ({ request }) => {
+  // A second shift the worker has clocked in to but not out of — must surface as "working".
+  const { data: liveShift, error: liveShiftError } = await admin
+    .from('shifts')
+    .insert({
+      company_id: seeded.companyId,
+      department_id: departmentId,
+      shift_date: '2030-02-02',
+      start_time: '09:00',
+      end_time: '17:00',
+      title: 'Module 5 Live Shift',
+      created_by: seeded.ownerId,
+      publication_status: 'published',
+    })
+    .select('id')
+    .single()
+  if (liveShiftError || !liveShift) throw new Error(`Failed to create live shift: ${liveShiftError?.message}`)
+
+  const { data: liveAssignment, error: liveAssignmentError } = await admin
+    .from('shift_assignments')
+    .insert({
+      shift_id: liveShift.id,
+      user_id: worker.userId,
+      assigned_by: seeded.ownerId,
+      supervisor_employee_id: seeded.ownerId,
+    })
+    .select('id')
+    .single()
+  if (liveAssignmentError || !liveAssignment) throw new Error(`Failed to create live assignment: ${liveAssignmentError?.message}`)
+  historyAssignmentId = liveAssignment.id as string
+
+  const { error: recordError } = await admin.from('attendance_records').insert({
+    shift_assignment_id: historyAssignmentId,
+    casual_worker_id: worker.userId,
+    clock_in_time: '2030-02-02T09:01:00.000Z',
+    confirmed_by_employee_id: worker.userId,
+    submitted_by_employee_id: worker.userId,
+    status: 'clocked_in',
+    owner_status: 'pending',
+  })
+  if (recordError) throw new Error(`Failed to create attendance record: ${recordError.message}`)
+
+  const res = await request.get(`/api/casual/attendance?resource=history&user_id=${worker.authUserId}`)
+  expect(res.status()).toBe(200)
+  const body = await res.json()
+  expect(body.success).toBe(true)
+
+  // Clock-in at 09:04 falls inside the 10-minute grace period, so it was stored as 09:00.
+  const completed = body.history.find((entry: { id: string }) => entry.id === assignmentId)
+  expect(completed).toMatchObject({ status: 'completed', hours: 8.03 })
+  expect(new Date(completed.clock_in_time).toISOString()).toBe('2030-02-01T09:00:00.000Z')
+  expect(new Date(completed.clock_out_time).toISOString()).toBe('2030-02-01T17:02:00.000Z')
+
+  const working = body.history.find((entry: { id: string }) => entry.id === historyAssignmentId)
+  expect(working).toMatchObject({
+    status: 'working',
+    clock_out_time: null,
+    hours: null,
+    pay: null,
+    supervisor_name: 'Test Owner module5',
+  })
+
+  // Most recent date first — the working 02-02 shift sits above the completed 02-01 one.
+  expect(body.history.map((entry: { id: string }) => entry.id).indexOf(historyAssignmentId))
+    .toBeLessThan(body.history.map((entry: { id: string }) => entry.id).indexOf(assignmentId))
+
+  // Leave no trace: the still-open record would otherwise surface in the UC54 AI timesheet scan.
+  await admin.from('attendance_records').delete().eq('shift_assignment_id', historyAssignmentId)
+  await admin.from('shift_assignments').delete().eq('id', historyAssignmentId)
+  await admin.from('shifts').delete().eq('id', liveShift.id)
+})
+
 test('UC50 and UC51 view the attendance dashboard, then review a record through manager and owner decisions', async ({ request }) => {
   const dashboard = await request.get(`/api/attendance?company_id=${seeded.companyId}`)
   expect(dashboard.status()).toBe(200)
@@ -181,6 +258,93 @@ test('UC50 and UC51 view the attendance dashboard, then review a record through 
   })
   expect(ownerReview.status()).toBe(200)
   expect(await ownerReview.json()).toMatchObject({ success: true, record: { owner_status: 'approved', status: 'owner_approved' } })
+})
+
+test('UC49 casual worker break_in/break_out, then UC56 owner modifies the break times', async ({ request }) => {
+  const { data: breakShift, error: breakShiftError } = await admin
+    .from('shifts')
+    .insert({
+      company_id: seeded.companyId,
+      department_id: departmentId,
+      shift_date: '2030-02-03',
+      start_time: '09:00',
+      end_time: '17:00',
+      title: 'Module 5 Break Shift',
+      created_by: seeded.ownerId,
+      publication_status: 'published',
+    })
+    .select('id')
+    .single()
+  if (breakShiftError || !breakShift) throw new Error(`Failed to create break shift: ${breakShiftError?.message}`)
+
+  const { data: breakAssignment, error: breakAssignmentError } = await admin
+    .from('shift_assignments')
+    .insert({ shift_id: breakShift.id, user_id: worker.userId, assigned_by: seeded.ownerId })
+    .select('id')
+    .single()
+  if (breakAssignmentError || !breakAssignment) throw new Error(`Failed to create break assignment: ${breakAssignmentError?.message}`)
+  const breakAssignmentId = breakAssignment.id as string
+
+  // Break In before clocking in is rejected.
+  const tooEarly = await request.post('/api/casual/attendance', {
+    data: { action: 'break_in', user_id: worker.authUserId, shift_assignment_id: breakAssignmentId },
+  })
+  expect(tooEarly.status()).toBe(400)
+
+  const clockIn = await request.post('/api/casual/attendance', {
+    data: { action: 'clock_in', user_id: worker.authUserId, shift_assignment_id: breakAssignmentId, clock_time: '2030-02-03T09:00:00.000Z' },
+  })
+  expect(clockIn.status()).toBe(201)
+
+  const breakIn = await request.post('/api/casual/attendance', {
+    data: { action: 'break_in', user_id: worker.authUserId, shift_assignment_id: breakAssignmentId, clock_time: '2030-02-03T12:00:00.000Z' },
+  })
+  expect(breakIn.status()).toBe(200)
+  const breakInBody = await breakIn.json()
+  expect(new Date(breakInBody.record.break_in_time).toISOString()).toBe('2030-02-03T12:00:00.000Z')
+
+  // A second Break In while already on a break is rejected.
+  const doubleBreak = await request.post('/api/casual/attendance', {
+    data: { action: 'break_in', user_id: worker.authUserId, shift_assignment_id: breakAssignmentId },
+  })
+  expect(doubleBreak.status()).toBe(400)
+
+  const breakOut = await request.post('/api/casual/attendance', {
+    data: { action: 'break_out', user_id: worker.authUserId, shift_assignment_id: breakAssignmentId, clock_time: '2030-02-03T12:30:00.000Z' },
+  })
+  expect(breakOut.status()).toBe(200)
+  const breakOutBody = await breakOut.json()
+  expect(new Date(breakOutBody.record.break_out_time).toISOString()).toBe('2030-02-03T12:30:00.000Z')
+
+  const clockOut = await request.post('/api/casual/attendance', {
+    data: { action: 'clock_out', user_id: worker.authUserId, shift_assignment_id: breakAssignmentId, clock_time: '2030-02-03T17:00:00.000Z' },
+  })
+  expect(clockOut.status()).toBe(200)
+
+  // History hours subtract the 30-minute break: 8h span − 0.5h = 7.5h.
+  const history = await request.get(`/api/casual/attendance?resource=history&user_id=${worker.authUserId}`)
+  expect(history.status()).toBe(200)
+  const historyBody = await history.json()
+  const entry = historyBody.history.find((row: { id: string }) => row.id === breakAssignmentId)
+  expect(entry.hours).toBe(7.5)
+  expect(new Date(entry.break_in_time).toISOString()).toBe('2030-02-03T12:00:00.000Z')
+
+  // UC56: the Owner adjusts the break pair directly through final_review (decision: modified).
+  const ownerModify = await request.patch('/api/attendance', {
+    data: {
+      action: 'final_review',
+      id: breakOutBody.record.id,
+      owner_id: seeded.ownerId,
+      decision: 'modified',
+      break_in_time: '2030-02-03T12:15:00.000Z',
+      break_out_time: '2030-02-03T13:00:00.000Z',
+    },
+  })
+  expect(ownerModify.status()).toBe(200)
+  const ownerModifyBody = await ownerModify.json()
+  expect(ownerModifyBody.record.status).toBe('owner_modified')
+  expect(new Date(ownerModifyBody.record.break_in_time).toISOString()).toBe('2030-02-03T12:15:00.000Z')
+  expect(new Date(ownerModifyBody.record.break_out_time).toISOString()).toBe('2030-02-03T13:00:00.000Z')
 })
 
 test('UC50/UC51 resource=range scopes records to the given date window, for the Past Attendance Record calendar', async ({ request }) => {

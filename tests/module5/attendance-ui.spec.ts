@@ -182,7 +182,8 @@ test('casual worker can clock in and out for their current job from the Dashboar
   // exist for the Casual Worker role (out of UC49-57's actor scope for CW).
   await page.goto('/casual/dashboard')
   await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible()
-  await expect(page.getByText('Module 5 UI Shift')).toBeVisible()
+  // The title renders on both the Upcoming Jobs timeline card and the Job Detail block.
+  await expect(page.getByText('Module 5 UI Shift').first()).toBeVisible()
 
   await page.getByRole('button', { name: 'Clock In' }).click()
   await expect(page.getByText('Clocked in.')).toBeVisible()
@@ -210,7 +211,8 @@ test('casual worker can clock in and out for their current job from the Dashboar
   // The completed job now shows up in Attendance history instead.
   await page.goto('/casual/attendance')
   await expect(page.getByRole('heading', { name: 'Attendance' })).toBeVisible()
-  await expect(page.getByText('Module 5 UI Shift')).toBeVisible()
+  // The title renders in both the history list row and its detail panel.
+  await expect(page.getByText('Module 5 UI Shift').first()).toBeVisible()
 })
 
 test('owner can review Module 5 work from the attendance UI', async ({ page }) => {

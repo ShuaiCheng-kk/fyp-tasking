@@ -249,14 +249,15 @@ export function JobDetailPanel({
   variant = 'panel',
 }: {
   job: JobView
-  onClose: () => void
+  onClose?: () => void
   onApply?: (job: JobView) => void
   // False for signed-in company staff / platform admins — Apply is hidden rather than rejected.
   canApply?: boolean
   // Replaces the "Apply Now" area (e.g. application status + Withdraw/Accept/Decline actions).
   actionSlot?: React.ReactNode
-  // 'panel' = sticky sidebar (Job Board); 'modal' = static full-width block inside a modal overlay.
-  variant?: 'panel' | 'modal'
+  // 'panel' = sticky sidebar (Job Board); 'modal' = static full-width block inside a modal overlay;
+  // 'inline' = embedded inside a host block that already shows title/company — no chrome, no close.
+  variant?: 'panel' | 'modal' | 'inline'
 }) {
   const isShiftJob = resolveJobType(job) === 'shift'
   const cd = deadlineCountdown(job.expires_at)
@@ -269,7 +270,9 @@ export function JobDetailPanel({
   const metaIcon: React.CSSProperties = { flexShrink: 0 }
   const scheduleLine: React.CSSProperties = { fontFamily: fB, fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }
 
-  const rootStyle: React.CSSProperties = variant === 'modal'
+  const rootStyle: React.CSSProperties = variant === 'inline'
+    ? { display: 'flex', flexDirection: 'column', gap: '20px' }
+    : variant === 'modal'
     ? { background: '#FFFFFF', border: '1px solid #EDE9E3', borderRadius: '20px', padding: '32px', maxHeight: '85vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '20px' }
     : { background: '#FFFFFF', border: '1px solid #EDE9E3', borderRadius: '20px', padding: '32px', position: 'sticky', top: '24px', maxHeight: 'calc(100vh - 48px)', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '20px' }
 
@@ -278,19 +281,23 @@ export function JobDetailPanel({
       {/* Header — title + company + deadline pill */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
-            <h2 style={{ fontFamily: fH, fontWeight: 700, fontSize: '1.0625rem', color: '#111827', lineHeight: 1.35, margin: 0 }}>
-              {job.title}
-            </h2>
-            {cd && (
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 10px', borderRadius: 99, fontFamily: fB, fontSize: '0.72rem', fontWeight: 700, background: cd.expired ? '#FEF2F2' : '#FFFBEB', color: cd.expired ? '#B91C1C' : '#B45309', border: `1px solid ${cd.expired ? '#FECACA' : '#FDE68A'}`, whiteSpace: 'nowrap', flexShrink: 0 }}>
-                <Clock size={11} />{cd.label}
-              </span>
-            )}
-          </div>
-          <p style={{ fontFamily: fB, fontSize: '0.875rem', fontWeight: 500, color: '#6B7280', margin: '0 0 14px' }}>
-            {job.company_name ?? '—'}
-          </p>
+          {variant !== 'inline' && (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
+                <h2 style={{ fontFamily: fH, fontWeight: 700, fontSize: '1.0625rem', color: '#111827', lineHeight: 1.35, margin: 0 }}>
+                  {job.title}
+                </h2>
+                {cd && (
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 10px', borderRadius: 99, fontFamily: fB, fontSize: '0.72rem', fontWeight: 700, background: cd.expired ? '#FEF2F2' : '#FFFBEB', color: cd.expired ? '#B91C1C' : '#B45309', border: `1px solid ${cd.expired ? '#FECACA' : '#FDE68A'}`, whiteSpace: 'nowrap', flexShrink: 0 }}>
+                    <Clock size={11} />{cd.label}
+                  </span>
+                )}
+              </div>
+              <p style={{ fontFamily: fB, fontSize: '0.875rem', fontWeight: 500, color: '#6B7280', margin: '0 0 14px' }}>
+                {job.company_name ?? '—'}
+              </p>
+            </>
+          )}
 
           {/* Meta rows */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -326,10 +333,12 @@ export function JobDetailPanel({
           )}
           {actionSlot && <div style={{ marginTop: 14 }}>{actionSlot}</div>}
         </div>
-        <button onClick={onClose} aria-label="Close panel"
-          style={{ background: '#F3F4F6', border: 'none', borderRadius: '8px', width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}>
-          <X size={16} color="#374151" />
-        </button>
+        {variant !== 'inline' && onClose && (
+          <button onClick={onClose} aria-label="Close panel"
+            style={{ background: '#F3F4F6', border: 'none', borderRadius: '8px', width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}>
+            <X size={16} color="#374151" />
+          </button>
+        )}
       </div>
 
       {/* Schedule */}

@@ -513,6 +513,10 @@ export const attendanceService = {
       owner_reviewed_at: new Date().toISOString(),
       owner_adjusted_clock_in_time: input.decision === 'modified' ? input.clock_in_time ?? existing.clock_in_time : existing.owner_adjusted_clock_in_time,
       owner_adjusted_clock_out_time: input.decision === 'modified' ? input.clock_out_time ?? existing.clock_out_time : existing.owner_adjusted_clock_out_time,
+      // Break times have no adjusted-copy columns — the Owner edits the recorded pair directly
+      // (UC56: Owner/Partner modify clock times directly, breaks included).
+      break_in_time: input.decision === 'modified' ? input.break_in_time ?? existing.break_in_time : existing.break_in_time,
+      break_out_time: input.decision === 'modified' ? input.break_out_time ?? existing.break_out_time : existing.break_out_time,
       status: input.decision === 'approved' ? 'owner_approved' : input.decision === 'rejected' ? 'owner_rejected' : 'owner_modified',
     })
   },

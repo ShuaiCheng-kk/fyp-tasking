@@ -18,10 +18,11 @@ export const casualAttendanceRepository = {
     return data
   },
 
-  // Every completed (clocked out) shift assignment for this worker, most recent first — the
-  // Attendance page's past-work history.
-  async getCompletedAssignments(userId: string): Promise<{
+  // Every shift assignment for this worker, most recent first — the Attendance page's history.
+  // The service keeps only the ones with an attendance record (clocked in or fully clocked out).
+  async getHistoryAssignments(userId: string): Promise<{
     id: string
+    supervisor_employee_id: string | null
     shift: {
       id: string
       title: string | null
@@ -35,21 +36,59 @@ export const casualAttendanceRepository = {
   }[]> {
     const { data, error } = await supabase
       .from('shift_assignments')
-      .select('id, shifts!inner(id, title, shift_date, start_time, end_time, is_open_ended, flat_rate, source_job_posting_id)')
+      .select('id, supervisor_employee_id, shifts!inner(id, title, shift_date, start_time, end_time, is_open_ended, flat_rate, source_job_posting_id)')
       .eq('user_id', userId)
       .order('shift_date', { referencedTable: 'shifts', ascending: false })
     if (error) throw new Error(error.message)
     return (data ?? []).map(row => {
-      const r = row as unknown as { id: string; shifts: never }
-      return { id: r.id, shift: r.shifts }
+      const r = row as unknown as { id: string; supervisor_employee_id: string | null; shifts: never }
+      return { id: r.id, supervisor_employee_id: r.supervisor_employee_id, shift: r.shifts }
     })
   },
 
-  async getJobPostingsByIds(ids: string[]): Promise<{ id: string; company_name: string | null }[]> {
+  async getJobPostingsByIds(ids: string[]): Promise<{ id: string; company_name: string | null; location: string | null; created_by: string | null }[]> {
     if (ids.length === 0) return []
-    const { data, error } = await supabase.from('job_postings').select('id, company_name').in('id', ids)
+    const { data, error } = await supabase.from('job_postings').select('id, company_name, location, created_by').in('id', ids)
     if (error) throw new Error(error.message)
     return data ?? []
+  },
+
+  async getUsersByIds(ids: string[]): Promise<{ id: string; full_name: string; role: string; phone_number: string | null; email_address: string | null; profile_photo_url: string | null }[]> {
+    if (ids.length === 0) return []
+    const { data, error } = await supabase.from('users').select('id, full_name, role, phone_number, email_address, profile_photo_url').in('id', ids)
+    if (error) throw new Error(error.message)
+    return data ?? []
+  },
+
+  // Completed tasks this worker did on the given shifts — the Attendance detail's "what I
+  // actually delivered" list. Covers both single-assignee tasks (assigned_user_id) and
+  // multi-assignee ones (task_assignments rows).
+  async getCompletedTasksByShiftIds(shiftIds: string[], userId: string): Promise<{ id: string; shift_id: string | null; title: string }[]> {
+    if (shiftIds.length === 0) return []
+    const { data, error } = await supabase
+      .from('tasks')
+      .select('id, shift_id, title, assigned_user_id')
+      .in('shift_id', shiftIds)
+      .eq('status', 'Complete')
+      .eq('is_archived', false)
+    if (error) throw new Error(error.message)
+    const tasks = (data ?? []) as { id: string; shift_id: string | null; title: string; assigned_user_id: string | null }[]
+
+    const otherIds = tasks.filter(t => t.assigned_user_id !== userId).map(t => t.id)
+    const assignedTaskIds = new Set<string>()
+    if (otherIds.length > 0) {
+      const { data: assignments, error: assignError } = await supabase
+        .from('task_assignments')
+        .select('task_id')
+        .in('task_id', otherIds)
+        .eq('user_id', userId)
+      if (assignError) throw new Error(assignError.message)
+      for (const row of assignments ?? []) assignedTaskIds.add(row.task_id as string)
+    }
+
+    return tasks
+      .filter(t => t.assigned_user_id === userId || assignedTaskIds.has(t.id))
+      .map(({ id, shift_id, title }) => ({ id, shift_id, title }))
   },
 
   async getUpcomingAssignments(userId: string, fromDate: string): Promise<AssignmentWithShift[]> {

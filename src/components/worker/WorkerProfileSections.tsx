@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Award, Check, FileText, Paperclip, Pencil, Plus, RefreshCw, Trash2, Upload, Wrench } from 'lucide-react'
 import { PRESET_CERTIFICATES, WorkerCertificate } from '@/types/WorkerProfile'
 import DropdownField from '@/components/DropdownField'
+import { TitledBlock } from '@/components/panel'
 
 const DOCUMENT_ACCEPT = '.pdf,.doc,.docx'
 const CERTIFICATE_ACCEPT = '.pdf,.doc,.docx,.jpg,.jpeg,.png'
@@ -79,26 +80,20 @@ export function SkillsCard({ authId, onToast }: Props) {
   const skillsDirty = skills.trim() !== savedSkills.trim()
 
   return (
-    <div style={cardStyle}>
+    <TitledBlock
+      icon={<Wrench size={15} color="#F97316" />}
+      title="Skills"
+      headerRight={!skillsEditing && (
+        <button type="button" onClick={() => { setSkills(savedSkills); setError(''); setSkillsEditing(true) }} style={editButtonStyle}>
+          <Pencil size={13} /> Edit Skills
+        </button>
+      )}
+    >
       {error && (
         <div style={{ padding: '10px 14px', marginBottom: 14, background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 10, color: '#B91C1C', fontSize: '0.8125rem', fontWeight: 600 }}>
           {error}
         </div>
       )}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 14 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{ width: 32, height: 32, borderRadius: 8, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-            <Wrench size={16} color="#EA580C" />
-          </div>
-          <p style={{ margin: 0, fontWeight: 700, fontSize: '0.9375rem', color: '#111827' }}>Skills</p>
-        </div>
-        {!skillsEditing && (
-          <button type="button" onClick={() => { setSkills(savedSkills); setError(''); setSkillsEditing(true) }} style={editButtonStyle}>
-            <Pencil size={13} /> Edit Skills
-          </button>
-        )}
-      </div>
-
       {skillsEditing ? (
         <>
           <textarea
@@ -126,7 +121,7 @@ export function SkillsCard({ authId, onToast }: Props) {
           {savedSkills || 'No skills added yet.'}
         </p>
       )}
-    </div>
+    </TitledBlock>
   )
 }
 
@@ -228,14 +223,12 @@ export function CertificatesCard({ authId, onToast }: Props) {
   }
 
   return (
-    <div style={cardStyle}>
+    <TitledBlock icon={<Award size={15} color="#F97316" />} title="Certificates">
       {error && (
         <div style={{ padding: '10px 14px', marginBottom: 14, background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 10, color: '#B91C1C', fontSize: '0.8125rem', fontWeight: 600 }}>
           {error}
         </div>
       )}
-      <CardHeader icon={<Award size={16} color="#EA580C" />} title="Certificates" subtitle="" />
-
       {/* Hidden picker for swapping the proof file on an already-added certificate. */}
       <input ref={replaceFileInputRef} type="file" accept={CERTIFICATE_ACCEPT} style={{ display: 'none' }}
         onChange={e => {
@@ -337,7 +330,7 @@ export function CertificatesCard({ authId, onToast }: Props) {
 
         {certError && <p style={{ margin: 0, fontSize: '0.8125rem', color: '#DC2626' }}>{certError}</p>}
       </div>
-    </div>
+    </TitledBlock>
   )
 }
 
@@ -407,13 +400,12 @@ export function ResumeCard({ authId, onToast }: Props) {
   }
 
   return (
-    <div style={cardStyle}>
+    <TitledBlock icon={<FileText size={15} color="#F97316" />} title="Resume">
       {error && (
         <div style={{ padding: '10px 14px', marginBottom: 14, background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 10, color: '#B91C1C', fontSize: '0.8125rem', fontWeight: 600 }}>
           {error}
         </div>
       )}
-      <CardHeader icon={<FileText size={16} color="#EA580C" />} title="Resume" subtitle="" />
       <input ref={resumeInputRef} type="file" accept={DOCUMENT_ACCEPT} style={{ display: 'none' }}
         onChange={e => { const f = e.target.files?.[0]; if (f) void uploadResume(f) }} />
 
@@ -452,19 +444,7 @@ export function ResumeCard({ authId, onToast }: Props) {
       )}
 
       {resumeError && <p style={{ margin: '8px 0 0', fontSize: '0.8125rem', color: '#DC2626' }}>{resumeError}</p>}
-    </div>
-  )
-}
-
-function CardHeader({ icon, title, subtitle }: { icon: React.ReactNode; title: string; subtitle: string }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-      <div style={{ width: 32, height: 32, borderRadius: 8, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-        {icon}
-      </div>
-      <p style={{ margin: 0, fontWeight: 700, fontSize: '0.9375rem', color: '#111827' }}>{title}</p>
-      {subtitle ? <p style={{ margin: 0, fontSize: '0.78rem', color: '#6B7280' }}>{subtitle}</p> : null}
-    </div>
+    </TitledBlock>
   )
 }
 

@@ -8,6 +8,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { createBrowserClient } from '@supabase/ssr'
 import { User, Check, Pencil, Camera } from 'lucide-react'
 import DatePickerField from '@/components/DatePickerField'
+import { TitledBlock } from '@/components/panel'
 
 const DATE_DISPLAY_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 function formatDateDisplay(value: string | null | undefined): string {
@@ -130,22 +131,16 @@ export default function GuestPersonalInfoCard({ userId, onToast }: { userId: str
   }
 
   return (
-    <div style={cardStyle}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 18 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{ width: 32, height: 32, borderRadius: 8, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-            <User size={16} color="#EA580C" />
-          </div>
-          <p style={{ margin: 0, fontWeight: 700, fontSize: '0.9375rem', color: '#111827' }}>Personal Information</p>
-        </div>
-        {!editing && (
-          <button type="button" onClick={startEdit}
-            style={{ padding: '7px 14px', border: 'none', borderRadius: 8, background: 'linear-gradient(135deg, #F97316, #EA580C)', fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-            <Pencil size={13} /> Edit Profile
-          </button>
-        )}
-      </div>
-
+    <TitledBlock
+      icon={<User size={15} color="#F97316" />}
+      title="Personal Information"
+      headerRight={!editing && (
+        <button type="button" onClick={startEdit}
+          style={{ padding: '7px 14px', border: 'none', borderRadius: 8, background: 'linear-gradient(135deg, #F97316, #EA580C)', fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+          <Pencil size={13} /> Edit Profile
+        </button>
+      )}
+    >
       {/* Avatar + name */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 14, paddingBottom: 16, borderBottom: '1px solid #F3F4F6' }}>
         <div style={{ position: 'relative', flexShrink: 0 }}>
@@ -207,16 +202,8 @@ export default function GuestPersonalInfoCard({ userId, onToast }: { userId: str
           </div>
         )}
       </form>
-    </div>
+    </TitledBlock>
   )
-}
-
-const cardStyle: React.CSSProperties = {
-  background: '#FFFFFF',
-  borderRadius: 14,
-  border: '1.5px solid #E5E7EB',
-  padding: '20px 24px',
-  boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
 }
 
 const labelStyle: React.CSSProperties = {
