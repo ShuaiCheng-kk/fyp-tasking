@@ -11,6 +11,7 @@ vi.mock('@/repositories/userAdminRepository', () => ({
   suspendUser: vi.fn(),
   unsuspendUser: vi.fn(),
   getUserById: vi.fn(),
+  getReportStats: vi.fn(),
 }))
 
 import * as repo from '@/repositories/userAdminRepository'
@@ -22,6 +23,7 @@ import {
   unsuspendCompany,
   suspendUser,
   unsuspendUser,
+  getReportStats,
 } from './userAdminService'
 
 beforeEach(() => vi.clearAllMocks())
@@ -116,5 +118,22 @@ describe('unsuspendUser', () => {
     vi.mocked(repo.unsuspendUser).mockResolvedValue(undefined)
     await unsuspendUser({ user_id: 'u1' })
     expect(repo.unsuspendUser).toHaveBeenCalledWith('u1')
+  })
+})
+
+describe('getReportStats', () => {
+  it('passes from/to through to the repository and returns its result', async () => {
+    const stats = {
+      totalCompanies: 5, totalUsers: 20, activeCompanies: 4, activeUsers: 18,
+      suspendedCompanies: 1, suspendedUsers: 2, newCompaniesLast7Days: 1, newUsersLast7Days: 3,
+      newCompaniesLast30Days: 2, newUsersLast30Days: 6, newCompaniesInRange: 0, newUsersInRange: 0,
+      invitationFunnel: { used: 10, pending: 2, expired: 1 }, usersWithCompany: 18, usersWithoutCompany: 2,
+    }
+    vi.mocked(repo.getReportStats).mockResolvedValue(stats as never)
+
+    const result = await getReportStats('2026-01-01', '2026-01-31')
+
+    expect(repo.getReportStats).toHaveBeenCalledWith('2026-01-01', '2026-01-31')
+    expect(result).toEqual(stats)
   })
 })

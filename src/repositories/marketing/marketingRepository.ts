@@ -13,8 +13,6 @@ function mapPage(row: MarketingPageRow, blocks: MarketingContentBlock[]): Market
     title: row.title,
     route_path: row.route_path,
     is_editable: row.is_editable,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
     blocks,
   }
 }
@@ -23,7 +21,7 @@ export const marketingRepository = {
   async getMarketingPageBySlug(slug: string): Promise<MarketingPage | null> {
     const { data: page, error: pageError } = await supabase
       .from('marketing_pages')
-      .select('id, slug, title, route_path, is_editable, created_at, updated_at')
+      .select('id, slug, title, route_path, is_editable')
       .eq('slug', slug)
       .single()
 
@@ -31,7 +29,7 @@ export const marketingRepository = {
 
     const { data: blocks, error: blocksError } = await supabase
       .from('marketing_content_blocks')
-      .select('id, page_id, block_key, block_type, label, value, sort_order, updated_at')
+      .select('id, page_id, block_key, block_type, label, value, sort_order')
       .eq('page_id', page.id)
       .order('sort_order', { ascending: true })
 

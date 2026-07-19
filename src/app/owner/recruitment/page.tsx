@@ -25,6 +25,7 @@ import { JobApplicant, JobPostingPendingApproval, JobPostingSummary, PoolInviteR
 import { JobTemplate, JobTemplateUsageStats } from '@/types/JobTemplate'
 import { deptColor, setDeptColorOverrides } from '@/lib/deptColor'
 import { useIsCompactViewport } from '@/hooks/useIsCompactViewport'
+import { useIsCompactContainer } from '@/hooks/useIsCompactContainer'
 import DepartmentBadge from '@/components/DepartmentBadge'
 import RoleAvatar from '@/components/RoleAvatar'
 import DatePickerField from '@/components/DatePickerField'
@@ -715,7 +716,11 @@ function RTimePicker({ value, onChange, min, max }: { value: string; onChange: (
 
 export default function OwnerRecruitmentPage() {
   const router = useRouter()
-  const isCompactApplicantActions = useIsCompactViewport(1400)
+  // The Applicants panel is one of three columns sharing a row (Detail | Applicants |
+  // Confirmed) — its real width is a fraction of the window, not the window itself, so the
+  // button-label collapse must react to the panel's own rendered width (see
+  // useIsCompactContainer), not a window-width breakpoint.
+  const [applicantsPanelRef, isCompactApplicantActions] = useIsCompactContainer<HTMLDivElement>(480)
 
   // auth / company
   const [internalUserId, setInternalUserId] = useState('')
@@ -1150,8 +1155,8 @@ export default function OwnerRecruitmentPage() {
     const isShift = p.is_recurring
     setFormJobType(isShift ? 'shift' : 'oneoff')
     setFormTitle(p.title); setFormDeptId(p.department_id ?? '')
-    setFormEmpType(p.employment_type ?? 'casual'); setFormLocation(p.location ?? '')
-    setFormSalaryAmt(p.salary_amount?.toString() ?? ''); setFormSalaryType(p.salary_type ?? (isShift ? 'per hour' : 'flat rate'))
+    setFormEmpType(p.employment_type ?? 'casual'); setFormLocation('')
+    setFormSalaryAmt(p.salary_amount?.toString() ?? ''); setFormSalaryType(isShift ? 'per hour' : 'flat rate')
     setFormDescription(p.description); setFormRequirements(p.requirements ?? '')
     setFormExperienceRequired(p.experience_required ?? ''); setFormMinimumAge(p.minimum_age != null ? String(p.minimum_age) : '')
     setFormUniformType(uniformTypeOf(p)); setFormUniformDetails(p.uniform_details ?? '')
@@ -1248,7 +1253,6 @@ export default function OwnerRecruitmentPage() {
       employment_type: formEmpType || null,
       company_name: formCompanyName || companyName || null,
       salary_amount: scheduleReached && formSalaryAmt ? Number(formSalaryAmt) : null,
-      salary_type: formJobType === 'shift' ? 'per hour' : 'flat rate',
       urgency: formJobType === 'oneoff' ? (formUrgency || 'normal') : null,
       estimated_hours: formJobType === 'oneoff' ? (formEstHours || null) : null,
       is_recurring: formJobType === 'shift',
@@ -2391,7 +2395,7 @@ export default function OwnerRecruitmentPage() {
                 </div>
 
                 {/* Applicants — same treatment: pinned, with the list scrolling inside the panel */}
-                <div className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, overflow: 'hidden', display: 'flex', flexDirection: 'column', maxHeight: panelMaxHeight ?? undefined }}>
+                <div ref={applicantsPanelRef} className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, overflow: 'hidden', display: 'flex', flexDirection: 'column', maxHeight: panelMaxHeight ?? undefined }}>
                   <div style={{ height: LIST_HEADER_HEIGHT, padding: '0 18px', boxSizing: 'border-box', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, overflow: 'hidden' }}>
                     <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                       <Users size={15} style={{ color: '#F97316' }} />
@@ -2399,8 +2403,9 @@ export default function OwnerRecruitmentPage() {
                     <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Applicants</span>
                     {/* Hand the job straight to workers who already worked here, alongside the AI
                         assessment of whoever applied on the public board. Below the compact
-                        breakpoint the buttons drop their text label (icon + title tooltip only)
-                        so they never spill past the panel edge into the next column. */}
+                        breakpoint (this PANEL's own width, not the window's) the buttons drop
+                        their text label (icon + title tooltip only) so they never spill past the
+                        panel edge into the next column. */}
                     {activeTab !== 'closed' && (
                       <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
                         <button

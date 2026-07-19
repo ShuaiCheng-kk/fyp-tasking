@@ -794,7 +794,7 @@ describe('attendanceService', () => {
     })
   })
 
-  describe('decideFixedOffDayRequest (UC56: Approve Fixed Day Off)', () => {
+  describe('decideFixedOffDayRequest (UC55: Approve Fixed Day Off)', () => {
     it('approves a pending fixed day off request', async () => {
       vi.mocked(attendanceRepository.getFixedOffDayRequestById).mockResolvedValue({
         id: 'fod-1', user_id: 'user-1', company_id: 'company-1', request_date: '2026-07-10', week_start: '2026-07-06', status: 'pending', source: 'submitted', reviewed_by: null, reviewed_at: null, created_at: '2026-01-01',
@@ -1001,7 +1001,7 @@ describe('attendanceService', () => {
     })
   })
 
-  describe('getFixedOffDayRequests (UC56 — Manager and Employee requests both route to Owner)', () => {
+  describe('getFixedOffDayRequests (UC55 — Manager and Employee requests both route to Owner)', () => {
     beforeEach(() => {
       vi.mocked(offDaySettingsRepository.getDeadline).mockResolvedValue(null)
     })
@@ -1092,7 +1092,7 @@ describe('attendanceService', () => {
     })
   })
 
-  describe('submitFixedOffDayRequest (UC55)', () => {
+  describe('submitFixedOffDayRequest (UC54)', () => {
     // Mirrors weekStart()/addDays() in attendanceService.ts exactly: local-time Date parsing (no
     // 'Z' suffix) and formatting back out via local getters (never toISOString(), which converts
     // to UTC and would silently reintroduce the same skew this test is guarding against).

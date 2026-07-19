@@ -19,7 +19,7 @@ vi.mock('@/repositories/owner/ownerAnnouncementRepository', () => ({
 import { ownerAnnouncementService } from './ownerAnnouncementService'
 import { ownerAnnouncementRepository } from '@/repositories/owner/ownerAnnouncementRepository'
 
-describe('ownerAnnouncementService — Communication (UC59-61)', () => {
+describe('ownerAnnouncementService — Communication (UC58-60)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
@@ -36,7 +36,7 @@ describe('ownerAnnouncementService — Communication (UC59-61)', () => {
     })
   })
 
-  describe('postAnnouncement (UC59)', () => {
+  describe('postAnnouncement (UC58)', () => {
     it('rejects an empty title', async () => {
       await expect(ownerAnnouncementService.postAnnouncement('owner-1', 'company-1', null, '   ', 'Body'))
         .rejects.toThrow('Title cannot be empty')
@@ -58,7 +58,7 @@ describe('ownerAnnouncementService — Communication (UC59-61)', () => {
     })
   })
 
-  describe('updateAnnouncement (UC60)', () => {
+  describe('updateAnnouncement (UC59)', () => {
     it('rejects an empty title', async () => {
       await expect(ownerAnnouncementService.updateAnnouncement('ann-1', 'owner-1', '', 'Body', null))
         .rejects.toThrow('Title cannot be empty')
@@ -78,7 +78,7 @@ describe('ownerAnnouncementService — Communication (UC59-61)', () => {
     })
   })
 
-  describe('deleteAnnouncement (UC61)', () => {
+  describe('deleteAnnouncement (UC60)', () => {
     it('delegates to the repository', async () => {
       await ownerAnnouncementService.deleteAnnouncement('ann-1', 'owner-1')
       expect(ownerAnnouncementRepository.deleteAnnouncement).toHaveBeenCalledWith('ann-1', 'owner-1')

@@ -505,8 +505,8 @@ export default function PartnerRecruitmentPage() {
     const isShift = p.is_recurring
     setFormJobType(isShift ? 'shift' : 'oneoff')
     setFormTitle(p.title); setFormDeptId(p.department_id ?? '')
-    setFormEmpType(p.employment_type ?? 'casual'); setFormLocation(p.location ?? '')
-    setFormSalaryAmt(p.salary_amount?.toString() ?? ''); setFormSalaryType(p.salary_type ?? (isShift ? 'per hour' : 'flat rate'))
+    setFormEmpType(p.employment_type ?? 'casual'); setFormLocation('')
+    setFormSalaryAmt(p.salary_amount?.toString() ?? ''); setFormSalaryType(isShift ? 'per hour' : 'flat rate')
     setFormDescription(p.description); setFormRequirements(p.requirements ?? '')
     setFormIndustry(''); setFormCompanyName(companyName); setFormBenefits('')
     setFormOpenings(1)
@@ -583,7 +583,6 @@ export default function PartnerRecruitmentPage() {
     employment_type: formEmpType || null,
     company_name: formCompanyName || companyName || null,
     salary_amount: formSalaryAmt ? Number(formSalaryAmt) : null,
-    salary_type: formJobType === 'shift' ? 'per hour' : 'flat rate',
     urgency: formJobType === 'oneoff' ? (formUrgency || 'normal') : null,
     estimated_hours: formJobType === 'oneoff' ? (formEstHours || null) : null,
     job_start_time: formJobType === 'oneoff' ? (formJobStartTime || null) : null,
@@ -816,16 +815,12 @@ export default function PartnerRecruitmentPage() {
           title: `${draft.title} (copy)`,
           description: draft.description ?? '',
           requirements: draft.requirements ?? null,
-          location: draft.location ?? null,
           employment_type: draft.employment_type ?? null,
           department_id: draft.department_id ?? null,
           salary_amount: draft.salary_amount ?? null,
-          salary_type: draft.salary_type ?? null,
           urgency: draft.urgency ?? null,
           estimated_hours: draft.estimated_hours ?? null,
           is_recurring: draft.is_recurring ?? false,
-          recurrence_interval: draft.recurrence_interval ?? null,
-          recurrence_unit: draft.recurrence_unit ?? null,
           shift_date: draft.shift_date ?? null,
           shift_start_time: draft.shift_start_time ?? null,
           shift_end_time: draft.shift_end_time ?? null,

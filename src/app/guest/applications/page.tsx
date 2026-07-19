@@ -87,7 +87,6 @@ type Application = {
   company_description?: string
   invitation_id?: string
   invitation_status?: InvitationStatus
-  invitation_message?: string
 }
 
 // Adapt an application row to the shared JobView the board's JobCard / JobDetailPanel render from.
@@ -228,7 +227,6 @@ function ApplicationsContent() {
           cover_letter: app.cover_letter,
           invitation_id: invite?.id,
           invitation_status: invite?.status,
-          invitation_message: invite?.message ?? undefined,
           invitation_sent_at: invite?.sent_at ?? undefined,
           invitation_responded_at: invite?.responded_at ?? undefined,
         }

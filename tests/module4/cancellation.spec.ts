@@ -175,9 +175,9 @@ test('worker Cancel Shift: shift voided, application withdrawn, full job reopens
 
   // History kept + in-app message to the employer.
   const { data: history } = await admin
-    .from('recruitment_cancellations').select('cancelled_role, scope, reason').eq('job_id', job.id)
+    .from('recruitment_cancellations').select('cancelled_role, reason').eq('job_id', job.id)
   expect(history).toHaveLength(1)
-  expect(history![0]).toMatchObject({ cancelled_role: 'worker', scope: 'worker', reason: 'Family emergency' })
+  expect(history![0]).toMatchObject({ cancelled_role: 'worker', reason: 'Family emergency' })
   const { data: messages } = await admin
     .from('messages').select('content').eq('to_user_id', seeded.ownerId).eq('from_user_id', worker.userId)
   expect(messages!.length).toBeGreaterThan(0)
@@ -239,8 +239,8 @@ test('owner Remove Worker: reason mandatory; cancels the engagement and reopens 
   const { data: reopened } = await admin.from('job_postings').select('status').eq('id', job.id).single()
   expect(reopened?.status).toBe('open')
   const { data: history } = await admin
-    .from('recruitment_cancellations').select('cancelled_role, scope').eq('job_id', job.id)
-  expect(history![0]).toMatchObject({ cancelled_role: 'employer', scope: 'worker' })
+    .from('recruitment_cancellations').select('cancelled_role').eq('job_id', job.id)
+  expect(history![0]).toMatchObject({ cancelled_role: 'employer' })
 })
 
 // Deleting a posting is how an employer calls the whole job off. The posting row disappears, but

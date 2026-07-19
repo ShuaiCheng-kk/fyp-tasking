@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test'
 import { createClient } from '@supabase/supabase-js'
 import { seedTestOwnerAndCompany, cleanupTestOwnerAndCompany, TestOwner } from '../helpers/seed'
 
-// Integration tests for Module 9 — Account & Authentication (UC85-91).
+// Integration tests for Module 8 — Account & Authentication (UC65-71).
 // Hit the real route.ts -> service -> repository -> Supabase chain, no UI involved.
 
 const admin = createClient(
@@ -20,7 +20,7 @@ test.afterAll(async () => {
   await cleanupTestOwnerAndCompany(seeded)
 })
 
-test.describe('UC85 — Register Account', () => {
+test.describe('UC65 — Register Account', () => {
   let registeredAuthId: string | null = null
   let registeredEmail: string
 
@@ -72,9 +72,76 @@ test.describe('UC85 — Register Account', () => {
     })
     expect(res.status()).toBe(400)
   })
+
+  test('registers a Guest User / Casual Worker via the job-board path (register-guest -> complete-guest-registration)', async ({ request }) => {
+    registeredEmail = `test-register-guest-${Date.now()}@tasking-tests.local`
+
+    const registerRes = await request.post('/api/auth/register-guest', {
+      data: {
+        full_name: 'New Guest Worker',
+        email: registeredEmail,
+        password: 'Test-Password-123!',
+        phone: '81234567',
+        date_of_birth: '2001-06-15',
+        home_location: 'Singapore',
+      },
+    })
+    expect(registerRes.status()).toBe(200)
+    const registerBody = await registerRes.json()
+    expect(registerBody.success).toBe(true)
+    expect(registerBody.user_id).toBeTruthy()
+    registeredAuthId = registerBody.user_id
+
+    // No `users` row exists yet at this point — only the Supabase auth account.
+    const { data: beforeComplete } = await admin.from('users').select('id').eq('email_address', registeredEmail).maybeSingle()
+    expect(beforeComplete).toBeNull()
+
+    const completeRes = await request.post('/api/auth/complete-guest-registration', {
+      data: {
+        user_id: registerBody.user_id,
+        full_name: 'New Guest Worker',
+        email_address: registeredEmail,
+        password: 'Test-Password-123!',
+        phone_number: '81234567',
+        date_of_birth: '2001-06-15',
+        home_location: 'Singapore',
+      },
+    })
+    expect(completeRes.status()).toBe(200)
+    const completeBody = await completeRes.json()
+    expect(completeBody.success).toBe(true)
+    expect(completeBody.user.role).toBe('Guest User')
+
+    const { data: row } = await admin.from('users').select('role, full_name').eq('email_address', registeredEmail).single()
+    expect(row).toMatchObject({ role: 'Guest User', full_name: 'New Guest Worker' })
+  })
+
+  test('register-guest rejects a duplicate email', async ({ request }) => {
+    const res = await request.post('/api/auth/register-guest', {
+      data: {
+        full_name: 'Duplicate Owner',
+        email: seeded.email,
+        password: 'Test-Password-123!',
+        phone: '81234568',
+      },
+    })
+    expect(res.status()).toBe(400)
+    expect((await res.json()).success).toBe(false)
+  })
+
+  test('register-guest rejects a missing phone number', async ({ request }) => {
+    const res = await request.post('/api/auth/register-guest', {
+      data: {
+        full_name: 'No Phone',
+        email: `test-no-phone-${Date.now()}@tasking-tests.local`,
+        password: 'Test-Password-123!',
+      },
+    })
+    expect(res.status()).toBe(400)
+  })
 })
 
-test.describe('UC86 — Sign In', () => {
+test.describe('UC66 — Sign In', () => {
   test('signs in with valid credentials and returns the user profile', async ({ request }) => {
     const res = await request.post('/api/auth/signin', {
       data: { email_address: seeded.email, password: seeded.password },
@@ -96,7 +163,7 @@ test.describe('UC86 — Sign In', () => {
   })
 })
 
-test.describe('UC87 — Forgot Password', () => {
+test.describe('UC67 — Forgot / Reset Password', () => {
   test('accepts a forgot-password request for an existing email', async ({ request }) => {
     const res = await request.post('/api/auth/forgot-password', {
       data: { email: seeded.email },
@@ -112,7 +179,7 @@ test.describe('UC87 — Forgot Password', () => {
   })
 })
 
-test.describe('UC88 — Email Verification / Resend Confirmation', () => {
+test.describe('UC68 — Email Verification / Resend Confirmation', () => {
   let unverifiedAuthId: string | null = null
   let unverifiedEmail: string
 
@@ -160,7 +227,7 @@ test.describe('UC88 — Email Verification / Resend Confirmation', () => {
   })
 })
 
-test.describe('UC89 — Edit Own Profile', () => {
+test.describe('UC69 — Edit Own Profile', () => {
   test('updates the profile fields and persists them', async ({ request }) => {
     const res = await request.patch('/api/user/update-profile', {
       data: {
@@ -187,7 +254,7 @@ test.describe('UC89 — Edit Own Profile', () => {
   })
 })
 
-test.describe('UC90 — Accept Company Invitation', () => {
+test.describe('UC70 — Accept Company Invitation', () => {
   let invitedAuthId: string | null = null
 
   test.afterAll(async () => {
@@ -241,7 +308,7 @@ test.describe('UC90 — Accept Company Invitation', () => {
   })
 })
 
-test.describe('UC91 — Logout', () => {
+test.describe('UC71 — Logout', () => {
   test('signs out successfully', async ({ request }) => {
     const res = await request.post('/api/auth/signout')
     expect(res.status()).toBe(200)

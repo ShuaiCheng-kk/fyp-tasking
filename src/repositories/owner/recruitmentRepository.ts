@@ -144,14 +144,10 @@ export const recruitmentRepository = {
         location: input.location ?? null,
         employment_type: input.employment_type ?? null,
         company_name: input.company_name ?? null,
-        industry: input.industry ?? null,
         salary_amount: input.salary_amount ?? null,
-        salary_type: input.salary_type ?? 'per hour',
         urgency: input.urgency ?? null,
         estimated_hours: input.estimated_hours ?? null,
         is_recurring: input.is_recurring ?? false,
-        recurrence_interval: input.recurrence_interval ?? null,
-        recurrence_unit: input.recurrence_unit ?? null,
         status: input.status ?? 'open',
         shift_date: input.shift_date ?? null,
         shift_start_time: input.shift_start_time ?? null,
@@ -336,7 +332,6 @@ export const recruitmentRepository = {
     applicant_id: string | null
     cancelled_by: string
     cancelled_role: 'worker' | 'employer'
-    scope: 'worker' | 'job'
     reason: string | null
   }): Promise<void> {
     const { error } = await supabase.from('recruitment_cancellations').insert(input)
@@ -371,10 +366,10 @@ export const recruitmentRepository = {
 
   // Caches one applicant's AI match result — ai_summary holds the structured recommendation as
   // JSON text so a later page open can rebuild it without another OpenAI call.
-  async updateApplicantAI(id: string, ai_score: number | null, ai_summary: string): Promise<void> {
+  async updateApplicantAI(id: string, ai_summary: string): Promise<void> {
     const { error } = await supabase
       .from('job_applicants')
-      .update({ ai_score, ai_summary, ai_computed_at: new Date().toISOString() })
+      .update({ ai_summary, ai_computed_at: new Date().toISOString() })
       .eq('id', id)
     if (error) throw new Error(error.message)
   },
@@ -439,7 +434,6 @@ export const recruitmentRepository = {
     job_id: string
     applicant_id: string
     sent_by: string
-    message?: string | null
   }): Promise<JobInvitation> {
     const { data, error } = await supabase
       .from('job_invitations')
@@ -447,7 +441,6 @@ export const recruitmentRepository = {
         job_id: input.job_id,
         applicant_id: input.applicant_id,
         sent_by: input.sent_by,
-        message: input.message ?? null,
       })
       .select()
       .single()
@@ -473,6 +466,16 @@ export const recruitmentRepository = {
       .in('id', ids)
     if (error) throw new Error(error.message)
     return (data ?? []) as { id: string; full_name: string; profile_photo_url: string | null }[]
+  },
+
+  async getUserRole(id: string): Promise<string | null> {
+    const { data, error } = await supabase
+      .from('users')
+      .select('role')
+      .eq('id', id)
+      .maybeSingle()
+    if (error) throw new Error(error.message)
+    return (data as { role: string } | null)?.role ?? null
   },
 
   async getManagerDepartmentIds(manager_id: string, company_id: string): Promise<string[]> {
@@ -707,7 +710,6 @@ export const recruitmentRepository = {
     resume_url: string | null
     skills_snapshot: string | null
     certificates_snapshot: ApplicantCertificateSnapshot[]
-    age_at_apply: number | null
   }): Promise<JobApplicant> {
     const { data, error } = await supabase
       .from('job_applicants')
@@ -719,7 +721,6 @@ export const recruitmentRepository = {
         additional_note: null,
         skills_snapshot: input.skills_snapshot,
         certificates_snapshot: input.certificates_snapshot,
-        age_at_apply: input.age_at_apply,
         status: 'accepted',
       })
       .select()

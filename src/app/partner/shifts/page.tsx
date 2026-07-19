@@ -1372,7 +1372,6 @@ export default function OwnerShiftsPage() {
           start_time: shiftEditForm.start_time,
           end_time: shiftEditForm.end_time,
           publication_status: 'published',
-          acceptance_deadline_at: null,
           assigned_user_id: shiftEditForm.assigned_user_id || null,
           assigned_by: internalUserId,
         }),

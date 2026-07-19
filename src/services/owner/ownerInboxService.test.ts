@@ -26,7 +26,7 @@ vi.mock('@/repositories/owner/ownerInboxRepository', () => ({
 import { ownerInboxService } from './ownerInboxService'
 import { ownerInboxRepository } from '@/repositories/owner/ownerInboxRepository'
 
-describe('ownerInboxService — Communication (UC62)', () => {
+describe('ownerInboxService — Communication (UC61)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })

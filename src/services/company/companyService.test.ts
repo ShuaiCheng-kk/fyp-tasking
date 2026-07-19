@@ -20,7 +20,7 @@ vi.mock('@/repositories/department/departmentRepository', () => ({
 import { companyService } from './companyService'
 import { departmentRepository } from '@/repositories/department/departmentRepository'
 
-describe('companyService — Manage Departments (UC27)', () => {
+describe('companyService — Manage Departments (UC24-26)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })

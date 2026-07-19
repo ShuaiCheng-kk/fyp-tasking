@@ -21,7 +21,7 @@ import { employeeAnnouncementService } from './employeeAnnouncementService'
 import { employeeAnnouncementRepository } from '@/repositories/employee/employeeAnnouncementRepository'
 import { employeeInboxRepository } from '@/repositories/employee/employeeInboxRepository'
 
-describe('employeeAnnouncementService — View Announcements (UC59)', () => {
+describe('employeeAnnouncementService — View Announcements', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })

@@ -167,7 +167,6 @@ export const recruitmentService = {
       applicant_id: input.applicant_id,
       cancelled_by: input.removed_by,
       cancelled_role: 'employer',
-      scope: 'worker',
       reason,
     })
 
@@ -196,8 +195,17 @@ export const recruitmentService = {
 
   async createJobPosting(input: JobPostingInput): Promise<JobPosting> {
     validateJobPostingInput(input)
-    if (input.status !== 'draft') await assertWithinSupervisorShift(input)
-    return recruitmentRepository.createJobPosting(input)
+    // UC41: a Manager's posting must go through Owner/Partner approval — enforced here, not just
+    // by the Manager UI omitting a "publish directly" button, since that client-side omission
+    // alone can't stop a direct API call from publishing straight to 'open'.
+    let status = input.status
+    if (status !== 'draft') {
+      const creatorRole = await recruitmentRepository.getUserRole(input.created_by)
+      status = creatorRole === 'Manager' ? 'pending_approval' : status
+    }
+    const finalInput = { ...input, status }
+    if (finalInput.status !== 'draft') await assertWithinSupervisorShift(finalInput)
+    return recruitmentRepository.createJobPosting(finalInput)
   },
 
   async getDraftPostings(company_id: string, user_id: string): Promise<JobPostingSummary[]> {
@@ -227,7 +235,14 @@ export const recruitmentService = {
 
   async publishDraft(id: string): Promise<JobPosting> {
     if (!id) throw new Error('job_id is required')
-    await assertPublishable(id)
+    const posting = await assertPublishable(id)
+    // UC41: a Manager's draft must go to Owner/Partner approval (submitForReview), never straight
+    // to 'open' — the Manager UI only offers "Submit for Review", but that's a client-side
+    // omission alone; this stops a Manager's draft being published directly via this action too.
+    const creatorRole = await recruitmentRepository.getUserRole(posting.created_by)
+    if (creatorRole === 'Manager') {
+      throw new Error('A Manager-created job must be submitted for Owner/Partner approval, not published directly')
+    }
     return recruitmentRepository.updateJobPosting(id, { status: 'open' })
   },
 
@@ -342,9 +357,16 @@ export const recruitmentService = {
     if (!id || !created_by) throw new Error('job_id and created_by are required')
     const original = await recruitmentRepository.getJobPostingById(id)
     if (!original) throw new Error('Job posting not found')
+    // Duplicating a draft yields another draft; anything else republishes as a fresh open
+    // posting — unless the duplicating user is a Manager, in which case it's UC41's approval
+    // flow again (see createJobPosting's comment), not a direct publish.
+    let duplicateStatus: 'draft' | 'open' | 'pending_approval' = original.status === 'draft' ? 'draft' : 'open'
+    if (duplicateStatus !== 'draft') {
+      const creatorRole = await recruitmentRepository.getUserRole(created_by)
+      if (creatorRole === 'Manager') duplicateStatus = 'pending_approval'
+    }
     return recruitmentRepository.createJobPosting({
-      // Duplicating a draft yields another draft; anything else republishes as a fresh open posting
-      status: original.status === 'draft' ? 'draft' : 'open',
+      status: duplicateStatus,
       company_id: original.company_id,
       department_id: original.department_id,
       created_by,
@@ -354,14 +376,10 @@ export const recruitmentService = {
       location: original.location,
       employment_type: original.employment_type,
       company_name: original.company_name,
-      industry: original.industry,
       salary_amount: original.salary_amount,
-      salary_type: original.salary_type,
       urgency: original.urgency,
       estimated_hours: original.estimated_hours,
       is_recurring: original.is_recurring,
-      recurrence_interval: original.recurrence_interval,
-      recurrence_unit: original.recurrence_unit,
       shift_date: original.shift_date,
       shift_start_time: original.shift_start_time,
       shift_end_time: original.shift_end_time,
@@ -381,7 +399,6 @@ export const recruitmentService = {
     applicant_id: string
     decision: 'accepted' | 'rejected'
     decided_by: string
-    message?: string | null
   }): Promise<JobApplicant> {
     if (!input.applicant_id || !input.decision || !input.decided_by) {
       throw new Error('applicant_id, decision, and decided_by are required')
@@ -400,7 +417,6 @@ export const recruitmentService = {
         job_id: applicant.job_id,
         applicant_id: applicant.id,
         sent_by: input.decided_by,
-        message: input.message ?? 'Your application has been accepted. Please wait for onboarding instructions.',
       })
 
       // The worker isn't online 24/7 — an email closes the gap until they log in and confirm
@@ -477,7 +493,6 @@ export const recruitmentService = {
     job_id: string
     user_ids: string[]
     sent_by: string
-    message?: string | null
   }): Promise<PoolInviteResult[]> {
     if (!input.job_id) throw new Error('job_id is required')
     if (!input.sent_by) throw new Error('sent_by is required')
@@ -492,7 +507,7 @@ export const recruitmentService = {
       const contact = await workerApplicationRepository.getUserContact(user_id)
       const full_name = contact?.full_name ?? ''
       try {
-        const { profile, age } = await assertWorkerEligibleForJob({
+        const { profile } = await assertWorkerEligibleForJob({
           user_id,
           job,
           selfApply: false, // the Owner already employed them — they vouch for the experience
@@ -518,7 +533,6 @@ export const recruitmentService = {
             resume_url: profile.resume_url,
             skills_snapshot: profile.skills,
             certificates_snapshot: certificates.map(cert => ({ name: cert.name, file_url: cert.file_url })),
-            age_at_apply: age,
           })
           applicantId = created.id
         }
@@ -527,7 +541,6 @@ export const recruitmentService = {
           job_id: input.job_id,
           applicant_id: applicantId,
           sent_by: input.sent_by,
-          message: input.message ?? 'You have worked with us before — we would like to offer you this job.',
         })
 
         // The worker isn't online 24/7; the email is what actually reaches them. Never let a failed
@@ -624,7 +637,7 @@ function validateOpenings(openings: number | null | undefined): void {
 
 // Guards the draft -> open / draft -> pending_approval transitions with the same rules
 // createJobPosting applies to directly-published postings.
-async function assertPublishable(id: string): Promise<void> {
+async function assertPublishable(id: string): Promise<JobPosting> {
   const posting = await recruitmentRepository.getJobPostingById(id)
   if (!posting) throw new Error('Job posting not found')
   if (!posting.description?.trim()) throw new Error('description is required to publish a job')
@@ -633,6 +646,7 @@ async function assertPublishable(id: string): Promise<void> {
     throw new Error('job_start_time is required to publish a one-off job')
   }
   await assertWithinSupervisorShift(posting)
+  return posting
 }
 
 // A casual worker must never be on site while their supervising employee is not: the worker's

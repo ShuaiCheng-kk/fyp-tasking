@@ -125,3 +125,26 @@ test('suspend — 400 on invalid action', async ({ request }) => {
   })
   expect(res.status()).toBe(400)
 })
+
+// Platform-wide analytics on the User Admin dashboard — not one of UC76-80's own numbered actions,
+// but a real, currently-used feature (getReportStats), so it's still covered here.
+test('GET /api/useradmin/reports returns platform-wide stats including the seeded company/owner', async ({ request }) => {
+  const res = await request.get('/api/useradmin/reports')
+  expect(res.status()).toBe(200)
+  const body = await res.json()
+  expect(typeof body.totalCompanies).toBe('number')
+  expect(typeof body.totalUsers).toBe('number')
+  expect(body.totalCompanies).toBeGreaterThan(0)
+  expect(body.totalUsers).toBeGreaterThan(0)
+  expect(body.invitationFunnel).toEqual(
+    expect.objectContaining({ used: expect.any(Number), pending: expect.any(Number), expired: expect.any(Number) })
+  )
+})
+
+test('GET /api/useradmin/reports respects a from/to date range', async ({ request }) => {
+  const farFuture = await request.get('/api/useradmin/reports?from=2099-01-01&to=2099-01-02')
+  expect(farFuture.status()).toBe(200)
+  const body = await farFuture.json()
+  expect(body.newCompaniesInRange).toBe(0)
+  expect(body.newUsersInRange).toBe(0)
+})

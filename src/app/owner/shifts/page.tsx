@@ -116,7 +116,6 @@ type ShiftEditForm = {
   end_time: string
   assigned_user_id: string
   department_id: string
-  acceptance_deadline_at: string
 }
 
 type DuplicateShiftForm = {
@@ -969,7 +968,6 @@ export default function OwnerShiftsPage() {
     end_time: '17:00',
     assigned_user_id: '',
     department_id: '',
-    acceptance_deadline_at: '',
   })
   const [shiftActionLoading, setShiftActionLoading] = useState(false)
   const [shiftActionError, setShiftActionError] = useState('')
@@ -2100,7 +2098,6 @@ export default function OwnerShiftsPage() {
             shift_date: cell.shift_date,
             start_time: cell.start_time,
             end_time: cell.end_time,
-            acceptance_deadline_at: null,
             template_id: cell.template_id ?? null,
           })),
         }),
@@ -2159,9 +2156,6 @@ export default function OwnerShiftsPage() {
       end_time: shift.end_time,
       assigned_user_id: row.user_id ?? '',
       department_id: shift.department_id,
-      acceptance_deadline_at: shift.acceptance_deadline_at
-        ? shift.acceptance_deadline_at.slice(0, 16)
-        : '',
     })
     setEditShiftCalMonth(shift.shift_date.slice(0, 7))
     setEditShiftCalDir('next')
@@ -2291,7 +2285,6 @@ export default function OwnerShiftsPage() {
           start_time: shiftEditForm.start_time,
           end_time: shiftEditForm.end_time,
           publication_status: selectedShift.publication_status,
-          acceptance_deadline_at: shiftEditForm.acceptance_deadline_at || null,
           assigned_user_id: shiftEditForm.assigned_user_id || null,
           assigned_by: internalUserId,
           template_id: editSelectedTemplateId || null,

@@ -98,7 +98,7 @@ test.afterAll(async () => {
   await cleanupTestOwnerAndCompany(seeded)
 })
 
-test('UC32 generates an invitation code for a department role', async ({ request }) => {
+test('generates an invitation code for a department role', async ({ request }) => {
   const res = await request.post('/api/invitation/generate', {
     data: {
       company_id: seeded.companyId,
@@ -113,7 +113,66 @@ test('UC32 generates an invitation code for a department role', async ({ request
   expect(body.code).toMatch(/^\d{5}$/)
 })
 
-test('UC33 assigns, lists, and removes a department manager', async ({ request }) => {
+test('UC27 sends a direct invitation by email to a new address', async ({ request }) => {
+  const res = await request.post('/api/invitation/send-invite', {
+    data: {
+      email: `test-module3-direct-invite-${Date.now()}@tasking-tests.local`,
+      role: 'Employee',
+      company_id: seeded.companyId,
+      department_id: departments.primary,
+      invited_by: seeded.ownerId,
+    },
+  })
+  expect(res.status()).toBe(200)
+  const body = await res.json()
+  expect(body.success).toBe(true)
+
+  const missingFields = await request.post('/api/invitation/send-invite', {
+    data: { email: 'nobody@tasking-tests.local' },
+  })
+  expect(missingFields.status()).toBe(400)
+})
+
+test('UC27 an existing member of another company gets an inbox invite, not a duplicate invitation code', async ({ request }) => {
+  const outsider = await createMember('Employee', 'outsider-invite', departments.secondary)
+  // Move the outsider to a separate company so they're a genuine "existing user elsewhere" case.
+  const { data: otherCompany, error: otherCompanyError } = await admin
+    .from('companies')
+    .insert({ name: 'Module 3 Other Co', owner_id: seeded.ownerId, plan: 'Free' })
+    .select('id')
+    .single()
+  if (otherCompanyError || !otherCompany) throw new Error(`Failed to create other company: ${otherCompanyError?.message}`)
+  await admin.from('users').update({ company_id: otherCompany.id }).eq('id', outsider.userId)
+
+  const res = await request.post('/api/invitation/send-invite', {
+    data: {
+      email: outsider.email,
+      role: 'Employee',
+      company_id: seeded.companyId,
+      department_id: departments.primary,
+      invited_by: seeded.ownerId,
+    },
+  })
+  expect(res.status()).toBe(200)
+  expect((await res.json()).success).toBe(true)
+
+  const { data: inboxRows } = await admin
+    .from('inbox')
+    .select('recipient_user_id, company_id, role, type, status')
+    .eq('recipient_user_id', outsider.userId)
+    .eq('company_id', seeded.companyId)
+  expect(inboxRows).toEqual([
+    expect.objectContaining({
+      recipient_user_id: outsider.userId, company_id: seeded.companyId, role: 'Employee',
+      type: 'company_invite', status: 'pending',
+    }),
+  ])
+
+  await admin.from('inbox').delete().eq('recipient_user_id', outsider.userId)
+  await admin.from('companies').delete().eq('id', otherCompany.id)
+})
+
+test('UC31 assigns, lists, and removes a department manager', async ({ request }) => {
   const manager = await createMember('Manager', 'assign', departments.primary)
 
   const assign = await request.patch('/api/team/department-manager', {
@@ -143,7 +202,7 @@ test('UC33 assigns, lists, and removes a department manager', async ({ request }
   expect((await remove.json()).success).toBe(true)
 })
 
-test('UC34 and UC37 list team members and remove a member', async ({ request }) => {
+test('UC28/UC30 list team members and remove a member', async ({ request }) => {
   const employee = await createMember('Employee', 'remove', departments.primary)
   const { data: shift, error: shiftError } = await admin
     .from('shifts')
@@ -191,7 +250,7 @@ test('UC34 and UC37 list team members and remove a member', async ({ request }) 
   expect(await remove.json()).toMatchObject({ success: true, accountDeleted: true })
 })
 
-test('UC37 removes a manager who created shifts without leaving a partial membership update', async ({ request }) => {
+test('UC30 removes a manager who created shifts without leaving a partial membership update', async ({ request }) => {
   const manager = await createMember('Manager', 'remove-manager', departments.primary)
   const { data: shift, error: shiftError } = await admin
     .from('shifts')
@@ -228,7 +287,7 @@ test('UC37 removes a manager who created shifts without leaving a partial member
   expect(updatedShift!.created_by).toBe(seeded.ownerId)
 })
 
-test('UC38 changes an employee department in the employee department mapping', async ({ request }) => {
+test('UC31 changes an employee department in the employee department mapping', async ({ request }) => {
   const employee = await createMember('Employee', 'move', departments.primary)
 
   const res = await request.patch('/api/user/update-department', {
@@ -249,7 +308,7 @@ test('UC38 changes an employee department in the employee department mapping', a
   expect(employeeDepartments).toEqual([{ department_id: departments.secondary }])
 })
 
-test('UC40 imports departments and skips duplicates', async ({ request }) => {
+test('UC33 imports departments and skips duplicates', async ({ request }) => {
   const res = await request.post('/api/import/departments', {
     data: {
       company_id: seeded.companyId,
@@ -265,7 +324,7 @@ test('UC40 imports departments and skips duplicates', async ({ request }) => {
   })
 })
 
-test('UC42 writes and reads company activity logs', async ({ request }) => {
+test('writes and reads company activity logs', async ({ request }) => {
   const write = await request.post('/api/activity-log', {
     data: {
       company_id: seeded.companyId,
@@ -288,7 +347,7 @@ test('UC42 writes and reads company activity logs', async ({ request }) => {
   )
 })
 
-test('UC35 returns member data with full_name and role fields the UI search filters on', async ({ request }) => {
+test('UC28 returns member data with full_name and role fields the UI search filters on', async ({ request }) => {
   await createMember('Employee', 'search-target', departments.primary)
 
   const res = await request.get(`/api/team/members?company_id=${seeded.companyId}`)
@@ -311,7 +370,7 @@ test('UC35 returns member data with full_name and role fields the UI search filt
   )
 })
 
-test('UC36 toggles a casual worker between active and inactive', async ({ request }) => {
+test('UC29 toggles a casual worker between active and inactive', async ({ request }) => {
   const email = `test-module3-casual-${Date.now()}@tasking-tests.local`
   const { data: authData, error: authError } = await admin.auth.admin.createUser({
     email,
@@ -511,7 +570,7 @@ test('recruited casual worker is only marked verified into the company Casual Wo
   expect(verifiedByDepartmentMember.casual_worker_verified_at).toBeTruthy()
 })
 
-test('UC39 invites members by CSV row and reports per-row failures', async ({ request }) => {
+test('UC32 invites members by CSV row and reports per-row failures', async ({ request }) => {
   const goodEmail = `test-module3-csv-${Date.now()}@tasking-tests.local`
   const res = await request.post('/api/import/members', {
     data: {
@@ -538,7 +597,7 @@ test('UC39 invites members by CSV row and reports per-row failures', async ({ re
   await admin.from('invitation_code').delete().eq('company_id', seeded.companyId).eq('email', goodEmail)
 })
 
-test('UC41 org chart data: members carry department_id and role so the UI can group by department', async ({ request }) => {
+test('org chart data: members carry department_id and role so the UI can group by department', async ({ request }) => {
   const manager = await createMember('Manager', 'orgchart', departments.secondary)
 
   const members_ = await request.get(`/api/team/members?company_id=${seeded.companyId}`)
@@ -559,7 +618,7 @@ test('UC41 org chart data: members carry department_id and role so the UI can gr
   )
 })
 
-test('UC43 edits company profile fields', async ({ request }) => {
+test('UC34 edits company profile fields', async ({ request }) => {
   const res = await request.patch('/api/company/update-profile', {
     data: {
       company_id: seeded.companyId,

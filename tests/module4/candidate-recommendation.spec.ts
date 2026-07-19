@@ -115,7 +115,6 @@ test('UC44: applicant list returns the apply-time snapshot fields', async ({ req
     additional_note: 'Weekend availability.',
     skills_snapshot: 'Cash handling, Customer service',
     certificates_snapshot: [{ name: 'Food Hygiene Certificate', file_url: null }],
-    age_at_apply: 26,
   })
 
   const res = await request.get(`/api/recruitment?resource=applicants&job_id=${jobId}`)
@@ -127,7 +126,6 @@ test('UC44: applicant list returns the apply-time snapshot fields', async ({ req
   expect(applicant.skills_snapshot).toBe('Cash handling, Customer service')
   expect(applicant.certificates_snapshot).toEqual([{ name: 'Food Hygiene Certificate', file_url: null }])
   expect(applicant.relevant_experience).toBe('more_than_2')
-  expect(applicant.age_at_apply).toBe(26)
 })
 
 test('UC48: cached AI results are served without recomputation, insufficient profiles are flagged', async ({ request }) => {
@@ -143,7 +141,6 @@ test('UC48: cached AI results are served without recomputation, insufficient pro
     status: 'pending',
     skills_snapshot: 'Barista',
     relevant_experience: '1_to_2',
-    ai_score: 82,
     ai_computed_at: new Date().toISOString(),
   }).select('id').single()
   cachedRec.applicant_id = cachedApp!.id
@@ -172,9 +169,8 @@ test('UC48: cached AI results are served without recomputation, insufficient pro
 
   // Insufficient verdicts also get cached so later loads stay deterministic.
   const { data: persisted } = await admin
-    .from('job_applicants').select('ai_computed_at, ai_score').eq('id', emptyApp!.id).single()
+    .from('job_applicants').select('ai_computed_at').eq('id', emptyApp!.id).single()
   expect(persisted?.ai_computed_at).not.toBeNull()
-  expect(persisted?.ai_score).toBeNull()
 
   // Scored applicants sort above insufficient ones.
   const ids = recommendations.map((r: { applicant_id: string }) => r.applicant_id)
@@ -187,7 +183,6 @@ test.beforeEach(async () => {
   await admin
     .from('job_applicants')
     .update({
-      ai_score: 50,
       ai_summary: JSON.stringify({
         applicant_id: '', applicant_name: 'AI Rec snapshot', score: 50, recommendation: 'review',
         reasons: ['Pre-cached for test isolation'], risks: [], suggested_next_step: 'Review',

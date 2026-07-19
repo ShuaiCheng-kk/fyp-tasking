@@ -21,7 +21,6 @@ import { taskTemplateRepository } from '@/repositories/owner/taskTemplateReposit
 const baseTemplate = {
   id: 'template-1',
   company_id: 'company-1',
-  name: 'Daily Cleaning Checklist',
   title: 'Clean front desk',
   description: 'Wipe down and restock',
   priority: 'Medium',
@@ -41,7 +40,6 @@ describe('taskTemplateService — Task Template', () => {
 
       const result = await taskTemplateService.createTemplate({
         company_id: 'company-1',
-        name: 'Daily Cleaning Checklist',
         title: 'Clean front desk',
         description: 'Wipe down and restock',
         priority: 'Medium',
@@ -51,7 +49,6 @@ describe('taskTemplateService — Task Template', () => {
 
       expect(taskTemplateRepository.createTemplate).toHaveBeenCalledWith({
         company_id: 'company-1',
-        name: 'Daily Cleaning Checklist',
         title: 'Clean front desk',
         description: 'Wipe down and restock',
         priority: 'Medium',
@@ -66,7 +63,6 @@ describe('taskTemplateService — Task Template', () => {
 
       await taskTemplateService.createTemplate({
         company_id: 'company-1',
-        name: 'Daily Cleaning Checklist',
         title: 'Clean front desk',
         sub_task_titles: ['  Wipe counters  ', '   ', 'Restock supplies'],
         created_by: 'owner-1',
@@ -82,7 +78,6 @@ describe('taskTemplateService — Task Template', () => {
 
       await taskTemplateService.createTemplate({
         company_id: 'company-1',
-        name: 'Daily Cleaning Checklist',
         title: 'Clean front desk',
         created_by: 'owner-1',
       })
@@ -95,7 +90,6 @@ describe('taskTemplateService — Task Template', () => {
     it('throws when required fields are missing', async () => {
       await expect(taskTemplateService.createTemplate({
         company_id: '',
-        name: 'Daily Cleaning Checklist',
         title: 'Clean front desk',
         created_by: 'owner-1',
       })).rejects.toThrow('Missing required task template fields')
@@ -135,11 +129,10 @@ describe('taskTemplateService — Task Template', () => {
   })
 
   describe('updateTemplate', () => {
-    it('updates name, title, description, priority, and sub_task_titles for an existing template', async () => {
+    it('updates title, description, priority, and sub_task_titles for an existing template', async () => {
       vi.mocked(taskTemplateRepository.getTemplateById).mockResolvedValue(baseTemplate)
       vi.mocked(taskTemplateRepository.updateTemplate).mockResolvedValue({
         ...baseTemplate,
-        name: 'Renamed',
         title: 'Renamed title',
         description: 'Renamed description',
         priority: 'High',
@@ -147,7 +140,6 @@ describe('taskTemplateService — Task Template', () => {
       })
 
       const result = await taskTemplateService.updateTemplate('template-1', {
-        name: 'Renamed',
         title: 'Renamed title',
         description: 'Renamed description',
         priority: 'High',
@@ -155,26 +147,24 @@ describe('taskTemplateService — Task Template', () => {
       })
 
       expect(taskTemplateRepository.updateTemplate).toHaveBeenCalledWith('template-1', {
-        name: 'Renamed',
         title: 'Renamed title',
         description: 'Renamed description',
         priority: 'High',
         sub_task_titles: ['Check inventory'],
       })
-      expect(result.name).toBe('Renamed')
+      expect(result.title).toBe('Renamed title')
     })
 
     it('falls back to existing values for fields not provided', async () => {
       vi.mocked(taskTemplateRepository.getTemplateById).mockResolvedValue(baseTemplate)
       vi.mocked(taskTemplateRepository.updateTemplate).mockResolvedValue(baseTemplate)
 
-      await taskTemplateService.updateTemplate('template-1', { name: 'Renamed' })
+      await taskTemplateService.updateTemplate('template-1', { priority: 'High' })
 
       expect(taskTemplateRepository.updateTemplate).toHaveBeenCalledWith('template-1', {
-        name: 'Renamed',
         title: baseTemplate.title,
         description: baseTemplate.description,
-        priority: baseTemplate.priority,
+        priority: 'High',
         sub_task_titles: baseTemplate.sub_task_titles,
       })
     })
@@ -182,13 +172,7 @@ describe('taskTemplateService — Task Template', () => {
     it('throws when the template does not exist', async () => {
       vi.mocked(taskTemplateRepository.getTemplateById).mockResolvedValue(null)
 
-      await expect(taskTemplateService.updateTemplate('missing', { name: 'X' })).rejects.toThrow('Template not found')
-    })
-
-    it('throws when name is blank', async () => {
-      vi.mocked(taskTemplateRepository.getTemplateById).mockResolvedValue(baseTemplate)
-
-      await expect(taskTemplateService.updateTemplate('template-1', { name: '   ' })).rejects.toThrow('Please name this template.')
+      await expect(taskTemplateService.updateTemplate('missing', { title: 'X' })).rejects.toThrow('Template not found')
     })
 
     it('throws when title is blank', async () => {

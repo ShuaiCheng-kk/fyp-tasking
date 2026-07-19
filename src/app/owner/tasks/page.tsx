@@ -2553,14 +2553,12 @@ export default function OwnerTasksPage() {
         method: isEdit ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(isEdit ? {
-          name: templateFormTitle.trim(),
           title: templateFormTitle.trim(),
           description: templateFormDesc.trim() || null,
           priority: templateFormPriority || null,
           sub_task_titles: subTaskTitles,
         } : {
           company_id: companyId,
-          name: templateFormTitle.trim(),
           title: templateFormTitle.trim(),
           description: templateFormDesc.trim() || null,
           priority: templateFormPriority || null,

@@ -93,14 +93,10 @@ export async function POST(req: NextRequest) {
     location: typeof data.location === 'string' && data.location ? data.location : null,
     employment_type: typeof data.employment_type === 'string' && data.employment_type ? data.employment_type : null,
     company_name: typeof data.company_name === 'string' && data.company_name ? data.company_name : null,
-    industry: typeof data.industry === 'string' && data.industry ? data.industry : null,
     salary_amount: typeof data.salary_amount === 'number' ? data.salary_amount : null,
-    salary_type: typeof data.salary_type === 'string' && data.salary_type ? data.salary_type : 'per hour',
     urgency: typeof data.urgency === 'string' && data.urgency ? data.urgency : null,
     estimated_hours: typeof data.estimated_hours === 'string' && data.estimated_hours ? data.estimated_hours : null,
     is_recurring: data.is_recurring === true,
-    recurrence_interval: typeof data.recurrence_interval === 'number' ? data.recurrence_interval : null,
-    recurrence_unit: typeof data.recurrence_unit === 'string' && data.recurrence_unit ? data.recurrence_unit : null,
     status: data.status === 'draft' ? 'draft' : data.status === 'pending_approval' ? 'pending_approval' : 'open',
     shift_date: typeof data.shift_date === 'string' && data.shift_date ? data.shift_date : null,
     shift_start_time: typeof data.shift_start_time === 'string' && data.shift_start_time ? data.shift_start_time : null,
@@ -154,7 +150,6 @@ export async function PATCH(req: NextRequest) {
       if ('location' in data) patch.location = nullableString(data.location)
       if ('employment_type' in data) patch.employment_type = nullableString(data.employment_type)
       if ('salary_amount' in data) patch.salary_amount = typeof data.salary_amount === 'number' ? data.salary_amount : null
-      if ('salary_type' in data) patch.salary_type = nullableString(data.salary_type)
       if ('urgency' in data) patch.urgency = nullableString(data.urgency)
       if ('estimated_hours' in data) patch.estimated_hours = nullableString(data.estimated_hours)
       if ('is_recurring' in data && typeof data.is_recurring === 'boolean') patch.is_recurring = data.is_recurring
@@ -197,7 +192,6 @@ export async function PATCH(req: NextRequest) {
         applicant_id: String(data.applicant_id ?? ''),
         decision,
         decided_by: String(data.decided_by ?? ''),
-        message: typeof data.message === 'string' ? data.message : null,
       })
       return NextResponse.json({ success: true, applicant })
     }
@@ -266,7 +260,6 @@ export async function PATCH(req: NextRequest) {
         job_id: String(data.job_id ?? ''),
         user_ids,
         sent_by: String(data.sent_by ?? ''),
-        message: typeof data.message === 'string' ? data.message : null,
       })
       return NextResponse.json({ success: true, results })
     }

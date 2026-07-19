@@ -125,4 +125,35 @@ export const ownerTeamService = {
     await ownerTeamRepository.removeManagerDepartment(manager_id, department_id)
   },
 
+  // UC31: move a Manager or Employee to a different department, replacing whatever department
+  // they were previously in (both roles hold exactly one department membership row at a time).
+  async changeMemberDepartment(data: {
+    user_id: string
+    department_id: string
+    company_id?: string | null
+  }): Promise<void> {
+    if (!data.user_id) throw new Error('user_id is required')
+    if (!data.department_id) throw new Error('department_id is required')
+
+    const user = await ownerTeamRepository.findUserById(data.user_id)
+    if (!user) throw new Error('User not found')
+
+    const resolvedCompanyId = data.company_id || user.company_id
+    if (!resolvedCompanyId) throw new Error('Cannot resolve company_id for user')
+    if (user.company_id !== resolvedCompanyId) throw new Error('User is not a member of this company')
+
+    const department = await ownerTeamRepository.findDepartmentById(data.department_id, resolvedCompanyId)
+    if (!department) throw new Error('Department not found in this company')
+
+    if (user.role === 'Manager') {
+      await ownerTeamRepository.removeManagerDepartmentsByCompany(data.user_id, resolvedCompanyId)
+      await ownerTeamRepository.moveManagerToDepartment(data.user_id, resolvedCompanyId, data.department_id)
+    } else if (user.role === 'Employee') {
+      await ownerTeamRepository.deleteEmployeeDepartmentsByUserId(data.user_id)
+      await ownerTeamRepository.assignEmployeeDepartment(data.user_id, data.department_id)
+    } else {
+      throw new Error('Only Managers and Employees can be assigned to departments')
+    }
+  },
+
 }

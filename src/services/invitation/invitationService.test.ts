@@ -45,11 +45,13 @@ vi.mock('@/services/email/emailService', () => ({
 import { invitationService } from './invitationService'
 import { invitationRepository } from '@/repositories/invitation/invitationRepository'
 import { authRepository } from '@/repositories/auth/authRepository'
+import { companyRepository } from '@/repositories/company/companyRepository'
+import { emailService } from '@/services/email/emailService'
 
 const futureDate = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
 const pastDate = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
 
-describe('invitationService.redeemCode — Accept Company Invitation (UC87)', () => {
+describe('invitationService.redeemCode — Accept Company Invitation (UC70)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
@@ -135,5 +137,78 @@ describe('invitationService.redeemCode — Accept Company Invitation (UC87)', ()
     vi.mocked(authRepository.createUser).mockRejectedValue(new Error('foreign key violation'))
 
     await expect(invitationService.redeemCode(baseInput)).rejects.toThrow('Setup failed. Please try again.')
+  })
+})
+
+describe('invitationService.sendInvite — Send Direct Invitation (UC27)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  const inviter = { id: 'inviter-1', role: 'Owner', email_address: 'owner@test.com', full_name: 'Test Owner' }
+  const baseInput = {
+    email: 'invitee@test.com',
+    role: 'Employee',
+    company_id: 'company-1',
+    department_id: null,
+    invited_by: 'inviter-1',
+  }
+
+  it('rejects a Partner sending an invitation', async () => {
+    vi.mocked(authRepository.findByAuthIdOrInternalId).mockResolvedValue({ ...inviter, role: 'Partner' } as never)
+
+    await expect(invitationService.sendInvite(baseInput)).rejects.toThrow('Partners cannot invite members.')
+    expect(invitationRepository.createCode).not.toHaveBeenCalled()
+  })
+
+  it('rejects inviting your own email address', async () => {
+    vi.mocked(authRepository.findByAuthIdOrInternalId).mockResolvedValue(inviter as never)
+
+    await expect(invitationService.sendInvite({ ...baseInput, email: 'OWNER@test.com' }))
+      .rejects.toThrow('You cannot send an invitation to yourself.')
+  })
+
+  it('rejects when the invited email is already a member of this company', async () => {
+    vi.mocked(authRepository.findByAuthIdOrInternalId).mockResolvedValue(inviter as never)
+    vi.mocked(authRepository.findByEmail).mockResolvedValue({ id: 'existing-1', company_id: 'company-1' } as never)
+
+    await expect(invitationService.sendInvite(baseInput)).rejects.toThrow('This user is already a member of this company.')
+  })
+
+  it('an existing user (member of a different company) gets an inbox invite, not an email', async () => {
+    vi.mocked(authRepository.findByAuthIdOrInternalId).mockResolvedValue(inviter as never)
+    vi.mocked(authRepository.findByEmail).mockResolvedValue({ id: 'existing-1', company_id: 'company-2' } as never)
+
+    await invitationService.sendInvite(baseInput)
+
+    expect(invitationRepository.insertInboxInvite).toHaveBeenCalledWith({
+      recipient_user_id: 'existing-1',
+      sender_user_id: 'inviter-1',
+      company_id: 'company-1',
+      role: 'Employee',
+      department_id: null,
+    })
+    expect(invitationRepository.createCode).not.toHaveBeenCalled()
+    expect(emailService.sendInviteEmail).not.toHaveBeenCalled()
+  })
+
+  it('a brand-new email gets a fresh invitation code and an email, not an inbox notification', async () => {
+    vi.mocked(authRepository.findByAuthIdOrInternalId).mockResolvedValue(inviter as never)
+    vi.mocked(authRepository.findByEmail).mockResolvedValue(null)
+    vi.mocked(invitationRepository.createCode).mockResolvedValue({
+      code: '54321', company_id: 'company-1', department_id: null, role: 'Employee',
+      generated_by: 'inviter-1', expired_at: futureDate,
+    } as never)
+    vi.mocked(companyRepository.findById).mockResolvedValue({ id: 'company-1', name: 'Acme Co' } as never)
+
+    await invitationService.sendInvite(baseInput)
+
+    expect(invitationRepository.createCode).toHaveBeenCalledWith(
+      expect.objectContaining({ company_id: 'company-1', role: 'Employee', generated_by: 'inviter-1' })
+    )
+    expect(invitationRepository.insertInboxInvite).not.toHaveBeenCalled()
+    expect(emailService.sendInviteEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ to: 'invitee@test.com', role: 'Employee', companyName: 'Acme Co', inviterName: 'Test Owner' })
+    )
   })
 })

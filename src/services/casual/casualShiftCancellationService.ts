@@ -45,7 +45,6 @@ export const casualShiftCancellationService = {
         applicant_id: applicantId,
         cancelled_by: worker.id,
         cancelled_role: 'worker',
-        scope: 'worker',
         reason,
       })
 

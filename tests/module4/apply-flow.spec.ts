@@ -110,7 +110,7 @@ test.afterAll(async () => {
   await cleanupTestOwnerAndCompany(seeded)
 })
 
-test('apply snapshots the worker profile (skills, certificates, resume, age) onto the application', async ({ request }) => {
+test('apply snapshots the worker profile (skills, certificates, resume) onto the application', async ({ request }) => {
   // Fill the profile first — this is what must get frozen onto the application.
   await request.patch('/api/guest/profile/skills', {
     data: { user_id: adultAuthId, skills: 'Customer service, Barista' },
@@ -141,7 +141,6 @@ test('apply snapshots the worker profile (skills, certificates, resume, age) ont
   expect(application.additional_note).toBe('I worked at Starbucks for one year.')
   expect(application.skills_snapshot).toBe('Customer service, Barista')
   expect(application.certificates_snapshot).toEqual([{ name: 'Food Hygiene Certificate', file_url: null }])
-  expect(typeof application.age_at_apply).toBe('number')
 
   // Snapshot property: editing the profile afterwards must NOT change the application.
   await request.patch('/api/guest/profile/skills', {

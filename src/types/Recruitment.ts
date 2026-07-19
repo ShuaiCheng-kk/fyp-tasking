@@ -10,8 +10,6 @@ export interface JobPosting {
   employment_type: string | null
   status: 'open' | 'archived' | 'closed' | 'expired' | 'pending_approval' | 'rejected' | 'draft'
   is_recurring: boolean
-  recurrence_interval: number | null
-  recurrence_unit: string | null
   archived_at: string | null
   // Status the posting had right before it was archived ('open' or 'closed') — lets Unarchive
   // restore it to where it came from instead of always reopening it.
@@ -24,9 +22,7 @@ export interface JobPosting {
   company_size: string | null
   company_address: string | null
   company_industry: string | null
-  industry: string | null
   salary_amount: number | null
-  salary_type: string | null
   urgency: string | null
   estimated_hours: string | null
   shift_date: string | null
@@ -59,14 +55,10 @@ export interface JobPostingInput {
   location?: string | null
   employment_type?: string | null
   company_name?: string | null
-  industry?: string | null
   salary_amount?: number | null
-  salary_type?: string | null
   urgency?: string | null
   estimated_hours?: string | null
   is_recurring?: boolean
-  recurrence_interval?: number | null
-  recurrence_unit?: string | null
   status?: string
   shift_date?: string | null
   shift_start_time?: string | null
@@ -124,9 +116,7 @@ export interface JobApplicant {
   additional_note: string | null
   skills_snapshot: string | null
   certificates_snapshot: ApplicantCertificateSnapshot[] | null
-  age_at_apply: number | null
   // Cached AI match analysis — computed once per application, not on every page open.
-  ai_score: number | null
   ai_summary: string | null
   ai_computed_at: string | null
   // Latest invitation status, joined in for the employer's list ('accepted' = worker confirmed).
@@ -142,7 +132,6 @@ export interface JobInvitation {
   job_id: string
   applicant_id: string
   sent_by: string
-  message: string | null
   status: 'sent' | 'accepted' | 'declined'
   sent_at: string
 }

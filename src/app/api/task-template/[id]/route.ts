@@ -30,7 +30,6 @@ export async function PATCH(
   try {
     const body = await req.json()
     const template = await taskTemplateService.updateTemplate(id, {
-      name: body.name,
       title: body.title,
       description: body.description,
       priority: body.priority,

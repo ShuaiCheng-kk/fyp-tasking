@@ -25,6 +25,7 @@ vi.mock('@/repositories/owner/recruitmentRepository', () => ({
     getApplicantCounts: vi.fn(),
     getDepartmentsByIds: vi.fn(),
     getUsersByIds: vi.fn(),
+    getUserRole: vi.fn(),
     getApplicantsByJob: vi.fn(),
     createJobPosting: vi.fn(),
     getDraftPostings: vi.fn(),
@@ -90,8 +91,6 @@ const basePosting: JobPosting = {
   employment_type: 'casual',
   status: 'open',
   is_recurring: false,
-  recurrence_interval: null,
-  recurrence_unit: null,
   archived_at: null,
   archived_from_status: null,
   created_at: '2026-06-01T00:00:00.000Z',
@@ -102,9 +101,7 @@ const basePosting: JobPosting = {
   company_size: null,
   company_address: null,
   company_industry: null,
-  industry: null,
   salary_amount: null,
-  salary_type: null,
   urgency: null,
   estimated_hours: null,
   shift_date: null,
@@ -143,8 +140,6 @@ const baseApplicant: JobApplicant = {
   additional_note: null,
   skills_snapshot: null,
   certificates_snapshot: null,
-  age_at_apply: null,
-  ai_score: null,
   ai_summary: null,
   ai_computed_at: null,
 }
@@ -248,6 +243,37 @@ describe('recruitmentService — Recruitment', () => {
     it('throws when openings is below 1', async () => {
       await expect(recruitmentService.createJobPosting({ ...baseInput, openings: 0 }))
         .rejects.toThrow('openings must be a whole number of at least 1')
+    })
+
+    it('UC41: forces a Manager-created posting to pending_approval even if the caller asked for open', async () => {
+      vi.mocked(recruitmentRepository.getUserRole).mockResolvedValue('Manager')
+      vi.mocked(recruitmentRepository.createJobPosting).mockResolvedValue({ ...basePosting, status: 'pending_approval' })
+
+      await recruitmentService.createJobPosting({ ...baseInput, status: 'open' })
+
+      expect(recruitmentRepository.getUserRole).toHaveBeenCalledWith(baseInput.created_by)
+      expect(recruitmentRepository.createJobPosting).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'pending_approval' })
+      )
+    })
+
+    it('leaves an Owner-created posting as open', async () => {
+      vi.mocked(recruitmentRepository.getUserRole).mockResolvedValue('Owner')
+      vi.mocked(recruitmentRepository.createJobPosting).mockResolvedValue(basePosting)
+
+      await recruitmentService.createJobPosting({ ...baseInput, status: 'open' })
+
+      expect(recruitmentRepository.createJobPosting).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'open' })
+      )
+    })
+
+    it('does not look up the creator role for a draft', async () => {
+      vi.mocked(recruitmentRepository.createJobPosting).mockResolvedValue(basePosting)
+
+      await recruitmentService.createJobPosting({ ...baseInput, description: '', assigned_employee_id: null, status: 'draft' })
+
+      expect(recruitmentRepository.getUserRole).not.toHaveBeenCalled()
     })
   })
 
@@ -497,14 +523,37 @@ describe('recruitmentService — Recruitment', () => {
         expect.objectContaining({ status: 'draft' })
       )
     })
+
+    it('UC41: a Manager duplicating a live posting lands as pending_approval, not open', async () => {
+      vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue({ ...basePosting, status: 'open' })
+      vi.mocked(recruitmentRepository.getUserRole).mockResolvedValue('Manager')
+      vi.mocked(recruitmentRepository.createJobPosting).mockResolvedValue({ ...basePosting, id: 'job-2', status: 'pending_approval' })
+
+      await recruitmentService.duplicateJobPosting('job-1', 'mgr-1')
+
+      expect(recruitmentRepository.getUserRole).toHaveBeenCalledWith('mgr-1')
+      expect(recruitmentRepository.createJobPosting).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'pending_approval' })
+      )
+    })
   })
 
   describe('draft lifecycle (UC40)', () => {
     it('publishes a draft', async () => {
       vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue(basePosting)
+      vi.mocked(recruitmentRepository.getUserRole).mockResolvedValue('Owner')
       vi.mocked(recruitmentRepository.updateJobPosting).mockResolvedValue({ ...basePosting, status: 'open' })
       await recruitmentService.publishDraft('job-1')
       expect(recruitmentRepository.updateJobPosting).toHaveBeenCalledWith('job-1', { status: 'open' })
+    })
+
+    it('UC41: refuses to publish a Manager-created draft directly, leaving it unpublished', async () => {
+      vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue(basePosting)
+      vi.mocked(recruitmentRepository.getUserRole).mockResolvedValue('Manager')
+
+      await expect(recruitmentService.publishDraft('job-1'))
+        .rejects.toThrow('A Manager-created job must be submitted for Owner/Partner approval, not published directly')
+      expect(recruitmentRepository.updateJobPosting).not.toHaveBeenCalled()
     })
 
     it('refuses to publish a draft without a responsible employee', async () => {
@@ -625,7 +674,7 @@ describe('recruitmentService — Recruitment', () => {
       // NOT 'rejected' — the worker WAS hired, then cancelled on.
       expect(recruitmentRepository.setApplicantStatus).toHaveBeenCalledWith('applicant-1', 'cancelled_by_employer')
       expect(recruitmentRepository.insertRecruitmentCancellation).toHaveBeenCalledWith(
-        expect.objectContaining({ cancelled_role: 'employer', scope: 'worker', reason: 'Requirements changed' }),
+        expect.objectContaining({ cancelled_role: 'employer', reason: 'Requirements changed' }),
       )
     })
 
@@ -776,7 +825,7 @@ describe('recruitmentService — Recruitment', () => {
       })
 
       expect(recruitmentRepository.createDirectApplicant).toHaveBeenCalledWith(expect.objectContaining({
-        job_id: 'job-1', user_id: 'cw-1', skills_snapshot: 'Barista', age_at_apply: 26,
+        job_id: 'job-1', user_id: 'cw-1', skills_snapshot: 'Barista',
       }))
       expect(recruitmentRepository.createJobInvitation).toHaveBeenCalledWith(expect.objectContaining({
         job_id: 'job-1', applicant_id: 'applicant-new', sent_by: 'owner-1',

@@ -115,7 +115,6 @@ describe('workerApplicationService.submitApplication — apply gates + snapshot'
       additional_note: 'Worked at Starbucks for a year.',
       skills_snapshot: 'Customer service, Barista',
       certificates_snapshot: [{ name: 'Food Hygiene Certificate', file_url: 'https://cdn/cert.pdf' }],
-      age_at_apply: expect.any(Number),
     })
   })
 

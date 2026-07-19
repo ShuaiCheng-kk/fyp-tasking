@@ -15,6 +15,7 @@ import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
 import Spinner from '@/components/Spinner'
 import { deptColor } from '@/lib/deptColor'
 import { useIsCompactViewport } from '@/hooks/useIsCompactViewport'
+import { useIsCompactContainer } from '@/hooks/useIsCompactContainer'
 import {
   AttendanceDashboardRecord,
   AttendanceRequestStatus,
@@ -816,6 +817,12 @@ export default function OwnerAttendancePage() {
     if (tab === 'swaps' || tab === 'fixedoff') setMainTab(tab)
   }, [])
   const isCompactReqLayout = useIsCompactViewport(1300)
+  // Current Task Assignment / Task Assignment After Swap sit side by side in the middle column
+  // of the (up to) 3-column Requests grid above — that column's real width is a fraction of the
+  // window (shared with the Requests list and Completed Requests columns), not the window itself,
+  // so whether these two panels have room to sit side by side must be measured on their own
+  // wrapping row, not a window-width breakpoint (same fix as the Recruitment Applicants panel).
+  const [taskChangeRowRef, taskChangeRowCompact] = useIsCompactContainer<HTMLDivElement>(1100)
 
   // ── Records tab state ────────────────────────────────────────────────────
   const [recordsKeyword, setRecordsKeyword] = useState('')
@@ -2835,7 +2842,7 @@ export default function OwnerAttendancePage() {
                           onNavigateDay={navigateCurrentShiftsDay}
                           fixedOffByUserDate={fixedOffByUserDate}
                         />
-                        <div style={{ display: 'flex', alignItems: 'stretch', gap: 16, flexShrink: 0 }}>
+                        <div ref={taskChangeRowRef} style={{ display: 'flex', flexDirection: taskChangeRowCompact ? 'column' : 'row', alignItems: 'stretch', gap: 16, flexShrink: 0 }}>
                           <TaskChangeBlock
                             title="Current Task Assignment"
                             show={reqTab === 'swaps'}

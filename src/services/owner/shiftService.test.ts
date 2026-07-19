@@ -61,7 +61,6 @@ const baseShift = {
   end_time: '17:00',
   status: 'active' as const,
   publication_status: 'draft' as const,
-  acceptance_deadline_at: null,
   recurrence_group_id: null,
   recurrence_rule: null,
   source_shift_id: null,
@@ -75,14 +74,14 @@ const baseShift = {
   updated_at: '2026-06-01T00:00:00.000Z',
 }
 
-describe('shiftService — Shift (UC1-8, UC10, UC12)', () => {
+describe('shiftService — Shift (UC1, UC3-10)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(shiftRepository.getAssignmentsByUserAndDateRange).mockResolvedValue([])
     vi.mocked(shiftRepository.getAssignmentsByShiftIds).mockResolvedValue([])
   })
 
-  describe('createShift (UC3)', () => {
+  describe('createShift (UC1)', () => {
     it('creates a shift with no assignment', async () => {
       vi.mocked(shiftRepository.createShift).mockResolvedValue(baseShift)
 
@@ -153,19 +152,7 @@ describe('shiftService — Shift (UC1-8, UC10, UC12)', () => {
       })).rejects.toThrow('start_time must be before end_time')
     })
 
-    it('rejects an acceptance_deadline_at that is after the shift starts', async () => {
-      await expect(shiftService.createShift({
-        company_id: 'company-1',
-        department_id: 'dept-1',
-        shift_date: '2026-06-22',
-        start_time: '09:00',
-        end_time: '17:00',
-        created_by: 'owner-1',
-        acceptance_deadline_at: '2026-06-22T10:00:00.000Z',
-      })).rejects.toThrow('acceptance_deadline_at must be before the shift starts')
-    })
-
-    it('creates the shift but returns a warning when rest hours are below the minimum (UC10)', async () => {
+    it('creates the shift but returns a warning when rest hours are below the minimum (UC9)', async () => {
       vi.mocked(shiftRepository.getAssignmentsByUserAndDateRange).mockResolvedValue([
         {
           id: 'assign-prev',
@@ -197,7 +184,7 @@ describe('shiftService — Shift (UC1-8, UC10, UC12)', () => {
     })
   })
 
-  describe('createSplitShift (UC9)', () => {
+  describe('createSplitShift (UC8)', () => {
     it('creates two linked shift rows sharing the same split_group_id', async () => {
       let counter = 0
       vi.mocked(shiftRepository.createShift).mockImplementation(async (input) => ({
@@ -325,7 +312,7 @@ describe('shiftService — Shift (UC1-8, UC10, UC12)', () => {
     })
   })
 
-  describe('editShift (UC4)', () => {
+  describe('editShift (UC3)', () => {
     it('updates fields on an existing shift', async () => {
       vi.mocked(shiftRepository.getShiftById).mockResolvedValue(baseShift)
       vi.mocked(shiftRepository.updateShift).mockResolvedValue({ ...baseShift, title: 'Morning' })
@@ -549,7 +536,7 @@ describe('shiftService — Shift (UC1-8, UC10, UC12)', () => {
     })
   })
 
-  describe('bulkEditShifts (UC12)', () => {
+  describe('bulkEditShifts (UC10)', () => {
     it('updates multiple shifts and records one combined history entry', async () => {
       vi.mocked(shiftRepository.getShiftById)
         .mockResolvedValueOnce({ ...baseShift, id: 'shift-1' })
@@ -598,7 +585,7 @@ describe('shiftService — Shift (UC1-8, UC10, UC12)', () => {
     })
   })
 
-  describe('publishSchedule (UC6)', () => {
+  describe('publishSchedule (UC5)', () => {
     it('publishes a schedule without running any scheduling-rule validation', async () => {
       vi.mocked(shiftRepository.getShiftsByCompanyAndDateRange).mockResolvedValue([baseShift])
       vi.mocked(shiftRepository.updateSchedulePublication).mockResolvedValue([baseShift])
@@ -675,7 +662,7 @@ describe('shiftService — Shift (UC1-8, UC10, UC12)', () => {
     })
   })
 
-  describe('duplicateShift (UC7)', () => {
+  describe('duplicateShift (UC6)', () => {
     it('duplicates a shift as a draft, carrying over the original assignment', async () => {
       vi.mocked(shiftRepository.getShiftById).mockResolvedValue(baseShift)
       vi.mocked(shiftRepository.getAssignmentsByShiftIds).mockResolvedValue([{
@@ -737,7 +724,7 @@ describe('shiftService — Shift (UC1-8, UC10, UC12)', () => {
     })
   })
 
-  describe('createRecurringShifts (UC8)', () => {
+  describe('createRecurringShifts (UC7)', () => {
     it('creates weekly recurring shifts up to the end date', async () => {
       vi.mocked(shiftRepository.getShiftById).mockResolvedValue(baseShift)
       vi.mocked(shiftRepository.getAssignmentsByShiftIds).mockResolvedValue([])
@@ -845,7 +832,7 @@ describe('shiftService — Shift (UC1-8, UC10, UC12)', () => {
     })
   })
 
-  describe('deleteShift (UC5)', () => {
+  describe('deleteShift (UC4)', () => {
     it('deletes assignments then the shift', async () => {
       vi.mocked(shiftRepository.getShiftById).mockResolvedValue(baseShift)
       vi.mocked(shiftRepository.deleteAssignmentsByShiftId).mockResolvedValue(undefined)
@@ -900,7 +887,7 @@ describe('shiftService — Shift (UC1-8, UC10, UC12)', () => {
     })
   })
 
-  describe('assignShiftsInBulk (UC12)', () => {
+  describe('assignShiftsInBulk (UC10)', () => {
     it('creates shifts for valid assignments and collects failures for invalid ones', async () => {
       vi.mocked(shiftRepository.createShift).mockResolvedValue(baseShift)
       vi.mocked(shiftRepository.createShiftAssignment).mockResolvedValue({} as never)
@@ -923,7 +910,7 @@ describe('shiftService — Shift (UC1-8, UC10, UC12)', () => {
     })
   })
 
-  describe('createShiftsInBulk (UC14)', () => {
+  describe('createShiftsInBulk (UC10)', () => {
     it('creates all valid shifts in one batch and records a single bulk history entry', async () => {
       vi.mocked(shiftRepository.createShift)
         .mockResolvedValueOnce({ ...baseShift, id: 'shift-1' })
@@ -967,7 +954,7 @@ describe('shiftService — Shift (UC1-8, UC10, UC12)', () => {
     })
   })
 
-  describe('getTimelineShifts (UC1, UC2)', () => {
+  describe('getTimelineShifts', () => {
     it('groups shifts by member and includes unassigned open shifts under their department', async () => {
       vi.mocked(shiftRepository.getShiftsByCompanyAndDateRange).mockResolvedValue([
         { ...baseShift, id: 'shift-assigned', department_id: 'dept-1' },
@@ -1103,7 +1090,7 @@ describe('shiftService — Shift (UC1-8, UC10, UC12)', () => {
     })
   })
 
-  describe('createShift (UC3) — records undo history', () => {
+  describe('createShift (UC1) — records undo history', () => {
     it('records a create action history entry', async () => {
       vi.mocked(shiftRepository.createShift).mockResolvedValue(baseShift)
       vi.mocked(shiftRepository.createActionHistory).mockResolvedValue({} as never)
@@ -1126,7 +1113,7 @@ describe('shiftService — Shift (UC1-8, UC10, UC12)', () => {
     })
   })
 
-  describe('undoLastShiftAction (UC11)', () => {
+  describe('undoLastShiftAction', () => {
     it('throws when there is no recent action to undo', async () => {
       vi.mocked(shiftRepository.getLatestUndoableAction).mockResolvedValue(null)
 
@@ -1265,7 +1252,7 @@ describe('shiftService — Shift (UC1-8, UC10, UC12)', () => {
     })
   })
 
-  describe('redoLastUndoneAction (UC11)', () => {
+  describe('redoLastUndoneAction', () => {
     it('throws when there is no recently undone action to redo', async () => {
       vi.mocked(shiftRepository.getLatestRedoableAction).mockResolvedValue(null)
 

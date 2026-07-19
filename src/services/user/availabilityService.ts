@@ -16,13 +16,13 @@ export const availabilityService = {
     reason: string | null
     shift_assignment_id?: string | null
   }): Promise<LeaveRequest> {
-    if (!['time_off', 'break_waiver', 'leave'].includes(input.request_type)) {
+    if (!['time_off', 'break_waiver'].includes(input.request_type)) {
       throw new Error('Invalid request type')
     }
     return availabilityRepository.createLeaveRequest({
       user_id: input.user_id,
       company_id: input.company_id,
-      request_type: input.request_type as 'time_off' | 'break_waiver' | 'leave',
+      request_type: input.request_type as 'time_off' | 'break_waiver',
       reason: input.reason ?? null,
       shift_assignment_id: input.shift_assignment_id ?? null,
     })

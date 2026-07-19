@@ -7,7 +7,7 @@ import { TaskTemplate, TaskTemplateInput, TaskTemplateUpdateInput } from '@/type
 export const taskTemplateService = {
 
   async createTemplate(input: TaskTemplateInput): Promise<TaskTemplate> {
-    if (!input.company_id || !input.name || !input.title || !input.created_by) {
+    if (!input.company_id || !input.title || !input.created_by) {
       throw new Error('Missing required task template fields')
     }
     return taskTemplateRepository.createTemplate({
@@ -32,8 +32,6 @@ export const taskTemplateService = {
     if (!id) throw new Error('Template id is required')
     const existing = await taskTemplateRepository.getTemplateById(id)
     if (!existing) throw new Error('Template not found')
-    const name = fields.name !== undefined ? fields.name.trim() : existing.name
-    if (!name) throw new Error('Please name this template.')
     const title = fields.title !== undefined ? fields.title.trim() : existing.title
     if (!title) throw new Error('Please give this template a task title.')
     const description = fields.description !== undefined ? fields.description : existing.description
@@ -41,7 +39,7 @@ export const taskTemplateService = {
     const sub_task_titles = fields.sub_task_titles !== undefined
       ? fields.sub_task_titles.map(t => t.trim()).filter(Boolean)
       : existing.sub_task_titles
-    return taskTemplateRepository.updateTemplate(id, { name, title, description, priority, sub_task_titles })
+    return taskTemplateRepository.updateTemplate(id, { title, description, priority, sub_task_titles })
   },
 
 }

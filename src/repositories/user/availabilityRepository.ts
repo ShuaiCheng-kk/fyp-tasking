@@ -21,7 +21,7 @@ export type LeaveRequest = {
 type LeaveRequestCreateInput = {
   user_id: string
   company_id: string
-  request_type: 'time_off' | 'break_waiver' | 'leave'
+  request_type: 'time_off' | 'break_waiver'
   reason: string | null
   shift_assignment_id: string | null
 }

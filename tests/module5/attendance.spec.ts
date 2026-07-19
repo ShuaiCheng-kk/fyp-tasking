@@ -95,7 +95,6 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
   await admin.from('shift_swap_requests').delete().eq('company_id', seeded.companyId)
   await admin.from('time_off_requests').delete().eq('company_id', seeded.companyId)
-  await admin.from('employee_fixed_off_days').delete().eq('company_id', seeded.companyId)
 
   const { data: shiftRows } = await admin.from('shifts').select('id').eq('company_id', seeded.companyId)
   const shiftIds = (shiftRows ?? []).map((shift) => shift.id as string)
@@ -223,41 +222,10 @@ test('UC49 resource=history lists completed and still-working records with super
   expect(body.history.map((entry: { id: string }) => entry.id).indexOf(historyAssignmentId))
     .toBeLessThan(body.history.map((entry: { id: string }) => entry.id).indexOf(assignmentId))
 
-  // Leave no trace: the still-open record would otherwise surface in the UC54 AI timesheet scan.
+  // Leave no trace for later tests in this file.
   await admin.from('attendance_records').delete().eq('shift_assignment_id', historyAssignmentId)
   await admin.from('shift_assignments').delete().eq('id', historyAssignmentId)
   await admin.from('shifts').delete().eq('id', liveShift.id)
-})
-
-test('UC50 and UC51 view the attendance dashboard, then review a record through manager and owner decisions', async ({ request }) => {
-  const dashboard = await request.get(`/api/attendance?company_id=${seeded.companyId}`)
-  expect(dashboard.status()).toBe(200)
-  const dashboardBody = await dashboard.json()
-  const row = dashboardBody.dashboard.records.find((record: { assignment: { id: string } }) => record.assignment.id === assignmentId)
-  expect(row.record.status).toBe('submitted')
-
-  const managerReview = await request.patch('/api/attendance', {
-    data: {
-      action: 'manager_review',
-      id: row.record.id,
-      manager_id: seeded.ownerId,
-      manager_notes: 'Looks correct.',
-    },
-  })
-  expect(managerReview.status()).toBe(200)
-  expect(await managerReview.json()).toMatchObject({ success: true, record: { status: 'manager_reviewed' } })
-
-  const ownerReview = await request.patch('/api/attendance', {
-    data: {
-      action: 'final_review',
-      id: row.record.id,
-      owner_id: seeded.ownerId,
-      decision: 'approved',
-      owner_notes: 'Approved for payroll.',
-    },
-  })
-  expect(ownerReview.status()).toBe(200)
-  expect(await ownerReview.json()).toMatchObject({ success: true, record: { owner_status: 'approved', status: 'owner_approved' } })
 })
 
 test('UC49 casual worker break_in/break_out, then UC56 owner modifies the break times', async ({ request }) => {
@@ -365,7 +333,7 @@ test('UC50/UC51 resource=range scopes records to the given date window, for the 
   expect(missingParams.status()).toBe(400)
 })
 
-test('UC57 submit leave requests, all landing as pending', async ({ request }) => {
+test('submit time off / break waiver requests, all landing as pending', async ({ request }) => {
   const timeOff = await request.post('/api/user/leave-requests', {
     data: {
       user_id: worker.userId,
@@ -390,7 +358,9 @@ test('UC57 submit leave requests, all landing as pending', async ({ request }) =
   expect(breakWaiver.status()).toBe(200)
   expect(await breakWaiver.json()).toMatchObject({ success: true, request: { request_type: 'break_waiver', status: 'pending' } })
 
-  const leave = await request.post('/api/user/leave-requests', {
+  // 'leave' was a third request type here (labeled "Leave Request" in the Employee/Manager
+  // Settings UI) — cut along with its option in that dropdown; only time_off/break_waiver remain.
+  const rejected = await request.post('/api/user/leave-requests', {
     data: {
       user_id: worker.userId,
       company_id: seeded.companyId,
@@ -399,8 +369,8 @@ test('UC57 submit leave requests, all landing as pending', async ({ request }) =
       reason: 'Personal leave.',
     },
   })
-  expect(leave.status()).toBe(200)
-  expect(await leave.json()).toMatchObject({ success: true, request: { request_type: 'leave', status: 'pending' } })
+  expect(rejected.status()).toBe(500)
+  expect(await rejected.json()).toMatchObject({ success: false })
 
   const requests = await request.get(`/api/user/leave-requests?user_id=${worker.userId}`)
   expect(requests.status()).toBe(200)
@@ -409,16 +379,15 @@ test('UC57 submit leave requests, all landing as pending', async ({ request }) =
     expect.arrayContaining([
       expect.objectContaining({ request_type: 'time_off' }),
       expect.objectContaining({ request_type: 'break_waiver' }),
-      expect.objectContaining({ request_type: 'leave' }),
     ]),
   )
 })
 
-test('UC58 approves a leave request', async ({ request }) => {
+test('approves a time off request', async ({ request }) => {
   const list = await request.get(`/api/attendance?company_id=${seeded.companyId}&resource=time_off`)
   expect(list.status()).toBe(200)
   const listBody = await list.json()
-  const pendingLeave = listBody.requests.find((r: { request_type: string; status: string }) => r.request_type === 'leave' && r.status === 'pending')
+  const pendingLeave = listBody.requests.find((r: { request_type: string; status: string }) => r.request_type === 'time_off' && r.status === 'pending')
   expect(pendingLeave).toBeTruthy()
 
   const decide = await request.patch('/api/attendance', {
@@ -474,29 +443,6 @@ test('UC52 and UC53 submit and approve a shift swap request', async ({ request }
     .single()
   expect(error).toBeNull()
   expect(assignment!.user_id).toBe(replacement.userId)
-})
-
-test('UC54 generates an AI timesheet auto-approval suggestion', async ({ request }) => {
-  const res = await request.post('/api/ai/timesheets', {
-    data: {
-      company_id: seeded.companyId,
-      apply: false,
-      min_confidence: 95,
-    },
-  })
-  expect(res.status()).toBe(200)
-  expect(await res.json()).toEqual({ success: true, decisions: [] })
-
-  const invalid = await request.post('/api/ai/timesheets', {
-    data: {
-      company_id: seeded.companyId,
-      apply: true,
-      owner_id: seeded.ownerId,
-      min_confidence: 101,
-    },
-  })
-  expect(invalid.status()).toBe(400)
-  expect(await invalid.json()).toMatchObject({ success: false, message: 'min_confidence must be between 0 and 100' })
 })
 
 // ── Employee / Manager break + absence API tests (UC49 extension) ────────────
@@ -662,25 +608,3 @@ test('UC49 employee record_absence stores absence_reason', async ({ request }) =
   expect(body.record.status).toBe('submitted')
 })
 
-test('UC54 ai_suggestions resource returns expected shape', async ({ request }) => {
-  const res = await request.get(`/api/attendance?company_id=${seeded.companyId}&resource=ai_suggestions`)
-  expect(res.status()).toBe(200)
-  const body = await res.json()
-  expect(body.success).toBe(true)
-  expect(Array.isArray(body.suggestions)).toBe(true)
-})
-
-test('UC54 apply_ai_approvals action returns decisions array', async ({ request }) => {
-  const res = await request.patch('/api/attendance', {
-    data: {
-      action: 'apply_ai_approvals',
-      company_id: seeded.companyId,
-      owner_id: seeded.ownerId,
-      min_confidence: 95,
-    },
-  })
-  expect(res.status()).toBe(200)
-  const body = await res.json()
-  expect(body.success).toBe(true)
-  expect(Array.isArray(body.decisions)).toBe(true)
-})

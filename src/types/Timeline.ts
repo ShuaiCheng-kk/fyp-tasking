@@ -10,7 +10,6 @@ export interface TimelineShiftBlock {
   department_name: string
   status: string
   publication_status: 'draft' | 'published'
-  acceptance_deadline_at: string | null
   recurrence_group_id: string | null
   recurrence_rule: 'daily' | 'weekly' | 'custom' | null
   source_shift_id: string | null

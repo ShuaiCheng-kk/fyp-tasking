@@ -74,7 +74,6 @@ describe('casualShiftCancellationService.cancelShift — worker backs out before
       applicant_id: 'applicant-1',
       cancelled_by: 'worker-1',
       cancelled_role: 'worker',
-      scope: 'worker',
       reason: 'Family emergency',
     })
   })

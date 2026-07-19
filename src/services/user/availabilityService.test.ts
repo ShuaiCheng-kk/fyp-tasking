@@ -22,7 +22,7 @@ describe('availabilityService', () => {
   })
 
   describe('submitBreakWaiverRequest (Leave Requests)', () => {
-    it.each(['time_off', 'break_waiver', 'leave'])('accepts the %s request type', async requestType => {
+    it.each(['time_off', 'break_waiver'])('accepts the %s request type', async requestType => {
       const created = { id: 'req-1', company_id: 'company-1', requester_id: 'user-1', shift_assignment_id: null, request_type: requestType, reason: null, status: 'pending', reviewed_by: null, reviewed_at: null, created_at: '2026-01-01', updated_at: '2026-01-01' }
       vi.mocked(availabilityRepository.createLeaveRequest).mockResolvedValue(created)
 

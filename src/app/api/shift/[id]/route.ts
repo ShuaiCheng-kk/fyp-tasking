@@ -28,7 +28,6 @@ export async function PATCH(
     end_time,
     status,
     publication_status,
-    acceptance_deadline_at,
     assigned_user_id,
     assigned_by,
     supervisor_employee_id,
@@ -44,7 +43,6 @@ export async function PATCH(
   if (typeof end_time === 'string') fields.end_time = end_time
   if (status === 'active' || status === 'inactive') fields.status = status
   if (publication_status === 'draft' || publication_status === 'published') fields.publication_status = publication_status
-  if (typeof acceptance_deadline_at === 'string' || acceptance_deadline_at === null) fields.acceptance_deadline_at = acceptance_deadline_at
   if (typeof template_id === 'string' || template_id === null) fields.template_id = template_id
 
   const assignment = assigned_user_id === undefined

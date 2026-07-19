@@ -227,14 +227,6 @@ export const ownerTeamRepository = {
       .eq('reviewed_by', user_id)
     if (timeOffReviewedByError) throw new Error(timeOffReviewedByError.message)
 
-    const { error: fixedOffError } = await supabase
-      .from('employee_fixed_off_days')
-      .delete()
-      .eq('user_id', user_id)
-    if (fixedOffError && !/does not exist|schema cache/i.test(fixedOffError.message)) {
-      throw new Error(fixedOffError.message)
-    }
-
     const { error: tasksAssignedError } = await supabase
       .from('tasks')
       .update({ assigned_user_id: null })
@@ -381,6 +373,34 @@ export const ownerTeamRepository = {
       .delete()
       .eq('manager_id', manager_id)
       .eq('department_id', department_id)
+    if (error) throw new Error(error.message)
+  },
+
+  async findDepartmentById(department_id: string, company_id: string): Promise<{ id: string } | null> {
+    const { data, error } = await supabase
+      .from('departments')
+      .select('id')
+      .eq('id', department_id)
+      .eq('company_id', company_id)
+      .single()
+    if (error) return null
+    return data
+  },
+
+  async assignEmployeeDepartment(employee_id: string, department_id: string): Promise<void> {
+    const { error } = await supabase
+      .from('employee_departments')
+      .insert({ employee_id, department_id })
+    if (error) throw new Error(error.message)
+  },
+
+  // Plain move — unlike assignManagerDepartment, this doesn't record an assigned_by (the caller,
+  // e.g. Team page's "change member department" action, isn't necessarily the one assigning them
+  // to a Manager role in the first place, just relocating an existing Manager).
+  async moveManagerToDepartment(manager_id: string, company_id: string, department_id: string): Promise<void> {
+    const { error } = await supabase
+      .from('manager_departments')
+      .insert({ manager_id, company_id, department_id })
     if (error) throw new Error(error.message)
   },
 

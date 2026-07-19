@@ -25,12 +25,6 @@ export const shiftService = {
     if (input.start_time >= input.end_time) {
       throw new Error('start_time must be before end_time')
     }
-    if (
-      input.acceptance_deadline_at &&
-      new Date(input.acceptance_deadline_at).getTime() > new Date(`${input.shift_date}T${input.start_time}`).getTime()
-    ) {
-      throw new Error('acceptance_deadline_at must be before the shift starts')
-    }
     const warning = input.assigned_user_id
       ? await detectClopeningConflict({
           user_id: input.assigned_user_id,
@@ -129,13 +123,6 @@ export const shiftService = {
     const effectiveShift = { ...existing, ...fields }
     if (effectiveShift.start_time >= effectiveShift.end_time) {
       throw new Error('start_time must be before end_time')
-    }
-    if (
-      effectiveShift.acceptance_deadline_at &&
-      new Date(effectiveShift.acceptance_deadline_at).getTime() >
-        new Date(`${effectiveShift.shift_date}T${effectiveShift.start_time}`).getTime()
-    ) {
-      throw new Error('acceptance_deadline_at must be before the shift starts')
     }
     const assignedUserId = assignment?.assigned_user_id
     const warning = assignedUserId
@@ -377,11 +364,6 @@ export const shiftService = {
           end_time: input.end_time,
         })
       : null
-    const duplicateStartAt = new Date(`${input.shift_date}T${input.start_time}`).getTime()
-    const acceptanceDeadlineAt = original.acceptance_deadline_at &&
-      new Date(original.acceptance_deadline_at).getTime() <= duplicateStartAt
-      ? original.acceptance_deadline_at
-      : null
 
     const shift = await shiftRepository.createShift({
       company_id: original.company_id,
@@ -393,7 +375,6 @@ export const shiftService = {
       end_time: input.end_time,
       created_by: input.created_by,
       publication_status: 'draft',
-      acceptance_deadline_at: acceptanceDeadlineAt,
       template_id: input.template_id ?? null,
     })
 
@@ -471,7 +452,6 @@ export const shiftService = {
         end_time: original.end_time,
         created_by: input.created_by,
         publication_status: 'draft',
-        acceptance_deadline_at: original.acceptance_deadline_at,
         recurrence_group_id: recurrenceGroupId,
         recurrence_rule: input.recurrence_rule,
         source_shift_id: original.id,
@@ -967,7 +947,6 @@ function toTimelineShiftBlock(
     department_name,
     status: shift.status,
     publication_status: shift.publication_status,
-    acceptance_deadline_at: shift.acceptance_deadline_at,
     recurrence_group_id: shift.recurrence_group_id,
     recurrence_rule: shift.recurrence_rule,
     source_shift_id: shift.source_shift_id,
