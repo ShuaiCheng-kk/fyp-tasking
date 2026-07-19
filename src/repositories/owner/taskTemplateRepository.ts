@@ -11,7 +11,6 @@ export const taskTemplateRepository = {
       .from('task_templates')
       .insert({
         company_id: input.company_id,
-        name: input.name,
         title: input.title,
         description: input.description ?? null,
         priority: input.priority ?? null,

@@ -212,7 +212,7 @@ test.afterAll(async () => {
   await cleanupTestOwnerAndCompany(seeded)
 })
 
-test('UC62/UC64 GET /api/report/company returns real, computed workforce analytics for the period', async ({ request }) => {
+test('UC62 GET /api/report/company returns real, computed workforce analytics for the period', async ({ request }) => {
   const res = await request.get(
     `/api/report/company?company_id=${seeded.companyId}&date_from=2026-07-07&date_to=2026-07-13`,
   )
@@ -233,7 +233,8 @@ test('UC62/UC64 GET /api/report/company returns real, computed workforce analyti
   expect(report.overview.uncosted_assignments).toBe(0)
 
   // Department row must exist, be attributed to the seeded department, and show the same
-  // real cost and completion numbers rolled up by department — this is what UC64 exports.
+  // real cost and completion numbers rolled up by department. (UC64 Export Report reuses this
+  // same report data client-side to build a PDF — see tests/module7/report-ui.spec.ts.)
   const dept = report.departments.find((d: { department_id: string }) => d.department_id === departmentId)
   expect(dept).toBeTruthy()
   expect(dept.tasks_total).toBe(1)

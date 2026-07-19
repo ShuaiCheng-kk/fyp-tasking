@@ -8,7 +8,6 @@ export interface MarketingContentBlock {
   label: string
   value: string
   sort_order: number
-  updated_at: string
 }
 
 export interface MarketingPage {
@@ -17,8 +16,6 @@ export interface MarketingPage {
   title: string
   route_path: string
   is_editable: boolean
-  created_at: string
-  updated_at: string
   blocks: MarketingContentBlock[]
 }
 

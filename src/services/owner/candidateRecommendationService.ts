@@ -50,7 +50,7 @@ export const candidateRecommendationService = {
         }
         results.push(rec)
         if (!applicant.ai_computed_at || refresh) {
-          await recruitmentRepository.updateApplicantAI(applicant.id, null, JSON.stringify(rec))
+          await recruitmentRepository.updateApplicantAI(applicant.id, JSON.stringify(rec))
         }
         continue
       }
@@ -93,9 +93,8 @@ export const candidateRecommendationService = {
             requirements: jobPosting.requirements,
             experience_required: jobPosting.experience_required,
             employment_type: jobPosting.employment_type,
-            location: jobPosting.location,
+            location: jobPosting.company_location,
             salary_amount: jobPosting.salary_amount,
-            salary_type: jobPosting.salary_type,
           },
           applicants: toCompute.map((applicant, index) => ({
             applicant_id: applicant.id,
@@ -139,7 +138,7 @@ export const candidateRecommendationService = {
       })
 
       for (const rec of result.recommendations) {
-        await recruitmentRepository.updateApplicantAI(rec.applicant_id, rec.score, JSON.stringify(rec))
+        await recruitmentRepository.updateApplicantAI(rec.applicant_id, JSON.stringify(rec))
         results.push(rec)
       }
     }

@@ -90,7 +90,6 @@ export const casualShiftCancellationRepository = {
     applicant_id: string | null
     cancelled_by: string
     cancelled_role: 'worker' | 'employer'
-    scope: 'worker' | 'job'
     reason: string | null
   }): Promise<void> {
     const { error } = await supabase.from('recruitment_cancellations').insert(input)

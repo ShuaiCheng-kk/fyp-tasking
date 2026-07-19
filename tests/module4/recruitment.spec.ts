@@ -18,6 +18,7 @@ test.describe.configure({ mode: 'serial' })
 let seeded: TestOwner
 let departmentId: string
 let employeeId: string
+let managerId: string
 const createdJobIds: string[] = []
 const createdGuestAuthIds: string[] = []
 const createdGuestUserIds: string[] = []
@@ -55,6 +56,28 @@ test.beforeAll(async () => {
     .single()
   if (employeeError || !employee) throw new Error(`Failed to create employee: ${employeeError?.message}`)
   employeeId = employee.id
+
+  // A real Manager identity — for the UC41 server-side approval-routing regression test, which
+  // must exercise an actual Manager role lookup, not just a status value the caller claims.
+  const managerEmail = `test-recruitment-manager-${Date.now()}@tasking-tests.local`
+  const { data: managerAuth, error: managerAuthError } = await admin.auth.admin.createUser({
+    email: managerEmail, password: 'Test-Password-123!', email_confirm: true,
+  })
+  if (managerAuthError || !managerAuth.user) throw new Error(`Failed to create manager auth user: ${managerAuthError?.message}`)
+  createdGuestAuthIds.push(managerAuth.user.id)
+  const { data: manager, error: managerError } = await admin
+    .from('users')
+    .insert({
+      supabase_auth_id: managerAuth.user.id,
+      full_name: 'Test Recruitment Manager',
+      email_address: managerEmail,
+      role: 'Manager',
+      company_id: seeded.companyId,
+    })
+    .select('id')
+    .single()
+  if (managerError || !manager) throw new Error(`Failed to create manager: ${managerError?.message}`)
+  managerId = manager.id
 })
 
 test.afterAll(async () => {
@@ -79,6 +102,7 @@ test.afterAll(async () => {
     await admin.auth.admin.deleteUser(authId).catch(() => undefined)
   }
   if (employeeId) await admin.from('users').delete().eq('id', employeeId)
+  if (managerId) await admin.from('users').delete().eq('id', managerId)
   await admin.from('departments').delete().eq('id', departmentId)
   await cleanupTestOwnerAndCompany(seeded)
 })
@@ -147,7 +171,7 @@ test('UC35 publishes a one-off job with a job_start_time', async ({ request }) =
   createdJobIds.push(body.posting.id)
 })
 
-test('UC49: accepting an invitation to a one-off job creates a published, open-ended shift', async ({ request }) => {
+test('UC46: accepting an invitation to a one-off job creates a published, open-ended shift', async ({ request }) => {
   const jobRes = await request.post('/api/recruitment', {
     data: {
       company_id: seeded.companyId,
@@ -214,7 +238,7 @@ test('UC49: accepting an invitation to a one-off job creates a published, open-e
   expect(shift.source_job_posting_id).toBe(jobId)
 })
 
-test('UC49: accepting an invitation to a shift job creates a published shift with the real end time, not open-ended', async ({ request }) => {
+test('UC46: accepting an invitation to a shift job creates a published shift with the real end time, not open-ended', async ({ request }) => {
   const jobRes = await request.post('/api/recruitment', {
     data: {
       company_id: seeded.companyId,
@@ -622,6 +646,86 @@ test('UC42: owner rejects a pending job posting with a reason', async ({ request
   const rejectBody = await rejectRes.json()
   expect(rejectBody.posting.status).toBe('rejected')
   expect(rejectBody.posting.rejection_reason).toBe('Please add the salary details.')
+})
+
+test('UC41: a Manager cannot bypass approval by asking the API to publish directly', async ({ request }) => {
+  // 1) POST /api/recruitment with status:'open' from a Manager's created_by — server must force
+  // it to pending_approval regardless of what the client asked for.
+  const directPublish = await request.post('/api/recruitment', {
+    data: {
+      company_id: seeded.companyId,
+      department_id: departmentId,
+      created_by: managerId,
+      assigned_employee_id: employeeId,
+      title: 'Manager Direct Publish Attempt',
+      description: 'A Manager should never be able to publish this straight to open.',
+      formType: 'oneoff',
+      shift_date: '2030-03-09',
+      job_start_time: '09:00',
+      status: 'open',
+    },
+  })
+  expect(directPublish.status()).toBe(201)
+  const directPublishBody = await directPublish.json()
+  createdJobIds.push(directPublishBody.posting.id)
+  expect(directPublishBody.posting.status).toBe('pending_approval')
+
+  // 2) Duplicating an already-open posting as a Manager must land as pending_approval too, not
+  // republish straight to open.
+  const sourceRes = await request.post('/api/recruitment', {
+    data: {
+      company_id: seeded.companyId,
+      department_id: departmentId,
+      created_by: seeded.ownerId,
+      assigned_employee_id: employeeId,
+      title: 'Owner Source Posting',
+      description: 'Owner-published posting a Manager will duplicate.',
+      formType: 'oneoff',
+      shift_date: '2030-03-10',
+      job_start_time: '09:00',
+      status: 'open',
+    },
+  })
+  const sourceId = (await sourceRes.json()).posting.id as string
+  createdJobIds.push(sourceId)
+
+  const duplicateRes = await request.patch('/api/recruitment', {
+    data: { action: 'duplicate_posting', job_id: sourceId, created_by: managerId },
+  })
+  expect(duplicateRes.status()).toBe(200)
+  const duplicateBody = await duplicateRes.json()
+  createdJobIds.push(duplicateBody.posting.id)
+  expect(duplicateBody.posting.status).toBe('pending_approval')
+
+  // 3) A Manager-created draft cannot be pushed live via the direct "publish_draft" action —
+  // only via submit_for_review (UC41).
+  const draftRes = await request.post('/api/recruitment', {
+    data: {
+      company_id: seeded.companyId,
+      department_id: departmentId,
+      created_by: managerId,
+      assigned_employee_id: employeeId,
+      title: 'Manager Draft Direct Publish Attempt',
+      description: 'A Manager-authored draft must not publish directly either.',
+      formType: 'oneoff',
+      shift_date: '2030-03-11',
+      job_start_time: '09:00',
+      status: 'draft',
+    },
+  })
+  const draftId = (await draftRes.json()).posting.id as string
+  createdJobIds.push(draftId)
+
+  const publishDraftRes = await request.patch('/api/recruitment', {
+    data: { action: 'publish_draft', job_id: draftId },
+  })
+  expect(publishDraftRes.status()).toBe(400)
+  const publishDraftBody = await publishDraftRes.json()
+  expect(publishDraftBody.success).toBe(false)
+
+  // The rejected publish_draft call must not have changed the draft's status.
+  const stillDraft = await request.get(`/api/recruitment?resource=job_posting&job_id=${draftId}`)
+  expect((await stillDraft.json()).posting.status).toBe('draft')
 })
 
 test('UC40 edits a draft posting\'s fields before publishing', async ({ request }) => {
@@ -1091,4 +1195,32 @@ test("worker times must sit inside the supervisor's own shift on that date", asy
   })
   expect(publishRes.status()).toBe(400)
   expect((await publishRes.json()).message).toContain("supervisor's shift start")
+})
+
+test('UC47 POST /api/ai/job-description generates a structured job description draft', async ({ request }) => {
+  const res = await request.post('/api/ai/job-description', {
+    data: {
+      title: 'Weekend Barista',
+      job_type: 'shift',
+      company_name: 'Sunrise Hospitality Group',
+      department_name: 'Operations',
+      location: 'Raffles Place',
+      employment_type: 'Part-time',
+      pay: '$15/hour',
+      notes: 'Needs to handle a busy weekend rush and light customer service.',
+    },
+  })
+  expect(res.ok()).toBeTruthy()
+  const body = await res.json()
+  expect(body.success).toBe(true)
+  expect(typeof body.draft.title).toBe('string')
+  expect(typeof body.draft.description).toBe('string')
+  expect(Array.isArray(body.draft.requirements)).toBe(true)
+  expect(Array.isArray(body.draft.responsibilities)).toBe(true)
+  expect(Array.isArray(body.draft.screening_questions)).toBe(true)
+})
+
+test('UC47 POST /api/ai/job-description rejects a request missing title', async ({ request }) => {
+  const res = await request.post('/api/ai/job-description', { data: { job_type: 'shift' } })
+  expect(res.status()).toBe(400)
 })

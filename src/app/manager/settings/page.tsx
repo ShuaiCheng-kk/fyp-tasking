@@ -15,7 +15,6 @@ const MUTED  = '#64748B'
 const LEAVE_TYPES = [
   { value: 'time_off', label: 'Time Off' },
   { value: 'break_waiver', label: 'Break Waiver' },
-  { value: 'leave', label: 'Leave Request' },
 ]
 
 type LeaveRequest = {

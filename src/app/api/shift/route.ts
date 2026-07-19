@@ -50,7 +50,6 @@ export async function POST(req: NextRequest) {
     end_time,
     created_by,
     publication_status,
-    acceptance_deadline_at,
     assigned_user_id,
     supervisor_employee_id,
     template_id,
@@ -80,7 +79,6 @@ export async function POST(req: NextRequest) {
     end_time,
     created_by,
     publication_status: publication_status === 'published' ? 'published' : 'draft',
-    acceptance_deadline_at: typeof acceptance_deadline_at === 'string' && acceptance_deadline_at ? acceptance_deadline_at : null,
     template_id: typeof template_id === 'string' && template_id ? template_id : null,
   }
   const assignmentInput = {

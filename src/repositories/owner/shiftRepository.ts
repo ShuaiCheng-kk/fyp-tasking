@@ -22,7 +22,6 @@ export const shiftRepository = {
         instruction: input.instruction ?? null,
         created_by: input.created_by,
         publication_status: input.publication_status ?? 'draft',
-        acceptance_deadline_at: input.acceptance_deadline_at ?? null,
         recurrence_group_id: input.recurrence_group_id ?? null,
         recurrence_rule: input.recurrence_rule ?? null,
         source_shift_id: input.source_shift_id ?? null,

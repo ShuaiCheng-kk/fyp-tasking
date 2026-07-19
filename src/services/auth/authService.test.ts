@@ -149,4 +149,48 @@ describe('authService — Account & Authentication (UC82-85, UC88)', () => {
       await expect(authService.resendConfirmation('owner@test.com')).rejects.toThrow('Email already confirmed')
     })
   })
+
+  describe('registerGuest (UC65 — Register Account, Guest User / Casual Worker path)', () => {
+    const baseInput = {
+      email: 'guest@test.com',
+      password: 'Password123!',
+      full_name: 'New Guest',
+      phone: '91234567',
+      date_of_birth: '2000-01-01',
+      home_location: 'Singapore',
+      job_id: null,
+    }
+
+    it('signs up via Supabase auth and returns the new user id + confirmation status', async () => {
+      mockSupabase.auth.signUp.mockResolvedValue({
+        data: { user: { id: 'auth-guest-1', email_confirmed_at: null } },
+        error: null,
+      })
+
+      const result = await authService.registerGuest(baseInput)
+
+      expect(mockSupabase.auth.signUp).toHaveBeenCalledWith(
+        expect.objectContaining({
+          email: 'guest@test.com',
+          password: 'Password123!',
+          options: expect.objectContaining({
+            data: expect.objectContaining({ full_name: 'New Guest', phone_number: '91234567' }),
+          }),
+        })
+      )
+      expect(result).toEqual({ user_id: 'auth-guest-1', email_confirmed: false })
+    })
+
+    it('throws when Supabase signUp errors (e.g. duplicate email)', async () => {
+      mockSupabase.auth.signUp.mockResolvedValue({ data: { user: null }, error: { message: 'User already registered' } })
+
+      await expect(authService.registerGuest(baseInput)).rejects.toThrow('User already registered')
+    })
+
+    it('throws when Supabase returns no user and no error', async () => {
+      mockSupabase.auth.signUp.mockResolvedValue({ data: { user: null }, error: null })
+
+      await expect(authService.registerGuest(baseInput)).rejects.toThrow('Registration failed')
+    })
+  })
 })

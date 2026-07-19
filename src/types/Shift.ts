@@ -9,7 +9,6 @@ export interface Shift {
   end_time: string
   status: 'active' | 'inactive'
   publication_status: 'draft' | 'published'
-  acceptance_deadline_at: string | null
   recurrence_group_id: string | null
   recurrence_rule: 'daily' | 'weekly' | 'custom' | null
   source_shift_id: string | null
@@ -33,7 +32,6 @@ export interface ShiftInput {
   end_time: string
   created_by: string
   publication_status?: 'draft' | 'published'
-  acceptance_deadline_at?: string | null
   recurrence_group_id?: string | null
   recurrence_rule?: 'daily' | 'weekly' | 'custom' | null
   source_shift_id?: string | null

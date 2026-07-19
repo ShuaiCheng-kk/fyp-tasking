@@ -66,14 +66,14 @@ const baseTask: Task = {
   updated_at: '2026-06-20T00:00:00.000Z',
 }
 
-describe('taskService — Task (UC14-26)', () => {
+describe('taskService — Task (UC12-23)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(taskRepository.getManagersByDepartment).mockResolvedValue([])
     vi.mocked(taskRepository.hasShiftOnDate).mockResolvedValue(true)
   })
 
-  describe('assignTask (UC14)', () => {
+  describe('assignTask (UC12)', () => {
     it('requires company_id, department_id, and title', async () => {
       await expect(taskService.assignTask({
         company_id: '', department_id: 'dept-1', title: 'x',
@@ -354,7 +354,7 @@ describe('taskService — Task (UC14-26)', () => {
     })
   })
 
-  describe('editTask (UC16)', () => {
+  describe('editTask (UC13)', () => {
     it('requires an id', async () => {
       await expect(taskService.editTask('', { title: 'x' })).rejects.toThrow('Task id is required')
     })
@@ -582,7 +582,7 @@ describe('taskService — Task (UC14-26)', () => {
     })
   })
 
-  describe('deleteTask (UC17)', () => {
+  describe('deleteTask (UC15)', () => {
     it('requires an id', async () => {
       await expect(taskService.deleteTask('')).rejects.toThrow('Task id is required')
     })
@@ -631,7 +631,7 @@ describe('taskService — Task (UC14-26)', () => {
     })
   })
 
-  describe('duplicateTask (UC18)', () => {
+  describe('duplicateTask (UC16)', () => {
     it('duplicates the task as Assigned/0% and copies sub-tasks', async () => {
       vi.mocked(taskRepository.getTaskById).mockResolvedValue(baseTask)
       vi.mocked(taskRepository.createTask).mockImplementation(async (input) => ({
@@ -658,7 +658,7 @@ describe('taskService — Task (UC14-26)', () => {
     })
   })
 
-  describe('createRecurringTasks (UC19)', () => {
+  describe('createRecurringTasks (UC17)', () => {
     it('rejects an invalid recurrence_rule', async () => {
       vi.mocked(taskRepository.getTaskById).mockResolvedValue(baseTask)
       await expect(taskService.createRecurringTasks('task-1', {
@@ -951,7 +951,7 @@ describe('taskService — Task (UC14-26)', () => {
     })
   })
 
-  describe('archiveTask (UC20)', () => {
+  describe('archiveTask (UC18)', () => {
     it('requires an id', async () => {
       await expect(taskService.archiveTask('')).rejects.toThrow('Task id is required')
     })
@@ -1015,7 +1015,7 @@ describe('taskService — Task (UC14-26)', () => {
     })
   })
 
-  describe('getCalendarTasks (UC21)', () => {
+  describe('getCalendarTasks', () => {
     it('requires both date_from and date_to', async () => {
       await expect(taskService.getCalendarTasks('company-1', '', '2026-06-30'))
         .rejects.toThrow('date_from and date_to are required')
@@ -1039,7 +1039,7 @@ describe('taskService — Task (UC14-26)', () => {
     })
   })
 
-  describe('assignTaskWithSubTasks (UC22)', () => {
+  describe('assignTaskWithSubTasks (UC19)', () => {
     beforeEach(() => {
       vi.mocked(taskRepository.getUserById).mockImplementation(async (id: string) => (
         id === 'manager-1' ? { id: 'manager-1', role: 'Manager', company_id: 'company-1' } as any : null
@@ -1106,7 +1106,7 @@ describe('taskService — Task (UC14-26)', () => {
     })
   })
 
-  describe('reorderSubTasks (UC28)', () => {
+  describe('reorderSubTasks (UC23)', () => {
     it('requires a parent task id', async () => {
       await expect(taskService.reorderSubTasks('', ['sub-1'])).rejects.toThrow('Task id is required')
     })
@@ -1161,7 +1161,7 @@ describe('taskService — Task (UC14-26)', () => {
     })
   })
 
-  describe('getKanbanTasks (UC15)', () => {
+  describe('getKanbanTasks', () => {
     it('groups tasks by status', async () => {
       vi.mocked(taskRepository.getTasksByCompany).mockResolvedValue([
         { ...baseTask, id: 't1', status: 'Assigned' },
@@ -1476,7 +1476,7 @@ describe('taskService — Task (UC14-26)', () => {
     })
   })
 
-  describe('getTaskReassignmentSuggestion (UC24)', () => {
+  describe('getTaskReassignmentSuggestion (UC21)', () => {
     it('recommends the assignee with fewer active tasks', async () => {
       vi.mocked(taskRepository.getTaskById).mockResolvedValue({ ...baseTask, assigned_user_id: 'user-1' })
       vi.mocked(taskRepository.getTasksByCompany).mockResolvedValue([

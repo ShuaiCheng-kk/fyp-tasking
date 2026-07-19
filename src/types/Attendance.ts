@@ -155,8 +155,6 @@ export interface ShiftSwapRequest {
   status: ShiftSwapStatus
   reviewed_by: string | null
   reviewed_at: string | null
-  ai_recommendation: string | null
-  ai_reason: string | null
   requires_owner_review: boolean
   owner_review_reason: string | null
   created_at: string

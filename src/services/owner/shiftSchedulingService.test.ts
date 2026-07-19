@@ -14,7 +14,7 @@ vi.mock('@/services/ai/openAIService', () => ({
 import { shiftSchedulingService } from './shiftSchedulingService'
 import { openAIService } from '@/services/ai/openAIService'
 
-describe('shiftSchedulingService — AI Auto-Schedule (UC13)', () => {
+describe('shiftSchedulingService — AI Auto-Schedule (UC11)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })

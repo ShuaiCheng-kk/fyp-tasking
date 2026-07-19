@@ -24,7 +24,7 @@ vi.mock('@/repositories/company/companyRepository', () => ({
 import { userService } from './userService'
 import { authRepository } from '@/repositories/auth/authRepository'
 
-describe('userService — Edit Own Profile (UC86)', () => {
+describe('userService — Edit Own Profile (UC69)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })

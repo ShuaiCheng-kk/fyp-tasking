@@ -101,7 +101,6 @@ export const workerApplicationRepository = {
     additional_note: string | null
     skills_snapshot: string | null
     certificates_snapshot: ApplicantCertificateSnapshot[]
-    age_at_apply: number | null
   }) {
     const { data, error } = await supabase
       .from('job_applicants')
@@ -113,7 +112,6 @@ export const workerApplicationRepository = {
         additional_note: application.additional_note,
         skills_snapshot: application.skills_snapshot,
         certificates_snapshot: application.certificates_snapshot,
-        age_at_apply: application.age_at_apply,
         status: 'pending',
       })
       .select()
@@ -143,7 +141,6 @@ export const workerApplicationRepository = {
         job_invitations (
           id,
           status,
-          message,
           sent_at,
           responded_at
         )

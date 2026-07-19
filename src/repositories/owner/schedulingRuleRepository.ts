@@ -2,17 +2,9 @@
 // RULE: Supabase queries only. No business logic.
 
 import { supabase } from '@/lib/supabase'
-import { ScheduleValidationItem, SchedulingRuleKey, SchedulingRuleSetting, SchedulingRuleValue } from '@/types/SchedulingRule'
+import { ScheduleValidationItem } from '@/types/SchedulingRule'
 import { Shift } from '@/types/Shift'
 import { ShiftAssignment } from '@/types/ShiftAssignment'
-
-type RuleSettingRow = {
-  company_id: string
-  rule_key: SchedulingRuleKey
-  value: SchedulingRuleValue
-  active: boolean
-  updated_by: string | null
-}
 
 export type RuleValidationUser = {
   id: string
@@ -42,46 +34,6 @@ export type TimeOffContextRow = ApprovedTimeOffRow & {
 }
 
 export const schedulingRuleRepository = {
-  async getRuleSettings(company_id: string): Promise<SchedulingRuleSetting[]> {
-    const { data, error } = await supabase
-      .from('scheduling_rule_settings')
-      .select('company_id, rule_key, value, active, updated_by')
-      .eq('company_id', company_id)
-    if (error) throw new Error(error.message)
-    return (data ?? [])
-      .filter((row: RuleSettingRow) => String(row.rule_key) !== 'inactive_employee_block')
-      .map((row: RuleSettingRow) => ({
-        company_id: row.company_id,
-        rule_key: row.rule_key,
-        value: row.value,
-        active: row.active,
-        updated_by: row.updated_by,
-      }))
-  },
-
-  async upsertRuleSetting(input: {
-    company_id: string
-    rule_key: SchedulingRuleKey
-    value: SchedulingRuleValue
-    active: boolean
-    updated_by: string
-  }): Promise<SchedulingRuleSetting> {
-    const { data, error } = await supabase
-      .from('scheduling_rule_settings')
-      .upsert({
-        company_id: input.company_id,
-        rule_key: input.rule_key,
-        value: input.value,
-        active: input.active,
-        updated_by: input.updated_by,
-        updated_at: new Date().toISOString(),
-      }, { onConflict: 'company_id,rule_key' })
-      .select('company_id, rule_key, value, active, updated_by')
-      .single()
-    if (error) throw new Error(error.message)
-    return data as SchedulingRuleSetting
-  },
-
   async getCompanyUsers(company_id: string): Promise<RuleValidationUser[]> {
     const { data, error } = await supabase
       .from('users')

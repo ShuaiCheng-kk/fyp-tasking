@@ -57,8 +57,6 @@ function makeApplicant(overrides: Partial<JobApplicant>): JobApplicant {
     additional_note: null,
     skills_snapshot: 'Customer service',
     certificates_snapshot: null,
-    age_at_apply: 24,
-    ai_score: null,
     ai_summary: null,
     ai_computed_at: null,
     ...overrides,
@@ -130,14 +128,14 @@ describe('candidateRecommendationService.recommendCandidates (UC48)', () => {
       }),
     )
     // computed once -> cached on the application row
-    expect(recruitmentRepository.updateApplicantAI).toHaveBeenCalledWith('app-1', 85, expect.any(String))
+    expect(recruitmentRepository.updateApplicantAI).toHaveBeenCalledWith('app-1', expect.any(String))
     expect(result[0].score).toBe(85)
   })
 
   it('serves cached results without calling the AI again', async () => {
     const cached = JSON.stringify(aiRec('app-1', 'Alice', 72))
     vi.mocked(recruitmentRepository.getApplicantsByJob).mockResolvedValue([
-      makeApplicant({ ai_score: 72, ai_summary: cached, ai_computed_at: '2026-07-11T00:00:00Z' }),
+      makeApplicant({ ai_summary: cached, ai_computed_at: '2026-07-11T00:00:00Z' }),
     ])
 
     const result = await candidateRecommendationService.recommendCandidates('job-1')
@@ -150,7 +148,7 @@ describe('candidateRecommendationService.recommendCandidates (UC48)', () => {
   it('refresh=true recomputes even when a cache exists', async () => {
     const cached = JSON.stringify(aiRec('app-1', 'Alice', 72))
     vi.mocked(recruitmentRepository.getApplicantsByJob).mockResolvedValue([
-      makeApplicant({ ai_score: 72, ai_summary: cached, ai_computed_at: '2026-07-11T00:00:00Z' }),
+      makeApplicant({ ai_summary: cached, ai_computed_at: '2026-07-11T00:00:00Z' }),
     ])
     vi.mocked(openAIService.generateStructuredJson).mockResolvedValue({
       recommendations: [aiRec('app-1', 'Alice', 88)],
@@ -175,7 +173,7 @@ describe('candidateRecommendationService.recommendCandidates (UC48)', () => {
 
     expect(openAIService.generateStructuredJson).not.toHaveBeenCalled()
     expect(result[0].insufficient).toBe(true)
-    expect(recruitmentRepository.updateApplicantAI).toHaveBeenCalledWith('app-empty', null, expect.any(String))
+    expect(recruitmentRepository.updateApplicantAI).toHaveBeenCalledWith('app-empty', expect.any(String))
   })
 
   it('sorts scored applicants by score and puts insufficient ones last', async () => {

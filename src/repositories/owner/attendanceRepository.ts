@@ -161,7 +161,7 @@ export const attendanceRepository = {
 
   async updateShiftSwapRequest(
     id: string,
-    fields: Partial<Pick<ShiftSwapRequest, 'status' | 'reviewed_by' | 'reviewed_at' | 'counterpart_status' | 'counterpart_reviewed_at' | 'ai_recommendation' | 'ai_reason' | 'requires_owner_review' | 'owner_review_reason'>>,
+    fields: Partial<Pick<ShiftSwapRequest, 'status' | 'reviewed_by' | 'reviewed_at' | 'counterpart_status' | 'counterpart_reviewed_at' | 'requires_owner_review' | 'owner_review_reason'>>,
   ): Promise<ShiftSwapRequest> {
     const { data, error } = await supabase
       .from('shift_swap_requests')

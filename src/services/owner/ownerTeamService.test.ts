@@ -33,6 +33,9 @@ vi.mock('@/repositories/owner/ownerTeamRepository', () => ({
     assignManagerDepartment: vi.fn(),
     removeManagerDepartmentsByCompany: vi.fn(),
     removeManagerDepartment: vi.fn(),
+    findDepartmentById: vi.fn(),
+    assignEmployeeDepartment: vi.fn(),
+    moveManagerToDepartment: vi.fn(),
   },
 }))
 
@@ -272,6 +275,67 @@ describe('ownerTeamService', () => {
       await ownerTeamService.removeManagerFromDepartment('mgr-1', 'dept-1')
 
       expect(ownerTeamRepository.removeManagerDepartment).toHaveBeenCalledWith('mgr-1', 'dept-1')
+    })
+  })
+
+  describe('changeMemberDepartment (UC31)', () => {
+    it('rejects a missing user_id', async () => {
+      await expect(ownerTeamService.changeMemberDepartment({ user_id: '', department_id: 'dept-1' }))
+        .rejects.toThrow('user_id is required')
+    })
+
+    it('rejects a missing department_id', async () => {
+      await expect(ownerTeamService.changeMemberDepartment({ user_id: 'user-1', department_id: '' }))
+        .rejects.toThrow('department_id is required')
+    })
+
+    it('throws when the user cannot be found', async () => {
+      vi.mocked(ownerTeamRepository.findUserById).mockResolvedValue(null)
+      await expect(ownerTeamService.changeMemberDepartment({ user_id: 'user-1', department_id: 'dept-1' }))
+        .rejects.toThrow('User not found')
+    })
+
+    it('rejects when the resolved company does not match the user\'s own company', async () => {
+      vi.mocked(ownerTeamRepository.findUserById).mockResolvedValue(makeUser({ id: 'user-1', company_id: 'company-1' }))
+      await expect(ownerTeamService.changeMemberDepartment({ user_id: 'user-1', department_id: 'dept-1', company_id: 'company-2' }))
+        .rejects.toThrow('User is not a member of this company')
+    })
+
+    it('throws when the department does not belong to the resolved company', async () => {
+      vi.mocked(ownerTeamRepository.findUserById).mockResolvedValue(makeUser({ id: 'user-1', company_id: 'company-1', role: 'Employee' }))
+      vi.mocked(ownerTeamRepository.findDepartmentById).mockResolvedValue(null)
+      await expect(ownerTeamService.changeMemberDepartment({ user_id: 'user-1', department_id: 'dept-1' }))
+        .rejects.toThrow('Department not found in this company')
+    })
+
+    it('moves a Manager: replaces their manager_departments row', async () => {
+      vi.mocked(ownerTeamRepository.findUserById).mockResolvedValue(makeUser({ id: 'mgr-1', company_id: 'company-1', role: 'Manager' }))
+      vi.mocked(ownerTeamRepository.findDepartmentById).mockResolvedValue({ id: 'dept-2' })
+
+      await ownerTeamService.changeMemberDepartment({ user_id: 'mgr-1', department_id: 'dept-2', company_id: 'company-1' })
+
+      expect(ownerTeamRepository.removeManagerDepartmentsByCompany).toHaveBeenCalledWith('mgr-1', 'company-1')
+      expect(ownerTeamRepository.moveManagerToDepartment).toHaveBeenCalledWith('mgr-1', 'company-1', 'dept-2')
+      expect(ownerTeamRepository.assignEmployeeDepartment).not.toHaveBeenCalled()
+    })
+
+    it('moves an Employee: replaces their employee_departments row', async () => {
+      vi.mocked(ownerTeamRepository.findUserById).mockResolvedValue(makeUser({ id: 'emp-1', company_id: 'company-1', role: 'Employee' }))
+      vi.mocked(ownerTeamRepository.findDepartmentById).mockResolvedValue({ id: 'dept-2' })
+
+      await ownerTeamService.changeMemberDepartment({ user_id: 'emp-1', department_id: 'dept-2', company_id: 'company-1' })
+
+      expect(ownerTeamRepository.deleteEmployeeDepartmentsByUserId).toHaveBeenCalledWith('emp-1')
+      expect(ownerTeamRepository.assignEmployeeDepartment).toHaveBeenCalledWith('emp-1', 'dept-2')
+      expect(ownerTeamRepository.moveManagerToDepartment).not.toHaveBeenCalled()
+    })
+
+    it('rejects a role that is neither Manager nor Employee', async () => {
+      vi.mocked(ownerTeamRepository.findUserById).mockResolvedValue(makeUser({ id: 'owner-1', company_id: 'company-1', role: 'Owner' }))
+      vi.mocked(ownerTeamRepository.findDepartmentById).mockResolvedValue({ id: 'dept-1' })
+
+      await expect(ownerTeamService.changeMemberDepartment({ user_id: 'owner-1', department_id: 'dept-1', company_id: 'company-1' }))
+        .rejects.toThrow('Only Managers and Employees can be assigned to departments')
     })
   })
 })

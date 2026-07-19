@@ -29,12 +29,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, message: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { company_id, name, title, description, priority, sub_task_titles, created_by } = body as Record<string, unknown>
+  const { company_id, title, description, priority, sub_task_titles, created_by } = body as Record<string, unknown>
 
   if (!company_id || typeof company_id !== 'string')
     return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
-  if (!name || typeof name !== 'string')
-    return NextResponse.json({ success: false, message: 'name is required' }, { status: 400 })
   if (!title || typeof title !== 'string')
     return NextResponse.json({ success: false, message: 'title is required' }, { status: 400 })
   if (!created_by || typeof created_by !== 'string')
@@ -43,7 +41,6 @@ export async function POST(req: NextRequest) {
   try {
     const template = await taskTemplateService.createTemplate({
       company_id,
-      name,
       title,
       description: typeof description === 'string' ? description : null,
       priority: typeof priority === 'string' ? priority : null,

@@ -49,7 +49,7 @@ export const workerApplicationService = {
     // Every hard gate (role, per-company ban, age, experience, schedule conflict) lives in the
     // shared eligibility module so an Owner-issued pool invite can't bypass a check this flow
     // enforces. See services/shared/workerEligibility.ts.
-    const { profile, age } = await assertWorkerEligibleForJob({
+    const { profile } = await assertWorkerEligibleForJob({
       user_id: input.user_id,
       job,
       selfApply: true,
@@ -70,7 +70,6 @@ export const workerApplicationService = {
       additional_note: note,
       skills_snapshot: profile.skills,
       certificates_snapshot: certificates.map(cert => ({ name: cert.name, file_url: cert.file_url })),
-      age_at_apply: age,
     })
   },
 

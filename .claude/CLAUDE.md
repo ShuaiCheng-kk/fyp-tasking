@@ -96,7 +96,9 @@ Strictly follow MVC + Repository:
 1. **The page itself never scrolls** — vertically or horizontally, on any screen size. `<main>` is locked to one viewport: `height:'100vh', overflow:'hidden', display:'flex', flexDirection:'column'`. Page header and tab bar are `flexShrink:0` and always visible.
 2. **Blocks scroll internally instead** — whichever panel's content overflows gets its own scrollbar: content area `flex:1, minHeight:0, overflow:'auto'` (or each parallel panel gets its own `overflowY:'auto'`). Wide tables/calendars scroll horizontally inside their own panel (`overflowX:'auto'` + inner `minWidth`), with sticky headers where useful.
 3. **Every flex/grid child on the scroll path needs `minHeight:0` (vertical) / `minWidth:0` (horizontal)** — without it the child refuses to shrink and blows the layout open instead of scrolling.
-4. **Width breakpoints via the `useIsCompactViewport` hook** (`src/hooks/useIsCompactViewport.ts`), not CSS media queries — the app uses inline styles which media queries can't override. Existing precedents: multi-column grids stack to one column below ~1300px; header action buttons collapse to icon buttons below ~1400px.
+4. **Width breakpoints via hooks, not CSS media queries** — the app uses inline styles which media queries can't override. Two hooks, for two different things — using the wrong one causes a bug that only shows up at certain window widths (confirmed real-world case: Recruitment's Applicants panel and Attendance's Current/After-Swap panels both broke this way):
+   - **`useIsCompactViewport`** (`src/hooks/useIsCompactViewport.ts`) — checks `window.innerWidth`. Only correct for a layout decision made by something that spans (close to) the full page width itself — e.g. the page's own top-level grid stacking to one column below ~1300px.
+   - **`useIsCompactContainer`** (`src/hooks/useIsCompactContainer.ts`) — checks a DOM node's own `clientWidth` via `ResizeObserver` (callback-ref based, so it's safe on conditionally-mounted panels). Required for anything living inside a shared row/grid where siblings eat part of the width (a panel that's one of several side-by-side columns, a header's action buttons inside one such panel, etc.) — that panel's real width is a fraction of the window, not the window itself, so window-width breakpoints are wrong there and will look fine on one screen and break on another at the same URL.
 5. **Verify at 1192×745** (the user's real laptop CSS viewport) with seeded data (`node scripts/seed.js`, login `owner@test.com`/`111111`) via a Playwright screenshot run: assert `document.documentElement.scrollHeight === clientHeight` and same for width, on every tab of the page.
 Reference implementations: the six owner pages (attendance, shifts, communication, tasks, team, recruitment) were converted to this pattern in July 2026 — copy their structure.
 
@@ -126,7 +128,7 @@ Code must be readable enough that a teammate (or an AI given the code) can draw 
 
 - Middleware/session cookie timing: signin redirect can fire before cookie is fully written.
 - Navbar shows Dashboard/Logout in unauthenticated/incognito state (T-21, T-22).
-- `src/proxy.ts` contains role-based route-guard logic (redirects unauthenticated/wrong-role users) but is named wrong for Next.js to load it as middleware — it currently does nothing. No route-protection middleware is active. Needs a decision: rename to `src/middleware.ts` to wire it up, or remove if route guarding is meant to stay page-level.
+- (Resolved 2026-07-19) `src/proxy.ts` was dead code — misnamed so Next.js never loaded it as middleware — and has been deleted. Route guarding stays page-level: each role's `layout.tsx` does its own client-side Supabase session/role check and redirects. No route-protection middleware is active.
 
 ---
 
@@ -153,7 +155,7 @@ Reference `docs/Use_Cases_List.md` for the UC list. **Every UC must go through t
 
 ## 9. Module build order & autonomous per-module execution
 
-Modules 9 (Marketing CMS) and 10 (User & Company Admin) are **out of scope** — owned by a separate team. Build order for the remaining 8 modules, derived from data/feature dependencies (earlier modules are depended on by later ones):
+Build order for all 10 modules, derived from data/feature dependencies (earlier modules are depended on by later ones). (2026-07-19: Modules 9 and 10 were originally out of scope — "owned by a separate team" — but have been pulled into this line. Their backend routes, repositories, and services already existed; Unit + Integration test coverage was backfilled under `tests/module9/` and `tests/module10/` per section 8's workflow. Treat them like the other 8 modules from here on, including the autonomous execution rule below.)
 
 1. **Module 8 — Account & Authentication** (UC65–71) — foundation; nothing else works without registration/login/company creation.
 2. **Module 3 — Team / Company** (UC24–34) — departments, members, company profile that every other module references.
@@ -162,7 +164,9 @@ Modules 9 (Marketing CMS) and 10 (User & Company Admin) are **out of scope** —
 5. **Module 5 — Attendance** (UC49–57) — clock in/out, swap/day-off requests depend on shift assignment existing.
 6. **Module 4 — Recruitment** (UC35–48) — hiring pipeline that feeds Casual Workers, which Shift/Task/Attendance then consume for that role.
 7. **Module 6 — Communication** (UC58–61) — independent; announcements and messages.
-8. **Module 7 — Report** (UC62–64) — downstream consumer of Shift/Task/Attendance data; build last.
+8. **Module 7 — Report** (UC62–64) — downstream consumer of Shift/Task/Attendance data.
+9. **Module 9 — Marketing CMS** (UC72–75) — independent of the company hierarchy; operated by the separate Marketing Admin platform role.
+10. **Module 10 — User & Company Admin** (UC76–80) — independent of the company hierarchy; operated by the separate User Admin platform role.
 
 **Autonomous execution rule:** When the user names a module to start (e.g. "做 Module 1" / "开始 Module 3"), pull every UC belonging to that module from `docs/Use_Cases_List.md` and run each one through the full workflow in section 8 — back-to-back, without asking the user which UC to do next or how to do it. Only stop and surface work to the user at the review checkpoints in section 8 steps 7–8 (UI/usage review, then the user's manual real-use pass). Iterate on the user's feedback (fix → re-run the full Unit + Integration suite → re-present) until the user signs the module off (e.g. "pass" / "OK" / "没问题"). Once signed off, automatically continue to the next module in the build order above without waiting to be told — the user only needs to speak up to skip ahead, switch to a different module, or pause. This rule applies in any conversation, new or resumed, since this file is loaded at the start of every session.
 
