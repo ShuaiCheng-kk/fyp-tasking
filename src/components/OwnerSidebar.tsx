@@ -17,35 +17,45 @@ import {
 } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 
-const NAV_ITEMS = [
-  { label: 'Dashboard',     Icon: LayoutDashboard, href: '/owner/dashboard',       dot: null as 'messages' | 'announcements' | 'review' | 'tasks' | null },
-  { label: 'Shifts',        Icon: CalendarDays,    href: '/owner/shifts',          dot: null },
-  { label: 'Tasks',         Icon: CheckSquare,     href: '/owner/tasks',           dot: 'tasks' as const },
-  { label: 'Company',       Icon: Building2,       href: '/owner/team',            dot: null },
-  { label: 'Communication', Icon: MessageCircle,    href: '/owner/communication',   dot: 'messages' as const },
-  { label: 'Recruitment',   Icon: UserPlus,         href: '/owner/recruitment',     dot: 'review' as const },
-  { label: 'Attendance',    Icon: ClipboardList,    href: '/owner/attendance',      dot: 'attendance' as const },
-  { label: 'Report',        Icon: BarChart2,        href: '/owner/report',          dot: null },
-]
+export type SidebarRole = 'owner' | 'partner' | 'manager'
 
-const NAV_LABELS = NAV_ITEMS.map(i => i.label)
-const ORDER_KEY = 'owner_sidebar_nav_order'
+type DotKey = 'messages' | 'announcements' | 'review' | 'attendance' | 'tasks' | null
 
-function mergeOrder(saved: string[]): string[] {
-  const valid = saved.filter(l => NAV_LABELS.includes(l))
-  const missing = NAV_LABELS.filter(l => !valid.includes(l))
+function navItemsFor(role: SidebarRole) {
+  const items = [
+    { label: 'Dashboard',     Icon: LayoutDashboard, href: `/${role}/dashboard`,     dot: null as DotKey },
+    { label: 'Shifts',        Icon: CalendarDays,    href: `/${role}/shifts`,        dot: null as DotKey },
+    { label: 'Tasks',         Icon: CheckSquare,     href: `/${role}/tasks`,         dot: 'tasks' as DotKey },
+    { label: 'Company',       Icon: Building2,       href: `/${role}/team`,          dot: null as DotKey },
+    { label: 'Communication', Icon: MessageCircle,    href: `/${role}/communication`, dot: 'messages' as DotKey },
+    { label: 'Recruitment',   Icon: UserPlus,         href: `/${role}/recruitment`,   dot: 'review' as DotKey },
+    { label: 'Attendance',    Icon: ClipboardList,    href: `/${role}/attendance`,    dot: 'attendance' as DotKey },
+    { label: 'Report',        Icon: BarChart2,        href: `/${role}/report`,        dot: null as DotKey },
+  ]
+  // Report is O/P-only (UC62-64) — Managers never get the menu item.
+  return role === 'manager' ? items.filter(i => i.label !== 'Report') : items
+}
+
+function orderKeyFor(role: SidebarRole): string {
+  return `${role}_sidebar_nav_order`
+}
+
+function mergeOrder(saved: string[], navLabels: string[]): string[] {
+  const valid = saved.filter(l => navLabels.includes(l))
+  const missing = navLabels.filter(l => !valid.includes(l))
   return [...valid, ...missing]
 }
 
 // Used by the sign-in flow so the post-login landing page matches whatever
-// the user dragged to the top of their sidebar, instead of always /owner/dashboard.
-export function getOwnerLandingHref(): string {
-  const fallback = NAV_ITEMS[0].href
+// the user dragged to the top of their sidebar, instead of always the dashboard.
+export function getOwnerLandingHref(role: SidebarRole = 'owner'): string {
+  const navItems = navItemsFor(role)
+  const fallback = navItems[0].href
   try {
-    const saved = localStorage.getItem(ORDER_KEY)
+    const saved = localStorage.getItem(orderKeyFor(role))
     if (!saved) return fallback
-    const firstLabel = mergeOrder(JSON.parse(saved))[0]
-    return NAV_ITEMS.find(i => i.label === firstLabel)?.href ?? fallback
+    const firstLabel = mergeOrder(JSON.parse(saved), navItems.map(i => i.label))[0]
+    return navItems.find(i => i.label === firstLabel)?.href ?? fallback
   } catch {
     return fallback
   }
@@ -64,10 +74,15 @@ const THEME = {
 export default function OwnerSidebar({
   unreadMessages,
   unreadAnnouncements,
+  role = 'owner',
 }: {
   unreadMessages?: number
   unreadAnnouncements?: number
+  role?: SidebarRole
 }) {
+  const NAV_ITEMS = navItemsFor(role)
+  const NAV_LABELS = NAV_ITEMS.map(i => i.label)
+  const ORDER_KEY = orderKeyFor(role)
   const pathname = usePathname()
   const [expanded, setExpanded] = useState(false)
   const [userRole, setUserRole] = useState('')
@@ -88,7 +103,7 @@ export default function OwnerSidebar({
     try {
       const saved = localStorage.getItem(ORDER_KEY)
       if (saved) {
-        const merged = mergeOrder(JSON.parse(saved))
+        const merged = mergeOrder(JSON.parse(saved), NAV_LABELS)
         navOrderRef.current = merged
         setNavOrder(merged)
       }
@@ -199,7 +214,7 @@ export default function OwnerSidebar({
           if (raw) readIds = new Set(JSON.parse(raw))
         } catch {}
 
-        fetch(`/api/inbox/announcements?company_id=${cid}&role=owner`)
+        fetch(`/api/inbox/announcements?company_id=${cid}&role=${role}`)
           .then(r => r.json())
           .then(data => {
             if (data.success) {
@@ -237,7 +252,7 @@ export default function OwnerSidebar({
           const rkey = `ann_read_ids_${cid}_${internalId}`
           let rids: Set<string> = new Set()
           try { const raw2 = localStorage.getItem(rkey); if (raw2) rids = new Set(JSON.parse(raw2)) } catch {}
-          fetch(`/api/inbox/announcements?company_id=${cid}&role=owner`)
+          fetch(`/api/inbox/announcements?company_id=${cid}&role=${role}`)
             .then(r => r.json())
             .then(data => {
               if (data.success) setAnnCount((data.announcements as { id: string }[]).filter(a => !rids.has(a.id)).length)
@@ -287,7 +302,7 @@ export default function OwnerSidebar({
   }, [])
 
   useEffect(() => {
-    if (pathname !== '/owner/communication') return
+    if (pathname !== `/${role}/communication`) return
     setMsgCount(0)
     setAnnCount(0)
     const authUid = typeof localStorage !== 'undefined' ? localStorage.getItem('tasking_user_id') : null
@@ -299,7 +314,7 @@ export default function OwnerSidebar({
         const internalId: string = d.user.id
         const cid = localStorage.getItem('tasking_company_id') ?? localStorage.getItem(`tasking_company_id_${authUid}`)
         if (!cid) return
-        fetch(`/api/inbox/announcements?company_id=${cid}&role=owner`)
+        fetch(`/api/inbox/announcements?company_id=${cid}&role=${role}`)
           .then(r => r.json())
           .then(data => {
             if (!data.success) return

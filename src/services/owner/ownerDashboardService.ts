@@ -2,6 +2,7 @@
 // RULE: Business logic only. No HTTP handling. No direct DB access.
 
 import { attendanceService, resolveActiveSubmissionWeekStart, resolveDeadlineDateForWeek } from '@/services/owner/attendanceService'
+import { ownerTeamService } from '@/services/owner/ownerTeamService'
 import { attendanceRepository } from '@/repositories/owner/attendanceRepository'
 import { offDaySettingsService } from '@/services/owner/offDaySettingsService'
 import { taskService } from '@/services/owner/taskService'
@@ -20,6 +21,10 @@ import {
 } from '@/types/OwnerDashboard'
 
 const STARTING_SOON_DAYS = 2
+
+// Manager viewers get the same summary scoped to their own departments (UC role scope);
+// null means the viewer is an Owner/Partner and sees the whole company.
+type DeptScope = { ids: Set<string>; names: Set<string> } | null
 
 // Local wall-clock calendar date — same convention as reportService.formatDateKey / taskService's
 // own copy. due_at/shift_date "belong" to whichever local day they fall on, never a UTC slice.
@@ -53,7 +58,7 @@ function formatWeekLabel(weekStartKey: string): string {
   return `${fmt(start)}–${fmt(end)}`
 }
 
-async function buildWaitingOnYou(company_id: string, owner_id: string): Promise<WaitingOnYouItem[]> {
+async function buildWaitingOnYou(company_id: string, owner_id: string, scope: DeptScope): Promise<WaitingOnYouItem[]> {
   const [swaps, deadline, kanban, postings, pendingApprovalPostings] = await Promise.all([
     attendanceService.getShiftSwapRequests(company_id),
     offDaySettingsService.getDeadline(company_id, owner_id).catch(() => null),
@@ -66,7 +71,8 @@ async function buildWaitingOnYou(company_id: string, owner_id: string): Promise<
   // (hides awaiting-counterpart and Employee-requester rows), so every pending row it returns
   // is waiting on the Owner. requires_owner_review only marks rule-violation escalations under
   // auto-approval mode — filtering on it would miss every manual-approval-mode request.
-  const pendingSwaps = swaps.filter(s => s.status === 'pending')
+  const scopedSwaps = scope ? swaps.filter(s => s.department_name != null && scope.names.has(s.department_name)) : swaps
+  const pendingSwaps = scopedSwaps.filter(s => s.status === 'pending')
   const swapOldest = pendingSwaps.length > 0
     ? pendingSwaps.reduce((oldest, s) => s.created_at < oldest ? s.created_at : oldest, pendingSwaps[0].created_at)
     : null
@@ -97,7 +103,8 @@ async function buildWaitingOnYou(company_id: string, owner_id: string): Promise<
     : null
 
   // 4. Accept Applicants — pending applicants across every open posting
-  const postingsWithPending = postings.filter(p => p.pending_count > 0)
+  const scopedPostings = scope ? postings.filter(p => p.department_id != null && scope.ids.has(p.department_id)) : postings
+  const postingsWithPending = scopedPostings.filter(p => p.pending_count > 0)
   const applicantLists = await Promise.all(postingsWithPending.map(p => recruitmentService.getApplicants(p.id)))
   const pendingApplicants = applicantLists.flat().filter(a => a.status === 'pending')
   const applicantOldest = pendingApplicants.length > 0
@@ -112,7 +119,8 @@ async function buildWaitingOnYou(company_id: string, owner_id: string): Promise<
   const items: WaitingOnYouItem[] = [
     { id: 'shift_swap', label: 'Handle Shift Swaps', count: pendingSwaps.length, oldest_at: swapOldest, detail: null },
     { id: 'off_day_deadline', label: 'Schedule Next Week', count: offDayCount, oldest_at: offDayOldest, detail: offDayDetail },
-    { id: 'job_posting_approval', label: 'Review Job Postings', count: pendingApprovalPostings.length, oldest_at: approvalOldest, detail: null },
+    // Approving job postings is O/P-only (UC42) — a Manager viewer never gets that card.
+    ...(scope ? [] : [{ id: 'job_posting_approval', label: 'Review Job Postings', count: pendingApprovalPostings.length, oldest_at: approvalOldest, detail: null } as WaitingOnYouItem]),
     { id: 'applicant_accept', label: 'Review Applicants', count: pendingApplicants.length, oldest_at: applicantOldest, detail: null },
     { id: 'task_review', label: 'Manage Tasks', count: reviewTasks.length, oldest_at: reviewOldest, detail: null },
   ]
@@ -249,17 +257,19 @@ function classifyAttendance(
   return { expected: rows.length, checked_in: checkedIn, departments }
 }
 
-async function buildAttendanceOverview(company_id: string): Promise<AttendanceOverview> {
+async function buildAttendanceOverview(company_id: string, scope: DeptScope): Promise<AttendanceOverview> {
   const todayKey = formatDateKey(new Date())
-  const records = await attendanceService.getAttendanceByDateRange(company_id, todayKey, todayKey)
+  const allRecords = await attendanceService.getAttendanceByDateRange(company_id, todayKey, todayKey)
+  const records = scope ? allRecords.filter(r => r.department_name != null && scope.names.has(r.department_name)) : allRecords
   return {
     internal: classifyAttendance(records, ['Manager', 'Employee']),
     casual: classifyAttendance(records, ['Casual Worker']),
   }
 }
 
-async function buildRecruitmentOverview(company_id: string): Promise<RecruitmentOverview> {
-  const postings = await recruitmentService.getJobPostings(company_id)
+async function buildRecruitmentOverview(company_id: string, scope: DeptScope): Promise<RecruitmentOverview> {
+  const allPostings = await recruitmentService.getJobPostings(company_id)
+  const postings = scope ? allPostings.filter(p => p.department_id != null && scope.ids.has(p.department_id)) : allPostings
   const open = postings.filter(p => p.status === 'open')
   const todayKey = formatDateKey(new Date())
 
@@ -286,15 +296,21 @@ async function buildRecruitmentOverview(company_id: string): Promise<Recruitment
 }
 
 export const ownerDashboardService = {
-  async getDashboardSummary(company_id: string, owner_id: string): Promise<OwnerDashboardSummary> {
+  async getDashboardSummary(company_id: string, owner_id: string, viewer_role?: string): Promise<OwnerDashboardSummary> {
     if (!company_id) throw new Error('company_id is required')
     if (!owner_id) throw new Error('owner_id is required')
 
+    let scope: DeptScope = null
+    if (viewer_role === 'Manager') {
+      const depts = await ownerTeamService.getManagerDepartments(owner_id, company_id)
+      scope = { ids: new Set(depts.map(d => d.department_id)), names: new Set(depts.map(d => d.department_name)) }
+    }
+
     const [waitingOnYou, taskOverview, attendanceOverview, recruitmentOverview] = await Promise.all([
-      buildWaitingOnYou(company_id, owner_id),
+      buildWaitingOnYou(company_id, owner_id, scope),
       buildTaskOverview(company_id, owner_id),
-      buildAttendanceOverview(company_id),
-      buildRecruitmentOverview(company_id),
+      buildAttendanceOverview(company_id, scope),
+      buildRecruitmentOverview(company_id, scope),
     ])
 
     return {

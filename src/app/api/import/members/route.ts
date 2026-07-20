@@ -3,6 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { importService } from '@/services/owner/importService'
+import { userService } from '@/services/auth/userService'
 import { MemberImportRow } from '@/types/Import'
 
 export async function POST(req: NextRequest) {
@@ -19,6 +20,12 @@ export async function POST(req: NextRequest) {
   }
   if (!Array.isArray(b.members)) {
     return NextResponse.json({ success: false, message: 'members must be an array' }, { status: 400 })
+  }
+  try {
+    await userService.assertOwnerRole(b.invited_by)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Forbidden'
+    return NextResponse.json({ success: false, message }, { status: 403 })
   }
 
   try {

@@ -5,6 +5,7 @@ import { createBrowserClient } from '@supabase/ssr'
 
 const ROLE_DASHBOARD: Record<string, string> = {
   Owner: '/owner/dashboard',
+  Partner: '/partner/dashboard',
   Employee: '/employee/dashboard',
   'Casual Worker': '/casual/dashboard',
 }

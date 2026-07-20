@@ -295,6 +295,7 @@ test('UC31 changes an employee department in the employee department mapping', a
       user_id: employee.userId,
       department_id: departments.secondary,
       company_id: seeded.companyId,
+      requester_user_id: seeded.ownerId,
     },
   })
   expect(res.status()).toBe(200)
@@ -313,6 +314,7 @@ test('UC33 imports departments and skips duplicates', async ({ request }) => {
     data: {
       company_id: seeded.companyId,
       departments: ['Front Desk', '  Bar  ', 'Bar', 'Events'],
+      requester_user_id: seeded.ownerId,
     },
   })
   expect(res.status()).toBe(200)
@@ -622,6 +624,7 @@ test('UC34 edits company profile fields', async ({ request }) => {
   const res = await request.patch('/api/company/update-profile', {
     data: {
       company_id: seeded.companyId,
+      requester_user_id: seeded.ownerId,
       name: 'Module 3 Company Updated',
       description: 'Updated through module 3 API test',
       location: 'Singapore',
@@ -639,4 +642,14 @@ test('UC34 edits company profile fields', async ({ request }) => {
     postal_code: '123456',
     industry: 'Hospitality',
   })
+})
+
+test('Owner-only routes reject a non-Owner requester with 403', async ({ request }) => {
+  const employee = await createMember('Employee', 'guard403', departments.primary)
+
+  const res = await request.post('/api/company/create-department', {
+    data: { company_id: seeded.companyId, name: 'Should Not Exist', requester_user_id: employee.userId },
+  })
+  expect(res.status()).toBe(403)
+  expect((await res.json()).success).toBe(false)
 })

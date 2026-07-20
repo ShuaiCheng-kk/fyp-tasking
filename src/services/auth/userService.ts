@@ -38,6 +38,13 @@ function mapTeamMemberRow(row: any, cwMeta: Map<string, CwMeta>): TeamMemberRow 
 
 export const userService = {
 
+  // Server-side guard for Owner-only use cases (UC24-26, UC31-34): the UI hides these
+  // actions from other roles, but the API must reject them too.
+  async assertOwnerRole(user_id: string): Promise<void> {
+    const user = await userService.getUserById(user_id)
+    if (user.role !== 'Owner') throw new Error('Only an Owner can perform this action')
+  },
+
   async getUserById(id: string): Promise<User & { department_id: string | null }> {
     const { supabase } = await import('@/lib/supabase')
     const { data: user, error } = await supabase

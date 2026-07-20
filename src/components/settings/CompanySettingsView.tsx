@@ -262,6 +262,7 @@ export default function CompanySettingsView({ sidebar, dashboardPath }: { sideba
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           company_id: editTarget.id,
+          requester_user_id: internalUserId,
           name: editName,
           description: editDesc,
           location: editLocation,
