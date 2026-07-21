@@ -207,6 +207,18 @@ function formatShiftHour(time: string): string {
   return m === 0 ? `${h12}${ampm}` : `${h12}:${String(m).padStart(2, '0')}${ampm}`
 }
 
+// Shift times are UTC-nominal (stored/compared as literal wall-clock, never converted) — read
+// clock_in/out timestamps with the UTC getters so an owner-modified time formats consistently
+// with the shift's own start_time/end_time instead of drifting through the browser's timezone.
+function formatClockHour(iso: string): string {
+  const d = new Date(iso)
+  const h = d.getUTCHours()
+  const m = d.getUTCMinutes()
+  const ampm = h < 12 ? 'am' : 'pm'
+  const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h
+  return m === 0 ? `${h12}${ampm}` : `${h12}:${String(m).padStart(2, '0')}${ampm}`
+}
+
 
 type ARStatus = 'present' | 'late' | 'absent' | 'no-shift'
 
@@ -1723,11 +1735,31 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
 
   const submitReview = async () => {
     if (!reviewRecord?.record || !internalUserId || !companyId) return
-    setReviewActionLoading(true)
     setReviewError('')
     // Convert "HH:MM AM/PM" inputs back to ISO using the shift date
     const shiftDate = reviewRecord.shift.shift_date
     const toISO = (ampm: string) => ampm ? new Date(`${shiftDate}T${amPmToHHMM(ampm)}:00Z`).toISOString() : null
+    const clockInIso = toISO(reviewClockIn)
+    const clockOutIso = toISO(reviewClockOut)
+    const breakInIso = toISO(reviewBreakIn)
+    const breakOutIso = toISO(reviewBreakOut)
+
+    // Mirrors validateModifiedAttendanceTimes on the server — catches the mistake before the
+    // round-trip instead of only after a rejected PATCH.
+    if (clockInIso && clockOutIso && new Date(clockInIso).getTime() > new Date(clockOutIso).getTime()) {
+      setReviewError('Clock In cannot be later than Clock Out'); return
+    }
+    if (breakInIso && breakOutIso && new Date(breakInIso).getTime() > new Date(breakOutIso).getTime()) {
+      setReviewError('Break In cannot be later than Break Out'); return
+    }
+    if (breakInIso && clockInIso && clockOutIso && (new Date(breakInIso).getTime() < new Date(clockInIso).getTime() || new Date(breakInIso).getTime() > new Date(clockOutIso).getTime())) {
+      setReviewError('Break In must be between Clock In and Clock Out'); return
+    }
+    if (breakOutIso && clockInIso && clockOutIso && (new Date(breakOutIso).getTime() < new Date(clockInIso).getTime() || new Date(breakOutIso).getTime() > new Date(clockOutIso).getTime())) {
+      setReviewError('Break Out must be between Clock In and Clock Out'); return
+    }
+
+    setReviewActionLoading(true)
     try {
       const res = await fetch('/api/attendance', {
         method: 'PATCH',
@@ -1737,10 +1769,10 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
           id: reviewRecord.record.id,
           owner_id: internalUserId,
           decision: 'modified',
-          clock_in_time: toISO(reviewClockIn),
-          clock_out_time: toISO(reviewClockOut),
-          break_in_time: toISO(reviewBreakIn),
-          break_out_time: toISO(reviewBreakOut),
+          clock_in_time: clockInIso,
+          clock_out_time: clockOutIso,
+          break_in_time: breakInIso,
+          break_out_time: breakOutIso,
         }),
       })
       const data = await res.json()
@@ -2553,7 +2585,15 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                                           >
                                             <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}><ARStatusIcon status={st} /></span>
                                             <span style={{ fontSize: 12, fontWeight: 600, color: '#0F172A', whiteSpace: 'nowrap', textAlign: 'center' }}>
-                                              {formatShiftHour(rec.shift.start_time)} – {formatShiftHour(rec.shift.end_time)}
+                                              {(() => {
+                                                // Owner-modified times take precedence over the worker's original
+                                                // clock times — same precedence openReview() uses to pre-fill the modal.
+                                                const inTime = rec.record?.owner_adjusted_clock_in_time ?? rec.record?.clock_in_time
+                                                const outTime = rec.record?.owner_adjusted_clock_out_time ?? rec.record?.clock_out_time
+                                                return inTime
+                                                  ? `${formatClockHour(inTime)} – ${outTime ? formatClockHour(outTime) : formatShiftHour(rec.shift.end_time)}`
+                                                  : `${formatShiftHour(rec.shift.start_time)} – ${formatShiftHour(rec.shift.end_time)}`
+                                              })()}
                                             </span>
                                             <span />
                                           </button>
@@ -3177,7 +3217,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                 // Shared day-set picker for the Modify flow — used by the request card and by the
                 // Off Day Details cards. Selection lives in fixedOffModifyDates (one picker open at
                 // a time via modifyingFixedOffKey).
-                const ModifyDaysPicker = ({ group }: { group: FixedOffGroup }) => {
+                const ModifyDaysPicker = ({ group, modifyComplete }: { group: FixedOffGroup; modifyComplete: boolean }) => {
                   const requestDates = group.requests.map(r => r.request_date)
                   const weekDates = Array.from({ length: 7 }, (_, i) => toISODate(addDays(new Date(`${group.week_start}T00:00:00`), i)))
                   const customMinDate = toISODate(addDays(new Date(`${weekDates[6]}T00:00:00`), 1))
@@ -3186,6 +3226,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                       ? prev.filter(x => x !== d)
                       : (prev.length < requestDates.length ? [...prev, d] : prev))
                   }
+                  const confirmModify = () => decideFixedOffGroup(group.requests.map(r => r.id), 'modified', group.requester_name, [...fixedOffModifyDates].sort())
                   return (
                     <div onClick={e => e.stopPropagation()} style={{ width: '100%', boxSizing: 'border-box', border: '1.5px solid #FED7AA', borderRadius: 12, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -3239,6 +3280,20 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                           onChange={e => { if (e.target.value && !fixedOffModifyDates.includes(e.target.value)) toggleModifyDate(e.target.value) }}
                           style={{ fontSize: '0.72rem', fontWeight: 700, color: '#334155', background: '#FFFFFF', border: '1.5px solid #E5E7EB', borderRadius: 999, padding: '4px 8px', cursor: 'pointer' }}
                         />
+                        {/* Confirm sits in the same row as the replacement days it applies to, not
+                            up in the card's header row, so it's unambiguous which selection it
+                            commits. marginLeft: auto pins it to the row's right edge even as the
+                            day pills wrap. */}
+                        {modifyComplete && (
+                          <button
+                            type="button"
+                            onClick={confirmModify}
+                            disabled={reqActionLoading}
+                            style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.78rem', fontWeight: 700, color: '#FFFFFF', background: 'linear-gradient(135deg, #F97316, #EA580C)', border: '1.5px solid transparent', borderRadius: 999, padding: '6px 16px', cursor: reqActionLoading ? 'default' : 'pointer', opacity: reqActionLoading ? 0.6 : 1, transition: 'background 0.15s, border-color 0.15s' }}
+                          >
+                            {reqActionLoading ? <Spinner size={13} /> : <Check size={13} />} Confirm
+                          </button>
+                        )}
                       </div>
                     </div>
                   )
@@ -3331,27 +3386,26 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                             >
                               <Check size={13} /> Approve
                             </button>
-                            <button
-                              onClick={() => {
-                                if (modifyComplete) {
-                                  decideFixedOffGroup(ids, 'modified', group.requester_name, [...fixedOffModifyDates].sort())
-                                } else if (isModifying) {
-                                  setModifyingFixedOffKey(null)
-                                  setFixedOffModifyDates([])
-                                } else {
-                                  setFixedOffModifyDates([])
-                                  setModifyingFixedOffKey(group.key)
-                                }
-                              }}
-                              disabled={reqActionLoading}
-                              style={modifyComplete
-                                ? { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: '0.78rem', fontWeight: 700, color: '#FFFFFF', background: 'linear-gradient(135deg, #F97316, #EA580C)', border: '1.5px solid transparent', borderRadius: 999, padding: '6px 16px', cursor: reqActionLoading ? 'default' : 'pointer', opacity: reqActionLoading ? 0.6 : 1, transition: 'background 0.15s, border-color 0.15s' }
-                                : { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: '0.78rem', fontWeight: 700, color: '#C2410C', background: isModifying ? '#FFEDD5' : '#FFF7ED', border: `1.5px solid ${isModifying ? '#FDBA74' : '#FED7AA'}`, borderRadius: 999, padding: '6px 16px', cursor: reqActionLoading ? 'default' : 'pointer', opacity: reqActionLoading ? 0.6 : 1, transition: 'background 0.15s, border-color 0.15s' }}
-                            >
-                              {modifyComplete
-                                ? <>{reqActionLoading ? <Spinner size={13} /> : <Check size={13} />} Confirm</>
-                                : <><Pencil size={13} /> Modify</>}
-                            </button>
+                            {/* Once every replacement day is picked, Confirm moves down into the
+                                picker itself (right above/below the days it applies to) — this
+                                button's only job past that point is staying out of the way. */}
+                            {!modifyComplete && (
+                              <button
+                                onClick={() => {
+                                  if (isModifying) {
+                                    setModifyingFixedOffKey(null)
+                                    setFixedOffModifyDates([])
+                                  } else {
+                                    setFixedOffModifyDates([])
+                                    setModifyingFixedOffKey(group.key)
+                                  }
+                                }}
+                                disabled={reqActionLoading}
+                                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: '0.78rem', fontWeight: 700, color: '#C2410C', background: isModifying ? '#FFEDD5' : '#FFF7ED', border: `1.5px solid ${isModifying ? '#FDBA74' : '#FED7AA'}`, borderRadius: 999, padding: '6px 16px', cursor: reqActionLoading ? 'default' : 'pointer', opacity: reqActionLoading ? 0.6 : 1, transition: 'background 0.15s, border-color 0.15s' }}
+                              >
+                                <Pencil size={13} /> Modify
+                              </button>
+                            )}
                           </div>
                         ) : (
                           <div style={{ marginLeft: 'auto', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0 }}>
@@ -3365,7 +3419,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                         )}
                       </div>
 
-                      {isModifying && <ModifyDaysPicker group={group} />}
+                      {isModifying && <ModifyDaysPicker group={group} modifyComplete={modifyComplete} />}
                     </div>
                   )
                 }
@@ -3728,14 +3782,14 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                                           {formatFixedOffRequestDay(r.request_date)}
                                         </span>
                                       ))}
-                                      {canModifyDecided && (
+                                      {/* Once every replacement day is picked, Confirm moves down into
+                                          the picker itself, grouped with the days it applies to. */}
+                                      {canModifyDecided && !detailModifyComplete && (
                                         <button
                                           type="button"
                                           onClick={e => {
                                             e.stopPropagation()
-                                            if (detailModifyComplete) {
-                                              decideFixedOffGroup(group!.requests.map(r => r.id), 'modified', group!.requester_name, [...fixedOffModifyDates].sort())
-                                            } else if (isModifyingThis) {
+                                            if (isModifyingThis) {
                                               setModifyingFixedOffKey(null)
                                               setFixedOffModifyDates([])
                                             } else {
@@ -3744,13 +3798,9 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                                             }
                                           }}
                                           disabled={reqActionLoading}
-                                          style={detailModifyComplete
-                                            ? { marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.76rem', fontWeight: 700, color: '#FFFFFF', background: 'linear-gradient(135deg, #F97316, #EA580C)', border: '1px solid transparent', borderRadius: 999, padding: '4px 10px', whiteSpace: 'nowrap', cursor: reqActionLoading ? 'default' : 'pointer', opacity: reqActionLoading ? 0.6 : 1, flexShrink: 0, transition: 'background 0.15s, border-color 0.15s' }
-                                            : { marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.76rem', fontWeight: 700, color: '#C2410C', background: isModifyingThis ? '#FFEDD5' : '#FFF7ED', border: `1px solid ${isModifyingThis ? '#FDBA74' : '#FED7AA'}`, borderRadius: 999, padding: '4px 10px', whiteSpace: 'nowrap', cursor: reqActionLoading ? 'default' : 'pointer', opacity: reqActionLoading ? 0.6 : 1, flexShrink: 0, transition: 'background 0.15s, border-color 0.15s' }}
+                                          style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.76rem', fontWeight: 700, color: '#C2410C', background: isModifyingThis ? '#FFEDD5' : '#FFF7ED', border: `1px solid ${isModifyingThis ? '#FDBA74' : '#FED7AA'}`, borderRadius: 999, padding: '4px 10px', whiteSpace: 'nowrap', cursor: reqActionLoading ? 'default' : 'pointer', opacity: reqActionLoading ? 0.6 : 1, flexShrink: 0, transition: 'background 0.15s, border-color 0.15s' }}
                                         >
-                                          {detailModifyComplete
-                                            ? <>{reqActionLoading ? <Spinner size={11} /> : <Check size={11} />} Confirm</>
-                                            : <><Pencil size={11} /> Modify</>}
+                                          <Pencil size={11} /> Modify
                                         </button>
                                       )}
                                     </div>
@@ -3786,7 +3836,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                                     )}
                                   </div>
                                 )}
-                                {canModifyDecided && isModifyingThis && group && <ModifyDaysPicker group={group} />}
+                                {canModifyDecided && isModifyingThis && group && <ModifyDaysPicker group={group} modifyComplete={detailModifyComplete} />}
                               </div>
                             )
                           }

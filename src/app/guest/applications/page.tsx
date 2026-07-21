@@ -2,7 +2,6 @@
 
 import { Fragment, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { createBrowserClient } from '@supabase/ssr'
 import { ArrowRight, Check, CheckCircle2, Clock, Mail } from 'lucide-react'
 import { useIsCompactViewport } from '@/hooks/useIsCompactViewport'
 import ApplyJobModal from '@/components/guest/ApplyJobModal'
@@ -11,6 +10,10 @@ import { FLOW_STEPS, FlowTone, getApplicationFlowState } from '@/components/gues
 
 // One icon per step, matching FLOW_STEPS' order (Pending Review / Accept-Reject Job Offer / Confirmed).
 const STEP_ICONS = [Clock, Mail, CheckCircle2]
+
+// Holds the "offer confirmed" banner message across reloads. Set here on Accept, read on mount,
+// and cleared by signin/page.tsx on the worker's NEXT sign-in — see the confirmedBanner state below.
+const CONFIRMED_BANNER_KEY = 'tasking_confirmed_banner'
 
 const pageKeyframes = `
   @keyframes overlayFadeIn { from { opacity: 0 } to { opacity: 1 } }
@@ -158,43 +161,20 @@ function ApplicationsContent() {
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Pill tab: applications still moving through the happy path vs. ones that ended off it.
   const [viewTab, setViewTab] = useState<'ongoing' | 'closed'>('ongoing')
-  // After confirming an offer the account becomes a Casual Worker, so the Guest pages stop being
-  // theirs. Rather than silently swap the UI out from under them on their next click, we hold a
-  // short countdown → sign out, and tell them to log back in as a Casual Worker.
-  const [confirmedJobTitle, setConfirmedJobTitle] = useState<string | null>(null)
-  const [signOutCountdown, setSignOutCountdown] = useState(30)
-
-  const signOutToReauth = () => {
-    const supabase = createBrowserClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    )
-    void supabase.auth.signOut().finally(() => {
-      localStorage.removeItem('tasking_user_id')
-      localStorage.removeItem('tasking_user_role')
-      localStorage.removeItem('tasking_company_id')
-      localStorage.removeItem('tasking_active_session')
-      localStorage.removeItem('apply_job_id')
-      sessionStorage.removeItem('tasking_session_active')
-      window.location.href = '/signout'
-    })
-  }
-
-  // Tick the post-confirmation countdown down to 0, then sign out automatically.
+  // Confirming an offer promotes the account to Casual Worker behind the scenes, but the session
+  // stays put — no forced sign-out. Unlike the toast (which fades in 3s), this sits next to the
+  // Ongoing/History pills with no dismiss control — it stays through reloads (persisted in
+  // localStorage, not just component state) until the worker's NEXT sign-in, which is when
+  // signin/page.tsx clears CONFIRMED_BANNER_KEY.
+  const [confirmedBanner, setConfirmedBanner] = useState<string | null>(null)
   useEffect(() => {
-    if (confirmedJobTitle === null) return
-    if (signOutCountdown <= 0) {
-      signOutToReauth()
-      return
-    }
-    const t = setTimeout(() => setSignOutCountdown(n => n - 1), 1000)
-    return () => clearTimeout(t)
-  }, [confirmedJobTitle, signOutCountdown])
+    setConfirmedBanner(localStorage.getItem(CONFIRMED_BANNER_KEY))
+  }, [])
 
-  const showToast = (msg: string) => {
+  const showToast = (msg: string, durationMs = 3000) => {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
     setToast(msg)
-    toastTimerRef.current = setTimeout(() => setToast(''), 3000)
+    toastTimerRef.current = setTimeout(() => setToast(''), durationMs)
   }
 
   const loadApplications = async (userId: string) => {
@@ -311,10 +291,12 @@ function ApplicationsContent() {
       if (profile?.id) await loadApplications(profile.id)
 
       if (response === 'accepted') {
-        // Confirming promoted the account to Casual Worker — hand off with an explicit countdown
-        // instead of letting the next click silently change the whole page.
-        setSignOutCountdown(30)
-        setConfirmedJobTitle(app.job_title)
+        // Confirming promoted the account to Casual Worker, but the session carries on as-is —
+        // a persistent banner (not a fading toast) tells them, since it stays relevant until they
+        // next sign in. Written to localStorage (not just state) so it survives reloads too.
+        const msg = `"${app.job_title}" confirmed! Sign in again next time to access your Casual Worker workspace.`
+        localStorage.setItem(CONFIRMED_BANNER_KEY, msg)
+        setConfirmedBanner(msg)
       } else {
         showToast('Invitation declined.')
       }
@@ -385,7 +367,7 @@ function ApplicationsContent() {
           </h1>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start', marginBottom: 20, flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start', gap: 12, marginBottom: 20, flexShrink: 0 }}>
           <div style={pillTabBarStyle}>
             {(['ongoing', 'closed'] as const).map(tab => {
               const active = viewTab === tab
@@ -401,6 +383,13 @@ function ApplicationsContent() {
               )
             })}
           </div>
+
+          {confirmedBanner && (
+            <div style={confirmedBannerStyle}>
+              <CheckCircle2 size={16} style={{ color: '#15803D', flexShrink: 0 }} />
+              <span style={confirmedBannerTextStyle}>{confirmedBanner}</span>
+            </div>
+          )}
         </div>
 
         {/* Keyed on loading too (not just viewTab): applications take an API round-trip to arrive,
@@ -517,13 +506,14 @@ function ApplicationsContent() {
       {toast && (
         <div style={{
           position: 'fixed', bottom: 28, left: '50%', transform: 'translateX(-50%)',
-          background: '#0F172A', color: '#FFFFFF', borderRadius: 999, padding: '10px 18px',
-          display: 'flex', alignItems: 'center', gap: 8,
-          fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', zIndex: 9999,
+          background: '#0F172A', color: '#FFFFFF', borderRadius: 14, padding: '10px 18px',
+          display: 'flex', alignItems: 'flex-start', gap: 8,
+          fontSize: 13, fontWeight: 600, whiteSpace: 'normal', maxWidth: 420, textAlign: 'left',
+          zIndex: 9999,
           animation: 'fadeSlideUpToast 0.22s ease',
           boxShadow: '0 4px 20px rgba(0,0,0,0.25)',
         }}>
-          <Check size={15} style={{ color: '#10B981', flexShrink: 0 }} />
+          <Check size={15} style={{ color: '#10B981', flexShrink: 0, marginTop: 1 }} />
           {toast}
         </div>
       )}
@@ -560,40 +550,6 @@ function ApplicationsContent() {
         </div>
       )}
 
-      {/* Post-confirmation hand-off — the account just became a Casual Worker, so this explains
-          the sign-out and lets the countdown (or the button) carry them there deliberately. */}
-      {confirmedJobTitle !== null && (
-        <div style={confirmOverlayStyle}>
-          <div style={{ ...confirmModalStyle, maxWidth: 440 }}>
-            <div style={{ padding: '32px 28px 28px', textAlign: 'center' }}>
-              <div style={{ width: 52, height: 52, borderRadius: 999, background: '#DCFCE7', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
-                <CheckCircle2 size={28} style={{ color: '#15803D' }} />
-              </div>
-              <h2 style={{ margin: '0 0 10px', fontSize: '1.125rem', fontWeight: 800, color: '#111827' }}>
-                You&apos;re all set!
-              </h2>
-              <p style={{ margin: '0 0 4px', fontSize: '0.9375rem', color: '#374151', lineHeight: 1.6 }}>
-                You&apos;ve accepted the offer for <strong>{confirmedJobTitle}</strong>.
-              </p>
-              <p style={{ margin: '0 0 16px', fontSize: '0.9375rem', color: '#374151', lineHeight: 1.6 }}>
-                Your Casual Worker account is now ready.
-              </p>
-              <p style={{ margin: '0 0 6px', fontSize: '0.875rem', color: '#6B7280', lineHeight: 1.6 }}>
-                You&apos;ll be signed out automatically in <strong style={{ color: '#EA580C' }}>{signOutCountdown} seconds</strong>.
-              </p>
-              <p style={{ margin: '0 0 22px', fontSize: '0.875rem', color: '#6B7280', lineHeight: 1.6 }}>
-                Sign in again to access your Casual Worker workspace.
-              </p>
-              <button
-                onClick={signOutToReauth}
-                style={{ width: '100%', padding: '12px', border: 'none', borderRadius: 10, background: 'linear-gradient(135deg, #F97316, #EA580C)', color: '#FFFFFF', fontWeight: 700, fontSize: '0.9375rem', cursor: 'pointer' }}
-              >
-                Sign out now
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </>
   )
 }
@@ -815,6 +771,28 @@ const pillTabButtonActiveStyle: React.CSSProperties = {
   background: 'linear-gradient(180deg, #0F172A 0%, #111827 100%)',
   color: '#FFFFFF',
   boxShadow: '0 6px 18px rgba(15,23,42,0.18)',
+}
+
+// Sits beside the pill tab bar after a Guest confirms an offer — no dismiss control, sized to its
+// own content (not stretched across the row), and persisted through reloads (see
+// CONFIRMED_BANNER_KEY) until the worker's next sign-in clears it.
+const confirmedBannerStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 8,
+  height: 36,
+  padding: '0 16px 0 14px',
+  borderRadius: 999,
+  background: '#F0FDF4',
+  border: '1px solid #BBF7D0',
+  color: '#166534',
+  fontSize: 12.5,
+  fontWeight: 600,
+  maxWidth: '100%',
+}
+
+const confirmedBannerTextStyle: React.CSSProperties = {
+  whiteSpace: 'nowrap',
 }
 
 // Full-width "Withdraw Application" action on the JobCard footer (details open by clicking the

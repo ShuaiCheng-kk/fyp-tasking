@@ -183,9 +183,9 @@ export const recruitmentService = {
     return recruitmentRepository.createJobPosting(finalInput)
   },
 
-  async getDraftPostings(company_id: string, user_id: string): Promise<JobPostingSummary[]> {
-    if (!company_id || !user_id) throw new Error('company_id and user_id are required')
-    const postings = await recruitmentRepository.getDraftPostings(company_id, user_id)
+  async getDraftPostings(company_id: string): Promise<JobPostingSummary[]> {
+    if (!company_id) throw new Error('company_id is required')
+    const postings = await recruitmentRepository.getDraftPostings(company_id)
     const deptIds = [...new Set(postings.map(p => p.department_id).filter((id): id is string => Boolean(id)))]
     const empIds = [...new Set(postings.flatMap(p => [p.assigned_employee_id, p.created_by]).filter((id): id is string => Boolean(id)))]
     const [departments, employees] = await Promise.all([

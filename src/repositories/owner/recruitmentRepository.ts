@@ -38,12 +38,11 @@ export const recruitmentRepository = {
     return (data ?? []) as JobPosting[]
   },
 
-  async getDraftPostings(company_id: string, user_id: string): Promise<JobPosting[]> {
+  async getDraftPostings(company_id: string): Promise<JobPosting[]> {
     const { data, error } = await supabase
       .from('job_postings')
       .select('*')
       .eq('company_id', company_id)
-      .eq('created_by', user_id)
       .eq('status', 'draft')
       .order('created_at', { ascending: false })
     if (error) throw new Error(error.message)

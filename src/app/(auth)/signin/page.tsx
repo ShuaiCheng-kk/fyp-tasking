@@ -95,6 +95,9 @@ function SignInContent() {
       const role: string = data.user?.role ?? '';
       const authUid = authData.user.id;
       localStorage.setItem('tasking_user_id', authUid);
+      // Clears the Guest Applications "offer confirmed" banner (src/app/guest/applications/page.tsx,
+      // CONFIRMED_BANNER_KEY) — it's only meant to carry through to THIS next sign-in, not beyond it.
+      localStorage.removeItem('tasking_confirmed_banner');
       localStorage.removeItem('tasking_company_id');
       if (data.user?.company_id) {
         localStorage.setItem('tasking_company_id_' + authUid, data.user.company_id);

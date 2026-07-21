@@ -100,6 +100,11 @@ export interface DepartmentPerformanceRow {
   internal_attendance_records: number
   // Internal tasks whose deadline fell in the period — denominator of internal_task_on_time_rate.
   internal_tasks_due: number
+  // Requested/hired position counts behind hiring_success_rate (same Closed-postings-only,
+  // position-count-weighted basis — see ReportOverview.hiring_success_rate). Both 0 when there
+  // were no closed postings, matching hiring_success_rate being null in that case.
+  hiring_positions_requested: number
+  hiring_positions_hired: number
 }
 
 // ── 任务负载（按人）─────────────────────────────────────────────────────────
@@ -130,6 +135,7 @@ export interface RecruitmentFunnel {
 export interface RecruitmentPostingRow {
   posting_id: string
   title: string
+  department_id: string | null
   department_name: string | null
   status: string
   openings: number | null

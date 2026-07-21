@@ -4,7 +4,7 @@
 import { openAIService } from '@/services/ai/openAIService'
 import { reportService } from '@/services/owner/reportService'
 import { AIAnomaly } from '@/types/AI'
-import { CompanyReport, DepartmentPerformanceRow, ReportFilters, ReportOverview, ReportPeriod, TaskWorkloadRow } from '@/types/Report'
+import { CompanyReport, DepartmentPerformanceRow, ReportFilters, ReportOverview, ReportPeriod, RecruitmentPostingRow, TaskWorkloadRow } from '@/types/Report'
 
 // 'internal' = Owner Report's Internal tab: Manager/Employee shift coverage, task delivery,
 // attendance, and department-level hiring/cost performance only — no individual Casual Worker
@@ -29,6 +29,12 @@ export type AnomalyScope = 'all' | 'internal'
 //      and the KPI cards trend company-wide totals, so a department going from 5% to 21% is
 //      indistinguishable from one that has been at 21% all along.
 //   3. Cross-measure contradictions that require aligning two charts by department by eye.
+//   4. WHY a department's hiring success rate lags its peers — the chart plots the percentage,
+//      not the applicant funnel behind it. A department can be low because its postings drew few
+//      or no applicants, because applicants came but weren't accepted, or because offers went
+//      unconfirmed — three different problems (or no problem at all, just quiet interest) that
+//      look identical as a bar. This is the one place a bare rate comparison is allowed, and only
+//      because it is never bare — it always ships with the per-posting funnel facts that explain it.
 //
 // Sample-size caveats are also computed, but they are a GUARDRAIL, not a finding: they exist
 // to tell the AI which rates are too small to be worth reporting (a 0% over one task renders
@@ -56,6 +62,7 @@ const INTERNAL_DEPT_KEYS = [
   'rework_count', 'overdue_open', 'internal_attendance_rate', 'internal_attendance_late_rate',
   'internal_attendance_absent_rate', 'internal_attendance_records', 'internal_task_on_time_rate',
   'internal_tasks_due', 'hiring_success_rate', 'average_time_to_fill_days', 'casual_labor_cost',
+  'hiring_positions_requested', 'hiring_positions_hired',
 ] as const
 
 // Below this many records/tasks a percentage swings wildly on a single event, so it carries no
@@ -72,6 +79,11 @@ const MIN_COST_FLOOR = 200
 // one member took most of it. Below this many tasks, a majority share is just a small week.
 const MIN_DEPT_TASKS_FOR_CONCENTRATION = 8
 const MIN_CONCENTRATION_SHARE = 60
+// A department's hiring success rate only earns a card against a real number of requested
+// positions (a 0/1 department is noise) and only when it trails the best comparable department
+// this period by a real margin — a 10-point gap between two decent rates isn't worth a card.
+const MIN_HIRING_SAMPLE_OPENINGS = 3
+const MIN_HIRING_GAP_POINTS = 30
 // The owner pages through cards one at a time — nobody reads dozens. Only the worst few survive.
 const MAX_ANOMALIES = 5
 
@@ -261,6 +273,69 @@ function crossMeasureFacts(report: CompanyReport): string[] {
   return facts
 }
 
+// ── 4. Hiring success rate gap — the chart shows the percentage, not the funnel behind it ─────
+// hiring_success_rate is otherwise chart-visible, so a bare "Department X has the lowest hiring
+// success rate" is the same forbidden single-measure ranking as any other KPI. What makes this
+// one different is that it never ships bare: every fact here carries the per-posting applicant
+// funnel (applicants / accepted / confirmed, and whether the posting is even closed yet) for the
+// SAME department, so the AI reasons from what actually happened on those postings — low
+// applicant interest, applicants who weren't accepted, or offers that were never confirmed — not
+// from the percentage alone. "Nobody applied" is itself a legitimate, non-judgmental explanation;
+// this is not a stick to imply the posting or the department did something wrong.
+function hiringFunnelFacts(report: CompanyReport): string[] {
+  // Needs a real requested-position count (else the rate is a coin flip on 1 or 2 hires) AND at
+  // least one comparably-sized peer department to be behind — a company with only one hiring
+  // department this period has no "peer" to lag, so nothing to report.
+  const eligible = report.departments.filter(
+    row => row.hiring_success_rate !== null && row.hiring_positions_requested >= MIN_HIRING_SAMPLE_OPENINGS,
+  )
+  if (eligible.length < 2) return []
+
+  const postingsByDept = new Map<string, RecruitmentPostingRow[]>()
+  for (const posting of report.casual.postings) {
+    const key = posting.department_id ?? 'none'
+    postingsByDept.set(key, [...(postingsByDept.get(key) ?? []), posting])
+  }
+
+  const facts: string[] = []
+  for (const row of eligible) {
+    const bestPeer = eligible
+      .filter(other => other.department_id !== row.department_id)
+      .reduce<DepartmentPerformanceRow | null>(
+        (best, other) => (!best || other.hiring_success_rate! > best.hiring_success_rate! ? other : best),
+        null,
+      )
+    if (!bestPeer || bestPeer.hiring_success_rate! - row.hiring_success_rate! < MIN_HIRING_GAP_POINTS) continue
+
+    // The rate is real (it came from closed postings), but the funnel facts that EXPLAIN it are
+    // read off every posting the department ran this period, open or closed — a still-open
+    // posting with zero applicants is exactly the kind of explanation this signal exists to surface.
+    const postings = postingsByDept.get(row.department_id ?? 'none') ?? []
+    if (postings.length === 0) continue
+
+    // Four DIFFERENT counts sit next to each other in each posting line (people needed, people who
+    // applied, people accepted, people confirmed) — an AI reading this quickly has previously
+    // conflated "needed N people" with "N postings" or with the applicant count, so every number
+    // here is spelled out with its own distinct label and no two labels share a word.
+    const postingLines = postings.map(p => {
+      const state = p.status === 'open' ? 'is still open and' : 'closed and'
+      const needed = p.openings !== null ? `needed ${p.openings} people` : 'had no fixed headcount'
+      const applied = `drew ${p.applicants} applicant${p.applicants === 1 ? '' : 's'}`
+      const accepted = `accepted ${p.accepted} of them`
+      const confirmed = `ended with ${p.confirmed} confirmed hire${p.confirmed === 1 ? '' : 's'}`
+      return `"${p.title}" ${state} ${needed}, ${applied}, ${accepted}, and ${confirmed}`
+    })
+    const postingCount = `${row.department_name} ran ${postings.length} job posting${postings.length === 1 ? '' : 's'} this period`
+
+    facts.push(
+      `${row.department_name}: hiring success rate was ${row.hiring_success_rate}% this period, well behind ` +
+      `${bestPeer.department_name}'s ${bestPeer.hiring_success_rate}%. ${postingCount}. ${postingLines.join('. ')}.`,
+    )
+  }
+
+  return facts
+}
+
 function buildSignals(report: CompanyReport, scope: AnomalyScope): string[] {
   return [
     ...sampleSizeCaveats(report.departments),
@@ -268,6 +343,7 @@ function buildSignals(report: CompanyReport, scope: AnomalyScope): string[] {
     ...trendFacts(report.departments, report.previous_departments),
     ...costTrendFacts(report.departments, report.previous_departments),
     ...crossMeasureFacts(report),
+    ...hiringFunnelFacts(report),
     ...(scope === 'internal' ? [] : [
       ...report.casual.workers
         .filter(row => row.absent + row.late + row.rejected_shifts > 0)
@@ -289,7 +365,7 @@ function fieldNotes(period: ReportPeriod, previousPeriod: ReportPeriod): string[
     `previous_period (${previousPeriod.date_from} to ${previousPeriod.date_to}) is the preceding period of the same length. previous_departments holds the same per-department rows for it.`,
     'Every field ending in _rate is an integer percentage from 0 to 100 (e.g. 18 means 18%), never a fraction.',
     'A rate of null means there was no data to rate in this period — it does NOT mean 0%. Never report a null rate as 0% and never call it an anomaly.',
-    '`internal_attendance_records` and `internal_tasks_due` are the DENOMINATORS of the rates next to them. A rate over a handful of records is noise, not an anomaly.',
+    '`internal_attendance_records`, `internal_tasks_due`, and `hiring_positions_requested`/`hiring_positions_hired` are the DENOMINATORS of the rates next to them. A rate over a handful of records is noise, not an anomaly.',
     '`overview` figures are company-wide totals across all departments. `department_rows` figures are per-department. A company-wide figure must never be described as belonging to one department.',
     '`department_rows[].internal_*` fields cover Manager/Employee staff only; Casual Workers are excluded from them.',
     'Field names in this input are machine identifiers, never display text — refer to them in output by their plain-English meaning only.',
@@ -341,14 +417,20 @@ export const anomalyDetectionService = {
         'Specifically FORBIDDEN, no matter how bad the number looks:',
         '- "Department X has the lowest/highest attendance rate" or any single-measure ranking of departments.',
         '- "Department X has the lowest/highest on-time task completion rate", including a bare "X is at 0%".',
-        '- "Department X has the lowest/highest hiring success rate or time to fill."',
+        '- "Department X has the lowest/highest hiring success rate or time to fill" stated as a bare percentage comparison with no funnel facts behind it — that alone is exactly the ranking the chart already shows.',
         '- Restating a company-wide KPI or its trend arrow — the cards above the charts already show those.',
-        'ONLY three kinds of finding are allowed, because only these are invisible on the charts:',
+        'ONLY four kinds of finding are allowed, because only these are invisible on the charts:',
         '(a) A department whose work was concentrated on one member over the period — the charts aggregate by department and never show how work was divided between people.',
         '(b) A department whose absent rate, on-time task completion rate, or casual worker cost moved sharply versus the PREVIOUS period — the charts plot this period only, so movement cannot be seen.',
         '(c) A contradiction between two measures for the same department that requires cross-referencing two separate charts — namely staff attending reliably while their tasks still missed deadlines.',
+        '(d) A department whose hiring success rate trailed a peer department by a real margin THIS period, explained by that department\'s own job-posting applicant funnel — a `signals` entry starting "Department: hiring success rate was X% ... Its postings this period: ..." is the ONLY basis for this finding; never invent a (d) finding without one of these signal lines to build it from.',
+        '`evidence` is never shown to the reader, so for a (d) finding the ONE sentence in `title` itself must name the specific posting-level reason, not just the rate — e.g. "Hiring success rate was 33% this period after its only posting, IT Helpdesk Temp Support, drew just 1 applicant for 3 openings" or "Hiring success rate was 0% this period even though Warehouse Temp has been open the whole period with 0 applicants". A title that states only the rate, or only the rate plus a rival department\'s rate, with nothing about the underlying applicant/accepted/confirmed counts is the same forbidden ranking with extra words, and MUST NOT be returned.',
+        'Do NOT explain a (d) finding using `hiring_positions_requested`/`hiring_positions_hired` alone (e.g. "3 positions requested, 1 hired") — those two numbers are the same rate in a different shape, not an explanation. Pull the reason from the posting names and their applicant/accepted/confirmed counts in the matching `signals` line, and weave it into the title sentence itself.',
+        'Each posting line in a (d) signal states FOUR different counts for that ONE posting — how many people it needed, how many applied, how many were accepted, how many were confirmed — plus, separately, how many postings the department ran this period. These are four different things about the same posting, not four different postings. Re-read the labelled words ("needed", "drew", "accepted of them", "confirmed hire(s)", "ran N job posting(s)") before writing the title — do not turn "needed 3 people" into "3 postings", and never say a posting "drew multiple applicants" when the signal states a specific number.',
+        'Reproduce a posting\'s title exactly as it appears in quotes in the signal — never paraphrase, shorten, or rename it.',
+        'State a (d) finding as an observation the owner can act on, not a verdict — low applicant interest is a normal, blameless outcome, not a sign anything was done wrong, so never imply the posting, the manager, or the department is at fault. Do not speculate about causes the funnel numbers cannot show (pay, timing, market conditions) — state only what the applicant/accepted/confirmed counts say.',
         'Never weigh casual worker cost against internal staff delivery: that is money spent on one group of people set against work done by a different group, so the comparison is meaningless. Cost may only be discussed as its own movement versus the previous period.',
-        'If a finding is none of (a), (b) or (c), do not return it.',
+        'If a finding is none of (a), (b), (c) or (d), do not return it.',
         // This is a report: it accounts for a closed period, it does not brief the owner on live state.
         'THIS IS A REPORT ON A FINISHED PERIOD. Every anomaly must describe what HAPPENED during it, in the past tense. Never describe a current state ("X is overloaded", "nobody is assigned to Y") and never predict what will happen next — that belongs on the dashboard, not here.',
         'The `signals` array already contains every such fact, pre-computed and correct. Build your anomalies from it. If a signal explicitly says not to report something, obey it.',

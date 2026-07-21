@@ -192,6 +192,8 @@ async function buildPeriodData(filters: ReportFilters, now: Date): Promise<Perio
       casual_labor_cost: 0,
       internal_attendance_records: 0,
       internal_tasks_due: 0,
+      hiring_positions_requested: 0,
+      hiring_positions_hired: 0,
     }
     deptRows.set(key, row)
     return row
@@ -555,6 +557,7 @@ async function buildPeriodData(filters: ReportFilters, now: Date): Promise<Perio
     return {
       posting_id: posting.id,
       title: posting.title,
+      department_id: posting.department_id,
       department_name: posting.department_id ? (departmentNames.get(posting.department_id) ?? null) : null,
       status: posting.status,
       openings: posting.openings,
@@ -590,6 +593,8 @@ async function buildPeriodData(filters: ReportFilters, now: Date): Promise<Perio
   deptRows.forEach((row, key) => {
     const bucket = deptHiring.get(key)
     row.hiring_success_rate = bucket ? percent(bucket.hired, bucket.requested) : null
+    row.hiring_positions_requested = bucket?.requested ?? 0
+    row.hiring_positions_hired = bucket?.hired ?? 0
   })
 
   // Average Time to Fill: mean days_to_fill across postings that reached full headcount in this

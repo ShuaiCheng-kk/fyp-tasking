@@ -389,15 +389,6 @@ export default function CasualDashboardPage() {
     </>
   )
 
-  const cancelShiftButton = (
-    <button
-      type="button"
-      onClick={() => { setShowCancelConfirm(true); setCancelReason(''); setCancelError('') }}
-      style={{ display: 'inline-flex', alignItems: 'center', gap: 5, height: 30, padding: '0 12px', borderRadius: 8, border: '1px solid #FECACA', background: '#FEF2F2', color: '#DC2626', fontWeight: 700, fontSize: '0.78rem', cursor: 'pointer' }}
-    >
-      <XCircle size={13} /> Cancel Shift
-    </button>
-  )
 
   // One contact row — avatar left, name/phone/email beside it. Used for the shift Supervisor
   // and for the Owner/Manager who posted the job (roleLabel distinguishes the poster).
@@ -539,11 +530,6 @@ export default function CasualDashboardPage() {
                   requirements), same panel the worker saw when applying. */}
               <div style={{ flex: '0 1 auto', minWidth: 160 }}>
                 {jobInfoHeader}
-                {!selClockedIn && (
-                  <div style={{ marginTop: 16 }}>
-                    {cancelShiftButton}
-                  </div>
-                )}
               </div>
 
               {showWorkPanels && !isCompact && <div style={{ width: 1, alignSelf: 'stretch', background: '#F3F4F6', flexShrink: 0, marginLeft: 'auto' }} />}

@@ -1,10 +1,11 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import {
   Briefcase, Building2, CalendarDays, ChevronLeft, ChevronRight, Clock, Coffee,
-  DollarSign, FileText, History, Mail, Phone, UserCheck, UserRound, Wallet,
+  DollarSign, FileText, History, Mail, Phone, UserCheck, UserRound, Wallet, X,
 } from 'lucide-react'
 import { TitledBlock } from '@/components/panel'
 import { JobDetailPanel, JobView } from '@/components/jobs/JobPresentation'
@@ -107,6 +108,129 @@ function LiveDot() {
   return <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#EA580C', display: 'inline-block', animation: 'attendanceLiveDotPulse 1.4s ease-in-out infinite' }} />
 }
 
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+// Compact month-picker popover — trigger button (shows "All Months" or the selected "Mon YYYY")
+// + year-stepped 3x4 month grid, with a clear ("x") affordance once a month is picked. Filters
+// Total Earned's Jobs/Pay and the Records list to that calendar month; null = show everything.
+// Portaled to document.body (same pattern as DatePickerField) — a plain position:absolute child
+// gets trapped behind later sibling blocks whenever an ancestor's own animation/transform
+// promotes it to a stacking context (this page's TitledBlocks all animate in on mount).
+function MonthPicker({ value, onChange }: { value: string | null; onChange: (v: string | null) => void }) {
+  const [open, setOpen] = useState(false)
+  const [viewYear, setViewYear] = useState(() => (value ? Number(value.slice(0, 4)) : new Date().getFullYear()))
+  const [pos, setPos] = useState({ top: 0, left: 0 })
+  const [mounted, setMounted] = useState(false)
+  const triggerRef = useRef<HTMLButtonElement | null>(null)
+  const popoverRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => { setMounted(true) }, [])
+
+  useEffect(() => {
+    if (!open) return
+    const onDocClick = (e: MouseEvent) => {
+      if (triggerRef.current?.contains(e.target as Node) || popoverRef.current?.contains(e.target as Node)) return
+      setOpen(false)
+    }
+    document.addEventListener('mousedown', onDocClick)
+    return () => document.removeEventListener('mousedown', onDocClick)
+  }, [open])
+
+  const label = value ? `${MONTH_NAMES[Number(value.slice(5, 7)) - 1]} ${value.slice(0, 4)}` : 'All Months'
+  const POPOVER_WIDTH = 224
+
+  const handleOpen = () => {
+    if (!open && triggerRef.current) {
+      const r = triggerRef.current.getBoundingClientRect()
+      setPos({ top: r.bottom + 6, left: Math.min(r.left, window.innerWidth - POPOVER_WIDTH - 8) })
+      setViewYear(value ? Number(value.slice(0, 4)) : new Date().getFullYear())
+    }
+    setOpen(o => !o)
+  }
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <button
+        ref={triggerRef}
+        type="button"
+        onClick={handleOpen}
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.78rem', fontWeight: 700,
+          color: value ? '#EA580C' : '#374151', background: value ? '#FFF7ED' : '#FFFFFF',
+          border: `1.5px solid ${value ? '#FDBA74' : '#E5E7EB'}`, borderRadius: 8, padding: '6px 10px 6px 8px',
+          cursor: 'pointer', whiteSpace: 'nowrap',
+        }}
+      >
+        <CalendarDays size={13} /> {label}
+      </button>
+      {value && (
+        <button
+          type="button"
+          onClick={() => onChange(null)}
+          title="Clear month filter"
+          style={{
+            position: 'absolute', top: -6, right: -6, width: 16, height: 16, borderRadius: '50%',
+            background: '#DC2626', color: '#FFFFFF', border: '1.5px solid #FFFFFF', display: 'flex',
+            alignItems: 'center', justifyContent: 'center', cursor: 'pointer', padding: 0,
+          }}
+        >
+          <X size={9} strokeWidth={3} />
+        </button>
+      )}
+      {open && mounted && createPortal(
+        <div ref={popoverRef} style={{
+          position: 'fixed', top: pos.top, left: pos.left, zIndex: 99999, width: POPOVER_WIDTH,
+          background: '#FFFFFF', border: '1.5px solid #E5E7EB', borderRadius: 12,
+          boxShadow: '0 16px 48px rgba(15,23,42,0.14), 0 2px 8px rgba(0,0,0,0.06)', padding: 12,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+            <button type="button" onClick={() => setViewYear(y => y - 1)}
+              style={{ width: 26, height: 26, borderRadius: 7, border: '1px solid #E5E7EB', background: '#FFFFFF', color: '#6B7280', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+              <ChevronLeft size={14} />
+            </button>
+            <span style={{ fontSize: '0.85rem', fontWeight: 800, color: '#111827' }}>{viewYear}</span>
+            <button type="button" onClick={() => setViewYear(y => y + 1)}
+              style={{ width: 26, height: 26, borderRadius: 7, border: '1px solid #E5E7EB', background: '#FFFFFF', color: '#6B7280', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+              <ChevronRight size={14} />
+            </button>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
+            {MONTH_NAMES.map((m, i) => {
+              const key = `${viewYear}-${String(i + 1).padStart(2, '0')}`
+              const active = value === key
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => { onChange(key); setOpen(false) }}
+                  style={{
+                    padding: '8px 0', borderRadius: 8, cursor: 'pointer',
+                    border: `1.5px solid ${active ? '#F97316' : '#E5E7EB'}`,
+                    background: active ? '#FFF7ED' : '#FFFFFF',
+                    color: active ? '#EA580C' : '#374151', fontSize: '0.78rem', fontWeight: 700,
+                  }}
+                >
+                  {m}
+                </button>
+              )
+            })}
+          </div>
+          {value && (
+            <button
+              type="button"
+              onClick={() => { onChange(null); setOpen(false) }}
+              style={{ marginTop: 10, width: '100%', padding: '7px 0', borderRadius: 8, border: '1.5px solid #E5E7EB', background: '#FFFFFF', color: '#6B7280', fontSize: '0.76rem', fontWeight: 700, cursor: 'pointer' }}
+            >
+              Clear Filter
+            </button>
+          )}
+        </div>,
+        document.body
+      )}
+    </div>
+  )
+}
+
 export default function CasualAttendancePage() {
   const router = useRouter()
   const isCompact = useIsCompactViewport(1300)
@@ -115,6 +239,9 @@ export default function CasualAttendancePage() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [hoveredId, setHoveredId] = useState<string | null>(null)
   const [page, setPage] = useState(1)
+  // null = no filter (every record). 'YYYY-MM' scopes Total Earned's Jobs/Pay and the Records
+  // list to that calendar month, cleared via the MonthPicker's own "x"/Clear Filter affordance.
+  const [monthFilter, setMonthFilter] = useState<string | null>(null)
   // Records per page is derived from the list's real height so the cards always fill the block
   // exactly — no dead space under the last card, no internal scrolling.
   const [pageSize, setPageSize] = useState(8)
@@ -157,7 +284,9 @@ export default function CasualAttendancePage() {
     void load()
   }, [router])
 
-  const selected = history.find(e => e.id === selectedId) ?? null
+  const filteredHistory = monthFilter ? history.filter(e => e.shift_date.slice(0, 7) === monthFilter) : history
+
+  const selected = filteredHistory.find(e => e.id === selectedId) ?? null
 
   useEffect(() => {
     setDetailJob(null)
@@ -172,12 +301,20 @@ export default function CasualAttendancePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected?.job_posting_id])
 
-  const totalEarned = history.reduce((sum, e) => sum + (e.pay ?? 0), 0)
-  const completedCount = history.filter(e => e.status === 'completed').length
+  // Changing the month filter can strand the current selection outside the new set (or leave the
+  // list showing page 2 of a now-shorter list) — reset both to stay in sync with the new records.
+  useEffect(() => {
+    setPage(1)
+    setSelectedId(filteredHistory.length > 0 ? filteredHistory[0].id : null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [monthFilter])
 
-  const totalPages = Math.max(1, Math.ceil(history.length / pageSize))
+  const totalEarned = filteredHistory.reduce((sum, e) => sum + (e.pay ?? 0), 0)
+  const completedCount = filteredHistory.filter(e => e.status === 'completed').length
+
+  const totalPages = Math.max(1, Math.ceil(filteredHistory.length / pageSize))
   const safePage = Math.min(page, totalPages)
-  const pageEntries = history.slice((safePage - 1) * pageSize, safePage * pageSize)
+  const pageEntries = filteredHistory.slice((safePage - 1) * pageSize, safePage * pageSize)
 
   return (
     <main style={pageStyle}>
@@ -201,6 +338,7 @@ export default function CasualAttendancePage() {
             <TitledBlock
               icon={<Wallet size={15} color="#F97316" />}
               title="Total Earned"
+              headerRight={<MonthPicker value={monthFilter} onChange={setMonthFilter} />}
               containerStyle={{ flexShrink: 0, animation: 'attendanceFadeSlideUp 0.35s ease both' }}
             >
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
@@ -221,6 +359,11 @@ export default function CasualAttendancePage() {
               bodyStyle={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 10 }}
             >
               <div ref={listRef} style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {filteredHistory.length === 0 && (
+                <div style={{ padding: '28px 0', textAlign: 'center', background: '#F8FAFC', borderRadius: 12 }}>
+                  <p style={{ margin: 0, fontSize: '0.85rem', color: '#94A3B8' }}>No records for this month.</p>
+                </div>
+              )}
               {pageEntries.map((entry, i) => {
                 const active = entry.id === selectedId
                 const hovered = entry.id === hoveredId
@@ -303,7 +446,13 @@ export default function CasualAttendancePage() {
               (Job Detail / Supervisor / Attendance Timeline / Payment Summary) the same way the
               Dashboard lays out separate TitledBlocks, instead of one big wrapper card. ===== */}
           <div style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
-            {selected && <RecordDetail key={selected.id} entry={selected} isCompact={isCompact} detailJob={detailJob} />}
+            {selected ? (
+              <RecordDetail key={selected.id} entry={selected} isCompact={isCompact} detailJob={detailJob} />
+            ) : (
+              <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F8FAFC', borderRadius: 14 }}>
+                <p style={{ margin: 0, fontSize: '0.9rem', color: '#94A3B8' }}>No records for this month.</p>
+              </div>
+            )}
           </div>
         </div>
       )}

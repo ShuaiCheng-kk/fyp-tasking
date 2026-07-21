@@ -48,7 +48,18 @@ export default function WorkerLayout({
         const data = await res.json()
         if (!data.success) throw new Error(data.message || 'Failed to load profile')
 
-        const userRole = data.profile.role as WorkerRole
+        // The role for THIS session is the one signin/page.tsx stamped into localStorage at
+        // login, not whatever the DB says right now — accepting a job offer promotes the
+        // account to Casual Worker immediately server-side, but swapping the sidebar/menu out
+        // from under the worker mid-session (e.g. the instant they click into Profile) would be
+        // confusing. That switch is only supposed to happen on their NEXT sign-in. Only fall
+        // back to the live DB role if nothing usable was stored (shouldn't happen via the
+        // normal sign-in flow).
+        const storedRole = localStorage.getItem('tasking_user_role')
+        const userRole: WorkerRole =
+          storedRole === 'Guest User' || storedRole === 'Casual Worker'
+            ? storedRole
+            : (data.profile.role as WorkerRole)
         setRole(userRole)
 
         if (userRole === 'Guest User') {

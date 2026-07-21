@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
 import {
   Archive, ArchiveRestore, ArrowRight, Briefcase, Building2, Cake, Check, CheckCircle, ChevronDown, ChevronLeft, ChevronRight,
-  ClipboardList, Clock, Copy, Crown, DollarSign, Eye, FileText, LayoutGrid, Lock, MapPin,
+  ClipboardList, Clock, Copy, Crown, DollarSign, Eye, FileText, LayoutGrid, Lock, MapPin, MousePointerClick,
   Pencil, Plus, Repeat, Send, Shirt, Sparkles, Timer, Trash2, UserCheck, UserX, Users,
   X, XCircle, Zap,
 } from 'lucide-react'
@@ -1014,9 +1014,9 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
       const [liveRes, pendingRes, draftsRes, deptRes, templatesRes] = await Promise.all([
         fetch(`/api/recruitment?company_id=${cid}`),
         fetch(`/api/recruitment?company_id=${cid}&resource=pending_approval`),
-        fetch(`/api/recruitment?company_id=${cid}&resource=drafts&user_id=${uid}`),
+        fetch(`/api/recruitment?company_id=${cid}&resource=drafts`),
         fetch(`/api/company/departments?company_id=${cid}`),
-        fetch(`/api/job-template?company_id=${cid}&created_by=${uid}`),
+        fetch(`/api/job-template?company_id=${cid}`),
       ])
       const [liveData, pendingData, draftsData, deptData, templatesData] = await Promise.all([
         liveRes.json(), pendingRes.json(), draftsRes.json(), deptRes.json(), templatesRes.json(),
@@ -1277,7 +1277,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
       openings: scheduleReached && formOpenings ? Math.max(1, parseInt(formOpenings, 10) || 1) : null,
       uniform_required: formUniformType === 'company' || formUniformType === 'dress_code',
       uniform_type: formUniformType || null,
-      uniform_details: formUniformType === 'company' || formUniformType === 'dress_code' ? (formUniformDetails || null) : null,
+      uniform_details: formUniformType === 'dress_code' ? (formUniformDetails || null) : null,
       location: formLocation || null,
       employment_type: formEmpType || null,
       company_name: formCompanyName || companyName || null,
@@ -1411,7 +1411,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
     salary_type: formJobType === 'shift' ? 'per hour' : 'flat rate',
     uniform_required: formUniformType === 'company' || formUniformType === 'dress_code',
     uniform_type: formUniformType || 'none',
-    uniform_details: formUniformType === 'company' || formUniformType === 'dress_code' ? (formUniformDetails || null) : null,
+    uniform_details: formUniformType === 'dress_code' ? (formUniformDetails || null) : null,
     experience_required: formExperienceRequired || null,
     minimum_age: formMinimumAge || null,
     estimated_hours: formJobType === 'oneoff' ? (formEstHours || null) : null,
@@ -1424,7 +1424,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
     if (!formDescription.trim()) { setFormError('Description is required to save a template'); return }
     if (!formRequirements.trim()) { setFormError('Requirements are required to save a template'); return }
     if (formJobType === 'oneoff' && !formEstHours) { setFormError('Estimated hours are required to save a template'); return }
-    if ((formUniformType === 'company' || formUniformType === 'dress_code') && !formUniformDetails.trim()) { setFormError('Uniform details are required to save a template'); return }
+    if (formUniformType === 'dress_code' && !formUniformDetails.trim()) { setFormError('Dress code details are required to save a template'); return }
     if (!formExperienceRequired) { setFormError('Experience requirement is required to save a template'); return }
     if (!formMinimumAge) { setFormError('Minimum age is required to save a template'); return }
     if (!formDeptId) { setFormError('Department is required to save a template'); return }
@@ -1465,7 +1465,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
     if (!ntplRequirements.trim()) { setNtplError('Skills & qualifications are required'); return }
     if (ntplFormType === 'oneoff' && !ntplEstimatedHours) { setNtplError('Estimated hours are required'); return }
     if (!ntplUniformType) { setNtplError('Uniform requirement is required'); return }
-    if ((ntplUniformType === 'company' || ntplUniformType === 'dress_code') && !ntplUniformDetails.trim()) { setNtplError('Uniform details are required'); return }
+    if (ntplUniformType === 'dress_code' && !ntplUniformDetails.trim()) { setNtplError('Dress code details are required'); return }
     if (!ntplExperienceRequired) { setNtplError('Experience requirement is required'); return }
     if (!ntplMinimumAge) { setNtplError('Minimum age is required'); return }
     if (!ntplDepartmentId) { setNtplError('Department is required'); return }
@@ -1484,7 +1484,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
           salary_type: ntplFormType === 'shift' ? 'per hour' : 'flat rate',
           uniform_required: ntplUniformType === 'company' || ntplUniformType === 'dress_code',
           uniform_type: ntplUniformType || 'none',
-          uniform_details: ntplUniformType === 'company' || ntplUniformType === 'dress_code' ? (ntplUniformDetails || null) : null,
+          uniform_details: ntplUniformType === 'dress_code' ? (ntplUniformDetails || null) : null,
           experience_required: ntplExperienceRequired || null,
           minimum_age: ntplMinimumAge || null,
           estimated_hours: ntplFormType === 'oneoff' ? (ntplEstimatedHours || null) : null,
@@ -1538,7 +1538,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
     if (!tplDescription.trim()) { setTplError('Job scope is required'); return }
     if (!tplRequirements.trim()) { setTplError('Skills & qualifications are required'); return }
     if (tplFormType === 'oneoff' && !tplEstimatedHours) { setTplError('Estimated hours are required'); return }
-    if ((tplUniformType === 'company' || tplUniformType === 'dress_code') && !tplUniformDetails.trim()) { setTplError('Uniform details are required'); return }
+    if (tplUniformType === 'dress_code' && !tplUniformDetails.trim()) { setTplError('Dress code details are required'); return }
     if (!tplExperienceRequired) { setTplError('Experience requirement is required'); return }
     if (!tplMinimumAge) { setTplError('Minimum age is required'); return }
     if (!tplDepartmentId) { setTplError('Department is required'); return }
@@ -1557,7 +1557,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
           salary_type: tplFormType === 'shift' ? 'per hour' : 'flat rate',
           uniform_required: tplUniformType === 'company' || tplUniformType === 'dress_code',
           uniform_type: tplUniformType || 'none',
-          uniform_details: tplUniformType === 'company' || tplUniformType === 'dress_code' ? (tplUniformDetails || null) : null,
+          uniform_details: tplUniformType === 'dress_code' ? (tplUniformDetails || null) : null,
           experience_required: tplExperienceRequired || null,
           minimum_age: tplMinimumAge || null,
           estimated_hours: tplFormType === 'oneoff' ? (tplEstimatedHours || null) : null,
@@ -1600,7 +1600,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
       if (!formExperienceRequired) { setFormError('Experience requirement is required to publish'); return }
       if (!formMinimumAge) { setFormError('Minimum age is required to publish'); return }
       if (!formUniformType) { setFormError('Uniform requirement is required to publish'); return }
-      if ((formUniformType === 'company' || formUniformType === 'dress_code') && !formUniformDetails.trim()) { setFormError('Uniform details are required to publish'); return }
+      if (formUniformType === 'dress_code' && !formUniformDetails.trim()) { setFormError('Dress code details are required to publish'); return }
       if (formJobType === 'oneoff' && !formEstHours) { setFormError('Estimated hours are required to publish'); return }
       if (formJobType === 'oneoff' && !formJobStartTime) { setFormError('Start time is required to publish'); return }
       if (!formDeptId) { setFormError('Department is required to publish'); return }
@@ -1845,7 +1845,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
     try {
       const res = await fetch('/api/recruitment', {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: decision, job_id: jobId, rejection_reason: rejection_reason ?? '' }),
+        body: JSON.stringify({ action: decision, job_id: jobId, rejection_reason: rejection_reason ?? '', rejected_by: internalUserId }),
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'Failed to update posting')
@@ -2182,6 +2182,27 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                   </div>
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  {/* Icon legend — explains the three counters every job card shows below */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '7px 12px', background: '#F8FAFC', border: `1px solid ${PANEL_BORDER}`, borderRadius: 8, flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 18, height: 18, borderRadius: 999, background: '#FFF7ED', color: '#EA580C', flexShrink: 0 }}>
+                        <Users size={11} />
+                      </span>
+                      <span style={{ fontSize: 11, color: '#64748B', fontWeight: 600 }}>Pending review</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 18, height: 18, borderRadius: 999, background: '#FFFBEB', color: '#B45309', flexShrink: 0 }}>
+                        <Clock size={11} />
+                      </span>
+                      <span style={{ fontSize: 11, color: '#64748B', fontWeight: 600 }}>Awaiting reply</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 18, height: 18, borderRadius: 999, background: '#ECFDF5', color: '#059669', flexShrink: 0 }}>
+                        <UserCheck size={11} />
+                      </span>
+                      <span style={{ fontSize: 11, color: '#64748B', fontWeight: 600 }}>Positions to fill</span>
+                    </div>
+                  </div>
                   {sortedJobsPostings.map((p, idx) => {
                   const isSelected = selectedLiveId === p.id
                   const active = isSelected
@@ -2540,7 +2561,14 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                             </div>
                             <p style={{ margin: 0, fontSize: '0.875rem', fontWeight: 600, color: '#6B7280' }}>No applicants yet</p>
                           </div>
-                        ) : pendingApplicants.map(applicant => {
+                        ) : (
+                          <>
+                            {/* Hints that an applicant's photo opens their full profile */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 12px', marginBottom: 12, background: '#F8FAFC', border: `1px solid ${PANEL_BORDER}`, borderRadius: 8 }}>
+                              <MousePointerClick size={12} style={{ color: '#94A3B8', flexShrink: 0 }} />
+                              <span style={{ fontSize: 11, color: '#64748B', fontWeight: 600 }}>Click an applicant&apos;s photo to view their full details</span>
+                            </div>
+                            {pendingApplicants.map(applicant => {
                           const rec = recommendations.find(r => r.applicant_id === applicant.id)
                           return (
                             <ApplicantCard
@@ -2589,7 +2617,9 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                               ))}
                             </ApplicantCard>
                           )
-                        })}
+                            })}
+                          </>
+                        )}
                   </div>
                 </div>
 
@@ -3328,18 +3358,27 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                             </div>
                             <p style={{ margin: 0, fontSize: '0.875rem', fontWeight: 600, color: '#6B7280' }}>No applicants yet</p>
                           </div>
-                        ) : archivedApplicants.map(applicant => (
-                          <ApplicantCard
-                            key={applicant.id}
-                            applicant={applicant}
-                            onOpenDetail={() => setApplicantDetail(applicant)}
-                            actions={
-                              applicant.status === 'accepted' && applicant.invitation_status === 'accepted'
-                                ? <ApplicantPill tone={{ bg: '#F0FDF4', border: '#BBF7D0', text: '#15803D' }} icon={<UserCheck size={13} />} label="Confirmed" />
-                                : (applicantStatusPill(applicant) ?? <ApplicantPill tone={{ bg: '#F3F4F6', border: '#E5E7EB', text: '#6B7280' }} label="Pending" />)
-                            }
-                          />
-                        ))}
+                        ) : (
+                          <>
+                            {/* Hints that an applicant's photo opens their full profile */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 12px', marginBottom: 12, background: '#F8FAFC', border: `1px solid ${PANEL_BORDER}`, borderRadius: 8 }}>
+                              <MousePointerClick size={12} style={{ color: '#94A3B8', flexShrink: 0 }} />
+                              <span style={{ fontSize: 11, color: '#64748B', fontWeight: 600 }}>Click an applicant&apos;s photo to view their full details</span>
+                            </div>
+                            {archivedApplicants.map(applicant => (
+                              <ApplicantCard
+                                key={applicant.id}
+                                applicant={applicant}
+                                onOpenDetail={() => setApplicantDetail(applicant)}
+                                actions={
+                                  applicant.status === 'accepted' && applicant.invitation_status === 'accepted'
+                                    ? <ApplicantPill tone={{ bg: '#F0FDF4', border: '#BBF7D0', text: '#15803D' }} icon={<UserCheck size={13} />} label="Confirmed" />
+                                    : (applicantStatusPill(applicant) ?? <ApplicantPill tone={{ bg: '#F3F4F6', border: '#E5E7EB', text: '#6B7280' }} label="Pending" />)
+                                }
+                              />
+                            ))}
+                          </>
+                        )}
                   </div>
                 </div>
               </div>
@@ -3456,14 +3495,14 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                           onChange={v => setTplUniformType(v as UniformType)}
                         />
                       </div>
-                      {(tplUniformType === 'company' || tplUniformType === 'dress_code') && (
+                      {tplUniformType === 'dress_code' && (
                         <div style={{ minWidth: 0 }}>
-                          <label style={modalLabelStyle}>{tplUniformType === 'company' ? 'Uniform Details' : 'Dress Code'}</label>
+                          <label style={modalLabelStyle}>Dress Code</label>
                           <textarea
                             value={tplUniformDetails}
                             onChange={e => setTplUniformDetails(e.target.value)}
                             rows={2}
-                            placeholder={tplUniformType === 'company' ? 'e.g. Black polo shirt, black apron' : 'e.g. Black shirt, black pants, black shoes'}
+                            placeholder="e.g. Black shirt, black pants, black shoes"
                             style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }}
                             onFocus={e => { e.currentTarget.style.borderColor = '#F97316' }}
                             onBlur={e => { e.currentTarget.style.borderColor = '#E5E7EB' }}
@@ -3618,9 +3657,9 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                           <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0, whiteSpace: 'pre-line' }}>{tplRequirements || '—'}</p>
                         </div>
 
-                        {(tplUniformType === 'company' || tplUniformType === 'dress_code') && (
+                        {tplUniformType === 'dress_code' && (
                           <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 20 }}>
-                            <p style={{ ...modalLabelStyle, margin: '0 0 8px' }}>{tplUniformType === 'company' ? 'Uniform Details' : 'Dress Code'}</p>
+                            <p style={{ ...modalLabelStyle, margin: '0 0 8px' }}>Dress Code</p>
                             <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0, whiteSpace: 'pre-line' }}>{tplUniformDetails || '—'}</p>
                           </div>
                         )}
@@ -3678,7 +3717,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                         const toFill: { label: string; hint: string }[] = []
                         if (!tplDepartmentId) toFill.push({ label: 'Department', hint: 'Select department' })
                         if (!tplSalaryAmt || Number(tplSalaryAmt) <= 0) toFill.push({ label: tplFormType === 'shift' ? 'Hourly Rate' : 'Flat Rate', hint: '$ 0.00' })
-                        if ((tplUniformType === 'company' || tplUniformType === 'dress_code') && !tplUniformDetails.trim()) toFill.push({ label: tplUniformType === 'company' ? 'Uniform Details' : 'Dress Code', hint: 'e.g. Black polo shirt, black apron' })
+                        if (tplUniformType === 'dress_code' && !tplUniformDetails.trim()) toFill.push({ label: 'Dress Code', hint: 'e.g. Black shirt, black pants, black shoes' })
                         if (tplFormType === 'oneoff' && !tplEstimatedHours) toFill.push({ label: 'Est. Hours', hint: 'e.g. 5' })
                         if (tplFormType === 'shift') {
                           toFill.push(
@@ -4019,14 +4058,14 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                       onChange={v => setNtplUniformType(v as UniformType)}
                     />
                   </div>
-                  {(ntplUniformType === 'company' || ntplUniformType === 'dress_code') && (
+                  {ntplUniformType === 'dress_code' && (
                     <div style={{ minWidth: 0 }}>
-                      <label style={modalLabelStyle}>{ntplUniformType === 'company' ? 'Uniform Details' : 'Dress Code'}</label>
+                      <label style={modalLabelStyle}>Dress Code</label>
                       <textarea
                         value={ntplUniformDetails}
                         onChange={e => setNtplUniformDetails(e.target.value)}
                         rows={2}
-                        placeholder={ntplUniformType === 'company' ? 'e.g. Black polo shirt, black apron' : 'e.g. Black shirt, black pants, black shoes'}
+                        placeholder="e.g. Black shirt, black pants, black shoes"
                         style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }}
                         onFocus={e => { e.currentTarget.style.borderColor = '#F97316' }}
                         onBlur={e => { e.currentTarget.style.borderColor = '#E5E7EB' }}
@@ -4093,7 +4132,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
               ) : (
                 (() => {
                   const step2Incomplete = templateActionLoading || !ntplUniformType
-                    || ((ntplUniformType === 'company' || ntplUniformType === 'dress_code') && !ntplUniformDetails.trim())
+                    || (ntplUniformType === 'dress_code' && !ntplUniformDetails.trim())
                     || !ntplExperienceRequired || !ntplMinimumAge
                     || !ntplDepartmentId || !ntplSalaryAmt || Number(ntplSalaryAmt) <= 0
                   return (
@@ -4188,7 +4227,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
         // Apply Template: Post stays disabled until every field is filled — mirrors saveForm's publish validation
         const applyReady = !!(formTitle.trim() && formDescription.trim() && formRequirements.trim()
           && formExperienceRequired && formMinimumAge
-          && (!(formUniformType === 'company' || formUniformType === 'dress_code') || formUniformDetails.trim())
+          && (formUniformType !== 'dress_code' || formUniformDetails.trim())
           && formDeptId && formSalaryAmt && Number(formSalaryAmt) > 0
           && formShiftDate && formAssignedEmployeeId
           && (formJobType !== 'shift' || (formShiftStart && formShiftEnd && formBreakStart && formBreakEnd))
@@ -4200,7 +4239,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
         // Save as Template appears in the create wizard once every field a template stores is filled
         // (department + pay live on the last step, so it only ever lights up there)
         const templateReady = !!(formTitle.trim() && formDescription.trim() && formRequirements.trim()
-          && (!(formUniformType === 'company' || formUniformType === 'dress_code') || formUniformDetails.trim())
+          && (formUniformType !== 'dress_code' || formUniformDetails.trim())
           && formExperienceRequired && formMinimumAge && formDeptId
           && formSalaryAmt && Number(formSalaryAmt) > 0
           && (formJobType !== 'oneoff' || formEstHours))
@@ -4335,10 +4374,10 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                             rows={3} style={{ ...iStyle, resize: 'none', overflow: 'hidden', lineHeight: 1.6, verticalAlign: 'top' }} />
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-                          <button onClick={() => setAiPreview(null)} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: '1px solid #E5E7EB', borderRadius: 10, background: '#FFFFFF', color: '#6B7280', height: 36, padding: '0 12px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
-                            Regenerate
+                          <button onClick={handleAIGenerate} disabled={aiLoading} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: '1px solid #E5E7EB', borderRadius: 10, background: '#FFFFFF', color: '#6B7280', height: 36, padding: '0 12px', fontSize: 13, fontWeight: 700, cursor: aiLoading ? 'default' : 'pointer', opacity: aiLoading ? 0.6 : 1 }}>
+                            {aiLoading ? <><Spinner size={13} /> Regenerating…</> : 'Regenerate'}
                           </button>
-                          <button onClick={handleUseAIDraft} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: accent, color: '#FFFFFF', height: 36, padding: '0 12px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+                          <button onClick={handleUseAIDraft} disabled={aiLoading} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: accent, color: '#FFFFFF', height: 36, padding: '0 12px', fontSize: 13, fontWeight: 700, cursor: aiLoading ? 'default' : 'pointer', opacity: aiLoading ? 0.6 : 1 }}>
                             Continue
                           </button>
                         </div>
@@ -4450,10 +4489,10 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                             onChange={v => setFormUniformType(v as UniformType)}
                           />
                         </div>
-                        {(formUniformType === 'company' || formUniformType === 'dress_code') && (
+                        {formUniformType === 'dress_code' && (
                           <div>
-                            <label style={lStyle}>{formUniformType === 'company' ? 'Uniform Details' : 'Dress Code'}</label>
-                            <textarea value={formUniformDetails} onChange={e => setFormUniformDetails(e.target.value)} rows={2} placeholder={formUniformType === 'company' ? 'e.g. Black polo shirt, black apron' : 'e.g. Black shirt, black pants, black shoes'} style={{ ...iStyle, resize: 'vertical', lineHeight: 1.55, verticalAlign: 'top' }} />
+                            <label style={lStyle}>Dress Code</label>
+                            <textarea value={formUniformDetails} onChange={e => setFormUniformDetails(e.target.value)} rows={2} placeholder="e.g. Black shirt, black pants, black shoes" style={{ ...iStyle, resize: 'vertical', lineHeight: 1.55, verticalAlign: 'top' }} />
                           </div>
                         )}
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
@@ -4681,10 +4720,10 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                         onChange={v => setFormUniformType(v as UniformType)}
                       />
                     </div>
-                    {(formUniformType === 'company' || formUniformType === 'dress_code') && (
+                    {formUniformType === 'dress_code' && (
                       <div>
-                        <label style={lStyle}>{formUniformType === 'company' ? 'Uniform Details' : 'Dress Code'}</label>
-                        <textarea value={formUniformDetails} onChange={e => setFormUniformDetails(e.target.value)} rows={2} placeholder={formUniformType === 'company' ? 'e.g. Black polo shirt, black apron' : 'e.g. Black shirt, black pants, black shoes'} style={{ ...iStyle, resize: 'vertical', lineHeight: 1.55, verticalAlign: 'top' }} />
+                        <label style={lStyle}>Dress Code</label>
+                        <textarea value={formUniformDetails} onChange={e => setFormUniformDetails(e.target.value)} rows={2} placeholder="e.g. Black shirt, black pants, black shoes" style={{ ...iStyle, resize: 'vertical', lineHeight: 1.55, verticalAlign: 'top' }} />
                       </div>
                     )}
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
@@ -4892,7 +4931,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                     (() => {
                       const nextDisabled = applyStep === 1
                         ? (!formTitle.trim() || !formDescription.trim() || !formRequirements.trim() || (formJobType === 'oneoff' && !formEstHours))
-                        : (!formUniformType || ((formUniformType === 'company' || formUniformType === 'dress_code') && !formUniformDetails.trim()) || !formExperienceRequired || !formMinimumAge)
+                        : (!formUniformType || (formUniformType === 'dress_code' && !formUniformDetails.trim()) || !formExperienceRequired || !formMinimumAge)
                       return (
                         <button
                           onClick={() => { setFormError(''); setApplyStep((applyStep + 1) as 2 | 3) }}
@@ -4906,7 +4945,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                     (() => {
                       const nextDisabled = !formTitle.trim() || !formDescription.trim() || !formRequirements.trim()
                         || (formJobType === 'oneoff' && !formEstHours)
-                        || !formUniformType || ((formUniformType === 'company' || formUniformType === 'dress_code') && !formUniformDetails.trim())
+                        || !formUniformType || (formUniformType === 'dress_code' && !formUniformDetails.trim())
                         || !formExperienceRequired || !formMinimumAge
                       return (
                         <button

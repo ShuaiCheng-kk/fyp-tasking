@@ -129,14 +129,24 @@ function getAttendanceExceptions(input: {
   shift_date: string
   start_time: string
   end_time: string
-  record: { clock_in_time: string | null; clock_out_time: string | null; owner_status: string } | null
+  record: {
+    clock_in_time: string | null
+    clock_out_time: string | null
+    owner_status: string
+    owner_adjusted_clock_in_time?: string | null
+    owner_adjusted_clock_out_time?: string | null
+  } | null
 }): AttendanceExceptionType[] {
   const exceptions: AttendanceExceptionType[] = []
   const shiftEnd = combineDateTime(input.shift_date, input.end_time)
   const now = new Date()
 
+  // An Owner/Partner correction (UC56) supersedes the worker's original clock times for every
+  // exception check below — otherwise a corrected record keeps flagging Late/Absent forever.
+  const clockInTime = input.record?.owner_adjusted_clock_in_time ?? input.record?.clock_in_time ?? null
+  const clockOutTime = input.record?.owner_adjusted_clock_out_time ?? input.record?.clock_out_time ?? null
+
   // Absent: no clock-in by shift end, OR clocked in after shift end (invalid clock-in)
-  const clockInTime = input.record?.clock_in_time ?? null
   const clockedInAfterShiftEnd = clockInTime && new Date(clockInTime).getTime() >= shiftEnd.getTime()
   if (!clockInTime && now.getTime() > shiftEnd.getTime()) {
     exceptions.push('absent')
@@ -155,12 +165,39 @@ function getAttendanceExceptions(input: {
   // The grace period is also applied at clock-in time (attendanceGrace.ts) so a clock-in
   // recorded at exactly start_time can be ≤10 min after and is never flagged late.
   if (minutesAfter(clockInTime, input.shift_date, input.start_time) > 10) exceptions.push('late')
-  if (minutesAfter(input.record.clock_out_time, input.shift_date, input.end_time) > 15) exceptions.push('overtime')
+  if (minutesAfter(clockOutTime, input.shift_date, input.end_time) > 15) exceptions.push('overtime')
   return exceptions
 }
 
 function indexById<T extends { id: string }>(rows: T[]): Map<string, T> {
   return new Map(rows.map(row => [row.id, row]))
+}
+
+// UC56: Owner/Partner-modified clock/break times must stay internally consistent — enforced here
+// (not just by the modal disabling Save) since a direct PATCH could otherwise skip the UI check.
+function validateModifiedAttendanceTimes(times: {
+  clock_in_time: string | null
+  clock_out_time: string | null
+  break_in_time: string | null
+  break_out_time: string | null
+}): void {
+  const clockIn = times.clock_in_time ? new Date(times.clock_in_time).getTime() : null
+  const clockOut = times.clock_out_time ? new Date(times.clock_out_time).getTime() : null
+  const breakIn = times.break_in_time ? new Date(times.break_in_time).getTime() : null
+  const breakOut = times.break_out_time ? new Date(times.break_out_time).getTime() : null
+
+  if (clockIn !== null && clockOut !== null && clockIn > clockOut) {
+    throw new Error('Clock In cannot be later than Clock Out')
+  }
+  if (breakIn !== null && breakOut !== null && breakIn > breakOut) {
+    throw new Error('Break In cannot be later than Break Out')
+  }
+  if (breakIn !== null && clockIn !== null && clockOut !== null && (breakIn < clockIn || breakIn > clockOut)) {
+    throw new Error('Break In must be between Clock In and Clock Out')
+  }
+  if (breakOut !== null && clockIn !== null && clockOut !== null && (breakOut < clockIn || breakOut > clockOut)) {
+    throw new Error('Break Out must be between Clock In and Clock Out')
+  }
 }
 
 // Local-time date arithmetic (no 'Z' suffix, and formatted back out via local getters rather
@@ -504,6 +541,15 @@ export const attendanceService = {
     if (!existing) throw new Error('Attendance record not found')
     if (!['approved', 'rejected', 'modified'].includes(input.decision)) {
       throw new Error('Invalid attendance decision')
+    }
+
+    if (input.decision === 'modified') {
+      validateModifiedAttendanceTimes({
+        clock_in_time: input.clock_in_time ?? existing.clock_in_time,
+        clock_out_time: input.clock_out_time ?? existing.clock_out_time,
+        break_in_time: input.break_in_time ?? existing.break_in_time,
+        break_out_time: input.break_out_time ?? existing.break_out_time,
+      })
     }
 
     return attendanceRepository.updateAttendanceRecord(input.id, {
