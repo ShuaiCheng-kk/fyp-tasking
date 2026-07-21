@@ -53,9 +53,8 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: true, pendingPostings })
     }
     if (resource === 'drafts') {
-      const user_id = searchParams.get('user_id')
-      if (!company_id || !user_id) return NextResponse.json({ success: false, message: 'company_id and user_id are required' }, { status: 400 })
-      const drafts = await recruitmentService.getDraftPostings(company_id, user_id)
+      if (!company_id) return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
+      const drafts = await recruitmentService.getDraftPostings(company_id)
       return NextResponse.json({ success: true, drafts })
     }
     if (!company_id) return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })

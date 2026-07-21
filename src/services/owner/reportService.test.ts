@@ -315,6 +315,7 @@ describe('reportService.getCompanyReport', () => {
     expect(report.overview.total_hires).toBe(2)
     const p1 = report.casual.postings.find(p => p.posting_id === 'p1')!
     expect(p1.days_to_fill).toBeCloseTo(2, 2) // 07-07T10:00 → 07-09T10:00
+    expect(p1.department_id).toBe('d1')
     const p2 = report.casual.postings.find(p => p.posting_id === 'p2')!
     expect(p2.days_to_fill).toBeNull() // no openings defined → never "filled"
   })
@@ -347,6 +348,8 @@ describe('reportService.getCompanyReport', () => {
     const dept = report.departments.find(d => d.department_id === 'd1')!
     expect(dept.hiring_success_rate).toBe(71)
     expect(dept.average_time_to_fill_days).toBeCloseTo(1.08, 2)
+    expect(dept.hiring_positions_requested).toBe(7)
+    expect(dept.hiring_positions_hired).toBe(5)
   })
 
   // ── Casual Worker Pool Analytics — all four KPIs count each worker once ──

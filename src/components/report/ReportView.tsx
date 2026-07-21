@@ -47,6 +47,17 @@ function Spinner({ size = 16, dark = false }: { size?: number; dark?: boolean })
   )
 }
 
+// Matches DashboardView's EmptyRow — the shared "nothing to show" treatment for a panel body
+// (soft filled box + centered muted text), so an empty Report block reads the same as an empty
+// Dashboard block instead of floating unstyled text.
+function EmptyRow({ text }: { text: string }) {
+  return (
+    <div style={{ background: '#F8FAFC', borderRadius: 14, padding: '20px 12px', textAlign: 'center', fontSize: 12, fontWeight: 600, color: '#94A3B8' }}>
+      {text}
+    </div>
+  )
+}
+
 // ─── Trend (vs. previous period of the same length) ────────────────────────────
 
 function TrendTag({ current, previous, format, judged, invert }: {
@@ -336,8 +347,12 @@ function ReliableCarousel({ workers, onSelect }: { workers: ReliableWorkerRow[];
   const clamped = Math.min(index, workers.length - 1)
   const w = workers[clamped]
   const facts = buildCwFacts(w)
+  // No overflow clipping on the row below, on purpose: CSS forces a non-'visible' overflow-x/-y
+  // pair to both become 'auto', which would silently clip the worker card's top (avatar + rank
+  // badge) whenever this row's content is taller than its 50% share of the block — the scrollable
+  // wrapper in CwPoolBlock handles that instead. The ±26px slide-in only overflows briefly.
   return (
-    <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', gap: 6, overflow: 'hidden' }}>
+    <div style={{ flex: '1 0 auto', display: 'flex', alignItems: 'center', gap: 6 }}>
       <button type="button" aria-label="Previous worker" disabled={clamped === 0} onClick={() => { setDir('prev'); setIndex(clamped - 1) }} style={carouselArrowBtn(clamped === 0)}>
         <ChevronLeft size={15} />
       </button>
@@ -378,8 +393,12 @@ function AttentionCarousel({ workers, onSelect }: {
   const clamped = Math.min(index, workers.length - 1)
   const w = workers[clamped]
   const facts = buildCwFacts(w)
+  // No overflow clipping on the row below, on purpose: CSS forces a non-'visible' overflow-x/-y
+  // pair to both become 'auto', which would silently clip the worker card's top (avatar + rank
+  // badge) whenever this row's content is taller than its 50% share of the block — the scrollable
+  // wrapper in CwPoolBlock handles that instead. The ±26px slide-in only overflows briefly.
   return (
-    <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', gap: 6, overflow: 'hidden' }}>
+    <div style={{ flex: '1 0 auto', display: 'flex', alignItems: 'center', gap: 6 }}>
       <button type="button" aria-label="Previous worker" disabled={clamped === 0} onClick={() => { setDir('prev'); setIndex(clamped - 1) }} style={carouselArrowBtn(clamped === 0)}>
         <ChevronLeft size={15} />
       </button>
@@ -433,18 +452,22 @@ function CwPoolBlock({ loading, topReliable, attention, onSelectWorker, compact 
         {loading ? (
           <div style={{ height: '100%', minHeight: 220, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Spinner size={20} dark /></div>
         ) : (
-          /* Two carousels split the card 50/50 (flex: 1 each), one worker card at a time in each. */
-          <div style={{ height: '100%', minHeight: 220, display: 'flex', flexDirection: 'column' }}>
+          /* Two carousels split the card 50/50 (flex: 1 each), one worker card at a time in each.
+             A populated carousel's own content (avatar + name + score + facts) can be taller than
+             its 50% share once the grid's row-spanning layout gives this block less height than
+             that needs — this wrapper scrolls internally rather than letting the carousel below
+             clip the worker card's top edge (was cutting off the avatar/rank badge). */
+          <div style={{ height: '100%', minHeight: 220, display: 'flex', flexDirection: 'column', overflowY: 'auto' }}>
             <p style={sectionLabel}>Top Reliable Workers</p>
             {topReliable.length === 0 ? (
-              <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9CA3AF', fontSize: 13, textAlign: 'center' }}>No casual worker shifts in this range</div>
+              <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><EmptyRow text="No casual worker shifts in this range" /></div>
             ) : (
               <ReliableCarousel workers={topReliable} onSelect={onSelectWorker} />
             )}
 
             <p style={{ ...sectionLabel, marginTop: 14, paddingTop: 14, borderTop: '1px solid #E5E7EB' }}>Workers Needing Attention</p>
             {attention.length === 0 ? (
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, paddingTop: 24 }}>
                 <div style={{ width: 34, height: 34, borderRadius: 999, background: '#ECFDF5', color: '#10B981', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <CheckCircle2 size={17} />
                 </div>
@@ -602,7 +625,7 @@ function DeptRateBarChart({
     return <div style={{ height: 130, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Spinner size={20} dark /></div>
   }
   if (data.length === 0) {
-    return <div style={{ height: 130, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9CA3AF', fontSize: 13, textAlign: 'center', padding: '0 12px' }}>{emptyMessage}</div>
+    return <div style={{ height: 130, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 12px' }}><EmptyRow text={emptyMessage} /></div>
   }
   // Value scale + dashed guides, shared by both orientations: percent is a fixed 0–100 labelled every
   // 25% with a guide every 10%; days uses a tight domain (largest value + 1 day of headroom) labelled
@@ -1419,7 +1442,7 @@ export default function ReportView({ sidebar }: { sidebar: React.ReactNode }) {
                     {loading ? (
                       <div style={{ height: '100%', minHeight: 220, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Spinner size={20} dark /></div>
                     ) : costChartData.length === 0 ? (
-                      <div style={{ height: '100%', minHeight: 220, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9CA3AF', fontSize: 13 }}>No Casual Worker cost recorded in this range</div>
+                      <div style={{ height: '100%', minHeight: 220, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><EmptyRow text="No Casual Worker cost recorded in this range" /></div>
                     ) : (
                       <ResponsiveContainer width="100%" height="100%" minHeight={220}>
                         <PieChart>

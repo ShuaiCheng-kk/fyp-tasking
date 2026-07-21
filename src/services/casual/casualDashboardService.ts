@@ -55,6 +55,17 @@ function localDateKey(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
 
+// Shift dates are UTC-nominal by design (see casualAttendanceService's Clock In window, which
+// parses `${shift_date}T${start_time}Z` as UTC) — findCurrentAssignment's "from today onward"
+// filter must use that same UTC calendar day, or the two disagree for 8.5 hours a day in any
+// timezone ahead of UTC (a same-day shift can fail to appear on the dashboard at all even though
+// Clock In would otherwise accept it once it's visible). Only this lookup changes; the 7-day
+// timeline's upper bound below is untouched — this fixes the concrete "job doesn't show up"
+// symptom without touching the rest of Module 5's date handling.
+function utcDateKey(date: Date): string {
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`
+}
+
 // A Casual Worker only ever works one job at a time — the earliest assignment from today onward
 // that hasn't been clocked out of yet IS the current job. Once they clock out, it drops out and
 // the next chronological assignment becomes current. Shared by the dashboard (job card) and by
@@ -67,7 +78,7 @@ export async function findCurrentAssignment(userId: string): Promise<{
   all: { assignment: UpcomingAssignment; record: AttendanceRecord | null }[]
 } | null> {
   const today = new Date()
-  const todayKey = localDateKey(today)
+  const todayKey = utcDateKey(today)
   const unsortedAssignments = await casualDashboardRepository.getUpcomingAssignments(userId, todayKey)
 
   // Earliest first — sorted here rather than trusted from the repository, since ordering across
@@ -107,15 +118,16 @@ export const casualDashboardService = {
       return { user, current_job: null as CurrentJobView | null, upcoming_jobs: [] as CurrentJobView[] }
     }
 
-    // The timeline shows every job in the next 7 days (today inclusive, completed ones too, so a
-    // finished morning job still appears greyed out). The current job is always included even
-    // when it starts beyond the window — otherwise a worker whose only job is next week would
-    // see an empty dashboard.
+    // The timeline shows every NOT-YET-COMPLETED job in the next 7 days (today inclusive) — once
+    // a job is clocked out, it moves to Attendance History instead of lingering here greyed out.
+    // The current job is always included even when it starts beyond the window — otherwise a
+    // worker whose only job is next week would see an empty dashboard.
     const windowEnd = new Date()
     windowEnd.setDate(windowEnd.getDate() + (UPCOMING_WINDOW_DAYS - 1))
     const windowEndKey = localDateKey(windowEnd)
-    const timeline = current.all.filter(
-      entry => entry.assignment.shift.shift_date <= windowEndKey || entry.assignment.id === current.assignment.id
+    const timeline = current.all.filter(entry =>
+      !entry.record?.clock_out_time &&
+      (entry.assignment.shift.shift_date <= windowEndKey || entry.assignment.id === current.assignment.id)
     )
 
     const postingIds = [...new Set(timeline.map(e => e.assignment.shift.source_job_posting_id).filter((id): id is string => !!id))]

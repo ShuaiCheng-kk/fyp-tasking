@@ -129,26 +129,25 @@ describe('casualDashboardService.getDashboard — single current-job model', () 
     await expect(casualDashboardService.getDashboard('auth-1')).rejects.toThrow('Casual worker not found')
   })
 
-  it('lists every job inside the 7-day window as upcoming_jobs, completed ones included', async () => {
+  it('lists every NOT-YET-COMPLETED job inside the 7-day window as upcoming_jobs, completed ones excluded', async () => {
     vi.mocked(casualDashboardRepository.getUserByAuthId).mockResolvedValue(user)
     vi.mocked(casualDashboardRepository.getUpcomingAssignments).mockResolvedValue([
       makeAssignment({ id: 'a-1', shift_date: '2026-07-15' }),
       makeAssignment({ id: 'a-2', shift_date: '2026-07-15', start_time: '19:00' }),
       makeAssignment({ id: 'a-3', shift_date: '2026-07-18' }),
     ])
-    // The morning job is already clocked out — it stays on the timeline (shown as completed)
-    // but the evening job becomes the current one.
+    // The morning job is already clocked out — it drops off the timeline (it belongs in
+    // Attendance History instead) and the evening job becomes the current one.
     vi.mocked(casualAttendanceRepository.getAttendanceRecordsByAssignmentIds).mockResolvedValue([
       { shift_assignment_id: 'a-1', clock_in_time: '2026-07-15T09:00:00Z', clock_out_time: '2026-07-15T17:00:00Z' } as any,
     ])
 
     const result = await casualDashboardService.getDashboard('auth-1')
-    expect(result.upcoming_jobs.map(j => j.assignment_id)).toEqual(['a-1', 'a-2', 'a-3'])
+    expect(result.upcoming_jobs.map(j => j.assignment_id)).toEqual(['a-2', 'a-3'])
     expect(result.current_job?.assignment_id).toBe('a-2')
-    expect(result.upcoming_jobs[0].clock_out_time).toBe('2026-07-15T17:00:00Z')
     // Every timeline entry carries the full pre-work info (supervisor + posting location).
-    expect(result.upcoming_jobs[2].supervisor?.id).toBe('emp-1')
-    expect(result.upcoming_jobs[2].location).toBe('1 Raffles Place')
+    expect(result.upcoming_jobs[1].supervisor?.id).toBe('emp-1')
+    expect(result.upcoming_jobs[1].location).toBe('1 Raffles Place')
   })
 
   it('excludes jobs beyond the 7-day window but always keeps the current job itself', async () => {

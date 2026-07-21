@@ -9,11 +9,12 @@
 // card layout) so the same board reads consistently across roles.
 
 import { Fragment, useEffect, useState } from 'react'
-import { AlertTriangle, ArrowRight, Check, CheckCircle, ChevronDown, Clock, ClipboardList, Eye, GitBranch, Layers, RefreshCw } from 'lucide-react'
+import { AlertTriangle, ArrowRight, Check, CheckCircle, ChevronDown, Clock, ClipboardList, Eye, GitBranch, GripVertical, Layers, RefreshCw } from 'lucide-react'
 import { Task } from '@/types/Task'
 import { TitledBlock } from '@/components/panel'
 import { ModalHeader, modalLabelStyle, modalInputStyle } from '@/components/modal'
 import { modalKeyframes } from '@/components/theme/tokens'
+import { useIsCompactContainer } from '@/hooks/useIsCompactContainer'
 
 const COLUMNS: Task['status'][] = ['Assigned', 'In Progress', 'Review', 'Complete']
 const STATUS_PERCENT: Record<Task['status'], number> = { Assigned: 0, 'In Progress': 33, Review: 66, Complete: 100 }
@@ -43,6 +44,11 @@ export default function CasualTaskBoard({ companyId, shiftId, userId }: Props) {
   const [loading, setLoading] = useState(true)
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null)
   const [dragOverCol, setDragOverCol] = useState<Task['status'] | null>(null)
+  // The board sits beside the Message panel in the Dashboard's row (roughly half the row width)
+  // — narrow enough that "Tasks · Drag cards to move · refresh" doesn't fit on one line, so the
+  // hint text drops to icon-only below this breakpoint (see useIsCompactContainer's doc: this is
+  // a panel-width, not a window-width, squeeze).
+  const [titleRowRef, isNarrow] = useIsCompactContainer<HTMLDivElement>(380)
   const [detailTask, setDetailTask] = useState<Task | null>(null)
   const [expandedTaskIds, setExpandedTaskIds] = useState<Set<string>>(new Set())
 
@@ -141,9 +147,15 @@ export default function CasualTaskBoard({ companyId, shiftId, userId }: Props) {
   // bottom of the viewport); the Kanban columns fill that height and the body scrolls if the
   // cards outgrow it.
   return (
+    <div ref={titleRowRef} style={{ height: '100%', minWidth: 0, minHeight: 0 }}>
     <TitledBlock
       icon={<ClipboardList size={15} color="#F97316" />}
       title="Tasks"
+      titleHint={
+        <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.7rem', fontWeight: 600, color: '#9CA3AF', background: '#F3F4F6', padding: '3px 8px', borderRadius: 999, whiteSpace: 'nowrap', flexShrink: 0 }}>
+          <GripVertical size={11} />{!isNarrow && ' Drag to move'}
+        </span>
+      }
       containerStyle={{ height: '100%', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', position: 'relative' }}
       bodyStyle={{ flex: 1, minHeight: 0, overflow: 'auto' }}
       headerRight={
@@ -155,8 +167,6 @@ export default function CasualTaskBoard({ companyId, shiftId, userId }: Props) {
     >
       {loading ? (
         <p style={{ margin: 0, color: '#6B7280', fontSize: '0.875rem' }}>Loading tasks…</p>
-      ) : tasks.length === 0 ? (
-        <p style={{ margin: 0, fontSize: '0.875rem', color: '#9CA3AF' }}>No tasks assigned for this job yet.</p>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'stretch', gap: 0, height: '100%', boxSizing: 'border-box', minWidth: 640 }}>
           {COLUMNS.map((col, colIdx) => {
@@ -377,5 +387,6 @@ export default function CasualTaskBoard({ companyId, shiftId, userId }: Props) {
         </div>
       )}
     </TitledBlock>
+    </div>
   )
 }

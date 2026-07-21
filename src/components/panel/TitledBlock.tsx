@@ -7,6 +7,7 @@
 export default function TitledBlock({
   icon,
   title,
+  titleHint,
   headerRight,
   containerStyle,
   bodyStyle,
@@ -14,6 +15,10 @@ export default function TitledBlock({
 }: {
   icon: React.ReactNode
   title: string
+  // Opt-in small pill directly beside the title — only for a non-obvious interaction affordance
+  // (e.g. "drag cards to move"), never a descriptive caption. Omitted by every other caller, so
+  // the default title-only rendering is unchanged everywhere else.
+  titleHint?: React.ReactNode
   // Right-aligned header slot (e.g. an Edit button, a refresh icon, a status pill).
   headerRight?: React.ReactNode
   // Outer overrides for host-specific states (e.g. a highlighted orange border).
@@ -28,6 +33,7 @@ export default function TitledBlock({
           {icon}
         </div>
         <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>{title}</span>
+        {titleHint}
         {headerRight && (
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>{headerRight}</div>
         )}

@@ -179,6 +179,89 @@ describe('attendanceService', () => {
       await expect(attendanceService.finalReviewAttendance({ id: 'missing', owner_id: 'owner-1', decision: 'approved' }))
         .rejects.toThrow('Attendance record not found')
     })
+
+    describe('UC56: modified time-range validation', () => {
+      const baseExisting = {
+        id: 'rec-1', clock_in_time: '2026-07-01T09:00:00Z', clock_out_time: '2026-07-01T17:00:00Z',
+        break_in_time: null, break_out_time: null,
+        owner_adjusted_clock_in_time: null, owner_adjusted_clock_out_time: null,
+      }
+
+      it('rejects a Clock In later than Clock Out', async () => {
+        vi.mocked(attendanceRepository.getAttendanceRecordById).mockResolvedValue(baseExisting as any)
+
+        await expect(attendanceService.finalReviewAttendance({
+          id: 'rec-1', owner_id: 'owner-1', decision: 'modified',
+          clock_in_time: '2026-07-01T17:30:00Z', clock_out_time: '2026-07-01T17:00:00Z',
+        })).rejects.toThrow('Clock In cannot be later than Clock Out')
+        expect(attendanceRepository.updateAttendanceRecord).not.toHaveBeenCalled()
+      })
+
+      it('rejects a Break In later than Break Out', async () => {
+        vi.mocked(attendanceRepository.getAttendanceRecordById).mockResolvedValue(baseExisting as any)
+
+        await expect(attendanceService.finalReviewAttendance({
+          id: 'rec-1', owner_id: 'owner-1', decision: 'modified',
+          break_in_time: '2026-07-01T12:30:00Z', break_out_time: '2026-07-01T12:00:00Z',
+        })).rejects.toThrow('Break In cannot be later than Break Out')
+        expect(attendanceRepository.updateAttendanceRecord).not.toHaveBeenCalled()
+      })
+
+      it('rejects a Break In outside the Clock In/Out range', async () => {
+        vi.mocked(attendanceRepository.getAttendanceRecordById).mockResolvedValue(baseExisting as any)
+
+        await expect(attendanceService.finalReviewAttendance({
+          id: 'rec-1', owner_id: 'owner-1', decision: 'modified',
+          break_in_time: '2026-07-01T08:00:00Z', break_out_time: '2026-07-01T08:30:00Z',
+        })).rejects.toThrow('Break In must be between Clock In and Clock Out')
+        expect(attendanceRepository.updateAttendanceRecord).not.toHaveBeenCalled()
+      })
+
+      it('rejects a Break Out outside the Clock In/Out range', async () => {
+        vi.mocked(attendanceRepository.getAttendanceRecordById).mockResolvedValue(baseExisting as any)
+
+        await expect(attendanceService.finalReviewAttendance({
+          id: 'rec-1', owner_id: 'owner-1', decision: 'modified',
+          break_in_time: '2026-07-01T12:00:00Z', break_out_time: '2026-07-01T18:00:00Z',
+        })).rejects.toThrow('Break Out must be between Clock In and Clock Out')
+        expect(attendanceRepository.updateAttendanceRecord).not.toHaveBeenCalled()
+      })
+
+      it('validates the modified times against the EXISTING record when the input omits them', async () => {
+        // input only touches break times — clock_in/out fall back to the existing (already-invalid-if-swapped) record
+        vi.mocked(attendanceRepository.getAttendanceRecordById).mockResolvedValue({
+          ...baseExisting, clock_in_time: '2026-07-01T17:00:00Z', clock_out_time: '2026-07-01T09:00:00Z',
+        } as any)
+
+        await expect(attendanceService.finalReviewAttendance({
+          id: 'rec-1', owner_id: 'owner-1', decision: 'modified',
+          break_in_time: '2026-07-01T12:00:00Z', break_out_time: '2026-07-01T12:30:00Z',
+        })).rejects.toThrow('Clock In cannot be later than Clock Out')
+      })
+
+      it('allows a valid modified time range, breaks included', async () => {
+        vi.mocked(attendanceRepository.getAttendanceRecordById).mockResolvedValue(baseExisting as any)
+        vi.mocked(attendanceRepository.updateAttendanceRecord).mockResolvedValue({ id: 'rec-1' } as any)
+
+        await attendanceService.finalReviewAttendance({
+          id: 'rec-1', owner_id: 'owner-1', decision: 'modified',
+          clock_in_time: '2026-07-01T09:05:00Z', clock_out_time: '2026-07-01T17:05:00Z',
+          break_in_time: '2026-07-01T12:00:00Z', break_out_time: '2026-07-01T12:30:00Z',
+        })
+
+        expect(attendanceRepository.updateAttendanceRecord).toHaveBeenCalled()
+      })
+
+      it('does not validate time ranges on approve/reject decisions', async () => {
+        vi.mocked(attendanceRepository.getAttendanceRecordById).mockResolvedValue({
+          ...baseExisting, clock_in_time: '2026-07-01T17:00:00Z', clock_out_time: '2026-07-01T09:00:00Z',
+        } as any)
+        vi.mocked(attendanceRepository.updateAttendanceRecord).mockResolvedValue({ id: 'rec-1' } as any)
+
+        await expect(attendanceService.finalReviewAttendance({ id: 'rec-1', owner_id: 'owner-1', decision: 'approved' }))
+          .resolves.toBeDefined()
+      })
+    })
   })
 
   describe('getAttendanceDashboard (UC51: View Attendance Status)', () => {

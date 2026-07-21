@@ -96,21 +96,17 @@ describe('jobTemplateService — Job Template', () => {
   })
 
   describe('listTemplates', () => {
-    it('returns templates for a company, scoped to their creator', async () => {
+    it('returns templates shared company-wide, regardless of creator', async () => {
       vi.mocked(jobTemplateRepository.getTemplatesByCompany).mockResolvedValue([baseTemplate])
 
-      const result = await jobTemplateService.listTemplates('company-1', 'owner-1')
+      const result = await jobTemplateService.listTemplates('company-1')
 
-      expect(jobTemplateRepository.getTemplatesByCompany).toHaveBeenCalledWith('company-1', 'owner-1')
+      expect(jobTemplateRepository.getTemplatesByCompany).toHaveBeenCalledWith('company-1')
       expect(result).toEqual([baseTemplate])
     })
 
     it('throws when company_id is missing', async () => {
-      await expect(jobTemplateService.listTemplates('', 'owner-1')).rejects.toThrow('company_id is required')
-    })
-
-    it('throws when created_by is missing', async () => {
-      await expect(jobTemplateService.listTemplates('company-1', '')).rejects.toThrow('created_by is required')
+      await expect(jobTemplateService.listTemplates('')).rejects.toThrow('company_id is required')
     })
   })
 

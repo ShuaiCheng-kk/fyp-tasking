@@ -11,7 +11,7 @@ vi.mock('@/services/ai/openAIService', () => ({
 import { openAIService } from '@/services/ai/openAIService'
 import { reportService } from '@/services/owner/reportService'
 import { anomalyDetectionService } from '@/services/owner/anomalyDetectionService'
-import { CompanyReport, DepartmentPerformanceRow, ReportOverview, TaskWorkloadRow } from '@/types/Report'
+import { CompanyReport, DepartmentPerformanceRow, RecruitmentPostingRow, ReportOverview, TaskWorkloadRow } from '@/types/Report'
 
 function worker(overrides: Partial<TaskWorkloadRow>): TaskWorkloadRow {
   return {
@@ -57,6 +57,25 @@ function department(overrides: Partial<DepartmentPerformanceRow>): DepartmentPer
     hiring_success_rate: null,
     average_time_to_fill_days: null,
     casual_labor_cost: 400,
+    hiring_positions_requested: 0,
+    hiring_positions_hired: 0,
+    ...overrides,
+  }
+}
+
+function posting(overrides: Partial<RecruitmentPostingRow>): RecruitmentPostingRow {
+  return {
+    posting_id: 'posting-x',
+    title: 'Posting X',
+    department_id: 'dept-x',
+    department_name: 'Dept X',
+    status: 'closed',
+    openings: 2,
+    applicants: 0,
+    accepted: 0,
+    confirmed: 0,
+    days_to_fill: null,
+    created_at: '2026-07-08T09:00:00Z',
     ...overrides,
   }
 }
@@ -384,6 +403,89 @@ describe('anomalyDetectionService.detectAnomalies', () => {
       })],
     }))
     expect(signals.some(s => s.includes('people were there, so the shortfall came from workload or task allocation'))).toBe(true)
+  })
+
+  // ── 4. Hiring success rate gap, explained by the posting funnel ───────────
+
+  it('reports a department whose hiring success rate trails a peer, with the funnel behind it', async () => {
+    const signals = await signalsFor(reportWith({
+      departments: [
+        department({ department_id: 'eng', department_name: 'Engineering', hiring_success_rate: 33, hiring_positions_requested: 3, hiring_positions_hired: 1 }),
+        department({ department_id: 'mkt', department_name: 'Marketing', hiring_success_rate: 100, hiring_positions_requested: 3, hiring_positions_hired: 3 }),
+      ],
+      casual: {
+        funnel: { applied: 0, accepted: 0, confirmed: 0 }, fill_rate: null, workers: [], pool: [], labor_cost: 0, skill_distribution: [],
+        postings: [posting({ posting_id: 'p1', department_id: 'eng', title: 'IT Helpdesk Temp Support', status: 'closed', openings: 3, applicants: 1, accepted: 1, confirmed: 1 })],
+      },
+    }))
+    const fact = signals.find(s => s.includes('Engineering') && s.includes('hiring success rate'))
+    expect(fact).toContain('hiring success rate was 33% this period, well behind Marketing\'s 100%')
+    expect(fact).toContain('Engineering ran 1 job posting this period')
+    expect(fact).toContain('"IT Helpdesk Temp Support" closed and needed 3 people, drew 1 applicant, accepted 1 of them, and ended with 1 confirmed hire')
+  })
+
+  it('includes a still-open posting with zero applicants in the funnel facts', async () => {
+    const signals = await signalsFor(reportWith({
+      departments: [
+        department({ department_id: 'eng', department_name: 'Engineering', hiring_success_rate: 0, hiring_positions_requested: 4, hiring_positions_hired: 0 }),
+        department({ department_id: 'mkt', department_name: 'Marketing', hiring_success_rate: 100, hiring_positions_requested: 3, hiring_positions_hired: 3 }),
+      ],
+      casual: {
+        funnel: { applied: 0, accepted: 0, confirmed: 0 }, fill_rate: null, workers: [], pool: [], labor_cost: 0, skill_distribution: [],
+        postings: [posting({ posting_id: 'p1', department_id: 'eng', title: 'Warehouse Temp', status: 'open', openings: 4, applicants: 0, accepted: 0, confirmed: 0 })],
+      },
+    }))
+    const fact = signals.find(s => s.includes('Engineering') && s.includes('hiring success rate'))
+    expect(fact).toContain('"Warehouse Temp" is still open and needed 4 people, drew 0 applicants, accepted 0 of them, and ended with 0 confirmed hires')
+  })
+
+  it('ignores a hiring gap that rests on too few requested positions', async () => {
+    const signals = await signalsFor(reportWith({
+      departments: [
+        department({ department_id: 'eng', department_name: 'Engineering', hiring_success_rate: 0, hiring_positions_requested: 1, hiring_positions_hired: 0 }),
+        department({ department_id: 'mkt', department_name: 'Marketing', hiring_success_rate: 100, hiring_positions_requested: 3, hiring_positions_hired: 3 }),
+      ],
+      casual: {
+        funnel: { applied: 0, accepted: 0, confirmed: 0 }, fill_rate: null, workers: [], pool: [], labor_cost: 0, skill_distribution: [],
+        postings: [posting({ department_id: 'eng', title: 'Solo Position', status: 'closed', openings: 1, applicants: 0, accepted: 0, confirmed: 0 })],
+      },
+    }))
+    expect(signals.some(s => s.includes('hiring success rate'))).toBe(false)
+  })
+
+  it('ignores a hiring gap too small to matter', async () => {
+    const signals = await signalsFor(reportWith({
+      departments: [
+        department({ department_id: 'eng', department_name: 'Engineering', hiring_success_rate: 75, hiring_positions_requested: 4, hiring_positions_hired: 3 }),
+        department({ department_id: 'mkt', department_name: 'Marketing', hiring_success_rate: 90, hiring_positions_requested: 4, hiring_positions_hired: 4 }),
+      ],
+      casual: {
+        funnel: { applied: 0, accepted: 0, confirmed: 0 }, fill_rate: null, workers: [], pool: [], labor_cost: 0, skill_distribution: [],
+        postings: [posting({ department_id: 'eng', title: 'Line Cook', status: 'closed', openings: 4, applicants: 6, accepted: 3, confirmed: 3 })],
+      },
+    }))
+    expect(signals.some(s => s.includes('hiring success rate'))).toBe(false)
+  })
+
+  it('does not report a hiring gap when there is no comparable peer department', async () => {
+    const signals = await signalsFor(reportWith({
+      departments: [
+        department({ department_id: 'eng', department_name: 'Engineering', hiring_success_rate: 20, hiring_positions_requested: 5, hiring_positions_hired: 1 }),
+      ],
+      casual: {
+        funnel: { applied: 0, accepted: 0, confirmed: 0 }, fill_rate: null, workers: [], pool: [], labor_cost: 0, skill_distribution: [],
+        postings: [posting({ department_id: 'eng', title: 'Solo Dept Posting', status: 'closed', openings: 5, applicants: 1, accepted: 1, confirmed: 1 })],
+      },
+    }))
+    expect(signals.some(s => s.includes('hiring success rate'))).toBe(false)
+  })
+
+  it('the instructions describe the hiring funnel gap as an allowed, non-judgmental finding', async () => {
+    await anomalyDetectionService.detectAnomalies(FILTERS, 'internal')
+    const { instructions } = lastAiCall()
+    expect(instructions).toContain('ONLY four kinds of finding are allowed')
+    expect(instructions).toContain('never invent a (d) finding without one of these signal lines')
+    expect(instructions).toContain('low applicant interest is a normal, blameless outcome')
   })
 
   // ── Scope + plumbing ──────────────────────────────────────────────────────
