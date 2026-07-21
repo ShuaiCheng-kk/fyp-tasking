@@ -1522,6 +1522,7 @@ export default function EmployeeTasksPage() {
                   <div><label style={modalLabelStyle}>Priority</label>{viewPriorityStyle ? <div style={{ ...viewFieldValue, background: viewPriorityStyle.bg }}><span style={{ color: viewPriorityStyle.text, fontWeight: 700, fontSize: '0.85rem' }}>{selectedTask.priority}</span></div> : <div style={viewEmpty}>None</div>}</div>
                 </div>
                 <div style={{ borderTop: '1px dashed #E5E7EB' }} />
+                <div><label style={modalLabelStyle}>Assigned By</label><div style={viewFieldValue}>{selectedTask.assigned_by_name ?? members.find(m => m.id === selectedTask.assigned_by)?.full_name ?? 'Unknown'}</div></div>
                 <div><label style={modalLabelStyle}>Assigned To</label>{viewAssigneeName ? <div style={viewFieldValue}>{viewAssigneeName}</div> : <div style={viewEmpty}>Unassigned</div>}</div>
                 <div><label style={modalLabelStyle}>Shift</label>{viewShift ? <div style={viewFieldValue}>{viewShift.title ? `${viewShift.title} — ` : ''}{new Date(`${viewShift.shift_date}T00:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} {viewShift.start_time.slice(0, 5)} – {viewShift.end_time.slice(0, 5)}</div> : <div style={viewEmpty}>No shift assigned</div>}</div>
                 <div>

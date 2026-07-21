@@ -17,7 +17,7 @@ test.afterAll(async () => {
 
 test('creates a department', async ({ request }) => {
   const res = await request.post('/api/company/create-department', {
-    data: { company_id: seeded.companyId, name: 'Operations' },
+    data: { company_id: seeded.companyId, name: 'Operations', requester_user_id: seeded.ownerId },
   })
   expect(res.status()).toBe(201)
   const body = await res.json()
@@ -28,7 +28,7 @@ test('creates a department', async ({ request }) => {
 
 test('rejects creation with a missing name', async ({ request }) => {
   const res = await request.post('/api/company/create-department', {
-    data: { company_id: seeded.companyId },
+    data: { company_id: seeded.companyId, requester_user_id: seeded.ownerId },
   })
   expect(res.status()).toBe(400)
   const body = await res.json()
@@ -45,7 +45,7 @@ test('lists the created department for the company', async ({ request }) => {
 
 test('renames the department', async ({ request }) => {
   const res = await request.patch('/api/company/update-department', {
-    data: { department_id: departmentId, name: 'Logistics' },
+    data: { department_id: departmentId, name: 'Logistics', requester_user_id: seeded.ownerId },
   })
   expect(res.status()).toBe(200)
   const body = await res.json()
@@ -57,7 +57,7 @@ test('renames the department', async ({ request }) => {
 
 test('deletes the department once it has no members', async ({ request }) => {
   const res = await request.delete('/api/company/delete-department', {
-    data: { department_id: departmentId },
+    data: { department_id: departmentId, requester_user_id: seeded.ownerId },
   })
   expect(res.status()).toBe(200)
   const body = await res.json()

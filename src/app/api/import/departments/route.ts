@@ -3,6 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { importService } from '@/services/owner/importService'
+import { userService } from '@/services/auth/userService'
 
 export async function POST(req: NextRequest) {
   let body: unknown
@@ -15,6 +16,15 @@ export async function POST(req: NextRequest) {
   const b = body as Record<string, unknown>
   if (typeof b.company_id !== 'string') {
     return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
+  }
+  if (typeof b.requester_user_id !== 'string' || !b.requester_user_id) {
+    return NextResponse.json({ success: false, message: 'requester_user_id is required' }, { status: 400 })
+  }
+  try {
+    await userService.assertOwnerRole(b.requester_user_id)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Forbidden'
+    return NextResponse.json({ success: false, message }, { status: 403 })
   }
   if (!Array.isArray(b.departments)) {
     return NextResponse.json({ success: false, message: 'departments must be an array' }, { status: 400 })

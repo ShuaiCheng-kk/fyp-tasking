@@ -23,7 +23,9 @@ export async function GET(req: NextRequest) {
   try {
     if (resource === 'applicants') {
       if (!job_id) return NextResponse.json({ success: false, message: 'job_id is required' }, { status: 400 })
-      const applicants = await recruitmentService.getApplicants(job_id)
+      const viewer_id = searchParams.get('viewer_id')
+      if (!viewer_id) return NextResponse.json({ success: false, message: 'viewer_id is required' }, { status: 400 })
+      const applicants = await recruitmentService.getApplicants(job_id, viewer_id)
       return NextResponse.json({ success: true, applicants })
     }
     if (resource === 'job_posting') {
@@ -58,11 +60,11 @@ export async function GET(req: NextRequest) {
     }
     if (!company_id) return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
     const department_id = searchParams.get('department_id')
-    const manager_id = searchParams.get('manager_id')
+    // Job Visibility: a Manager's own department-scoped view is filtered client-side by
+    // department (see RecruitmentView's scopeToManagerDepartments) — not by creator, so it
+    // includes Owner/Partner/other-Managers' postings in the department, not just their own.
     let postings
-    if (manager_id) {
-      postings = await recruitmentService.getJobPostingsForManager(company_id, manager_id)
-    } else if (department_id) {
+    if (department_id) {
       postings = await recruitmentService.getJobPostingsByDepartment(company_id, department_id)
     } else {
       postings = await recruitmentService.getJobPostings(company_id)
@@ -238,7 +240,7 @@ export async function PATCH(req: NextRequest) {
 
     if (action === 'reject_posting') {
       const rejection_reason = typeof data.rejection_reason === 'string' ? data.rejection_reason : ''
-      const posting = await recruitmentService.rejectJobPosting(String(data.job_id ?? ''), rejection_reason)
+      const posting = await recruitmentService.rejectJobPosting(String(data.job_id ?? ''), rejection_reason, String(data.rejected_by ?? ''))
       return NextResponse.json({ success: true, posting })
     }
 

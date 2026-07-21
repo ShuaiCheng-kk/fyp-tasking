@@ -41,6 +41,16 @@ export const ownerAnnouncementRepository = {
     return data
   },
 
+  async getAnnouncementOwner(announcementId: string): Promise<{ from_user_id: string }> {
+    const { data, error } = await supabase
+      .from('announcements')
+      .select('from_user_id')
+      .eq('id', announcementId)
+      .single()
+    if (error || !data) throw new Error('Announcement not found')
+    return data
+  },
+
   async updateAnnouncement(announcementId: string, requestingUserId: string, title: string, content: string, departmentId: string | null) {
     const { data: existing, error: fetchError } = await supabase
       .from('announcements')

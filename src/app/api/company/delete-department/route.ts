@@ -3,6 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { companyService } from '@/services/company/companyService'
+import { userService } from '@/services/auth/userService'
 
 export async function DELETE(req: NextRequest) {
   let body: unknown
@@ -12,10 +13,19 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ success: false, message: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { department_id } = body as Record<string, unknown>
+  const { department_id, requester_user_id } = body as Record<string, unknown>
 
   if (!department_id || typeof department_id !== 'string') {
     return NextResponse.json({ success: false, message: 'department_id is required' }, { status: 400 })
+  }
+  if (!requester_user_id || typeof requester_user_id !== 'string') {
+    return NextResponse.json({ success: false, message: 'requester_user_id is required' }, { status: 400 })
+  }
+  try {
+    await userService.assertOwnerRole(requester_user_id)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Forbidden'
+    return NextResponse.json({ success: false, message }, { status: 403 })
   }
 
   try {

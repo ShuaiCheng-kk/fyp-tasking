@@ -18,10 +18,7 @@ vi.mock('@/repositories/owner/recruitmentRepository', () => ({
   recruitmentRepository: {
     getPublicJobPostings: vi.fn(),
     getJobPostingsByDepartment: vi.fn(),
-    getJobPostingsForManager: vi.fn(),
     getJobPostingsByCompany: vi.fn(),
-    getJobPostingsByManagerDepts: vi.fn(),
-    getManagerDepartmentIds: vi.fn(),
     getApplicantCounts: vi.fn(),
     getDepartmentsByIds: vi.fn(),
     getUsersByIds: vi.fn(),
@@ -112,6 +109,7 @@ const basePosting: JobPosting = {
   job_start_time: null,
   assigned_employee_id: 'emp-1',
   rejection_reason: null,
+  rejected_by: null,
   expires_at: null,
   template_id: null,
   experience_required: null,
@@ -156,6 +154,10 @@ describe('recruitmentService — Recruitment', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(recruitmentRepository.getWorkerCancellationCounts).mockResolvedValue(new Map())
+    // vi.clearAllMocks() clears call history but NOT a mockResolvedValue set by an earlier test —
+    // without this reset, one test's getUserRole.mockResolvedValue('Manager') silently leaks into
+    // every later test that calls a Candidate-Management-guarded action and never re-sets it.
+    vi.mocked(recruitmentRepository.getUserRole).mockResolvedValue(null)
   })
 
   describe('createJobPosting (UC35)', () => {
@@ -571,11 +573,11 @@ describe('recruitmentService — Recruitment', () => {
   })
 
   describe('submitForReview (UC41)', () => {
-    it('sets status to pending_approval', async () => {
+    it('sets status to pending_approval and clears any earlier rejection record', async () => {
       vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue(basePosting)
       vi.mocked(recruitmentRepository.updateJobPosting).mockResolvedValue({ ...basePosting, status: 'pending_approval' })
       await recruitmentService.submitForReview('job-1')
-      expect(recruitmentRepository.updateJobPosting).toHaveBeenCalledWith('job-1', { status: 'pending_approval' })
+      expect(recruitmentRepository.updateJobPosting).toHaveBeenCalledWith('job-1', { status: 'pending_approval', rejection_reason: null, rejected_by: null })
     })
 
     it('refuses to submit for review without a responsible employee', async () => {
@@ -593,14 +595,18 @@ describe('recruitmentService — Recruitment', () => {
       expect(recruitmentRepository.approveJobPosting).toHaveBeenCalledWith('job-1')
     })
 
-    it('rejects a pending job posting with a reason', async () => {
-      vi.mocked(recruitmentRepository.rejectJobPosting).mockResolvedValue({ ...basePosting, status: 'rejected', rejection_reason: 'Missing details' })
-      await recruitmentService.rejectJobPosting('job-1', 'Missing details')
-      expect(recruitmentRepository.rejectJobPosting).toHaveBeenCalledWith('job-1', 'Missing details')
+    it('rejects a pending job posting with a reason, recording who rejected it', async () => {
+      vi.mocked(recruitmentRepository.rejectJobPosting).mockResolvedValue({ ...basePosting, status: 'rejected', rejection_reason: 'Missing details', rejected_by: 'owner-1' })
+      await recruitmentService.rejectJobPosting('job-1', 'Missing details', 'owner-1')
+      expect(recruitmentRepository.rejectJobPosting).toHaveBeenCalledWith('job-1', 'Missing details', 'owner-1')
     })
 
     it('throws when rejecting without a reason', async () => {
-      await expect(recruitmentService.rejectJobPosting('job-1', '  ')).rejects.toThrow('rejection_reason is required')
+      await expect(recruitmentService.rejectJobPosting('job-1', '  ', 'owner-1')).rejects.toThrow('rejection_reason is required')
+    })
+
+    it('throws when rejecting without a rejected_by', async () => {
+      await expect(recruitmentService.rejectJobPosting('job-1', 'Missing details', '')).rejects.toThrow('rejected_by is required')
     })
   })
 
@@ -628,10 +634,11 @@ describe('recruitmentService — Recruitment', () => {
 
   describe('getApplicants (UC44)', () => {
     it('returns applicants with resolved full_name, email_address, and cancellation history count', async () => {
+      vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue(basePosting)
       vi.mocked(recruitmentRepository.getApplicantsByJob).mockResolvedValue([baseApplicant])
       vi.mocked(recruitmentRepository.getWorkerCancellationCounts).mockResolvedValue(new Map([['user-1', 2]]))
 
-      const result = await recruitmentService.getApplicants('job-1')
+      const result = await recruitmentService.getApplicants('job-1', 'owner-1')
 
       expect(result[0].full_name).toBe('Jane Applicant')
       expect(result[0].email_address).toBe('jane@example.com')
@@ -639,7 +646,77 @@ describe('recruitmentService — Recruitment', () => {
     })
 
     it('throws when job_id is missing', async () => {
-      await expect(recruitmentService.getApplicants('')).rejects.toThrow('job_id is required')
+      await expect(recruitmentService.getApplicants('', 'owner-1')).rejects.toThrow('job_id is required')
+    })
+
+    it('throws when viewer_id is missing', async () => {
+      await expect(recruitmentService.getApplicants('job-1', '')).rejects.toThrow('viewer_id is required')
+    })
+  })
+
+  describe('Candidate Management is Recruitment-Owner-only (Manager Recruitment rules)', () => {
+    // basePosting.created_by = 'owner-1'. A Manager viewing/managing a job they didn't create —
+    // whether it belongs to the Owner, a Partner, or another Manager in the same department —
+    // must be blocked from every applicant-facing action, even though Job Visibility already lets
+    // them see the job itself.
+    it('blocks a Manager from viewing applicants on a job they did not create', async () => {
+      vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue(basePosting)
+      vi.mocked(recruitmentRepository.getUserRole).mockResolvedValue('Manager')
+
+      await expect(recruitmentService.getApplicants('job-1', 'mgr-2'))
+        .rejects.toThrow('Only the recruitment owner can manage applicants for this job')
+      expect(recruitmentRepository.getApplicantsByJob).not.toHaveBeenCalled()
+    })
+
+    it('allows a Manager to view applicants on their own job', async () => {
+      vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue({ ...basePosting, created_by: 'mgr-1' })
+      vi.mocked(recruitmentRepository.getUserRole).mockResolvedValue('Manager')
+      vi.mocked(recruitmentRepository.getApplicantsByJob).mockResolvedValue([baseApplicant])
+
+      const result = await recruitmentService.getApplicants('job-1', 'mgr-1')
+
+      expect(result).toHaveLength(1)
+    })
+
+    it('never restricts an Owner/Partner viewer, regardless of who created the job', async () => {
+      vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue({ ...basePosting, created_by: 'mgr-1' })
+      vi.mocked(recruitmentRepository.getUserRole).mockResolvedValue('Owner')
+      vi.mocked(recruitmentRepository.getApplicantsByJob).mockResolvedValue([baseApplicant])
+
+      const result = await recruitmentService.getApplicants('job-1', 'owner-1')
+
+      expect(result).toHaveLength(1)
+    })
+
+    it('blocks a Manager from deciding on an applicant for a job they did not create', async () => {
+      vi.mocked(recruitmentRepository.getApplicantById).mockResolvedValue(baseApplicant)
+      vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue(basePosting)
+      vi.mocked(recruitmentRepository.getUserRole).mockResolvedValue('Manager')
+
+      await expect(recruitmentService.decideApplicant({ applicant_id: 'applicant-1', decision: 'accepted', decided_by: 'mgr-2' }))
+        .rejects.toThrow('Only the recruitment owner can manage applicants for this job')
+      expect(recruitmentRepository.updateApplicantStatus).not.toHaveBeenCalled()
+    })
+
+    it('blocks a Manager from removing a confirmed worker on a job they did not create', async () => {
+      vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue(basePosting)
+      vi.mocked(recruitmentRepository.getApplicantById).mockResolvedValue({ ...baseApplicant, status: 'accepted' })
+      vi.mocked(recruitmentRepository.getUserRole).mockResolvedValue('Manager')
+
+      await expect(recruitmentService.removeConfirmedWorker({
+        job_id: 'job-1', applicant_id: 'applicant-1', removed_by: 'mgr-2', reason: 'Requirements changed',
+      })).rejects.toThrow('Only the recruitment owner can manage applicants for this job')
+      expect(recruitmentRepository.setApplicantStatus).not.toHaveBeenCalled()
+    })
+
+    it('blocks a Manager from inviting pool workers to a job they did not create', async () => {
+      vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue({ ...basePosting, status: 'open' })
+      vi.mocked(recruitmentRepository.getUserRole).mockResolvedValue('Manager')
+
+      await expect(recruitmentService.invitePoolWorkers({
+        job_id: 'job-1', user_ids: ['cw-1'], sent_by: 'mgr-2',
+      })).rejects.toThrow('Only the recruitment owner can manage applicants for this job')
+      expect(recruitmentRepository.createDirectApplicant).not.toHaveBeenCalled()
     })
   })
 
@@ -738,6 +815,7 @@ describe('recruitmentService — Recruitment', () => {
   describe('decideApplicant (UC45)', () => {
     it('accepts an applicant and sends a job invitation', async () => {
       vi.mocked(recruitmentRepository.getApplicantById).mockResolvedValue(baseApplicant)
+      vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue(basePosting)
       vi.mocked(recruitmentRepository.updateApplicantStatus).mockResolvedValue({ ...baseApplicant, status: 'accepted' })
 
       await recruitmentService.decideApplicant({ applicant_id: 'applicant-1', decision: 'accepted', decided_by: 'owner-1' })
@@ -776,6 +854,7 @@ describe('recruitmentService — Recruitment', () => {
     it('refuses to reject an applicant who already confirmed the offer — must use Remove Worker', async () => {
       const confirmed = { ...baseApplicant, status: 'accepted' as const, invitation_status: 'accepted' }
       vi.mocked(recruitmentRepository.getApplicantById).mockResolvedValue(confirmed)
+      vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue(basePosting)
 
       await expect(recruitmentService.decideApplicant({ applicant_id: 'applicant-1', decision: 'rejected', decided_by: 'owner-1' }))
         .rejects.toThrow('use Remove Worker instead')

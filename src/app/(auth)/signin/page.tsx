@@ -116,7 +116,7 @@ function SignInContent() {
       // (it outlives logout otherwise, and would bounce them to the board instead of their app).
       localStorage.removeItem('apply_job_id');
 
-      const route = role === 'Owner' ? getOwnerLandingHref() : (ROLE_ROUTES[role] || '/owner/dashboard');
+      const route = role === 'Owner' ? getOwnerLandingHref() : role === 'Partner' ? getOwnerLandingHref('partner') : (ROLE_ROUTES[role] || '/owner/dashboard');
       window.location.href = route;
     } catch (err) {
       const msg = err instanceof Error ? err.message : '';

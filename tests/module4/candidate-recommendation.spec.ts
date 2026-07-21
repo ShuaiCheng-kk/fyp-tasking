@@ -117,7 +117,7 @@ test('UC44: applicant list returns the apply-time snapshot fields', async ({ req
     certificates_snapshot: [{ name: 'Food Hygiene Certificate', file_url: null }],
   })
 
-  const res = await request.get(`/api/recruitment?resource=applicants&job_id=${jobId}`)
+  const res = await request.get(`/api/recruitment?resource=applicants&job_id=${jobId}&viewer_id=${seeded.ownerId}`)
   expect(res.status()).toBe(200)
   const { applicants } = await res.json()
   const applicant = applicants.find((a: { user_id: string }) => a.user_id === userId)

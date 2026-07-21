@@ -23,14 +23,27 @@ export async function GET(req: NextRequest) {
   const date_from = searchParams.get('date_from') ?? undefined
   const date_to = searchParams.get('date_to') ?? undefined
   const assigned_by = searchParams.get('assigned_by') ?? undefined
+  // Manager Tasks page scope: resolves to "every manager sharing a department with this manager"
+  // (assigned_by) plus that department set (a security-scoping filter, separate from the
+  // UI-level `department_id` filter below) — see taskService.getManagerTeamScope.
+  const manager_scope_id = searchParams.get('manager_scope_id') ?? undefined
+  // The actual current user, distinct from assigned_by above (which for Owner/Partner is the
+  // whole peer id list, not just the caller) — used to look up THIS viewer's own Task Delay
+  // Alert read state so a peer's dismissal doesn't hide it for anyone else.
+  const viewer_id = searchParams.get('viewer_id') ?? undefined
 
   if (!company_id) {
     return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
   }
 
   try {
+    const managerScope = manager_scope_id ? await taskService.getManagerTeamScope(company_id, manager_scope_id) : null
+    const assignedByFilter = managerScope
+      ? managerScope.managerIds
+      : assigned_by?.includes(',') ? assigned_by.split(',').filter(Boolean) : assigned_by
+
     if (kanban) {
-      const groups = await taskService.getKanbanTasks(company_id, assigned_by)
+      const groups = await taskService.getKanbanTasks(company_id, assignedByFilter, managerScope?.departmentIds, viewer_id)
       return NextResponse.json({ success: true, groups })
     }
     if (stats) {
@@ -54,7 +67,13 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: true, tasks })
     }
     if (suggestion === 'workload') {
-      const suggestions = await taskService.getWorkloadRebalancingSuggestions(company_id, department_id, assigned_by)
+      const suggestions = await taskService.getWorkloadRebalancingSuggestions(
+        company_id,
+        department_id,
+        assignedByFilter,
+        managerScope?.departmentIds,
+        managerScope ? 'Employee' : 'Manager',
+      )
       return NextResponse.json({
         success: true,
         suggestions,
@@ -66,7 +85,13 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: true, suggestion: reassignmentSuggestion })
     }
     if (suggestion === 'delay') {
-      const alerts = await taskService.getTaskDelayAlerts(company_id, department_id, assigned_by)
+      const alerts = await taskService.getTaskDelayAlerts(
+        company_id,
+        department_id,
+        assignedByFilter,
+        managerScope?.departmentIds,
+        viewer_id,
+      )
       return NextResponse.json({ success: true, alerts })
     }
     if (delay_threshold) {
@@ -114,7 +139,7 @@ export async function POST(req: NextRequest) {
   if (b.action === 'mark_delay_alerts_read') {
     try {
       const task_ids = Array.isArray(b.task_ids) ? b.task_ids.filter((v): v is string => typeof v === 'string') : []
-      await taskService.markTaskDelayAlertsRead(task_ids)
+      await taskService.markTaskDelayAlertsRead(task_ids, b.user_id as string | undefined)
       return NextResponse.json({ success: true })
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to mark delay alerts as read'
@@ -206,6 +231,20 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ success: true, task })
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to approve task'
+      return NextResponse.json({ success: false, message }, { status: 400 })
+    }
+  }
+
+  if (b.action === 'apply_workload_suggestion') {
+    try {
+      const task = await taskService.applyWorkloadSuggestionReassignment(
+        b.id,
+        b.assigned_user_id as string,
+        b.assigned_by as string | undefined,
+      )
+      return NextResponse.json({ success: true, task })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to reassign task'
       return NextResponse.json({ success: false, message }, { status: 400 })
     }
   }

@@ -40,9 +40,12 @@ export const ownerTeamService = {
     if (user_id_to_remove === requester.id) throw new Error('Cannot remove yourself')
     if (target.company_id !== company_id) throw new Error('User is not a member of this company')
 
+    // Only the company creator (the true Owner) may remove a member — Partner is a clone of Owner
+    // in every other feature, but removing members is deliberately Owner-only, so a Partner cannot
+    // remove anyone: not another Partner, not a Manager, not an Employee.
     const requesterIsCreator = requester.id === company.owner_id
-    if (!requesterIsCreator && target.role === 'Owner') {
-      throw new Error('Insufficient permissions to remove a Partner')
+    if (!requesterIsCreator) {
+      throw new Error('Insufficient permissions to remove a member')
     }
 
     // An Employee who is the responsible supervisor on live recruitment jobs or upcoming casual

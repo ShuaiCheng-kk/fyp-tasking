@@ -357,8 +357,11 @@ describe('shiftService — Shift (UC1, UC3-10)', () => {
       })
     })
 
-    it('clears the assignment without creating a new one when assigned_user_id is null', async () => {
+    it('clears an existing assignment without creating a new one when assigned_user_id is null', async () => {
       vi.mocked(shiftRepository.getShiftById).mockResolvedValue(baseShift)
+      vi.mocked(shiftRepository.getAssignmentsByShiftIds).mockResolvedValue([
+        { id: 'a-1', shift_id: 'shift-1', user_id: 'user-1', assigned_by: 'owner-1', assignment_status: 'assigned', supervisor_employee_id: null, created_at: '', updated_at: '' },
+      ])
       vi.mocked(shiftRepository.deleteAssignmentsByShiftId).mockResolvedValue(undefined)
 
       await shiftService.editShift('shift-1', {}, {
@@ -369,6 +372,60 @@ describe('shiftService — Shift (UC1, UC3-10)', () => {
 
       expect(shiftRepository.deleteAssignmentsByShiftId).toHaveBeenCalledWith('shift-1')
       expect(shiftRepository.createShiftAssignment).not.toHaveBeenCalled()
+    })
+
+    it('does not touch shift_assignments when the assignment block matches the existing assignment (e.g. saving other fields unchanged)', async () => {
+      vi.mocked(shiftRepository.getShiftById).mockResolvedValue(baseShift)
+      vi.mocked(shiftRepository.getAssignmentsByShiftIds).mockResolvedValue([
+        { id: 'a-1', shift_id: 'shift-1', user_id: 'user-1', assigned_by: 'owner-1', assignment_status: 'assigned', supervisor_employee_id: null, created_at: '', updated_at: '' },
+      ])
+
+      await shiftService.editShift('shift-1', { start_time: '08:30' }, {
+        assigned_user_id: 'user-1',
+        assigned_by: 'owner-1',
+        supervisor_employee_id: null,
+      })
+
+      expect(shiftRepository.deleteAssignmentsByShiftId).not.toHaveBeenCalled()
+      expect(shiftRepository.createShiftAssignment).not.toHaveBeenCalled()
+    })
+
+    it('does not touch shift_assignments for a Casual Worker assignment (has a supervisor) when the caller omits supervisor_employee_id entirely, e.g. Bulk Edit', async () => {
+      vi.mocked(shiftRepository.getShiftById).mockResolvedValue(baseShift)
+      vi.mocked(shiftRepository.getAssignmentsByShiftIds).mockResolvedValue([
+        { id: 'a-1', shift_id: 'shift-1', user_id: 'casual-1', assigned_by: 'owner-1', assignment_status: 'assigned', supervisor_employee_id: 'employee-1', created_at: '', updated_at: '' },
+      ])
+
+      // No supervisor_employee_id key at all — Bulk Edit has no supervisor field in its UI.
+      await shiftService.editShift('shift-1', { start_time: '08:30' }, {
+        assigned_user_id: 'casual-1',
+        assigned_by: 'owner-1',
+      })
+
+      expect(shiftRepository.deleteAssignmentsByShiftId).not.toHaveBeenCalled()
+      expect(shiftRepository.createShiftAssignment).not.toHaveBeenCalled()
+    })
+
+    it('preserves the existing supervisor when actually reassigning without specifying supervisor_employee_id', async () => {
+      vi.mocked(shiftRepository.getShiftById).mockResolvedValue(baseShift)
+      vi.mocked(shiftRepository.deleteAssignmentsByShiftId).mockResolvedValue(undefined)
+      vi.mocked(shiftRepository.createShiftAssignment).mockResolvedValue({} as never)
+      vi.mocked(shiftRepository.getAssignmentsByShiftIds).mockResolvedValue([
+        { id: 'a-1', shift_id: 'shift-1', user_id: 'casual-1', assigned_by: 'owner-1', assignment_status: 'assigned', supervisor_employee_id: 'employee-1', created_at: '', updated_at: '' },
+      ])
+
+      await shiftService.editShift('shift-1', {}, {
+        assigned_user_id: 'casual-2',
+        assigned_by: 'owner-1',
+      })
+
+      expect(shiftRepository.deleteAssignmentsByShiftId).toHaveBeenCalledWith('shift-1')
+      expect(shiftRepository.createShiftAssignment).toHaveBeenCalledWith({
+        shift_id: 'shift-1',
+        user_id: 'casual-2',
+        assigned_by: 'owner-1',
+        supervisor_employee_id: 'employee-1',
+      })
     })
 
     it('swaps the new assignee\'s same-day shift to the previous assignee instead of double-booking', async () => {
@@ -582,6 +639,23 @@ describe('shiftService — Shift (UC1, UC3-10)', () => {
 
     it('throws when items is empty', async () => {
       await expect(shiftService.bulkEditShifts('company-1', [], 'owner-1')).rejects.toThrow('items must be a non-empty array')
+    })
+
+    it('regression: saving a Casual Worker row with the same assignee does not touch shift_assignments (Bulk Edit has no supervisor field, so it must not look like a reassignment)', async () => {
+      vi.mocked(shiftRepository.getShiftById).mockResolvedValue({ ...baseShift, id: 'shift-1' })
+      vi.mocked(shiftRepository.updateShift).mockResolvedValue({ ...baseShift, id: 'shift-1', start_time: '10:00' })
+      vi.mocked(shiftRepository.getAssignmentsByShiftIds).mockResolvedValue([
+        { id: 'a-1', shift_id: 'shift-1', user_id: 'casual-1', assigned_by: 'owner-1', assignment_status: 'assigned', supervisor_employee_id: 'employee-1', created_at: '', updated_at: '' },
+      ])
+
+      const result = await shiftService.bulkEditShifts('company-1', [
+        { id: 'shift-1', start_time: '10:00', assigned_user_id: 'casual-1' },
+      ], 'owner-1')
+
+      expect(result.failed).toHaveLength(0)
+      expect(result.updated).toHaveLength(1)
+      expect(shiftRepository.deleteAssignmentsByShiftId).not.toHaveBeenCalled()
+      expect(shiftRepository.createShiftAssignment).not.toHaveBeenCalled()
     })
   })
 

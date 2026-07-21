@@ -15,8 +15,8 @@ import {
 export const offDaySettingsService = {
   async assertOwner(user_id: string, company_id: string): Promise<void> {
     const user = await authRepository.findByAuthIdOrInternalId(user_id)
-    if (!user || user.role !== 'Owner' || user.company_id !== company_id) {
-      throw new Error('Only Owner can manage Weekly Day Off settings')
+    if (!user || (user.role !== 'Owner' && user.role !== 'Partner') || user.company_id !== company_id) {
+      throw new Error('Only Owner or Partner can manage Weekly Day Off settings')
     }
   },
 

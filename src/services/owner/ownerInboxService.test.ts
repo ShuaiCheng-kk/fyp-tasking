@@ -23,8 +23,15 @@ vi.mock('@/repositories/owner/ownerInboxRepository', () => ({
   },
 }))
 
+vi.mock('@/repositories/manager/managerInboxRepository', () => ({
+  managerInboxRepository: {
+    getManagerContacts: vi.fn(),
+  },
+}))
+
 import { ownerInboxService } from './ownerInboxService'
 import { ownerInboxRepository } from '@/repositories/owner/ownerInboxRepository'
+import { managerInboxRepository } from '@/repositories/manager/managerInboxRepository'
 
 describe('ownerInboxService — Communication (UC61)', () => {
   beforeEach(() => {
@@ -118,6 +125,25 @@ describe('ownerInboxService — Communication (UC61)', () => {
       await ownerInboxService.sendMessage('owner-1', 'mgr-1', 'company-1', 'Hello')
 
       expect(ownerInboxRepository.insertMessage).toHaveBeenCalledWith('owner-1', 'mgr-1', 'company-1', 'Hello', undefined)
+    })
+
+    it('rejects a Manager messaging someone outside their own-department scope', async () => {
+      vi.mocked(ownerInboxRepository.findUserById).mockResolvedValue({ full_name: 'Manager One', role: 'Manager' })
+      vi.mocked(managerInboxRepository.getManagerContacts).mockResolvedValue([{ id: 'owner-1', full_name: 'Owner', role: 'Owner', email_address: '', profile_photo_url: null }])
+
+      await expect(ownerInboxService.sendMessage('mgr-1', 'mgr-2-other-dept', 'company-1', 'Hi'))
+        .rejects.toThrow('Managers can only message the Owner, Partner, or members of their own department')
+      expect(ownerInboxRepository.insertMessage).not.toHaveBeenCalled()
+    })
+
+    it('allows a Manager to message someone within their own-department scope', async () => {
+      vi.mocked(ownerInboxRepository.findUserById).mockResolvedValue({ full_name: 'Manager One', role: 'Manager' })
+      vi.mocked(managerInboxRepository.getManagerContacts).mockResolvedValue([{ id: 'emp-1', full_name: 'Employee', role: 'Employee', email_address: '', profile_photo_url: null }])
+      vi.mocked(ownerInboxRepository.insertMessage).mockResolvedValue({ id: 'msg-1' })
+
+      await ownerInboxService.sendMessage('mgr-1', 'emp-1', 'company-1', 'Hi')
+
+      expect(ownerInboxRepository.insertMessage).toHaveBeenCalledWith('mgr-1', 'emp-1', 'company-1', 'Hi', 'Manager One')
     })
   })
 

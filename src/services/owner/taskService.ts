@@ -136,11 +136,12 @@ export const taskService = {
         throw new Error('percentage_complete must be between 0 and 100')
       }
     }
-    // A new deadline is a new delay window — un-dismiss the Task Delay Alert so it can re-fire.
-    if (input.due_at !== undefined && input.due_at !== existing.due_at && existing.delay_alert_read_at) {
-      input = { ...input, delay_alert_read_at: null }
-    }
     const updated = await taskRepository.updateTask(id, input, actingUserId)
+    // A new deadline is a new delay window — un-dismiss the Task Delay Alert for every viewer
+    // who had acknowledged it, so it can re-fire for all of them.
+    if (input.due_at !== undefined && input.due_at !== existing.due_at) {
+      await taskRepository.clearDelayAlertReads(id)
+    }
     if (existing.parent_task_id === null) {
       const cascade: Partial<TaskInput> = {}
       if (input.assigned_user_id !== undefined && input.assigned_user_id !== existing.assigned_user_id) {
@@ -160,6 +161,22 @@ export const taskService = {
       if (Object.keys(cascade).length > 0) {
         await taskRepository.updateSubTasksByParent(id, cascade)
       }
+    }
+    return updated
+  },
+
+  // UC21 follow-through — applying a Workload Rebalancing suggestion is a company-wide,
+  // algorithmically-computed reassignment, not a manual edit, so it uses peer authorization
+  // (assertCanApplyWorkloadSuggestion) instead of the strict assigner-only editTask path.
+  async applyWorkloadSuggestionReassignment(id: string, newAssigneeId: string, actingUserId?: string | null): Promise<Task> {
+    if (!id) throw new Error('Task id is required')
+    if (!newAssigneeId) throw new Error('assigned_user_id is required')
+    const existing = await assertCanApplyWorkloadSuggestion(id, actingUserId)
+    if (existing.parent_task_id !== null) throw new Error('Only a top-level task can be reassigned this way')
+    await validateTaskAssignment({ ...existing, assigned_user_id: newAssigneeId })
+    const updated = await taskRepository.updateTask(id, { assigned_user_id: newAssigneeId }, actingUserId)
+    if (newAssigneeId !== existing.assigned_user_id) {
+      await taskRepository.updateSubTasksByParent(id, { assigned_user_id: newAssigneeId })
     }
     return updated
   },
@@ -506,8 +523,24 @@ export const taskService = {
     return [updatedSubTask, updatedParent]
   },
 
-  async getKanbanTasks(company_id: string, assigned_by?: string): Promise<KanbanGroup> {
-    const tasks = await taskRepository.getTasksByCompany(company_id, assigned_by)
+  // A Manager's own department membership plus every peer Manager sharing at least one of those
+  // departments — this is the correctness boundary for "Manager Tasks page shows tasks created by
+  // any manager collaboratively managing the same team" without leaking a peer's OTHER, unrelated
+  // department (see department_ids on getTasksByCompany). Falls back to [manager_id] alone when the
+  // manager has no department yet, so an unassigned manager sees nothing rather than the company.
+  async getManagerTeamScope(company_id: string, manager_id: string): Promise<{ departmentIds: string[]; managerIds: string[] }> {
+    const departmentIds = await taskRepository.getManagerDepartmentIds(manager_id, company_id)
+    if (departmentIds.length === 0) return { departmentIds: [], managerIds: [manager_id] }
+    const peers = await taskRepository.getManagersByDepartmentIds(company_id, departmentIds)
+    const managerIds = peers.length > 0 ? peers.map(p => p.id) : [manager_id]
+    return { departmentIds, managerIds }
+  },
+
+  async getKanbanTasks(company_id: string, assigned_by?: string | string[], department_ids?: string[], viewer_user_id?: string): Promise<KanbanGroup> {
+    const tasks = await attachDelayAlertReadState(
+      await taskRepository.getTasksByCompany(company_id, assigned_by, department_ids),
+      viewer_user_id,
+    )
     return {
       Assigned: tasks.filter(t => t.status === 'Assigned'),
       'In Progress': tasks.filter(t => t.status === 'In Progress'),
@@ -583,8 +616,14 @@ export const taskService = {
   // manager pool starts at score 0 so managers with no active tasks can be recommended. A user
   // must have at least two active main tasks before we suggest moving one away; moving their only
   // task is not a meaningful rebalance.
-  async getWorkloadRebalancingSuggestions(company_id: string, department_id?: string, assigned_by?: string): Promise<TaskWorkloadSuggestion[]> {
-    const activeTasks = (await taskRepository.getTasksByCompany(company_id, assigned_by))
+  async getWorkloadRebalancingSuggestions(
+    company_id: string,
+    department_id?: string,
+    assigned_by?: string | string[],
+    scopeDepartmentIds?: string[],
+    candidateRole: 'Manager' | 'Employee' = 'Manager',
+  ): Promise<TaskWorkloadSuggestion[]> {
+    const activeTasks = (await taskRepository.getTasksByCompany(company_id, assigned_by, scopeDepartmentIds))
       .filter(task => task.status !== 'Complete' && task.parent_task_id === null && task.assigned_user_id)
       .filter(task => !department_id || task.department_id === department_id)
 
@@ -604,8 +643,10 @@ export const taskService = {
     const suggestionsByDept = await Promise.all(departmentIds.map(async (deptId): Promise<TaskWorkloadSuggestion | null> => {
       const scores = new Map<string, number>()
       const taskCounts = new Map<string, number>()
-      const managers = await taskRepository.getManagersByDepartment(company_id, deptId)
-      for (const manager of managers) scores.set(manager.id, 0)
+      const candidates = candidateRole === 'Employee'
+        ? await taskRepository.getEmployeesByDepartment(company_id, deptId)
+        : await taskRepository.getManagersByDepartment(company_id, deptId)
+      for (const candidate of candidates) scores.set(candidate.id, 0)
 
       for (const task of activeTasks) {
         if (task.department_id !== deptId) continue
@@ -703,15 +744,17 @@ export const taskService = {
   // (created_at) exceeds the company's threshold percentage of the total assigned-to-deadline
   // window. Threshold is configurable per company (default 50). A task already In Progress is
   // being worked on, so it never triggers this alert.
-  async getTaskDelayAlerts(company_id: string, department_id?: string, assigned_by?: string): Promise<TaskDelayAlert[]> {
+  async getTaskDelayAlerts(company_id: string, department_id?: string, assigned_by?: string | string[], scopeDepartmentIds?: string[], viewer_user_id?: string): Promise<TaskDelayAlert[]> {
     const now = Date.now()
     const { threshold_percent } = await this.getTaskDelayThreshold(company_id)
-    return (await taskRepository.getTasksByCompany(company_id, assigned_by))
+    const readTaskIds = viewer_user_id ? await taskRepository.getDelayAlertReadsByUser(viewer_user_id) : new Map<string, string>()
+    return (await taskRepository.getTasksByCompany(company_id, assigned_by, scopeDepartmentIds))
       .filter(task => task.status === 'Assigned')
       .filter(task => task.parent_task_id === null)
       .filter(task => !!task.due_at)
-      // Marked as read by the assigner — stays dismissed until the deadline changes.
-      .filter(task => !task.delay_alert_read_at)
+      // Marked as read by this viewer specifically — stays dismissed for them until the deadline
+      // changes. A peer viewer (e.g. the other Owner/Partner) who hasn't read it still sees it.
+      .filter(task => !readTaskIds.has(task.id))
       .filter(task => !department_id || task.department_id === department_id)
       .map(task => {
         const createdAt = new Date(task.created_at).getTime()
@@ -747,12 +790,14 @@ export const taskService = {
     return { threshold_percent }
   },
 
-  // "Mark as read" on the Task Delay Alert — the assigner has seen the delayed tasks; the alert
-  // is dismissed for exactly those tasks. A task that becomes delayed later still alerts.
-  async markTaskDelayAlertsRead(task_ids: string[]): Promise<void> {
+  // "Mark as read" on the Task Delay Alert — only for the viewer who clicked it (Owner and
+  // Partner are peers who each see the same tasks but dismiss independently). A task that
+  // becomes delayed later, or whose deadline changes, still alerts again for everyone.
+  async markTaskDelayAlertsRead(task_ids: string[], user_id?: string | null): Promise<void> {
     if (!Array.isArray(task_ids) || task_ids.length === 0) throw new Error('task_ids is required')
     if (task_ids.some(id => typeof id !== 'string' || !id)) throw new Error('task_ids must be non-empty strings')
-    await taskRepository.markDelayAlertsRead(task_ids)
+    if (!user_id) throw new Error('user_id is required')
+    await taskRepository.markDelayAlertsRead(task_ids, user_id)
   },
 
 }
@@ -784,6 +829,40 @@ async function assertIsTaskOwner(taskId: string, actingUserId?: string | null): 
     throw new Error('Only the user who assigned this task can perform this action')
   }
   return task
+}
+
+// Maps each task's per-viewer Task Delay Alert read state onto it — a no-op (all nulls) when no
+// viewer_user_id is given, since some callers (e.g. calendar/reassignment lookups) don't care.
+async function attachDelayAlertReadState(tasks: Task[], viewer_user_id?: string): Promise<Task[]> {
+  if (!viewer_user_id) return tasks
+  const reads = await taskRepository.getDelayAlertReadsByUser(viewer_user_id)
+  return tasks.map(t => ({ ...t, delay_alert_read_at: reads.get(t.id) ?? null }))
+}
+
+// Owner and Partner are peer "assigner" roles over the same Manager tier (mirrors the Kanban
+// visibility scope in TasksView.tsx's fetchKanban / ownerDashboardService) — a company-wide,
+// algorithmically-suggested action like Workload Rebalancing may be applied by either peer, even
+// onto a task the OTHER one assigned. This is intentionally narrower than a full ownership bypass:
+// manual edit/delete/archive/duplicate stay assigner-only via assertIsTaskOwner above.
+async function assertCanApplyWorkloadSuggestion(taskId: string, actingUserId?: string | null): Promise<Task> {
+  const task = await taskRepository.getTaskById(taskId)
+  if (!actingUserId) throw new Error('Only a peer of the assigner can apply this suggestion')
+  if (task.assigned_by === actingUserId) return task
+  if (!task.assigned_by) throw new Error('Only a peer of the assigner can apply this suggestion')
+  const [actingUser, assigner] = await Promise.all([
+    taskRepository.getUserById(actingUserId),
+    taskRepository.getUserById(task.assigned_by),
+  ])
+  if (!actingUser || !assigner || actingUser.company_id !== assigner.company_id) {
+    throw new Error('Only a peer of the assigner can apply this suggestion')
+  }
+  const ownerPartner = ['Owner', 'Partner']
+  if (ownerPartner.includes(actingUser.role) && ownerPartner.includes(assigner.role)) return task
+  if (actingUser.role === 'Manager' && assigner.role === 'Manager') {
+    const scope = await taskService.getManagerTeamScope(task.company_id, actingUserId)
+    if (scope.managerIds.includes(assigner.id)) return task
+  }
+  throw new Error('Only a peer of the assigner can apply this suggestion')
 }
 
 function addDays(date: string, days: number): string {

@@ -25,6 +25,7 @@ let taskId: string
 let existingSubTaskId: string
 let managerA: SeededMember
 let managerB: SeededMember
+let employeeInDept: SeededMember
 
 async function createManager(label: string): Promise<SeededMember> {
   const email = `test-module2-manager-${label}-${Date.now()}@tasking-tests.local`
@@ -79,6 +80,37 @@ async function createTask(request: APIRequestContext, overrides: Record<string, 
   return body.task as { id: string }
 }
 
+async function createEmployee(label: string): Promise<SeededMember> {
+  const email = `test-module2-employee-${label}-${Date.now()}@tasking-tests.local`
+  const { data: authData, error: authError } = await admin.auth.admin.createUser({
+    email,
+    password: 'Test-Password-123!',
+    email_confirm: true,
+  })
+  if (authError || !authData.user) throw new Error(`Failed to create auth user: ${authError?.message}`)
+
+  const { data: user, error: userError } = await admin
+    .from('users')
+    .insert({
+      supabase_auth_id: authData.user.id,
+      full_name: `Module 2 Employee ${label}`,
+      email_address: email,
+      phone_number: null,
+      role: 'Employee',
+      company_id: seeded.companyId,
+    })
+    .select()
+    .single()
+  if (userError || !user) throw new Error(`Failed to create employee row: ${userError?.message}`)
+
+  const { error: employeeDeptError } = await admin
+    .from('employee_departments')
+    .insert({ employee_id: user.id, department_id: departmentId })
+  if (employeeDeptError) throw new Error(`Failed to assign employee department: ${employeeDeptError.message}`)
+
+  return { authUserId: authData.user.id, userId: user.id as string }
+}
+
 async function createShiftAssignmentsForDate(shiftDate: string, userIds = [managerA.userId, managerB.userId]) {
   const { data: shift, error: shiftError } = await admin
     .from('shifts')
@@ -118,6 +150,7 @@ test.beforeAll(async () => {
 
   managerA = await createManager('a')
   managerB = await createManager('b')
+  employeeInDept = await createEmployee('a')
 
   const { data: shift, error: shiftError } = await admin
     .from('shifts')
@@ -159,7 +192,8 @@ test.afterAll(async () => {
     await admin.from('shifts').delete().in('id', createdShiftIds)
   }
   await admin.from('manager_departments').delete().eq('company_id', seeded.companyId)
-  for (const member of [managerA, managerB]) {
+  await admin.from('employee_departments').delete().eq('employee_id', employeeInDept.userId)
+  for (const member of [managerA, managerB, employeeInDept]) {
     await admin.from('users').delete().eq('id', member.userId)
     await admin.auth.admin.deleteUser(member.authUserId).catch(() => undefined)
   }
@@ -181,6 +215,34 @@ test('views the task Kanban board', async ({ request }) => {
   expect(res.status()).toBe(200)
   const body = await res.json()
   expect(body.groups.Assigned).toEqual(expect.arrayContaining([expect.objectContaining({ id: taskId })]))
+})
+
+test('Manager Tasks page (manager_scope_id): a manager sees every manager\'s tasks within their shared department, but not the Owner\'s personal task to them', async ({ request }) => {
+  const taskByA = await createTask(request, {
+    title: 'Manager A assigns to Employee',
+    assigned_by: managerA.userId,
+    assigned_user_id: employeeInDept.userId,
+    shift_id: null,
+  })
+  const taskByB = await createTask(request, {
+    title: 'Manager B assigns to Employee',
+    assigned_by: managerB.userId,
+    assigned_user_id: employeeInDept.userId,
+    shift_id: null,
+  })
+
+  // From managerB's point of view, managerA's assignment to their shared team must be visible too.
+  const res = await request.get(`/api/task?company_id=${seeded.companyId}&kanban=true&manager_scope_id=${managerB.userId}`)
+  expect(res.status()).toBe(200)
+  const body = await res.json()
+  const ids = body.groups.Assigned.map((t: { id: string }) => t.id)
+  expect(ids).toEqual(expect.arrayContaining([taskByA.id, taskByB.id]))
+
+  // taskId (from the earlier UC12 test) is assigned_by the Owner directly to managerA — the
+  // manager's own personal task, not team work, so it must never appear in the team scope.
+  expect(ids).not.toContain(taskId)
+
+  await admin.from('tasks').delete().in('id', [taskByA.id, taskByB.id])
 })
 
 test('UC13 edits a task', async ({ request }) => {
@@ -421,33 +483,78 @@ test('workload and delay insights scope to a single department when department_i
   await admin.from('departments').delete().eq('id', otherDept.id)
 })
 
-test('marking a delay alert as read dismisses it until the deadline changes', async ({ request }) => {
+// Runs after the department-scoping test above (which is the last one still relying on
+// managerA/managerB's original department-wide imbalance) — applying this suggestion actually
+// fixes the imbalance, so any test relying on it staying 'rebalance' must come first.
+test('UC21 applies a workload rebalancing suggestion via peer-authorized reassignment', async ({ request }) => {
+  const workload = await request.get(`/api/task?company_id=${seeded.companyId}&suggestion=workload`)
+  const workloadBody = await workload.json()
+  const suggestion = workloadBody.suggestion
+  expect(suggestion.type).toBe('rebalance')
+
+  // Applying the suggestion is authorized for the peer "assigner" scope (Owner/Partner over the
+  // same Manager tier, or a shared-department Manager peer) rather than an exact assigner match —
+  // an Employee acting as neither is rejected.
+  const rejected = await request.patch('/api/task', {
+    data: {
+      action: 'apply_workload_suggestion',
+      id: suggestion.suggested_task_id,
+      assigned_user_id: suggestion.recommended_user_id,
+      assigned_by: employeeInDept.userId,
+    },
+  })
+  expect(rejected.status()).toBe(400)
+
+  const apply = await request.patch('/api/task', {
+    data: {
+      action: 'apply_workload_suggestion',
+      id: suggestion.suggested_task_id,
+      assigned_user_id: suggestion.recommended_user_id,
+      assigned_by: seeded.ownerId,
+    },
+  })
+  expect(apply.status()).toBe(200)
+  const applyBody = await apply.json()
+  expect(applyBody.success).toBe(true)
+  expect(applyBody.task.assigned_user_id).toBe(suggestion.recommended_user_id)
+})
+
+test('marking a delay alert as read dismisses it for that viewer only, until the deadline changes', async ({ request }) => {
   // taskId is Assigned and past the default 50% threshold (set up in UC22 above) — flagged.
-  const before = await request.get(`/api/task?company_id=${seeded.companyId}&suggestion=delay`)
+  const before = await request.get(`/api/task?company_id=${seeded.companyId}&suggestion=delay&viewer_id=${seeded.ownerId}`)
   expect((await before.json()).alerts).toEqual(expect.arrayContaining([expect.objectContaining({ task_id: taskId })]))
 
-  // Mark as read → the alert disappears even though the task is still sitting in Assigned.
+  // A user_id is required.
+  const missingUser = await request.post('/api/task', { data: { action: 'mark_delay_alerts_read', task_ids: [taskId] } })
+  expect(missingUser.status()).toBe(400)
+
+  // Mark as read → the alert disappears for THIS viewer even though the task is still Assigned.
   const markRead = await request.post('/api/task', {
-    data: { action: 'mark_delay_alerts_read', task_ids: [taskId] },
+    data: { action: 'mark_delay_alerts_read', task_ids: [taskId], user_id: seeded.ownerId },
   })
   expect(markRead.status()).toBe(200)
   expect((await markRead.json()).success).toBe(true)
 
-  const after = await request.get(`/api/task?company_id=${seeded.companyId}&suggestion=delay`)
+  const after = await request.get(`/api/task?company_id=${seeded.companyId}&suggestion=delay&viewer_id=${seeded.ownerId}`)
   expect((await after.json()).alerts).not.toEqual(expect.arrayContaining([expect.objectContaining({ task_id: taskId })]))
 
+  // A different viewer (e.g. a peer Owner/Partner) who never dismissed it still sees it —
+  // dismissal is per-viewer, not shared across whoever looks at the task.
+  const peerView = await request.get(`/api/task?company_id=${seeded.companyId}&suggestion=delay&viewer_id=${managerA.userId}`)
+  expect((await peerView.json()).alerts).toEqual(expect.arrayContaining([expect.objectContaining({ task_id: taskId })]))
+
   // An empty task_ids list is rejected.
-  const invalid = await request.post('/api/task', { data: { action: 'mark_delay_alerts_read', task_ids: [] } })
+  const invalid = await request.post('/api/task', { data: { action: 'mark_delay_alerts_read', task_ids: [], user_id: seeded.ownerId } })
   expect(invalid.status()).toBe(400)
 
-  // Editing the deadline clears the read mark — a new delay window can re-raise the alert.
+  // Editing the deadline clears the read mark for every viewer — a new delay window re-raises it.
   const newDue = new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString()
   const edit = await request.patch('/api/task', {
     data: { id: taskId, due_at: newDue, assigned_by: seeded.ownerId },
   })
   expect(edit.status()).toBe(200)
 
-  const reflagged = await request.get(`/api/task?company_id=${seeded.companyId}&suggestion=delay`)
+  const reflagged = await request.get(`/api/task?company_id=${seeded.companyId}&suggestion=delay&viewer_id=${seeded.ownerId}`)
   expect((await reflagged.json()).alerts).toEqual(expect.arrayContaining([expect.objectContaining({ task_id: taskId })]))
 })
 

@@ -11,20 +11,25 @@ const GAP_FROM_BADGES = 12
 // Used only on the rare owner page that doesn't render the user/plan badge row at all.
 const FALLBACK_POSITION = { top: 20, right: 24 }
 
-// Persistent, cross-page indicator for the Owner's "Auto Shift Scheduling" AI run — mounted once in
-// src/app/owner/layout.tsx so it stays visible (and the run keeps streaming) no matter which
-// /owner/* page the Owner navigates to while it's in progress. Clicking it takes them back to
-// Shifts to review the result; the Shifts page auto-opens the wizard when it sees a non-idle run.
+// Persistent, cross-page indicator for the Owner/Partner "Auto Shift Scheduling" AI run — mounted
+// once each in src/app/owner/layout.tsx and src/app/partner/layout.tsx so it stays visible (and the
+// run keeps streaming) no matter which page within that role the user navigates to while it's in
+// progress. Clicking it takes them back to that role's Shifts page to review the result; the Shifts
+// page auto-opens the wizard when it sees a non-idle run. The generation store itself is a
+// module-level singleton (not scoped per role), so whichever role's layout is mounted just reflects
+// whatever run is in flight — only one Owner/Partner AI schedule run is ever active at a time.
 // Styled to match the OwnerUserBadge/PlanBadge pills it sits next to (36px pill, white, #E5E7EB
 // border) rather than a standalone card, and positioned by measuring that badge row at runtime
-// (each owner page marks its wrapper with data-owner-header-badges) rather than a guessed fixed
-// offset — a hardcoded pixel value drifts out of alignment across pages/screen sizes.
+// (each page marks its wrapper with data-owner-header-badges) rather than a guessed fixed offset —
+// a hardcoded pixel value drifts out of alignment across pages/screen sizes.
 export default function AiScheduleStatusWidget() {
   const state = useSyncExternalStore(aiScheduleGenerationStore.subscribe, aiScheduleGenerationStore.getSnapshot, aiScheduleGenerationStore.getSnapshot)
   const router = useRouter()
   const pathname = usePathname()
   const [position, setPosition] = useState(FALLBACK_POSITION)
   const visible = state.status !== 'idle'
+  // /owner/shifts or /partner/shifts, matched to whichever role's layout mounted this widget.
+  const shiftsPath = `/${pathname.split('/')[1] || 'owner'}/shifts`
 
   useEffect(() => {
     if (!visible) return
@@ -71,10 +76,10 @@ export default function AiScheduleStatusWidget() {
 
   const goToShifts = () => {
     // Bump the open-request counter unconditionally — if the Shifts page is already mounted (the
-    // Owner is already sitting on /owner/shifts), navigating nowhere wouldn't otherwise tell it to
-    // reopen the wizard.
+    // user is already sitting on their role's Shifts page), navigating nowhere wouldn't otherwise
+    // tell it to reopen the wizard.
     aiScheduleGenerationStore.requestOpen()
-    if (pathname !== '/owner/shifts') router.push('/owner/shifts')
+    if (pathname !== shiftsPath) router.push(shiftsPath)
   }
 
   // Also cancels an in-flight run (clear() aborts the fetch) — not just dismissing a finished one.

@@ -2,6 +2,7 @@
 // RULE: Business logic only. No HTTP handling. No direct DB access.
 
 import { attendanceService, resolveActiveSubmissionWeekStart, resolveDeadlineDateForWeek } from '@/services/owner/attendanceService'
+import { ownerTeamService } from '@/services/owner/ownerTeamService'
 import { attendanceRepository } from '@/repositories/owner/attendanceRepository'
 import { offDaySettingsService } from '@/services/owner/offDaySettingsService'
 import { taskService } from '@/services/owner/taskService'
@@ -20,6 +21,10 @@ import {
 } from '@/types/OwnerDashboard'
 
 const STARTING_SOON_DAYS = 2
+
+// Manager viewers get the same summary scoped to their own departments (UC role scope);
+// null means the viewer is an Owner/Partner and sees the whole company.
+type DeptScope = { ids: Set<string>; names: Set<string> } | null
 
 // Local wall-clock calendar date — same convention as reportService.formatDateKey / taskService's
 // own copy. due_at/shift_date "belong" to whichever local day they fall on, never a UTC slice.
@@ -53,11 +58,11 @@ function formatWeekLabel(weekStartKey: string): string {
   return `${fmt(start)}–${fmt(end)}`
 }
 
-async function buildWaitingOnYou(company_id: string, owner_id: string): Promise<WaitingOnYouItem[]> {
+async function buildWaitingOnYou(company_id: string, owner_id: string, scope: DeptScope, assignerScope: string | string[]): Promise<WaitingOnYouItem[]> {
   const [swaps, deadline, kanban, postings, pendingApprovalPostings] = await Promise.all([
     attendanceService.getShiftSwapRequests(company_id),
     offDaySettingsService.getDeadline(company_id, owner_id).catch(() => null),
-    taskService.getKanbanTasks(company_id, owner_id),
+    taskService.getKanbanTasks(company_id, assignerScope),
     recruitmentService.getJobPostings(company_id),
     recruitmentService.getPendingApprovalPostings(company_id),
   ])
@@ -66,7 +71,8 @@ async function buildWaitingOnYou(company_id: string, owner_id: string): Promise<
   // (hides awaiting-counterpart and Employee-requester rows), so every pending row it returns
   // is waiting on the Owner. requires_owner_review only marks rule-violation escalations under
   // auto-approval mode — filtering on it would miss every manual-approval-mode request.
-  const pendingSwaps = swaps.filter(s => s.status === 'pending')
+  const scopedSwaps = scope ? swaps.filter(s => s.department_name != null && scope.names.has(s.department_name)) : swaps
+  const pendingSwaps = scopedSwaps.filter(s => s.status === 'pending')
   const swapOldest = pendingSwaps.length > 0
     ? pendingSwaps.reduce((oldest, s) => s.created_at < oldest ? s.created_at : oldest, pendingSwaps[0].created_at)
     : null
@@ -90,15 +96,21 @@ async function buildWaitingOnYou(company_id: string, owner_id: string): Promise<
     }
   }
 
-  // 3. Review Tasks — tasks in Review, assigned by this Owner (getKanbanTasks already scopes by assigned_by)
+  // 3. Review Tasks — tasks in Review, assigned by any Owner/Partner peer (or by this Manager, when
+  // scoped) — getKanbanTasks already scopes by assignerScope
   const reviewTasks = kanban.Review
   const reviewOldest = reviewTasks.length > 0
     ? reviewTasks.reduce((oldest, t) => t.created_at < oldest ? t.created_at : oldest, reviewTasks[0].created_at)
     : null
 
-  // 4. Accept Applicants — pending applicants across every open posting
-  const postingsWithPending = postings.filter(p => p.pending_count > 0)
-  const applicantLists = await Promise.all(postingsWithPending.map(p => recruitmentService.getApplicants(p.id)))
+  // 4. Accept Applicants — pending applicants across every open posting. Candidate Management is
+  // Recruitment-Owner-only: a Manager (scope set) only ever gets to act on applicants for jobs
+  // THEY created, so postings created by someone else in their department — visible, but not
+  // theirs to manage — must never inflate their own "waiting on you" count.
+  const scopedPostings = scope ? postings.filter(p => p.department_id != null && scope.ids.has(p.department_id)) : postings
+  const managePostings = scope ? scopedPostings.filter(p => p.created_by === owner_id) : scopedPostings
+  const postingsWithPending = managePostings.filter(p => p.pending_count > 0)
+  const applicantLists = await Promise.all(postingsWithPending.map(p => recruitmentService.getApplicants(p.id, owner_id)))
   const pendingApplicants = applicantLists.flat().filter(a => a.status === 'pending')
   const applicantOldest = pendingApplicants.length > 0
     ? pendingApplicants.reduce((oldest, a) => a.applied_at < oldest ? a.applied_at : oldest, pendingApplicants[0].applied_at)
@@ -112,7 +124,8 @@ async function buildWaitingOnYou(company_id: string, owner_id: string): Promise<
   const items: WaitingOnYouItem[] = [
     { id: 'shift_swap', label: 'Handle Shift Swaps', count: pendingSwaps.length, oldest_at: swapOldest, detail: null },
     { id: 'off_day_deadline', label: 'Schedule Next Week', count: offDayCount, oldest_at: offDayOldest, detail: offDayDetail },
-    { id: 'job_posting_approval', label: 'Review Job Postings', count: pendingApprovalPostings.length, oldest_at: approvalOldest, detail: null },
+    // Approving job postings is O/P-only (UC42) — a Manager viewer never gets that card.
+    ...(scope ? [] : [{ id: 'job_posting_approval', label: 'Review Job Postings', count: pendingApprovalPostings.length, oldest_at: approvalOldest, detail: null } as WaitingOnYouItem]),
     { id: 'applicant_accept', label: 'Review Applicants', count: pendingApplicants.length, oldest_at: applicantOldest, detail: null },
     { id: 'task_review', label: 'Manage Tasks', count: reviewTasks.length, oldest_at: reviewOldest, detail: null },
   ]
@@ -124,10 +137,10 @@ async function buildWaitingOnYou(company_id: string, owner_id: string): Promise<
   return [...pending, ...cleared]
 }
 
-async function buildTaskOverview(company_id: string, owner_id: string): Promise<TaskOverviewGroup[]> {
+async function buildTaskOverview(company_id: string, assignerScope: string | string[], viewer_id: string): Promise<TaskOverviewGroup[]> {
   const [kanban, delayAlerts] = await Promise.all([
-    taskService.getKanbanTasks(company_id, owner_id),
-    taskService.getTaskDelayAlerts(company_id, undefined, owner_id),
+    taskService.getKanbanTasks(company_id, assignerScope),
+    taskService.getTaskDelayAlerts(company_id, undefined, assignerScope, undefined, viewer_id),
   ])
 
   // Sub-tasks are excluded everywhere: they have no card of their own on the Kanban board, so a
@@ -249,17 +262,19 @@ function classifyAttendance(
   return { expected: rows.length, checked_in: checkedIn, departments }
 }
 
-async function buildAttendanceOverview(company_id: string): Promise<AttendanceOverview> {
+async function buildAttendanceOverview(company_id: string, scope: DeptScope): Promise<AttendanceOverview> {
   const todayKey = formatDateKey(new Date())
-  const records = await attendanceService.getAttendanceByDateRange(company_id, todayKey, todayKey)
+  const allRecords = await attendanceService.getAttendanceByDateRange(company_id, todayKey, todayKey)
+  const records = scope ? allRecords.filter(r => r.department_name != null && scope.names.has(r.department_name)) : allRecords
   return {
     internal: classifyAttendance(records, ['Manager', 'Employee']),
     casual: classifyAttendance(records, ['Casual Worker']),
   }
 }
 
-async function buildRecruitmentOverview(company_id: string): Promise<RecruitmentOverview> {
-  const postings = await recruitmentService.getJobPostings(company_id)
+async function buildRecruitmentOverview(company_id: string, scope: DeptScope): Promise<RecruitmentOverview> {
+  const allPostings = await recruitmentService.getJobPostings(company_id)
+  const postings = scope ? allPostings.filter(p => p.department_id != null && scope.ids.has(p.department_id)) : allPostings
   const open = postings.filter(p => p.status === 'open')
   const todayKey = formatDateKey(new Date())
 
@@ -286,15 +301,32 @@ async function buildRecruitmentOverview(company_id: string): Promise<Recruitment
 }
 
 export const ownerDashboardService = {
-  async getDashboardSummary(company_id: string, owner_id: string): Promise<OwnerDashboardSummary> {
+  async getDashboardSummary(company_id: string, owner_id: string, viewer_role?: string): Promise<OwnerDashboardSummary> {
     if (!company_id) throw new Error('company_id is required')
     if (!owner_id) throw new Error('owner_id is required')
 
+    let scope: DeptScope = null
+    if (viewer_role === 'Manager') {
+      const depts = await ownerTeamService.getManagerDepartments(owner_id, company_id)
+      scope = { ids: new Set(depts.map(d => d.department_id)), names: new Set(depts.map(d => d.department_name)) }
+    }
+
+    // Owner and Partner are peer "assigner" roles over the same Manager tier (mirrors the Task page
+    // fix in TasksView.tsx) — an Owner/Partner viewer's task widgets should include tasks assigned by
+    // either of them, not just the ones the current viewer personally assigned. A Manager viewer
+    // keeps the existing self-only scope (unchanged).
+    let assignerScope: string | string[] = owner_id
+    if (viewer_role !== 'Manager') {
+      const team = await ownerTeamService.getTeamByCompany(company_id)
+      const peerIds = team.filter(m => m.role === 'Owner' || m.role === 'Partner').map(m => m.id)
+      assignerScope = peerIds.length > 0 ? peerIds : owner_id
+    }
+
     const [waitingOnYou, taskOverview, attendanceOverview, recruitmentOverview] = await Promise.all([
-      buildWaitingOnYou(company_id, owner_id),
-      buildTaskOverview(company_id, owner_id),
-      buildAttendanceOverview(company_id),
-      buildRecruitmentOverview(company_id),
+      buildWaitingOnYou(company_id, owner_id, scope, assignerScope),
+      buildTaskOverview(company_id, assignerScope, owner_id),
+      buildAttendanceOverview(company_id, scope),
+      buildRecruitmentOverview(company_id, scope),
     ])
 
     return {

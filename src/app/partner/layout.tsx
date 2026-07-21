@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
+import AiScheduleStatusWidget from '@/components/shifts/AiScheduleStatusWidget'
 
 const ROLE_DASHBOARD: Record<string, string> = {
   Owner: '/owner/dashboard',
@@ -130,5 +131,10 @@ export default function PartnerLayout({
 
   if (checking) return null
 
-  return <div className="partner-layout">{children}</div>
+  return (
+    <div className="partner-layout">
+      {children}
+      <AiScheduleStatusWidget />
+    </div>
+  )
 }

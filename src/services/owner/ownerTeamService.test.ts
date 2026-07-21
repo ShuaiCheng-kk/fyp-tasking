@@ -147,13 +147,24 @@ describe('ownerTeamService', () => {
         .rejects.toThrow('User is not a member of this company')
     })
 
-    it('refuses a non-creator (Partner) removing another Owner/Partner', async () => {
+    it('refuses a non-creator Partner removing anyone — Partner has zero remove-member permission', async () => {
       const partnerRequester = makeUser({ id: 'partner-1', role: 'Partner' })
       vi.mocked(ownerTeamRepository.findCompanyById).mockResolvedValue(company)
       vi.mocked(ownerTeamRepository.findUserByAuthIdOrInternalId).mockResolvedValue(partnerRequester)
-      vi.mocked(ownerTeamRepository.findUserById).mockResolvedValue(makeUser({ id: 'user-2', role: 'Owner' }))
+
+      vi.mocked(ownerTeamRepository.findUserById).mockResolvedValue(makeUser({ id: 'user-2', role: 'Partner' }))
       await expect(ownerTeamService.removeMember('company-1', 'user-2', 'partner-1'))
-        .rejects.toThrow('Insufficient permissions to remove a Partner')
+        .rejects.toThrow('Insufficient permissions to remove a member')
+
+      vi.mocked(ownerTeamRepository.findUserById).mockResolvedValue(makeUser({ id: 'mgr-1', role: 'Manager' }))
+      await expect(ownerTeamService.removeMember('company-1', 'mgr-1', 'partner-1'))
+        .rejects.toThrow('Insufficient permissions to remove a member')
+
+      vi.mocked(ownerTeamRepository.findUserById).mockResolvedValue(makeUser({ id: 'emp-1', role: 'Employee' }))
+      await expect(ownerTeamService.removeMember('company-1', 'emp-1', 'partner-1'))
+        .rejects.toThrow('Insufficient permissions to remove a member')
+
+      expect(ownerTeamRepository.deleteUserById).not.toHaveBeenCalled()
     })
 
     it('blocks removing an Employee who supervises live recruitment jobs or upcoming casual shifts', async () => {

@@ -55,3 +55,24 @@ describe('userService — Edit Own Profile (UC69)', () => {
     )
   })
 })
+
+describe('userService — assertOwnerRole (Owner-only UC guard)', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('resolves when the requester is an Owner', async () => {
+    vi.spyOn(userService, 'getUserById').mockResolvedValue({ id: 'u1', role: 'Owner' } as never)
+    await expect(userService.assertOwnerRole('u1')).resolves.toBeUndefined()
+  })
+
+  it('rejects when the requester is a Partner', async () => {
+    vi.spyOn(userService, 'getUserById').mockResolvedValue({ id: 'u2', role: 'Partner' } as never)
+    await expect(userService.assertOwnerRole('u2')).rejects.toThrow('Only an Owner can perform this action')
+  })
+
+  it('rejects when the requester does not exist', async () => {
+    vi.spyOn(userService, 'getUserById').mockRejectedValue(new Error('User not found'))
+    await expect(userService.assertOwnerRole('missing')).rejects.toThrow('User not found')
+  })
+})

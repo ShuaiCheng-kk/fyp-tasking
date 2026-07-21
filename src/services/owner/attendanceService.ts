@@ -530,7 +530,7 @@ export const attendanceService = {
     if (allRequests.length === 0) return []
 
     const assignmentIds = [...new Set(allRequests.flatMap(r => [r.requester_assignment_id, r.counterpart_assignment_id]))]
-    const userIds = [...new Set(allRequests.flatMap(r => [r.requester_id, r.counterpart_id]))]
+    const userIds = [...new Set(allRequests.flatMap(r => [r.requester_id, r.counterpart_id, r.reviewed_by]).filter(Boolean) as string[])]
 
     const [assignmentsArr, users] = await Promise.all([
       attendanceRepository.getShiftAssignmentsByIds(assignmentIds),
@@ -628,6 +628,7 @@ export const attendanceService = {
         counterpart_name: counterpart?.full_name ?? 'Unknown',
         counterpart_role: counterpart?.role ?? '',
         counterpart_photo_url: counterpart?.profile_photo_url ?? null,
+        reviewer_name: req.reviewed_by ? usersById.get(req.reviewed_by)?.full_name ?? 'Unknown' : null,
         department_name: deptName,
         requester_shift_title: reqAss?.shifts?.title ?? null,
         requester_shift_date: reqAss?.shifts?.shift_date ?? null,
@@ -682,7 +683,7 @@ export const attendanceService = {
     const allRequests = await attendanceRepository.getOffDayRequestsByCompany(company_id)
     if (allRequests.length === 0) return []
 
-    const users = await attendanceRepository.getUsersByIds([...new Set(allRequests.map(request => request.user_id))])
+    const users = await attendanceRepository.getUsersByIds([...new Set(allRequests.flatMap(request => [request.user_id, request.reviewed_by]).filter(Boolean) as string[])])
     const usersById = indexById(users)
 
     const departmentIdByUser = await resolveDepartmentIdsByUser(
@@ -695,6 +696,7 @@ export const attendanceService = {
       ...request,
       requester_name: usersById.get(request.user_id)?.full_name ?? 'Unknown member',
       requester_role: usersById.get(request.user_id)?.role ?? '',
+      reviewer_name: request.reviewed_by ? usersById.get(request.reviewed_by)?.full_name ?? 'Unknown' : null,
       department_id: departmentIdByUser.get(request.user_id) ?? null,
     }))
   },
@@ -946,7 +948,7 @@ export const attendanceService = {
     let swapsView: ShiftSwapRequestView[] = []
     if (swaps.length > 0) {
       const assignmentIds = [...new Set(swaps.flatMap(s => [s.requester_assignment_id, s.counterpart_assignment_id]))]
-      const userIds = [...new Set(swaps.flatMap(s => [s.requester_id, s.counterpart_id]))]
+      const userIds = [...new Set(swaps.flatMap(s => [s.requester_id, s.counterpart_id, s.reviewed_by]).filter(Boolean) as string[])]
       const [assignmentsArr, users] = await Promise.all([
         Promise.all(assignmentIds.map(id => attendanceRepository.getShiftAssignmentById(id))),
         attendanceRepository.getUsersByIds(userIds),
@@ -988,6 +990,7 @@ export const attendanceService = {
           counterpart_name: counterpart?.full_name ?? 'Unknown',
           counterpart_role: counterpart?.role ?? '',
           counterpart_photo_url: counterpart?.profile_photo_url ?? null,
+          reviewer_name: req.reviewed_by ? usersById.get(req.reviewed_by)?.full_name ?? 'Unknown' : null,
           department_name: deptsById.get(reqAss?.shifts?.department_id ?? '') ?? null,
           requester_shift_title: reqAss?.shifts?.title ?? null,
           requester_shift_date: reqAss?.shifts?.shift_date ?? null,
@@ -1005,7 +1008,8 @@ export const attendanceService = {
       })
     }
 
-    const foUsers = await attendanceRepository.getUsersByIds([user_id])
+    const foUserIds = [...new Set([user_id, ...fixed_off.map(req => req.reviewed_by).filter(Boolean) as string[]])]
+    const foUsers = await attendanceRepository.getUsersByIds(foUserIds)
     const foUsersById = indexById(foUsers)
     const foDeptByUser = fixed_off.length > 0
       ? await resolveDepartmentIdsByUser([user_id], foUsersById, fixed_off[0].company_id)
@@ -1014,6 +1018,7 @@ export const attendanceService = {
       ...req,
       requester_name: foUsersById.get(req.user_id)?.full_name ?? 'Unknown',
       requester_role: foUsersById.get(req.user_id)?.role ?? '',
+      reviewer_name: req.reviewed_by ? foUsersById.get(req.reviewed_by)?.full_name ?? 'Unknown' : null,
       department_id: foDeptByUser.get(req.user_id) ?? null,
     }))
 

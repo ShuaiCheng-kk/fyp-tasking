@@ -17,57 +17,96 @@ import {
 } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 
-const NAV_ITEMS = [
-  { label: 'Dashboard',     Icon: LayoutDashboard, href: '/owner/dashboard',       dot: null as 'messages' | 'announcements' | 'review' | 'tasks' | null },
-  { label: 'Shifts',        Icon: CalendarDays,    href: '/owner/shifts',          dot: null },
-  { label: 'Tasks',         Icon: CheckSquare,     href: '/owner/tasks',           dot: 'tasks' as const },
-  { label: 'Company',       Icon: Building2,       href: '/owner/team',            dot: null },
-  { label: 'Communication', Icon: MessageCircle,    href: '/owner/communication',   dot: 'messages' as const },
-  { label: 'Recruitment',   Icon: UserPlus,         href: '/owner/recruitment',     dot: 'review' as const },
-  { label: 'Attendance',    Icon: ClipboardList,    href: '/owner/attendance',      dot: 'attendance' as const },
-  { label: 'Report',        Icon: BarChart2,        href: '/owner/report',          dot: null },
-]
+export type SidebarRole = 'owner' | 'partner' | 'manager'
 
-const NAV_LABELS = NAV_ITEMS.map(i => i.label)
-const ORDER_KEY = 'owner_sidebar_nav_order'
+type DotKey = 'messages' | 'announcements' | 'review' | 'attendance' | 'tasks' | null
 
-function mergeOrder(saved: string[]): string[] {
-  const valid = saved.filter(l => NAV_LABELS.includes(l))
-  const missing = NAV_LABELS.filter(l => !valid.includes(l))
+function navItemsFor(role: SidebarRole) {
+  const items = [
+    { label: 'Dashboard',     Icon: LayoutDashboard, href: `/${role}/dashboard`,     dot: null as DotKey },
+    { label: 'Shifts',        Icon: CalendarDays,    href: `/${role}/shifts`,        dot: null as DotKey },
+    { label: 'Tasks',         Icon: CheckSquare,     href: `/${role}/tasks`,         dot: 'tasks' as DotKey },
+    { label: 'Company',       Icon: Building2,       href: `/${role}/team`,          dot: null as DotKey },
+    { label: 'Communication', Icon: MessageCircle,    href: `/${role}/communication`, dot: 'messages' as DotKey },
+    { label: 'Recruitment',   Icon: UserPlus,         href: `/${role}/recruitment`,   dot: 'review' as DotKey },
+    { label: 'Attendance',    Icon: ClipboardList,    href: `/${role}/attendance`,    dot: 'attendance' as DotKey },
+    { label: 'Report',        Icon: BarChart2,        href: `/${role}/report`,        dot: null as DotKey },
+  ]
+  // Report is O/P-only (UC62-64); Company/Team is O/P-only too — Managers don't manage
+  // members or departments and don't get either menu item.
+  return role === 'manager' ? items.filter(i => i.label !== 'Report' && i.label !== 'Company') : items
+}
+
+function orderKeyFor(role: SidebarRole): string {
+  return `${role}_sidebar_nav_order`
+}
+
+function mergeOrder(saved: string[], navLabels: string[]): string[] {
+  const valid = saved.filter(l => navLabels.includes(l))
+  const missing = navLabels.filter(l => !valid.includes(l))
   return [...valid, ...missing]
 }
 
 // Used by the sign-in flow so the post-login landing page matches whatever
-// the user dragged to the top of their sidebar, instead of always /owner/dashboard.
-export function getOwnerLandingHref(): string {
-  const fallback = NAV_ITEMS[0].href
+// the user dragged to the top of their sidebar, instead of always the dashboard.
+export function getOwnerLandingHref(role: SidebarRole = 'owner'): string {
+  const navItems = navItemsFor(role)
+  const fallback = navItems[0].href
   try {
-    const saved = localStorage.getItem(ORDER_KEY)
+    const saved = localStorage.getItem(orderKeyFor(role))
     if (!saved) return fallback
-    const firstLabel = mergeOrder(JSON.parse(saved))[0]
-    return NAV_ITEMS.find(i => i.label === firstLabel)?.href ?? fallback
+    const firstLabel = mergeOrder(JSON.parse(saved), navItems.map(i => i.label))[0]
+    return navItems.find(i => i.label === firstLabel)?.href ?? fallback
   } catch {
     return fallback
   }
 }
 
-const THEME = {
+const THEME_LIGHT = {
   sidebarBg: '#FFFFFF',
   sidebarText: '#374151',
   sidebarActiveBg: 'transparent',
   sidebarActiveText: '#F97316',
+  sidebarActiveTint: 'rgba(249,115,22,0.12)',
   sidebarHoverBg: '#F9FAFB',
   sidebarBorder: '#E5E7EB',
   logoBorder: '#E5E7EB',
+  logoutHoverBg: '#FEF2F2',
+}
+
+// Partner's sidebar: black background, same orange accent as everyone else. Logo mark is untouched.
+const THEME_DARK = {
+  sidebarBg: '#18181B',
+  sidebarText: '#D4D4D8',
+  sidebarActiveBg: 'transparent',
+  sidebarActiveText: '#F97316',
+  sidebarActiveTint: 'rgba(249,115,22,0.12)',
+  sidebarHoverBg: 'rgba(255,255,255,0.07)',
+  sidebarBorder: '#3F3F46',
+  logoBorder: '#3F3F46',
+  logoutHoverBg: 'rgba(239,68,68,0.15)',
+}
+
+// Manager's sidebar: same white layout as Owner, blue accent instead of orange (CLAUDE.md §2).
+const THEME_MANAGER = {
+  ...THEME_LIGHT,
+  sidebarActiveText: '#3B82F6',
+  sidebarActiveTint: 'rgba(59,130,246,0.12)',
 }
 
 export default function OwnerSidebar({
   unreadMessages,
   unreadAnnouncements,
+  role = 'owner',
 }: {
   unreadMessages?: number
   unreadAnnouncements?: number
+  role?: SidebarRole
 }) {
+  const NAV_ITEMS = navItemsFor(role)
+  const NAV_LABELS = NAV_ITEMS.map(i => i.label)
+  const ORDER_KEY = orderKeyFor(role)
+  const THEME = role === 'partner' ? THEME_DARK : role === 'manager' ? THEME_MANAGER : THEME_LIGHT
   const pathname = usePathname()
   const [expanded, setExpanded] = useState(false)
   const [userRole, setUserRole] = useState('')
@@ -88,7 +127,7 @@ export default function OwnerSidebar({
     try {
       const saved = localStorage.getItem(ORDER_KEY)
       if (saved) {
-        const merged = mergeOrder(JSON.parse(saved))
+        const merged = mergeOrder(JSON.parse(saved), NAV_LABELS)
         navOrderRef.current = merged
         setNavOrder(merged)
       }
@@ -180,9 +219,12 @@ export default function OwnerSidebar({
           .catch(() => {})
 
         const fetchTaskAlerts = () => {
+          // A Manager's alert scope is their whole department team (every peer manager's tasks),
+          // not just tasks they personally assigned — resolved server-side via manager_scope_id.
+          const scopeParam = role === 'manager' ? `manager_scope_id=${internalId}` : `assigned_by=${internalId}`
           Promise.all([
-            fetch(`/api/task?company_id=${cid}&suggestion=workload&assigned_by=${internalId}`).then(r => r.json()).catch(() => ({ success: false })),
-            fetch(`/api/task?company_id=${cid}&suggestion=delay&assigned_by=${internalId}`).then(r => r.json()).catch(() => ({ success: false })),
+            fetch(`/api/task?company_id=${cid}&suggestion=workload&${scopeParam}`).then(r => r.json()).catch(() => ({ success: false })),
+            fetch(`/api/task?company_id=${cid}&suggestion=delay&${scopeParam}&viewer_id=${internalId}`).then(r => r.json()).catch(() => ({ success: false })),
           ]).then(([workloadData, delayData]) => {
             const workloadCount = workloadData.success ? (workloadData.suggestions ?? []).filter((s: { type: string }) => s.type === 'rebalance').length : 0
             const delayCount = delayData.success ? (delayData.alerts ?? []).length : 0
@@ -199,7 +241,7 @@ export default function OwnerSidebar({
           if (raw) readIds = new Set(JSON.parse(raw))
         } catch {}
 
-        fetch(`/api/inbox/announcements?company_id=${cid}&role=owner`)
+        fetch(`/api/inbox/announcements?company_id=${cid}&role=${role}`)
           .then(r => r.json())
           .then(data => {
             if (data.success) {
@@ -237,7 +279,7 @@ export default function OwnerSidebar({
           const rkey = `ann_read_ids_${cid}_${internalId}`
           let rids: Set<string> = new Set()
           try { const raw2 = localStorage.getItem(rkey); if (raw2) rids = new Set(JSON.parse(raw2)) } catch {}
-          fetch(`/api/inbox/announcements?company_id=${cid}&role=owner`)
+          fetch(`/api/inbox/announcements?company_id=${cid}&role=${role}`)
             .then(r => r.json())
             .then(data => {
               if (data.success) setAnnCount((data.announcements as { id: string }[]).filter(a => !rids.has(a.id)).length)
@@ -287,7 +329,7 @@ export default function OwnerSidebar({
   }, [])
 
   useEffect(() => {
-    if (pathname !== '/owner/communication') return
+    if (pathname !== `/${role}/communication`) return
     setMsgCount(0)
     setAnnCount(0)
     const authUid = typeof localStorage !== 'undefined' ? localStorage.getItem('tasking_user_id') : null
@@ -299,7 +341,7 @@ export default function OwnerSidebar({
         const internalId: string = d.user.id
         const cid = localStorage.getItem('tasking_company_id') ?? localStorage.getItem(`tasking_company_id_${authUid}`)
         if (!cid) return
-        fetch(`/api/inbox/announcements?company_id=${cid}&role=owner`)
+        fetch(`/api/inbox/announcements?company_id=${cid}&role=${role}`)
           .then(r => r.json())
           .then(data => {
             if (!data.success) return
@@ -313,7 +355,7 @@ export default function OwnerSidebar({
   useEffect(() => { if (unreadAnnouncements !== undefined) setAnnCount(unreadAnnouncements) }, [unreadAnnouncements])
 
   const visibleLabels = userRole === 'Manager'
-    ? navOrder.filter(l => l !== 'Report')
+    ? navOrder.filter(l => l !== 'Report' && l !== 'Company')
     : navOrder
 
   const orderedItems = visibleLabels
@@ -361,7 +403,7 @@ export default function OwnerSidebar({
         }}
       >
         <svg width="28" height="28" viewBox="0 0 32 32" fill="none" style={{ flexShrink: 0 }}>
-          <rect width="32" height="32" rx="8" fill={userRole === 'Manager' ? '#3B82F6' : '#F97316'} />
+          <rect width="32" height="32" rx="8" fill={role === 'manager' ? '#3B82F6' : '#F97316'} />
           <rect x="8" y="9" width="9" height="2.5" rx="1.25" fill="white" />
           <rect x="8" y="14.75" width="16" height="2.5" rx="1.25" fill="white" />
           <rect x="8" y="20.5" width="12" height="2.5" rx="1.25" fill="white" />
@@ -381,7 +423,8 @@ export default function OwnerSidebar({
       <nav style={{ flex: 1, padding: '12px 8px', overflow: 'hidden', position: 'relative' }}>
         {orderedItems.map(({ label, Icon, href, dot }, idx) => {
           const active = pathname === href
-          const showDot = dot === 'messages' ? msgCount > 0 : dot === 'announcements' ? annCount > 0 : dot === 'review' ? reviewCount > 0 : dot === 'attendance' ? attendanceCount > 0 : dot === 'tasks' ? taskAlertCount > 0 : false
+          // Communication covers both tabs — unread chat messages OR unread announcements light it up.
+          const showDot = dot === 'messages' ? msgCount > 0 || annCount > 0 : dot === 'announcements' ? annCount > 0 : dot === 'review' ? reviewCount > 0 : dot === 'attendance' ? attendanceCount > 0 : dot === 'tasks' ? taskAlertCount > 0 : false
           const isDragging = draggingLabel === label
           const isDragOver = dragOverLabel === label
 
@@ -433,7 +476,7 @@ export default function OwnerSidebar({
                   : hoveredIdx === idx && !draggingLabel
                     ? THEME.sidebarHoverBg
                     : 'transparent',
-                border: active ? '1.5px solid #F97316' : '1.5px solid transparent',
+                border: active ? `1.5px solid ${THEME.sidebarActiveText}` : '1.5px solid transparent',
                 color: active ? THEME.sidebarActiveText : THEME.sidebarText,
                 fontWeight: active ? 600 : 500,
                 fontSize: '0.9rem',
@@ -445,9 +488,9 @@ export default function OwnerSidebar({
                 transform: isDragging ? 'scale(0.985)' : undefined,
                 transition: 'box-shadow 0.18s ease, transform 0.18s ease, opacity 0.18s ease, border-color 0.15s ease',
                 opacity: isDragging ? 0.88 : 1,
-                outline: isDragOver ? '2px dashed #F97316' : 'none',
+                outline: isDragOver ? `2px dashed ${THEME.sidebarActiveText}` : 'none',
                 outlineOffset: 3,
-                boxShadow: isDragOver ? '0 14px 34px rgba(249,115,22,0.12)' : 'none',
+                boxShadow: isDragOver ? `0 14px 34px ${THEME.sidebarActiveTint}` : 'none',
               }}
             >
               <span style={{ position: 'relative', flexShrink: 0 }}>
@@ -497,7 +540,7 @@ export default function OwnerSidebar({
               fontWeight: 500, fontSize: '0.9rem',
               transition: 'color 0.12s, background 0.12s', whiteSpace: 'nowrap',
             }}
-            onMouseEnter={e => { e.currentTarget.style.color = '#DC2626'; e.currentTarget.style.background = '#FEF2F2' }}
+            onMouseEnter={e => { e.currentTarget.style.color = '#DC2626'; e.currentTarget.style.background = THEME.logoutHoverBg }}
             onMouseLeave={e => { e.currentTarget.style.color = '#EF4444'; e.currentTarget.style.background = 'none' }}
           >
             <LogOut size={18} strokeWidth={2} style={{ flexShrink: 0, color: 'inherit' }} />

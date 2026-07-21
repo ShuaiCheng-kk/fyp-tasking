@@ -614,14 +614,118 @@ async function main() {
     [employeeEmails[6], employeeEmails[7]],
   ]
 
+  // ── Fixed Off Day 数据先算出来（不落库）——Step 10 生成 Shift 时要用它跳过已批准的
+  // 休息日，所以这部分纯计算必须搬到 Shift 生成之前；真正的 DB insert 仍留在原来的
+  // Step 14c，复用这里算出的数组即可。见 attendanceService.resolveActiveSubmissionWeekStart。
+  const offDayDeadlineWeekday = 5 // Friday, matching resolveDeadlineDateForWeek's Sun=0..Sat=6 convention
+  const offDayDeadlineTime = '17:00'
+  function resolveActiveSubmissionWeekStart(today, deadlineWeekday, deadlineTime) {
+    const [hh, mm] = deadlineTime.split(':').map(Number)
+    let candidateWeekStart = startOfWeekMonday(today)
+    for (;;) {
+      const targetWeek = addDays(candidateWeekStart, 7)
+      const deadlineMoment = new Date(dateInWeek(candidateWeekStart, deadlineWeekday))
+      deadlineMoment.setHours(hh, mm, 0, 0)
+      if (Date.now() <= deadlineMoment.getTime()) return targetWeek
+      candidateWeekStart = targetWeek
+    }
+  }
+  const activeWeekStart = resolveActiveSubmissionWeekStart(TODAY, offDayDeadlineWeekday, offDayDeadlineTime)
+  const activeWeekStartKey = dateKey(activeWeekStart)
+
+  // Effective quota per requester — must match the off_day_quota_settings rows seeded in
+  // Step 14c so each seeded weekly group has exactly the right number of dates.
+  const requesterQuota = new Map([...managerEmails, ...employeeEmails].map(email => [email, 2]))
+  requesterQuota.set('manager3@test.com', 3)
+  requesterQuota.set('employee2@test.com', 1)
+
+  const WEEKDAY_COMBOS = {
+    1: [[1], [2], [3], [4], [5]],
+    2: [[1, 3], [2, 4], [3, 5], [1, 4], [2, 5], [1, 2], [4, 5], [2, 3]],
+    3: [[1, 3, 5], [2, 4, 5], [1, 2, 4], [1, 3, 4], [2, 3, 5]],
+  }
+  function pickWeekdaysForQuota(quota, idx) {
+    const combos = WEEKDAY_COMBOS[quota] ?? WEEKDAY_COMBOS[2]
+    return combos[idx % combos.length]
+  }
+
+  const allRequesters = [...managerEmails, ...employeeEmails]
+
+  // Pending — everyone submits their weekly group for the currently-open week (not yet decided,
+  // so Step 10 must NOT skip these dates — nothing is actually confirmed off yet).
+  const pendingFixedOffSeeders = allRequesters.flatMap((email, i) => {
+    const quota = requesterQuota.get(email)
+    return pickWeekdaysForQuota(quota, i).map(weekday => ({
+      email,
+      weekStart: activeWeekStart,
+      weekday,
+      status: 'pending',
+      source: 'submitted',
+      submittedHoursAgo: 6 + i * 3,
+    }))
+  })
+
+  // Overdue — the most recently CLOSED submission week (deadline already passed) keeps a few
+  // still-pending requests. Only uses requesters the w=1 historical week skips ((i+1)%3===0),
+  // so nobody gets both a decided and a pending row for the same week.
+  const closedWeekStart = addDays(activeWeekStart, -7)
+  const overdueClosedWeekSeeders = allRequesters.flatMap((email, i) => {
+    if ((i + 1) % 3 !== 0) return []
+    const quota = requesterQuota.get(email)
+    return pickWeekdaysForQuota(quota, i).map(weekday => ({
+      email,
+      weekStart: closedWeekStart,
+      weekday,
+      status: 'pending',
+      source: 'submitted',
+      submittedHoursAgo: 24 * 6 + i,
+    }))
+  })
+
+  // Historical — past 4 weeks, already decided (Approve / Modify only, matching the current
+  // product). These ARE confirmed off-days, so Step 10 skips generating a shift for that
+  // person on that date — a manager/employee who was granted a day off shouldn't also show
+  // up scheduled that day.
+  const historicalFixedOffSeeders = []
+  for (let w = 1; w <= 4; w++) {
+    const weekStart = addDays(activeWeekStart, -7 * w)
+    allRequesters.forEach((email, i) => {
+      if ((i + w) % 3 === 0) return // sparser historical weeks — not everyone requests every week
+      const quota = requesterQuota.get(email)
+      const weekdays = pickWeekdaysForQuota(quota, i + w)
+      weekdays.forEach(weekday => {
+        const reviewedHoursAgo = 24 * 7 * w + i
+        historicalFixedOffSeeders.push({
+          email,
+          weekStart,
+          weekday,
+          status: (i + w) % 4 === 0 ? 'modified' : 'approved',
+          source: (i + w) % 5 === 0 ? 'auto_assigned' : 'submitted',
+          reviewedHoursAgo,
+          submittedHoursAgo: reviewedHoursAgo + 2,
+        })
+      })
+    })
+  }
+
+  // Set of "email|date" pairs with a CONFIRMED (approved/modified) off day — the only thing
+  // Step 10 needs to decide whether to skip a shift. Pending/overdue requests are intentionally
+  // excluded (nothing decided yet, so the day is still schedulable).
+  const approvedOffDayDates = new Set(
+    historicalFixedOffSeeders.map(fo => `${fo.email}|${dateKey(dateInWeek(fo.weekStart, fo.weekday))}`)
+  )
+
   // ── Step 10: Shifts + Shift Assignments ─────────────────────────────────
   // 过去 SHIFT_DAYS_PAST 天 + 未来 SHIFT_DAYS_FUTURE 天，每个 Employee/Manager
-  // 每天一个班，全部 published。日期锚点是脚本运行时的"今天"。
-  // 注意：不跳过周末——真实业务规则（schedulingRuleService.ts）里"某天是否休息"看的是
+  // 每天一个班（除非当天已批准 off day，见下方 approvedOffDayDates），全部 published。
+  // 日期锚点是脚本运行时的"今天"。
+  // 注意：不按星期几跳过——真实业务规则（schedulingRuleService.ts）里"某天是否休息"看的是
   // 每个人自己的 employee_off_day_requests / 已批准请假，跟星期几无关；周末只是
   // fair_weekend_rotation 这条 soft rule 的参考对象（公平轮换谁上周末班），不是"周末不排班"。
   // 之前这里写死跳过周六周日只是图省事，会导致周末完全没人排班（进而导致依赖"某天有没有
   // 员工"的功能，例如 Post Job 向导的 Available Shift 选择器，在周末永远显示"没有员工"）。
+  // 真正该跳过的是"这个人这天已经批准休假"——用 approvedOffDayDates 逐人逐天判断，today
+  // 除外（TODAY_INTERNAL_OUTCOMES 需要今天每个 slot 都有真实数据喂 Owner Dashboard）。
   console.log('\nStep 10: 生成 Shifts + Shift Assignments...')
   const allStaffEmails = [...managerEmails, ...employeeEmails]
   // assignmentInfo: shiftAssignmentId -> { date, start_time, end_time, userEmail, isPast }
@@ -674,6 +778,9 @@ async function main() {
       const staffEmails = [...managersByDept[deptIdx], ...employeesByDept[deptIdx]]
       for (let slotIdx = 0; slotIdx < staffEmails.length; slotIdx++) {
         const email = staffEmails[slotIdx]
+        // Confirmed off day for this person on this exact date — skip the shift entirely,
+        // except today (its outcomes are hand-curated for the Dashboard and must stay intact).
+        if (!isToday && approvedOffDayDates.has(`${email}|${shiftDateStr}`)) continue
         const isManager = managerEmails.includes(email)
         const todayOutcome = isToday ? TODAY_INTERNAL_OUTCOMES[deptIdx][slotIdx] : null
         let startTime = isManager ? '09:00' : '11:00'
@@ -721,7 +828,7 @@ async function main() {
       todayOutcome: m.todayOutcome,
     })
   }
-  console.log(`  ✓ 生成 ${assignmentInfo.length} 个 shift + assignment（过去 ${SHIFT_DAYS_PAST} 天 + 未来 ${SHIFT_DAYS_FUTURE} 天，含周末）`)
+  console.log(`  ✓ 生成 ${assignmentInfo.length} 个 shift + assignment（过去 ${SHIFT_DAYS_PAST} 天 + 未来 ${SHIFT_DAYS_FUTURE} 天，含周末，已跳过 ${approvedOffDayDates.size} 个"人+已批准休假日"组合中落在这个窗口内的班）`)
 
   // ── Step 11: Attendance Records（仅对过去的 shift）──────────────────────
   // 混合比例：65% 准时打卡完成已审批，10% 迟到（未审批), 10% 已经 Manager Review
@@ -1285,6 +1392,34 @@ async function main() {
     if (id) { taskCount++; archivedCount++ }
   }
 
+  // ── Partner → Manager 任务 — Partner 在层级里跟 Owner 同级（Owner ⊇ Partner），一样能
+  // 往下指派给 Manager；这批任务专属 partner1/partner2 指派，assigned_by 不是 Owner，让
+  // Partner 的 Task 页面（能看到全部部门，跟 Owner 一样）不是 Owner 那份数据的翻版 ──
+  const partnerTaskDefs = [
+    { dept: 1, assignee: 'manager3@test.com', assigner: 'partner1@test.com', title: 'Coordinate influencer shipment', description: 'Arrange and track the outbound product shipment for the influencer partnership.', priority: 'High', status: 'Assigned', createdH: -18, dueH: 20, taskDate: weekdayKey(1) },
+    { dept: 1, assignee: 'manager4@test.com', assigner: 'partner1@test.com', title: 'Review agency creative deck', description: 'Give feedback on the agency\'s first creative deck before it goes to print.', priority: 'Medium', status: 'In Progress', pct: 45, createdH: -12, dueH: 40, taskDate: todayKey },
+    { dept: 3, assignee: 'manager7@test.com', assigner: 'partner2@test.com', title: 'Audit support SLA breaches', description: 'Pull last month\'s SLA breach tickets and flag repeat root causes.', priority: 'Urgent', status: 'Assigned', createdH: -28, dueH: 8, taskDate: todayKey }, // Delay Alert
+    { dept: 2, assignee: 'manager5@test.com', assigner: 'partner2@test.com', title: 'Sign off staging environment', description: 'Verify the staging environment matches prod config before the release freeze.', priority: 'High', status: 'Review', pct: 100, createdH: -22, dueH: 15, taskDate: todayKey },
+  ]
+  for (const def of partnerTaskDefs) {
+    const id = await insertTask({
+      company_id: company.id,
+      department_id: deptByIndex[def.dept].id,
+      title: def.title,
+      description: def.description,
+      assigned_user_id: mgrId(def.assignee),
+      assigned_by: mgrId(def.assigner),
+      status: def.status,
+      percentage_complete: def.pct ?? 0,
+      is_completed: def.completed ?? false,
+      priority: def.priority,
+      due_at: hoursFromNow(def.dueH),
+      task_date: def.taskDate,
+      created_at: hoursFromNow(def.createdH),
+    })
+    if (id) taskCount++
+  }
+
   // ── Manager → Employee 任务（manager1 的 Task 页面数据，含一条 Delay Alert）──
   const managerTaskDefs = [
     { assignee: 'employee1@test.com', title: 'Restock front shelves', description: 'Restock and face all front-of-house shelves before opening.', priority: 'High', status: 'Assigned', createdH: -26, dueH: 4, taskDate: todayKey }, // manager1 视角的 Delay Alert
@@ -1396,7 +1531,8 @@ async function main() {
   for (const def of taskTemplateDefs) {
     const { error } = await supabase.from('task_templates').insert({
       company_id: company.id,
-      name: def.name,
+      // task_templates.name was dropped (20260719230000_drop_unused_tables_and_columns.sql) —
+      // every render site reads title, never name.
       title: def.title,
       description: def.description,
       priority: def.priority,
@@ -1989,9 +2125,11 @@ async function main() {
   // there is no separate Manager-review step. Owner's only two live decisions are
   // Approve / Modify (see attendanceService.decideFixedOffDayRequestGroup).
   console.log('\nStep 14c: 生成 Fixed Off Day Requests...')
+  // 纯计算部分（offDayDeadlineWeekday/Time、resolveActiveSubmissionWeekStart、activeWeekStart、
+  // requesterQuota、WEEKDAY_COMBOS、pendingFixedOffSeeders、overdueClosedWeekSeeders、
+  // historicalFixedOffSeeders）已经在 Step 10 之前算好了（Shift 生成要用 approvedOffDayDates
+  // 跳过已批准的休息日），这里只做落库。
 
-  const offDayDeadlineWeekday = 5 // Friday, matching resolveDeadlineDateForWeek's Sun=0..Sat=6 convention
-  const offDayDeadlineTime = '17:00'
   const { error: offDayDeadlineSeedErr } = await supabase.from('off_day_submission_deadline').insert({
     company_id: company.id,
     deadline_weekday: offDayDeadlineWeekday,
@@ -2000,24 +2138,6 @@ async function main() {
   })
   if (offDayDeadlineSeedErr) console.warn(`  ! off_day_submission_deadline failed: ${offDayDeadlineSeedErr.message}`)
   else console.log(`  ok off_day_submission_deadline Friday ${offDayDeadlineTime}`)
-
-  // Mirrors resolveActiveSubmissionWeekStart in attendanceService.ts — whichever week is still
-  // open for submission right now (shifts a week further out each time a week's own Friday-5PM
-  // deadline has passed), so the seeded pending queue lines up with what the live Owner page
-  // actually displays as "Off Day Request For Next Week X".
-  function resolveActiveSubmissionWeekStart(today, deadlineWeekday, deadlineTime) {
-    const [hh, mm] = deadlineTime.split(':').map(Number)
-    let candidateWeekStart = startOfWeekMonday(today)
-    for (;;) {
-      const targetWeek = addDays(candidateWeekStart, 7)
-      const deadlineMoment = new Date(dateInWeek(candidateWeekStart, deadlineWeekday))
-      deadlineMoment.setHours(hh, mm, 0, 0)
-      if (Date.now() <= deadlineMoment.getTime()) return targetWeek
-      candidateWeekStart = targetWeek
-    }
-  }
-  const activeWeekStart = resolveActiveSubmissionWeekStart(TODAY, offDayDeadlineWeekday, offDayDeadlineTime)
-  const activeWeekStartKey = dateKey(activeWeekStart)
 
   // Default 2 days/week for both roles (matches what's already configured live), plus a couple
   // of per-user overrides so the "Individual Overrides" panel has real entries to show.
@@ -2030,82 +2150,6 @@ async function main() {
   const { error: offDayQuotaSeedErr } = await supabase.from('off_day_quota_settings').insert(offDayQuotaRows)
   if (offDayQuotaSeedErr) console.warn(`  ! off_day_quota_settings failed: ${offDayQuotaSeedErr.message}`)
   else console.log('  ok off_day_quota_settings: Manager 2/week, Employee 2/week, +2 overrides')
-
-  // Effective quota per requester — must match the rows above so each seeded weekly group has
-  // exactly the right number of dates, same as a real submission would.
-  const requesterQuota = new Map([...managerEmails, ...employeeEmails].map(email => [email, 2]))
-  requesterQuota.set('manager3@test.com', 3)
-  requesterQuota.set('employee2@test.com', 1)
-
-  const WEEKDAY_COMBOS = {
-    1: [[1], [2], [3], [4], [5]],
-    2: [[1, 3], [2, 4], [3, 5], [1, 4], [2, 5], [1, 2], [4, 5], [2, 3]],
-    3: [[1, 3, 5], [2, 4, 5], [1, 2, 4], [1, 3, 4], [2, 3, 5]],
-  }
-  function pickWeekdaysForQuota(quota, idx) {
-    const combos = WEEKDAY_COMBOS[quota] ?? WEEKDAY_COMBOS[2]
-    return combos[idx % combos.length]
-  }
-
-  const allRequesters = [...managerEmails, ...employeeEmails]
-
-  // Pending — everyone submits their weekly group for the currently-open week, so the Owner's
-  // "Off Day Request For Next Week" queue (single-card pager) has a full, realistic set to page
-  // through and to test the Approve / Modify + AI Suggestion flow against.
-  const pendingFixedOffSeeders = allRequesters.flatMap((email, i) => {
-    const quota = requesterQuota.get(email)
-    return pickWeekdaysForQuota(quota, i).map(weekday => ({
-      email,
-      weekStart: activeWeekStart,
-      weekday,
-      status: 'pending',
-      source: 'submitted',
-      submittedHoursAgo: 6 + i * 3,
-    }))
-  })
-
-  // Overdue — the most recently CLOSED submission week (deadline already passed) keeps a few
-  // still-pending requests, so the Owner Dashboard's "Schedule Next Week" card has real pending
-  // data to show. Only uses requesters the w=1 historical week skips ((i+1)%3===0), so nobody
-  // gets both a decided and a pending row for the same week.
-  const closedWeekStart = addDays(activeWeekStart, -7)
-  const overdueClosedWeekSeeders = allRequesters.flatMap((email, i) => {
-    if ((i + 1) % 3 !== 0) return []
-    const quota = requesterQuota.get(email)
-    return pickWeekdaysForQuota(quota, i).map(weekday => ({
-      email,
-      weekStart: closedWeekStart,
-      weekday,
-      status: 'pending',
-      source: 'submitted',
-      submittedHoursAgo: 24 * 6 + i,
-    }))
-  })
-
-  // Historical — past 4 weeks, already decided (Approve / Modify only, matching the current
-  // product), so the Weekly Day Off Calendar heatmap has real past data to show alongside the
-  // upcoming week's live requests.
-  const historicalFixedOffSeeders = []
-  for (let w = 1; w <= 4; w++) {
-    const weekStart = addDays(activeWeekStart, -7 * w)
-    allRequesters.forEach((email, i) => {
-      if ((i + w) % 3 === 0) return // sparser historical weeks — not everyone requests every week
-      const quota = requesterQuota.get(email)
-      const weekdays = pickWeekdaysForQuota(quota, i + w)
-      weekdays.forEach(weekday => {
-        const reviewedHoursAgo = 24 * 7 * w + i
-        historicalFixedOffSeeders.push({
-          email,
-          weekStart,
-          weekday,
-          status: (i + w) % 4 === 0 ? 'modified' : 'approved',
-          source: (i + w) % 5 === 0 ? 'auto_assigned' : 'submitted',
-          reviewedHoursAgo,
-          submittedHoursAgo: reviewedHoursAgo + 2,
-        })
-      })
-    })
-  }
 
   const fixedOffSeeders = [...pendingFixedOffSeeders, ...overdueClosedWeekSeeders, ...historicalFixedOffSeeders]
   let fixedOffCount = 0
@@ -2220,6 +2264,28 @@ async function main() {
       experience_required: 'Preferred', minimum_age: 16, uniform_type: 'none',
     },
 
+    // ── Partner-created postings（status: open）— Partner 跟 Owner 一样能直接发布职位
+    // （不需要走 pending_approval），所以他们的 Active Jobs 列表要有真正属于自己的职位，
+    // 不是 Owner 那份的复制 ──
+    {
+      dept: 3, status: 'open', form: 'oneoff', title: 'Trade Show Booth Crew',
+      description: 'Staff the company booth for a two-day industry trade show — demos and lead capture.',
+      requirements: 'Presentable, comfortable with product demos.',
+      employment_type: 'casual', salary_amount: 115, urgency: 'normal', estimated_hours: '8',
+      job_start_time: '09:30', createdBy: 'partner1@test.com', createdDaysAgo: 5, assignedEmployeeIdx: 7, openings: 3, deadlineDays: 7,
+      experience_required: 'Preferred', minimum_age: 18, uniform_type: 'dress_code', uniform_details: 'Company polo (issued), dark pants',
+    },
+    {
+      dept: 0, status: 'open', form: 'shift', is_recurring: true, title: 'Loading Dock Coordinator',
+      description: 'Coordinate incoming deliveries at the loading dock and log discrepancies.',
+      requirements: 'Comfortable with paperwork and radio comms during busy delivery windows.',
+      employment_type: 'part-time', salary_amount: 18.5, assignedEmployeeIdx: 0, openings: 2, deadlineDays: 15,
+      shift_days: ['Mon', 'Tue', 'Wed', 'Thu'],
+      shift_start_time: '07:00', shift_end_time: '15:00', break_start_time: '11:00', break_end_time: '11:30',
+      recurrence_interval: 1, recurrence_unit: 'week', createdBy: 'partner2@test.com', createdDaysAgo: 9,
+      experience_required: '6+ Months', minimum_age: 18, uniform_type: 'company', uniform_details: 'Hi-vis vest (provided)',
+    },
+
     // ── Dashboard Recruitment Overview 专用（status: open）——
     // deadlineToday = 申请截止日就是今天（Deadline Today 列表）；
     // startDays 1/2 = 明天/后天开工且 confirmed < openings（Starting Soon, Understaffed 列表）──
@@ -2285,6 +2351,14 @@ async function main() {
       shift_start_time: '12:00', shift_end_time: '18:00', break_start_time: null, break_end_time: null,
       createdBy: 'owner', createdDaysAgo: 8,
       experience_required: '2+ Years', minimum_age: 21, uniform_type: 'dress_code', uniform_details: 'All-black smart casual',
+    },
+    {
+      dept: 2, status: 'closed', form: 'oneoff', title: 'Server Migration Support Crew',
+      description: 'Extra hands for an overnight server migration — cabling, labeling, rack swaps.',
+      requirements: 'Comfortable working overnight in a server room.',
+      employment_type: 'casual', salary_amount: 135, urgency: 'high', estimated_hours: '6',
+      job_start_time: '22:00', createdBy: 'partner1@test.com', createdDaysAgo: 10, assignedEmployeeIdx: 5, openings: 2, deadlineDays: -3,
+      experience_required: '1+ Year', minimum_age: 21, uniform_type: 'none',
     },
 
     // ── Report 趋势数据：Closed + 已招满/部分招满，created_at 一批落在最近 7 天、一批落在
@@ -2478,6 +2552,36 @@ async function main() {
       job_start_time: '11:00', createdBy: 'owner', openings: 4, deadlineDays: 3,
       experience_required: 'Not Required', minimum_age: 16, uniform_type: 'dress_code', uniform_details: 'Plain white top, dark bottoms',
     },
+
+    // ── Partner / Manager 自己的草稿 — 每个能发职位的角色都该有自己写到一半、还没
+    // 存出去的草稿，不是只有 Owner 的 Drafts 标签有东西。Manager 的草稿仍然是 draft
+    // 状态本身（还没提交审批），只有 draft → open/pending_approval 的转换才受 UC41 限制。
+    {
+      dept: 3, status: 'draft', form: 'oneoff', title: 'Festive Season Extra Hands',
+      description: 'Extra floor staff to cover the festive season rush across all customer-facing shifts.',
+      requirements: 'Available across the festive week, comfortable with a fast pace.',
+      employment_type: 'casual', salary_amount: 90, urgency: 'normal', estimated_hours: '5',
+      job_start_time: '10:00', createdBy: 'partner1@test.com', openings: 4, deadlineDays: 12,
+      experience_required: 'Not Required', minimum_age: 16, uniform_type: 'none',
+    },
+    {
+      dept: 0, status: 'draft', form: 'shift', is_recurring: true, title: 'Early Morning Prep Cook',
+      description: 'Prep ingredients and set up stations before the morning rush.',
+      requirements: 'Comfortable with an early 5am start.',
+      employment_type: 'part-time', salary_amount: 18, openings: 2, deadlineDays: 10,
+      shift_days: ['Mon', 'Wed', 'Fri'],
+      shift_start_time: '05:00', shift_end_time: '10:00', break_start_time: null, break_end_time: null,
+      recurrence_interval: 1, recurrence_unit: 'week', createdBy: 'partner2@test.com',
+      experience_required: '6+ Months', minimum_age: 18, uniform_type: 'company', uniform_details: 'Kitchen apron and hairnet (provided)',
+    },
+    {
+      dept: 2, status: 'draft', form: 'oneoff', title: 'Client Demo Day Support',
+      description: 'Extra pair of hands to help set up and run the client demo day.',
+      requirements: 'Comfortable troubleshooting AV/laptop hiccups on the spot.',
+      employment_type: 'casual', salary_amount: 100, urgency: 'normal', estimated_hours: '5',
+      job_start_time: '09:00', createdBy: 'manager6@test.com', openings: 2, deadlineDays: 6,
+      experience_required: 'Preferred', minimum_age: null, uniform_type: 'none',
+    },
   ]
 
   let jobPostingCount = 0
@@ -2506,15 +2610,14 @@ async function main() {
       location: company.address,
       employment_type: def.employment_type ?? null,
       company_name: company.name,
-      industry: company.industry,
       status: def.status,
       form_type: def.form,
       is_recurring: isShift ? (def.is_recurring ?? false) : false,
-      recurrence_interval: isShift ? (def.recurrence_interval ?? null) : null,
-      recurrence_unit: isShift ? (def.recurrence_unit ?? null) : null,
+      // recurrence_interval/recurrence_unit/salary_type columns were dropped from job_postings
+      // (20260719230000_drop_unused_tables_and_columns.sql) — recurrence is now conveyed purely
+      // via is_recurring + shift_days, matching recruitmentRepository.createJobPosting.
       shift_days: isShift ? (def.shift_days ?? null) : null,
       salary_amount: def.salary_amount ?? null,
-      salary_type: def.salary_amount == null ? null : (isShift ? 'per hour' : 'flat rate'),
       urgency: isShift ? null : (def.urgency ?? 'normal'),
       estimated_hours: isShift ? null : (def.estimated_hours ?? null),
       shift_date: def.startDays != null ? dateKey(addDays(TODAY, def.startDays)) : jobStartDateKey,
@@ -2750,7 +2853,6 @@ async function main() {
       additional_note: def.note ?? null,
       skills_snapshot: guest.skills ?? null,
       certificates_snapshot: (guest.certs ?? []).map(c => ({ name: c.name, file_url: c.file_url })),
-      age_at_apply: ageAt(guest.date_of_birth, appliedAt),
     }).select('id').single()
     if (jaErr) { console.warn(`  ⚠ 创建 job_applicant 失败 (${def.title} / ${def.guest}): ${jaErr.message}`); continue }
     jobApplicantCount++
@@ -2763,7 +2865,6 @@ async function main() {
         job_id: jobId,
         applicant_id: ja.id,
         sent_by: ownerUser.id,
-        message: INVITATION_MESSAGES[i % INVITATION_MESSAGES.length],
         status: def.inv,
         sent_at: sentAt.toISOString(),
         responded_at: OFFER_RESOLVED.includes(def.inv) ? respondedAt.toISOString() : null,
@@ -2813,7 +2914,6 @@ async function main() {
       applicant_id: null,
       cancelled_by: userIdMap['cw4@test.com'].internalId,
       cancelled_role: 'worker',
-      scope: 'worker',
       reason: 'Family emergency came up — had to back out.',
       created_at: addDays(TODAY, -3).toISOString(),
     })

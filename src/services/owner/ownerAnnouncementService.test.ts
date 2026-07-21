@@ -9,6 +9,7 @@ vi.mock('@/repositories/owner/ownerAnnouncementRepository', () => ({
   ownerAnnouncementRepository: {
     getAnnouncements: vi.fn(),
     insertAnnouncement: vi.fn(),
+    getAnnouncementOwner: vi.fn(),
     updateAnnouncement: vi.fn(),
     deleteAnnouncement: vi.fn(),
     markAnnouncementsRead: vi.fn(),
@@ -16,12 +17,21 @@ vi.mock('@/repositories/owner/ownerAnnouncementRepository', () => ({
   },
 }))
 
+vi.mock('@/services/auth/userService', () => ({
+  userService: {
+    getUserById: vi.fn(),
+  },
+}))
+
 import { ownerAnnouncementService } from './ownerAnnouncementService'
 import { ownerAnnouncementRepository } from '@/repositories/owner/ownerAnnouncementRepository'
+import { userService } from '@/services/auth/userService'
 
 describe('ownerAnnouncementService — Communication (UC58-60)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.mocked(userService.getUserById).mockResolvedValue({ role: 'Owner', department_id: null } as any)
+    vi.mocked(ownerAnnouncementRepository.getAnnouncementOwner).mockResolvedValue({ from_user_id: 'owner-1' })
   })
 
   describe('getAnnouncements', () => {
@@ -56,6 +66,39 @@ describe('ownerAnnouncementService — Communication (UC58-60)', () => {
 
       expect(ownerAnnouncementRepository.insertAnnouncement).toHaveBeenCalledWith('owner-1', 'company-1', 'dept-1', 'Welcome', 'Hello team')
     })
+
+    it('rejects an Employee poster', async () => {
+      vi.mocked(userService.getUserById).mockResolvedValue({ role: 'Employee', department_id: 'dept-1' } as any)
+
+      await expect(ownerAnnouncementService.postAnnouncement('emp-1', 'company-1', null, 'Title', 'Body'))
+        .rejects.toThrow('Employees cannot post announcements')
+      expect(ownerAnnouncementRepository.insertAnnouncement).not.toHaveBeenCalled()
+    })
+
+    it('rejects a Manager attempting to post company-wide', async () => {
+      vi.mocked(userService.getUserById).mockResolvedValue({ role: 'Manager', department_id: 'dept-1' } as any)
+
+      await expect(ownerAnnouncementService.postAnnouncement('mgr-1', 'company-1', null, 'Title', 'Body'))
+        .rejects.toThrow('Managers can only post announcements to their own department')
+      expect(ownerAnnouncementRepository.insertAnnouncement).not.toHaveBeenCalled()
+    })
+
+    it('rejects a Manager posting to a different department', async () => {
+      vi.mocked(userService.getUserById).mockResolvedValue({ role: 'Manager', department_id: 'dept-1' } as any)
+
+      await expect(ownerAnnouncementService.postAnnouncement('mgr-1', 'company-1', 'dept-2', 'Title', 'Body'))
+        .rejects.toThrow('Managers can only post announcements to their own department')
+      expect(ownerAnnouncementRepository.insertAnnouncement).not.toHaveBeenCalled()
+    })
+
+    it('allows a Manager to post to their own department', async () => {
+      vi.mocked(userService.getUserById).mockResolvedValue({ role: 'Manager', department_id: 'dept-1' } as any)
+      vi.mocked(ownerAnnouncementRepository.insertAnnouncement).mockResolvedValue({ id: 'ann-1' })
+
+      await ownerAnnouncementService.postAnnouncement('mgr-1', 'company-1', 'dept-1', 'Title', 'Body')
+
+      expect(ownerAnnouncementRepository.insertAnnouncement).toHaveBeenCalledWith('mgr-1', 'company-1', 'dept-1', 'Title', 'Body')
+    })
   })
 
   describe('updateAnnouncement (UC59)', () => {
@@ -75,6 +118,42 @@ describe('ownerAnnouncementService — Communication (UC58-60)', () => {
       await ownerAnnouncementService.updateAnnouncement('ann-1', 'owner-1', '  New Title  ', '  New Body  ', 'dept-2')
 
       expect(ownerAnnouncementRepository.updateAnnouncement).toHaveBeenCalledWith('ann-1', 'owner-1', 'New Title', 'New Body', 'dept-2')
+    })
+
+    it('rejects a Manager trying to move their announcement to a different department', async () => {
+      vi.mocked(ownerAnnouncementRepository.getAnnouncementOwner).mockResolvedValue({ from_user_id: 'mgr-1' })
+      vi.mocked(userService.getUserById).mockResolvedValue({ role: 'Manager', department_id: 'dept-1' } as any)
+
+      await expect(ownerAnnouncementService.updateAnnouncement('ann-1', 'mgr-1', 'Title', 'Body', 'dept-2'))
+        .rejects.toThrow('Managers can only post announcements to their own department')
+      expect(ownerAnnouncementRepository.updateAnnouncement).not.toHaveBeenCalled()
+    })
+
+    it('rejects a Manager trying to make their announcement company-wide', async () => {
+      vi.mocked(ownerAnnouncementRepository.getAnnouncementOwner).mockResolvedValue({ from_user_id: 'mgr-1' })
+      vi.mocked(userService.getUserById).mockResolvedValue({ role: 'Manager', department_id: 'dept-1' } as any)
+
+      await expect(ownerAnnouncementService.updateAnnouncement('ann-1', 'mgr-1', 'Title', 'Body', null))
+        .rejects.toThrow('Managers can only post announcements to their own department')
+      expect(ownerAnnouncementRepository.updateAnnouncement).not.toHaveBeenCalled()
+    })
+
+    it('allows a Manager to keep their announcement in their own department', async () => {
+      vi.mocked(ownerAnnouncementRepository.getAnnouncementOwner).mockResolvedValue({ from_user_id: 'mgr-1' })
+      vi.mocked(userService.getUserById).mockResolvedValue({ role: 'Manager', department_id: 'dept-1' } as any)
+      vi.mocked(ownerAnnouncementRepository.updateAnnouncement).mockResolvedValue({ id: 'ann-1' })
+
+      await ownerAnnouncementService.updateAnnouncement('ann-1', 'mgr-1', 'Title', 'Body', 'dept-1')
+
+      expect(ownerAnnouncementRepository.updateAnnouncement).toHaveBeenCalledWith('ann-1', 'mgr-1', 'Title', 'Body', 'dept-1')
+    })
+
+    it('rejects editing when the requester does not own the announcement', async () => {
+      vi.mocked(ownerAnnouncementRepository.getAnnouncementOwner).mockResolvedValue({ from_user_id: 'owner-1' })
+
+      await expect(ownerAnnouncementService.updateAnnouncement('ann-1', 'mgr-1', 'Title', 'Body', null))
+        .rejects.toThrow('You can only edit your own announcements')
+      expect(ownerAnnouncementRepository.updateAnnouncement).not.toHaveBeenCalled()
     })
   })
 

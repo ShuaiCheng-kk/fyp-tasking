@@ -13,9 +13,10 @@ export const jobTemplateService = {
     return jobTemplateRepository.createTemplate(input)
   },
 
-  async listTemplates(company_id: string): Promise<JobTemplate[]> {
+  async listTemplates(company_id: string, created_by: string): Promise<JobTemplate[]> {
     if (!company_id) throw new Error('company_id is required')
-    return jobTemplateRepository.getTemplatesByCompany(company_id)
+    if (!created_by) throw new Error('created_by is required')
+    return jobTemplateRepository.getTemplatesByCompany(company_id, created_by)
   },
 
   async deleteTemplate(id: string): Promise<void> {

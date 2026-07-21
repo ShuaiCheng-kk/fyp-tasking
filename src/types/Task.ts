@@ -22,8 +22,10 @@ export interface Task {
   // assignee sees the reason as a rework notice until it is re-submitted / approved.
   rejection_reason?: string | null
   rejected_at?: string | null
-  // Set when the assigner marks this task's Task Delay Alert as read — the alert stays dismissed
-  // until the deadline changes (editTask clears this so a new delay window can re-alert).
+  // Per-viewer: populated from task_delay_alert_reads for whichever user_id requested this task
+  // (see taskService.getKanbanTasks/getTaskDelayAlerts), not a raw column — Owner and Partner each
+  // dismiss the Task Delay Alert independently. Stays set until the deadline changes (editTask
+  // clears every viewer's acknowledgement so a new delay window can re-alert everyone).
   delay_alert_read_at?: string | null
   // Stamped when the assigner approves the task in Review — the only path to Complete.
   completed_at?: string | null
@@ -33,6 +35,9 @@ export interface Task {
   // Full assignee set for top-level tasks (assigned_user_id is the first/primary entry, kept in
   // sync). Not populated on sub-tasks — those stay single-assignee via assigned_user_id alone.
   assigned_user_ids?: string[]
+  // Batch-attached alongside assigned_user_ids so every Task detail view (any role) can show
+  // "Assigned By" without a separate members-list lookup.
+  assigned_by_name?: string | null
 }
 
 export interface TaskInput {
@@ -56,7 +61,6 @@ export interface TaskInput {
   is_completed?: boolean
   rejection_reason?: string | null
   rejected_at?: string | null
-  delay_alert_read_at?: string | null
   completed_at?: string | null
   // Full desired assignee set. When provided, assigned_user_id is derived as the first entry and
   // every id is validated against the same one-level-down role check. Omit for single-assignee

@@ -17,7 +17,7 @@ let seeded: TestOwner
 let departments: { primary: string; secondary: string }
 const members: SeededMember[] = []
 
-async function createMember(role: 'Manager' | 'Employee', label: string, departmentId: string): Promise<SeededMember> {
+async function createMember(role: 'Manager' | 'Employee' | 'Partner', label: string, departmentId?: string): Promise<SeededMember> {
   const email = `test-module3-${label}-${Date.now()}@tasking-tests.local`
   const { data: authData, error: authError } = await admin.auth.admin.createUser({
     email,
@@ -45,7 +45,7 @@ async function createMember(role: 'Manager' | 'Employee', label: string, departm
       .from('manager_departments')
       .insert({ manager_id: user.id, company_id: seeded.companyId, department_id: departmentId, assigned_by: seeded.ownerId })
     if (error) throw new Error(`Failed to assign manager department: ${error.message}`)
-  } else {
+  } else if (role === 'Employee') {
     const { error } = await admin
       .from('employee_departments')
       .insert({ employee_id: user.id, department_id: departmentId })
@@ -287,6 +287,25 @@ test('UC30 removes a manager who created shifts without leaving a partial member
   expect(updatedShift!.created_by).toBe(seeded.ownerId)
 })
 
+test('UC30 a Partner cannot remove any member — not another Partner, not a Manager, not an Employee', async ({ request }) => {
+  const partner = await createMember('Partner', 'remover')
+  const otherPartner = await createMember('Partner', 'remove-target')
+  const manager = await createMember('Manager', 'remove-target-mgr', departments.primary)
+  const employee = await createMember('Employee', 'remove-target-emp', departments.primary)
+
+  for (const target of [otherPartner, manager, employee]) {
+    const remove = await request.delete('/api/team/remove-member', {
+      data: {
+        company_id: seeded.companyId,
+        user_id_to_remove: target.userId,
+        requesting_user_id: partner.userId,
+      },
+    })
+    expect(remove.status()).toBe(400)
+    expect(await remove.json()).toMatchObject({ success: false, message: 'Insufficient permissions to remove a member' })
+  }
+})
+
 test('UC31 changes an employee department in the employee department mapping', async ({ request }) => {
   const employee = await createMember('Employee', 'move', departments.primary)
 
@@ -295,6 +314,7 @@ test('UC31 changes an employee department in the employee department mapping', a
       user_id: employee.userId,
       department_id: departments.secondary,
       company_id: seeded.companyId,
+      requester_user_id: seeded.ownerId,
     },
   })
   expect(res.status()).toBe(200)
@@ -313,6 +333,7 @@ test('UC33 imports departments and skips duplicates', async ({ request }) => {
     data: {
       company_id: seeded.companyId,
       departments: ['Front Desk', '  Bar  ', 'Bar', 'Events'],
+      requester_user_id: seeded.ownerId,
     },
   })
   expect(res.status()).toBe(200)
@@ -622,6 +643,7 @@ test('UC34 edits company profile fields', async ({ request }) => {
   const res = await request.patch('/api/company/update-profile', {
     data: {
       company_id: seeded.companyId,
+      requester_user_id: seeded.ownerId,
       name: 'Module 3 Company Updated',
       description: 'Updated through module 3 API test',
       location: 'Singapore',
@@ -639,4 +661,14 @@ test('UC34 edits company profile fields', async ({ request }) => {
     postal_code: '123456',
     industry: 'Hospitality',
   })
+})
+
+test('Owner-only routes reject a non-Owner requester with 403', async ({ request }) => {
+  const employee = await createMember('Employee', 'guard403', departments.primary)
+
+  const res = await request.post('/api/company/create-department', {
+    data: { company_id: seeded.companyId, name: 'Should Not Exist', requester_user_id: employee.userId },
+  })
+  expect(res.status()).toBe(403)
+  expect((await res.json()).success).toBe(false)
 })

@@ -25,6 +25,7 @@ export async function POST(req: NextRequest) {
     const message = await ownerInboxService.sendMessage(from_user_id, to_user_id, company_id, content)
     return NextResponse.json({ success: true, message })
   } catch (error: any) {
-    return NextResponse.json({ success: false, error: error.message }, { status: 400 })
+    const status = error.message === 'Managers can only message the Owner, Partner, or members of their own department' ? 403 : 400
+    return NextResponse.json({ success: false, error: error.message }, { status })
   }
 }
