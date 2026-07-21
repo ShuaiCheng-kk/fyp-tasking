@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, message: 'members must be an array' }, { status: 400 })
   }
   try {
-    await userService.assertOwnerRole(b.invited_by)
+    await userService.assertOwnerOrPartnerRole(b.invited_by)
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Forbidden'
     return NextResponse.json({ success: false, message }, { status: 403 })

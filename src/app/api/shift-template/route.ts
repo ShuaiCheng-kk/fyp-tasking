@@ -7,17 +7,13 @@ import { shiftTemplateService } from '@/services/owner/shiftTemplateService'
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const company_id = searchParams.get('company_id')
-  const created_by = searchParams.get('created_by')
 
   if (!company_id) {
     return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
   }
-  if (!created_by) {
-    return NextResponse.json({ success: false, message: 'created_by is required' }, { status: 400 })
-  }
 
   try {
-    const templates = await shiftTemplateService.listTemplates(company_id, created_by)
+    const templates = await shiftTemplateService.listTemplates(company_id)
     return NextResponse.json({ success: true, templates })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to fetch shift templates'

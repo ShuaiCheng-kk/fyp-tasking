@@ -76,3 +76,29 @@ describe('userService — assertOwnerRole (Owner-only UC guard)', () => {
     await expect(userService.assertOwnerRole('missing')).rejects.toThrow('User not found')
   })
 })
+
+describe('userService — assertOwnerOrPartnerRole (Owner-or-Partner UC guard, e.g. UC32)', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('resolves when the requester is an Owner', async () => {
+    vi.spyOn(userService, 'getUserById').mockResolvedValue({ id: 'u1', role: 'Owner' } as never)
+    await expect(userService.assertOwnerOrPartnerRole('u1')).resolves.toBeUndefined()
+  })
+
+  it('resolves when the requester is a Partner', async () => {
+    vi.spyOn(userService, 'getUserById').mockResolvedValue({ id: 'u2', role: 'Partner' } as never)
+    await expect(userService.assertOwnerOrPartnerRole('u2')).resolves.toBeUndefined()
+  })
+
+  it('rejects when the requester is a Manager', async () => {
+    vi.spyOn(userService, 'getUserById').mockResolvedValue({ id: 'u3', role: 'Manager' } as never)
+    await expect(userService.assertOwnerOrPartnerRole('u3')).rejects.toThrow('Only an Owner or Partner can perform this action')
+  })
+
+  it('rejects when the requester does not exist', async () => {
+    vi.spyOn(userService, 'getUserById').mockRejectedValue(new Error('User not found'))
+    await expect(userService.assertOwnerOrPartnerRole('missing')).rejects.toThrow('User not found')
+  })
+})

@@ -87,15 +87,17 @@ describe('aiTaskAssignService.generateAssignmentSuggestion (UC20)', () => {
     expect(result.description).toBe('my own notes')
   })
 
-  it('only ranks managers with a shift on the given task_date', async () => {
-    vi.mocked(taskRepository.hasShiftOnDate).mockImplementation(async (userId: string) => userId === 'mgr-2')
+  // Task assignment is independent of shift scheduling (see taskService.assignTask/editTask) —
+  // every manager in the department is a candidate regardless of task_date or shift presence.
+  it('ranks every manager in the department regardless of shift presence on task_date', async () => {
+    vi.mocked(taskRepository.hasShiftOnDate).mockResolvedValue(false)
 
     const result = await aiTaskAssignService.generateAssignmentSuggestion({
       company_id: 'company-1', title: 'Prepare report', description: '', priority: 'High', want_sub_tasks: false, task_date: '2026-07-01',
     })
 
-    expect(result.candidates.map(c => c.id)).toEqual(['mgr-2'])
-    expect(result.recommended_manager_id).toBe('mgr-2')
+    expect(taskRepository.hasShiftOnDate).not.toHaveBeenCalled()
+    expect(result.candidates).toHaveLength(2)
   })
 
   it('does not filter by shift when no task_date is given', async () => {

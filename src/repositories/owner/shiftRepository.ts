@@ -7,6 +7,12 @@ import { ShiftAssignment } from '@/types/ShiftAssignment'
 import { ShiftActionHistory, ShiftActionHistoryInput, ShiftActionRedoPayload } from '@/types/ShiftActionHistory'
 import { User } from '@/types/auth.types'
 
+function blockedByAttendanceMessage(context: 'reassign' | 'delete'): string {
+  return context === 'delete'
+    ? 'Cannot delete this shift — attendance has already been recorded against it.'
+    : 'Cannot reassign this shift — attendance has already been recorded against it.'
+}
+
 export const shiftRepository = {
 
   async createShift(input: ShiftInput): Promise<Shift> {
@@ -115,11 +121,14 @@ export const shiftRepository = {
   },
 
   async getShiftById(id: string): Promise<Shift | null> {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('shifts')
       .select('*')
       .eq('id', id)
       .single()
+    // PGRST116 = no row matched — a genuine "not found". Any other error (network, RLS, etc.)
+    // must not be silently reported as "not found", or real failures become undiagnosable.
+    if (error && error.code !== 'PGRST116') throw new Error(error.message)
     return (data as Shift) ?? null
   },
 
@@ -206,21 +215,24 @@ export const shiftRepository = {
     if (error) throw new Error(error.message)
   },
 
-  async deleteAssignmentsByShiftId(shift_id: string): Promise<void> {
+  // context picks the FK-violation wording — the same shift_assignments delete underlies both
+  // "give this shift to someone else" (reassign) and "remove this shift" (delete) call sites,
+  // and the two need different user-facing wording for the same 23503 (attendance_records FK).
+  async deleteAssignmentsByShiftId(shift_id: string, context: 'reassign' | 'delete' = 'reassign'): Promise<void> {
     const { error } = await supabase
       .from('shift_assignments')
       .delete()
       .eq('shift_id', shift_id)
-    if (error) throw new Error(error.code === '23503' ? 'Cannot reassign this shift — attendance has already been recorded against it.' : error.message)
+    if (error) throw new Error(error.code === '23503' ? blockedByAttendanceMessage(context) : error.message)
   },
 
-  async deleteAssignmentsByShiftIds(shift_ids: string[]): Promise<void> {
+  async deleteAssignmentsByShiftIds(shift_ids: string[], context: 'reassign' | 'delete' = 'reassign'): Promise<void> {
     if (shift_ids.length === 0) return
     const { error } = await supabase
       .from('shift_assignments')
       .delete()
       .in('shift_id', shift_ids)
-    if (error) throw new Error(error.code === '23503' ? 'Cannot reassign this shift — attendance has already been recorded against it.' : error.message)
+    if (error) throw new Error(error.code === '23503' ? blockedByAttendanceMessage(context) : error.message)
   },
 
   async deleteAssignmentById(assignment_id: string): Promise<void> {

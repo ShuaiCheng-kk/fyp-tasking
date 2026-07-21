@@ -29,6 +29,9 @@ export interface Task {
   delay_alert_read_at?: string | null
   // Stamped when the assigner approves the task in Review — the only path to Complete.
   completed_at?: string | null
+  // Who actually clicked Approve — not always assigned_by, since Owner/Partner are peer
+  // "assigner" roles and either may review a task the other assigned (assertIsTaskOwner).
+  reviewed_by?: string | null
   created_at: string
   updated_at?: string
   shift_date?: string | null
@@ -38,6 +41,7 @@ export interface Task {
   // Batch-attached alongside assigned_user_ids so every Task detail view (any role) can show
   // "Assigned By" without a separate members-list lookup.
   assigned_by_name?: string | null
+  reviewed_by_name?: string | null
 }
 
 export interface TaskInput {
@@ -62,6 +66,7 @@ export interface TaskInput {
   rejection_reason?: string | null
   rejected_at?: string | null
   completed_at?: string | null
+  reviewed_by?: string | null
   // Full desired assignee set. When provided, assigned_user_id is derived as the first entry and
   // every id is validated against the same one-level-down role check. Omit for single-assignee
   // behavior identical to today.

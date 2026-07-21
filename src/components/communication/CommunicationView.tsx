@@ -14,7 +14,7 @@ import {
   Plus, X, Trash2, Pencil, Megaphone,
   Send, Search, SquarePen, Check, Bell, MessageSquare, Crown,
   Users, Globe, UserCog, UserRound, Pin, PinOff,
-  ImagePlus, Paperclip, FileText, Download, ChevronDown,
+  ImagePlus, Paperclip, FileText, ChevronDown,
 } from 'lucide-react'
 
 // ─── Shared types ─────────────────────────────────────────────────────────────
@@ -463,11 +463,16 @@ export default function CommunicationView({ renderSidebar, basePath }: {
     if (!internalUserId) return
     fetchConversations()
     fetchUnreadCount()
+    // Every conversation/message Avatar looks up its photoUrl via companyMembers.find(...) — that
+    // was only ever populated by opening the New Message compose modal, so avatars silently fell
+    // back to the initials/role icon on first load until the user happened to open compose once.
+    fetchEligibleContacts().then(setCompanyMembers)
     // Load pinned conversations from localStorage
     try {
       const raw = localStorage.getItem(`pinned_convs_${internalUserId}`)
       if (raw) setPinnedIds(new Set(JSON.parse(raw)))
     } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [internalUserId, fetchConversations, fetchUnreadCount])
 
   useEffect(() => {
@@ -599,16 +604,27 @@ export default function CommunicationView({ renderSidebar, basePath }: {
     return () => { supabase.removeChannel(channel) }
   }, [internalUserId])
 
+  // Keyed by id + updated_at (falling back to created_at when never edited), not just id — an
+  // edit changes updated_at, so a mark saved against the pre-edit stamp no longer matches and the
+  // announcement goes back to "unread" for everyone who'd already read the old version. A plain
+  // id-only mark would stay "read" forever even though the content changed underneath it.
+  function readKey(ann: Announcement): string {
+    return `${ann.id}:${ann.updated_at ?? ann.created_at}`
+  }
+
   function handleSelectAnn(ann: Announcement) {
     setSelectedAnn(ann)
     if (!companyId || !internalUserId) return
     const next = new Set(readIds)
-    next.add(ann.id)
+    next.add(readKey(ann))
     setReadIds(next)
     saveReadIds(companyId, internalUserId, next)
   }
 
-  const unreadAnnCount = announcements.filter(a => !readIds.has(a.id)).length
+  // Only announcements someone ELSE posted count toward the unread badge — posting your own
+  // never got added to readIds, so it was inflating the red-dot notification as if it were
+  // something you hadn't seen yet.
+  const unreadAnnCount = announcements.filter(a => a.from_user_id !== internalUserId && !readIds.has(readKey(a))).length
 
   useEffect(() => { setUnreadAnnCountState(unreadAnnCount) }, [unreadAnnCount])
 
@@ -685,6 +701,10 @@ export default function CommunicationView({ renderSidebar, basePath }: {
   }
 
   function handleOpenEdit(ann: Announcement) {
+    // handleSaveEdit reads selectedAnn.id as the target to PATCH — without this, clicking Edit on
+    // a card that isn't the currently-open detail view left selectedAnn null (or pointing at a
+    // different announcement), so Save Changes either silently no-op'd or saved onto the wrong one.
+    setSelectedAnn(ann)
     setEditTitle(ann.title)
     setEditContent(ann.content)
     if (ann.department_id) {
@@ -1029,7 +1049,9 @@ export default function CommunicationView({ renderSidebar, basePath }: {
     .filter(ann => othersDeptFilter === 'all' || ann.department_id === othersDeptFilter)
 
   function renderAnnouncementCard(ann: Announcement, i: number) {
-    const unread = !readIds.has(ann.id)
+    // Same "own posts are never unread" rule as unreadAnnCount — otherwise every card in My
+    // Announcements stayed permanently bold, since posting never adds it to readIds.
+    const unread = ann.from_user_id !== internalUserId && !readIds.has(readKey(ann))
     const selected = selectedAnn?.id === ann.id
     const deptName = ann.department_id ? (departments.find(d => d.id === ann.department_id)?.name ?? 'Dept') : null
     const isMine = ann.from_user_id === internalUserId
@@ -1493,7 +1515,6 @@ export default function CommunicationView({ renderSidebar, basePath }: {
                               const fileUrl = fileMatch?.[2] ?? null
                               return (
                                 <div key={msg.id} className="comm-msg-bubble" style={{ display: 'flex', justifyContent: isMine ? 'flex-end' : 'flex-start', alignItems: 'flex-end', gap: 6 }}>
-                                  {!isMine && <Avatar name={conv.partnerName} size={22} role={conv.partnerRole} photoUrl={companyMembers.find(m => m.id === conv.partnerId)?.profile_photo_url ?? null} />}
                                   {isImage && imgUrl ? (
                                     <div style={{ maxWidth: '65%', display: 'flex', flexDirection: 'column', alignItems: isMine ? 'flex-end' : 'flex-start', gap: 3 }}>
                                       <a href={imgUrl} target="_blank" rel="noopener noreferrer" style={{ display: 'block', borderRadius: isMine ? '12px 12px 3px 12px' : '12px 12px 12px 3px', overflow: 'hidden', border: '1px solid #E2E8F0' }}>
@@ -1502,16 +1523,17 @@ export default function CommunicationView({ renderSidebar, basePath }: {
                                       <span style={{ fontSize: 11, color: '#94A3B8', fontWeight: 500 }}>{formatTime(msg.created_at)}</span>
                                     </div>
                                   ) : isFile && fileUrl ? (
-                                    <div style={{ maxWidth: '70%', padding: '8px 11px', borderRadius: isMine ? '13px 13px 3px 13px' : '13px 13px 13px 3px', background: isMine ? '#FFEDD5' : '#FFFFFF', border: isMine ? '1px solid #FED7AA' : '1px solid #EDF2F7', boxShadow: '0 1px 4px rgba(15,23,42,0.04)' }}>
+                                    // The whole card is the download link (same pattern as the image
+                                    // bubble above) — no separate "Download" line needed underneath.
+                                    <a href={fileUrl} target="_blank" rel="noopener noreferrer" download={fileName ?? true} style={{ maxWidth: '70%', padding: '8px 11px', borderRadius: isMine ? '13px 13px 3px 13px' : '13px 13px 13px 3px', background: isMine ? '#FFEDD5' : '#FFFFFF', border: isMine ? '1px solid #FED7AA' : '1px solid #EDF2F7', boxShadow: '0 1px 4px rgba(15,23,42,0.04)', textDecoration: 'none', display: 'block' }}>
                                       <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
                                         <div style={{ width: 30, height: 30, borderRadius: 8, background: '#EFF6FF', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><FileText size={14} color="#3B82F6" /></div>
                                         <div style={{ minWidth: 0, flex: 1 }}>
                                           <p style={{ margin: 0, fontSize: 11.5, fontWeight: 700, color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{fileName}</p>
-                                          <a href={fileUrl} target="_blank" rel="noopener noreferrer" download={fileName ?? true} style={{ fontSize: 10.5, color: '#3B82F6', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 2, marginTop: 1, textDecoration: 'none' }}><Download size={9} /> Download</a>
                                         </div>
                                       </div>
-                                      <div style={{ fontSize: 11, marginTop: 4, color: '#94A3B8', fontWeight: 500, textAlign: isMine ? 'right' : 'left' }}>{formatTime(msg.created_at)}</div>
-                                    </div>
+                                      <div style={{ fontSize: 11, marginTop: 8, color: '#94A3B8', fontWeight: 500, textAlign: isMine ? 'right' : 'left' }}>{formatTime(msg.created_at)}</div>
+                                    </a>
                                   ) : (
                                     <div style={{ maxWidth: '70%', padding: '8px 11px', borderRadius: isMine ? '13px 13px 3px 13px' : '13px 13px 13px 3px', background: isMine ? '#FFEDD5' : '#FFFFFF', border: isMine ? '1px solid #FED7AA' : '1px solid #EDF2F7', color: '#0F172A', fontSize: 15, fontWeight: 500, lineHeight: 1.5, boxShadow: '0 1px 4px rgba(15,23,42,0.04)' }}>
                                       {msg.content}
@@ -1744,7 +1766,7 @@ export default function CommunicationView({ renderSidebar, basePath }: {
                               />
                             </div>
                           </div>
-                          <div style={{ color: '#9CA3AF', fontSize: 11.5, fontWeight: 500 }}>
+                          <div style={{ color: '#9CA3AF', fontSize: 13, fontWeight: 500, marginTop: 4 }}>
                             {selectedAnn.from_user_id !== internalUserId ? (
                               <>Posted by <span style={{ color: '#334155', fontWeight: 700 }}>{selectedAnn.created_by_name ?? 'Unknown'}</span> at {formatAnnouncementTimestamp(selectedAnn)}</>
                             ) : (

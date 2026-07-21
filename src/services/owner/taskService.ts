@@ -307,14 +307,10 @@ export const taskService = {
       const due_at = deadlineRule
         ? computeDeadlineFromRule(nextDate, deadlineRule)
         : original.due_at ? moveIsoDate(original.due_at, nextDate) : null
-      // The original's assignee was only validated to have a shift on the original's own
-      // task_date — each occurrence falls on a different date, so re-check per occurrence
-      // rather than blindly copying the assignment. Occurrences that land on a date the
-      // assignee has no shift go out Unassigned instead of blocking the whole series.
+      // Task assignment is independent of shift scheduling (see assignTask/editTask) — every
+      // occurrence keeps the original's assignee regardless of whether they have a shift on
+      // that occurrence's date.
       const occurrenceAssigneeId = original.assigned_user_id
-        && (await taskRepository.hasShiftOnDate(original.assigned_user_id, original.company_id, nextDate))
-        ? original.assigned_user_id
-        : null
       const copy = await taskRepository.createTask({
         shift_id: original.shift_id,
         company_id: original.company_id,
@@ -465,6 +461,7 @@ export const taskService = {
       rejection_reason: null,
       rejected_at: null,
       completed_at: new Date().toISOString(),
+      reviewed_by: actingUserId,
     })
     await taskRepository.updateSubTasksByParent(id, { status: 'Complete', percentage_complete: 100 })
     return updated
@@ -820,15 +817,34 @@ function deadlineUrgencyWeight(due_at: string | null): number {
   return 1                            // plenty of time
 }
 
-// Only the user who originally assigned a task may edit, delete, archive, duplicate, extend its
-// recurrence, reorder its sub-tasks, or add new sub-tasks to it. Everyone else (including the
-// assignee) has view-only access.
+// The user who originally assigned a task may edit, delete, archive, duplicate, extend its
+// recurrence, reorder its sub-tasks, add new sub-tasks to it, or approve/reject its Review
+// submission. Owner and Partner are peer "assigner" roles (a Partner is effectively a backup
+// Owner) — same cross-management the Shifts page already gives them over each other's shifts —
+// so either may also act on a task the OTHER one assigned. Manager/Employee assigners are
+// unaffected: still assigner-only, no peer widening.
 async function assertIsTaskOwner(taskId: string, actingUserId?: string | null): Promise<Task> {
   const task = await taskRepository.getTaskById(taskId)
-  if (!actingUserId || task.assigned_by !== actingUserId) {
+  if (!actingUserId) {
     throw new Error('Only the user who assigned this task can perform this action')
   }
-  return task
+  if (task.assigned_by === actingUserId) return task
+  if (task.assigned_by) {
+    const [actingUser, assigner] = await Promise.all([
+      taskRepository.getUserById(actingUserId),
+      taskRepository.getUserById(task.assigned_by),
+    ])
+    const ownerPartner = ['Owner', 'Partner']
+    if (
+      actingUser && assigner &&
+      actingUser.company_id === assigner.company_id &&
+      ownerPartner.includes(actingUser.role) &&
+      ownerPartner.includes(assigner.role)
+    ) {
+      return task
+    }
+  }
+  throw new Error('Only the user who assigned this task can perform this action')
 }
 
 // Maps each task's per-viewer Task Delay Alert read state onto it — a no-op (all nulls) when no
@@ -921,12 +937,6 @@ async function validateAssignee(creator: User | null, assigneeId: string, input:
   if (!creator || creator.role === 'Owner' || creator.role === 'Partner') {
     if (assignee.role !== 'Manager') {
       throw new Error('Owner tasks can only be assigned to Managers')
-    }
-    if (input.task_date) {
-      const hasShift = await taskRepository.hasShiftOnDate(assignee.id, input.company_id, input.task_date)
-      if (!hasShift) {
-        throw new Error('Selected manager does not have a shift on the task date')
-      }
     }
   } else if (creator.role === 'Manager') {
     // Strictly one level down — Casual Workers are the supervising Employee's to assign, never

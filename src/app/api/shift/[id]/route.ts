@@ -85,8 +85,8 @@ export async function DELETE(
   const { searchParams } = new URL(req.url)
   const performedBy = searchParams.get('performed_by') ?? undefined
   try {
-    await shiftService.deleteShift(id, performedBy)
-    return NextResponse.json({ success: true })
+    const result = await shiftService.deleteShift(id, performedBy)
+    return NextResponse.json({ success: true, skipped_shifts: result.skipped_shifts })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to delete shift'
     return NextResponse.json({ success: false, message }, { status: 400 })
