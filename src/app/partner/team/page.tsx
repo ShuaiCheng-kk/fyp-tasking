@@ -12,7 +12,7 @@ export default function PartnerTeamPage() {
         canManageDepartments: false,
         canInviteMembers: true,
         canChangeMemberDepartment: false,
-        canInviteMembersCsv: false,
+        canInviteMembersCsv: true,
       }}
     />
   )

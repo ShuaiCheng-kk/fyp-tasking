@@ -22,12 +22,11 @@ export const shiftTemplateRepository = {
     return data as ShiftTemplate
   },
 
-  async getTemplatesByCompany(company_id: string, created_by: string): Promise<ShiftTemplate[]> {
+  async getTemplatesByCompany(company_id: string): Promise<ShiftTemplate[]> {
     const { data, error } = await supabase
       .from('shift_templates')
       .select('*')
       .eq('company_id', company_id)
-      .eq('created_by', created_by)
       .order('created_at', { ascending: true })
     if (error) throw new Error(error.message)
     return (data ?? []) as ShiftTemplate[]

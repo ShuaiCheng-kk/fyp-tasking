@@ -498,8 +498,9 @@ function AttendanceHalf({ title, accent, accentBg, group, search = '' }: {
         </span>
         <span style={{ fontSize: 15.5, fontWeight: 800, color: '#0F172A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{title}</span>
       </div>
-      {/* Progress summary strip */}
-      {(() => {
+      {/* Progress summary strip — skipped entirely when no one's scheduled today, so the block
+          collapses to just the header + empty-state row instead of a 0/0 progress bar. */}
+      {group.departments.length === 0 ? null : (() => {
         const late = group.departments.reduce((n, d) => n + d.late.length, 0)
         const absent = group.departments.reduce((n, d) => n + d.absent.length, 0)
         const present = group.departments.reduce((n, d) => n + d.present.length, 0)
@@ -583,15 +584,17 @@ function AttendanceHalf({ title, accent, accentBg, group, search = '' }: {
       })()}
       {/* Down arrow leading from the progress summary into the per-department breakdown —
           same solid-circle style as the Task Overview connector arrows */}
-      <div style={{ display: 'flex', justifyContent: 'center', margin: '-2px 0' }}>
-        <span style={{
-          width: 36, height: 36, borderRadius: 999, background: '#F97316', color: '#FFFFFF',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-          boxShadow: '0 2px 6px rgba(15,23,42,0.22)',
-        }}>
-          <ArrowDown size={19} />
-        </span>
-      </div>
+      {group.departments.length === 0 ? null : (
+        <div style={{ display: 'flex', justifyContent: 'center', margin: '-2px 0' }}>
+          <span style={{
+            width: 36, height: 36, borderRadius: 999, background: '#F97316', color: '#FFFFFF',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+            boxShadow: '0 2px 6px rgba(15,23,42,0.22)',
+          }}>
+            <ArrowDown size={19} />
+          </span>
+        </div>
+      )}
       {/* Departments — two per row; alignItems start so expanding one card doesn't stretch its neighbor */}
       {group.departments.length === 0 ? (
         <EmptyRow text="No one scheduled today" />
@@ -752,6 +755,8 @@ export default function DashboardView({ sidebar, basePath, viewerRole }: {
               >
                 {!summary ? (
                   <EmptyRow text={loading ? 'Loading…' : 'No data yet'} />
+                ) : waitingCount === 0 ? (
+                  <EmptyRow text="All caught up — nothing waiting on you" />
                 ) : (
                   <div style={{ display: 'flex', gap: 12, minHeight: '100%', flexWrap: isCompact ? 'wrap' : 'nowrap', overflowX: isCompact ? undefined : 'auto' }}>
                     {summary.waiting_on_you.map(item => (
@@ -776,6 +781,8 @@ export default function DashboardView({ sidebar, basePath, viewerRole }: {
               >
                 {!summary ? (
                   <EmptyRow text={loading ? 'Loading…' : 'No data yet'} />
+                ) : summary.recruitment_overview.deadline_today.length === 0 && summary.recruitment_overview.starting_soon.length === 0 ? (
+                  <EmptyRow text="No recruitment activity to review" />
                 ) : (
                   <div style={{ display: 'flex', flexDirection: isCompact ? 'column' : 'row', gap: 16, alignItems: 'stretch' }}>
                     <StatActionCard

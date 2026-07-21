@@ -38,11 +38,18 @@ function mapTeamMemberRow(row: any, cwMeta: Map<string, CwMeta>): TeamMemberRow 
 
 export const userService = {
 
-  // Server-side guard for Owner-only use cases (UC24-26, UC31-34): the UI hides these
-  // actions from other roles, but the API must reject them too.
+  // Server-side guard for Owner-only use cases (UC24-26, UC30, UC31, UC33, UC34): the UI hides
+  // these actions from other roles, but the API must reject them too.
   async assertOwnerRole(user_id: string): Promise<void> {
     const user = await userService.getUserById(user_id)
     if (user.role !== 'Owner') throw new Error('Only an Owner can perform this action')
+  },
+
+  // Server-side guard for Owner-or-Partner use cases (e.g. UC32 Invite Members by CSV) —
+  // Partner is a clone of Owner for this one, unlike the strictly Owner-only set above.
+  async assertOwnerOrPartnerRole(user_id: string): Promise<void> {
+    const user = await userService.getUserById(user_id)
+    if (user.role !== 'Owner' && user.role !== 'Partner') throw new Error('Only an Owner or Partner can perform this action')
   },
 
   async getUserById(id: string): Promise<User & { department_id: string | null }> {

@@ -11,11 +11,8 @@ export async function DELETE(
   const { id } = await params
   if (!id) return NextResponse.json({ success: false, message: 'id is required' }, { status: 400 })
 
-  const requested_by = new URL(req.url).searchParams.get('requested_by')
-  if (!requested_by) return NextResponse.json({ success: false, message: 'requested_by is required' }, { status: 400 })
-
   try {
-    await shiftTemplateService.deleteTemplate(id, requested_by)
+    await shiftTemplateService.deleteTemplate(id)
     return NextResponse.json({ success: true })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to delete shift template'
@@ -32,8 +29,7 @@ export async function PATCH(
 
   try {
     const body = await req.json()
-    if (!body.requested_by) return NextResponse.json({ success: false, message: 'requested_by is required' }, { status: 400 })
-    const template = await shiftTemplateService.updateTemplate(id, body.requested_by, {
+    const template = await shiftTemplateService.updateTemplate(id, {
       name: body.name,
       start_time: body.start_time,
       end_time: body.end_time,

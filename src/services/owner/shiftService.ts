@@ -2,6 +2,7 @@
 // RULE: Business logic only. No HTTP handling. No direct DB access.
 
 import { shiftRepository } from '@/repositories/owner/shiftRepository'
+import { attendanceRepository } from '@/repositories/owner/attendanceRepository'
 import { BulkCreateShiftsPayload, BulkCreateShiftsResult, BulkEditShiftItem, BulkEditShiftsResult, BulkShiftAssignmentPayload, BulkShiftAssignmentResult, ClopeningConflict, DuplicateShiftInput, RecurringShiftInput, RecurringSplitShiftInput, Shift, ShiftInput, ShiftMutationResult, SplitShiftInput, SplitShiftResult } from '@/types/Shift'
 import { TimelineRow, TimelineShiftBlock } from '@/types/Timeline'
 import { ShiftActionRedoPayload, ShiftActionType } from '@/types/ShiftActionHistory'
@@ -566,7 +567,7 @@ export const shiftService = {
     return created
   },
 
-  async deleteShift(id: string, performed_by?: string): Promise<void> {
+  async deleteShift(id: string, performed_by?: string): Promise<{ skipped_shifts: Shift[] }> {
     const shift = await shiftRepository.getShiftById(id)
     if (!shift) throw new Error('Shift not found')
 
@@ -574,11 +575,30 @@ export const shiftService = {
     const siblings = isRecurrenceOriginal
       ? (await shiftRepository.getShiftsByRecurrenceGroupId(shift.recurrence_group_id!)).filter(s => s.id !== id)
       : []
-    const shiftsToDelete = [shift, ...siblings]
+    const candidates = [shift, ...siblings]
 
-    const assignments = await shiftRepository.getAssignmentsByShiftIds(shiftsToDelete.map(s => s.id))
+    // Pre-check attendance per candidate instead of reacting to the FK violation mid-loop —
+    // a recurring series' cascade must not abort (and half-delete) just because ONE occurrence
+    // already has attendance recorded; that occurrence is skipped/kept, the rest still delete.
+    const candidateAssignments = await shiftRepository.getAssignmentsByShiftIds(candidates.map(s => s.id))
+    const attendanceRecords = await attendanceRepository.getAttendanceRecordsByAssignmentIds(candidateAssignments.map(a => a.id))
+    const attendedAssignmentIds = new Set(attendanceRecords.map(r => r.shift_assignment_id))
+    const attendedShiftIds = new Set(
+      candidateAssignments.filter(a => attendedAssignmentIds.has(a.id)).map(a => a.shift_id),
+    )
+
+    const shiftsToDelete = candidates.filter(s => !attendedShiftIds.has(s.id))
+    const skippedShifts = candidates.filter(s => attendedShiftIds.has(s.id))
+
+    if (shiftsToDelete.length === 0) {
+      throw new Error(candidates.length > 1
+        ? 'Cannot delete this series — every occurrence already has attendance recorded against it.'
+        : 'Cannot delete this shift — attendance has already been recorded against it.')
+    }
+
+    const assignments = candidateAssignments.filter(a => shiftsToDelete.some(s => s.id === a.shift_id))
     for (const s of shiftsToDelete) {
-      await shiftRepository.deleteAssignmentsByShiftId(s.id)
+      await shiftRepository.deleteAssignmentsByShiftId(s.id, 'delete')
       await shiftRepository.deleteShift(s.id)
     }
     if (performed_by) {
@@ -593,6 +613,7 @@ export const shiftService = {
         },
       })
     }
+    return { skipped_shifts: skippedShifts }
   },
 
   async deleteShiftAssignment(assignment_id: string): Promise<void> {
@@ -883,7 +904,7 @@ export const shiftService = {
       const recreateAssignments = await shiftRepository.getAssignmentsByShiftIds(action.affected_shift_ids)
       if (recreateShifts.length > 0) redo_payload.recreate_shifts = recreateShifts
       if (recreateAssignments.length > 0) redo_payload.recreate_assignments = recreateAssignments
-      await shiftRepository.deleteAssignmentsByShiftIds(action.affected_shift_ids)
+      await shiftRepository.deleteAssignmentsByShiftIds(action.affected_shift_ids, 'delete')
       await shiftRepository.deleteShiftsByIds(action.affected_shift_ids)
     }
 
@@ -907,7 +928,7 @@ export const shiftService = {
       const nextAssignments = redo_payload.next_assignments ?? []
       await shiftRepository.restoreShiftAssignments(nextAssignments.filter(a => action.affected_shift_ids.includes(a.shift_id)))
     } else if (action.action_type === 'delete') {
-      await shiftRepository.deleteAssignmentsByShiftIds(action.affected_shift_ids)
+      await shiftRepository.deleteAssignmentsByShiftIds(action.affected_shift_ids, 'delete')
       await shiftRepository.deleteShiftsByIds(action.affected_shift_ids)
     } else if (action.action_type === 'bulk_edit') {
       const nextShifts = redo_payload.next_shifts ?? []

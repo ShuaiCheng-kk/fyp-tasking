@@ -188,18 +188,10 @@ export const aiTaskAssignService = {
     })
 
     const department = departments.find(d => d.id === draft.department_id) ?? departments[0]
-    const allManagers = await companyService.getManagersByDepartment(input.company_id, department.id)
-
-    // Only managers with a published shift on the task's date are real candidates — a draft
-    // shift isn't a commitment, and someone with no shift at all on that date can't be assigned.
-    const managers = input.task_date
-      ? (await Promise.all(allManagers.map(async m => ({
-          manager: m,
-          eligible: await taskRepository.hasShiftOnDate(m.id, input.company_id, input.task_date!),
-        }))))
-          .filter(r => r.eligible)
-          .map(r => r.manager)
-      : allManagers
+    // Task assignment is independent of shift scheduling (see taskService.assignTask/editTask) —
+    // every manager in the department is a real candidate regardless of whether they have a
+    // shift on the task's date.
+    const managers = await companyService.getManagersByDepartment(input.company_id, department.id)
 
     let candidates: AiAssignSuggestion['candidates'] = []
     if (managers.length > 0) {
@@ -215,7 +207,7 @@ export const aiTaskAssignService = {
 
     const recommended = candidates[0] ?? null
     const reason = recommended
-      ? `${draft.reason} ${recommended.full_name} currently has the lightest workload among managers available on this date.`
+      ? `${draft.reason} ${recommended.full_name} currently has the lightest workload among managers in this department.`
       : draft.reason
 
     return {

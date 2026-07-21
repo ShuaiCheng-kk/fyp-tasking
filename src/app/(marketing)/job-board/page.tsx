@@ -3,11 +3,17 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { Zap, Shield, Star, Search, Briefcase, ChevronDown, LogIn, UserPlus } from 'lucide-react';
+import { createBrowserClient } from '@supabase/ssr';
 import { hero, search, whyTasking, listings } from './content';
 import { JobPosting as BaseJobPosting } from '@/types/Recruitment';
 import ApplyJobModal from '@/components/guest/ApplyJobModal';
 import Toast from '@/components/Toast';
 import { JobCard, JobDetailPanel, resolveJobType } from '@/components/jobs/JobPresentation';
+
+const supabase = createBrowserClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
 import {
   ModalOverlay, ModalBox, ModalHeader,
   modalGhostButtonStyle, modalPrimaryButtonStyle,
@@ -137,9 +143,23 @@ export default function JobBoardPage() {
   const [authChecked, setAuthChecked] = useState(false);
 
   useEffect(() => {
-    const authId = localStorage.getItem('tasking_user_id');
-    setViewerRole(authId ? localStorage.getItem('tasking_user_role') : null);
-    setAuthChecked(true);
+    // localStorage's tasking_user_id/tasking_user_role only get cleared by the explicit
+    // /signout flow — a session that simply expires (or a browser closed without signing out)
+    // leaves them stale. Trusting them blindly would misreport a signed-out visitor as still
+    // being whatever staff account they last used on this browser, hiding Apply for no reason.
+    // The real Supabase session (same source the navbar's Sign In/Dashboard state uses) is the
+    // only trustworthy signal.
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) {
+        setViewerRole(localStorage.getItem('tasking_user_role'));
+      } else {
+        localStorage.removeItem('tasking_user_id');
+        localStorage.removeItem('tasking_user_role');
+        localStorage.removeItem('tasking_company_id');
+        setViewerRole(null);
+      }
+      setAuthChecked(true);
+    });
   }, []);
 
   const canApply = !viewerRole || viewerRole === 'Guest User' || viewerRole === 'Casual Worker';

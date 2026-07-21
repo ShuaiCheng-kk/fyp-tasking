@@ -992,7 +992,7 @@ function SubTaskOrderList({ items, onReorder, onRemove, onRename, disabled, acce
 // ─── Task Card ────────────────────────────────────────────────────────────────
 
 function TaskCard({
-  task, members, shiftOptions, departments, showDept, onClick, onEdit, subTaskCount, expanded, onToggleExpand, clickable = true, isOwner = true, highlighted = false, noOuterMargin = false, fillHeight = false, isSubTask = false, compact = false,
+  task, members, shiftOptions, departments, showDept, onClick, onEdit, subTaskCount, expanded, onToggleExpand, clickable = true, isOwner = true, highlighted = false, noOuterMargin = false, fillHeight = false, isSubTask = false, compact = false, stacked,
 }: {
   task: Task
   members: Member[]
@@ -1013,6 +1013,11 @@ function TaskCard({
   // Deadline Calendar cards: the cell already gives the assignee (row) and date (column),
   // so hide the assignee and show only the deadline's time.
   compact?: boolean
+  // Explicit override for the "peeking cards behind" visual. Kanban (unset) derives it from
+  // subTaskCount — a collapsed task with sub-tasks looks stacked. The Deadline Calendar passes
+  // this directly instead, meaning "this person has more tasks behind this one today" — it never
+  // shows sub-tasks there, so subTaskCount would be the wrong signal for it.
+  stacked?: boolean
 }) {
   const assigneeIds = task.assigned_user_ids ?? (task.assigned_user_id ? [task.assigned_user_id] : [])
   const assignees = assigneeIds.map(id => members.find(m => m.id === id)).filter((m): m is Member => !!m)
@@ -1020,13 +1025,10 @@ function TaskCard({
   const priority = !isSubTask && task.priority ? PRIORITY_COLORS[task.priority] : null
   const deadlineWarning = task.due_at && task.status !== 'Complete' && (isDueOverdue(task.due_at) || isDueWithinHours(task.due_at, 2))
   const dept = showDept && !isSubTask ? departments.find(d => d.id === task.department_id) : null
-  const showStack = !!subTaskCount && !expanded
+  const showStack = stacked !== undefined ? stacked : (!!subTaskCount && !expanded)
   // Rejected in Review and back to In Progress — the assignee owes rework on this one.
   const needsRework = !isSubTask && !!task.rejection_reason && task.status === 'In Progress'
-  // Surfaced only when someone ELSE assigned this task (isOwner false) — e.g. a peer Manager in
-  // the same department, or a peer Owner/Partner. On your own tasks it would just be redundant.
-  const assignedByLabel = !isOwner && !isSubTask && !compact ? task.assigned_by_name : null
-  const hasTopRowBadges = !!(priority && task.priority) || !!dept || !!subTaskCount || needsRework || !!assignedByLabel
+  const hasTopRowBadges = !!(priority && task.priority) || !!dept || !!subTaskCount || needsRework
   // Review cards pulse to nudge the viewer toward the pending sign-off — every Review card on the
   // board, regardless of who assigned it. Skipped in the compact calendar (too noisy in a dense
   // grid) and when the delay-alert highlight ring is already on.
@@ -1048,7 +1050,7 @@ function TaskCard({
           border: highlighted ? '1.5px solid #F97316' : '1px solid #E5E7EB',
           borderLeft: highlighted ? '1.5px solid #F97316' : '1px solid #E5E7EB',
           borderRadius: '10px',
-          padding: '16px 16px',
+          padding: compact ? '12px 14px' : '16px 16px',
           cursor: clickable ? 'pointer' : 'default',
           position: 'relative',
           zIndex: 2,
@@ -1077,7 +1079,7 @@ function TaskCard({
 
       {/* Top row: priority / department / sub-task badges */}
       {hasTopRowBadges && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: compact ? 8 : 12, paddingRight: 24 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: compact ? 6 : 12, paddingRight: 24 }}>
           {priority && task.priority && (
             <span style={{ fontSize: compact ? '0.65rem' : '0.72rem', fontWeight: 800, padding: compact ? '3px 8px' : '4px 10px', borderRadius: '99px', background: priority.bg, color: priority.text, letterSpacing: '0.01em' }}>
               {task.priority}
@@ -1089,27 +1091,30 @@ function TaskCard({
             </span>
           )}
           {dept && <DepartmentBadge departmentId={dept.id} departmentName={dept.name} />}
-          {assignedByLabel && (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: compact ? '0.6rem' : '0.68rem', fontWeight: 700, padding: compact ? '3px 8px' : '4px 10px', borderRadius: '99px', background: '#F1F5F9', color: '#475569' }}>
-              <UserRound size={10} /> {assignedByLabel}
-            </span>
-          )}
-          {!!subTaskCount && (
+          {/* Non-interactive where there's nothing to expand into (e.g. the Deadline Calendar,
+              which never shows sub-tasks) — onToggleExpand absent means render a plain badge,
+              not a dead button. */}
+          {!!subTaskCount && (onToggleExpand ? (
             <button
               type="button"
-              onClick={e => { e.stopPropagation(); onToggleExpand?.() }}
+              onClick={e => { e.stopPropagation(); onToggleExpand() }}
               style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: compact ? '0.6rem' : '0.65rem', fontWeight: 700, padding: '2px 7px', borderRadius: '99px', background: '#F1F5F9', color: '#475569', border: 'none', cursor: 'pointer' }}
             >
               <GitBranch size={10} />
               {subTaskCount}
               <ChevronDown size={10} style={{ transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
             </button>
-          )}
+          ) : (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: compact ? '0.6rem' : '0.65rem', fontWeight: 700, padding: '2px 7px', borderRadius: '99px', background: '#F1F5F9', color: '#475569' }}>
+              <GitBranch size={10} />
+              {subTaskCount}
+            </span>
+          ))}
         </div>
       )}
 
       {/* Title */}
-      <p title={compact ? task.title : undefined} style={{ fontWeight: 600, fontSize: isSubTask ? (compact ? '0.75rem' : '0.8rem') : (compact ? '0.8rem' : '0.875rem'), color: '#111827', margin: (!compact || (!isSubTask && task.due_at)) ? '0 0 8px' : 0, lineHeight: compact ? 1.55 : 1.4, paddingRight: !clickable || !isOwner || hasTopRowBadges ? 0 : 24, ...(compact ? { display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as const, overflow: 'hidden', minHeight: '3.1em' } : {}) }}>
+      <p title={compact ? task.title : undefined} style={{ fontWeight: 600, fontSize: isSubTask ? (compact ? '0.75rem' : '0.8rem') : (compact ? '0.8rem' : '0.875rem'), color: '#111827', margin: !compact ? '0 0 8px' : ((!isSubTask && task.due_at) ? '0 0 6px' : 0), lineHeight: compact ? 1.55 : 1.4, paddingRight: !clickable || !isOwner || hasTopRowBadges ? 0 : 24, ...(compact ? { display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as const, overflow: 'hidden' } : {}) }}>
         {task.title}
       </p>
 
@@ -1689,11 +1694,11 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
     if (!cid || !internalUserId) return
     if (!silent) setKanbanLoading(true)
     try {
-      // Owner and Partner are peer "assigner" roles over the same Manager tier — each should see
-      // every Owner/Partner-assigned task (edit/delete stays restricted to the actual assigner via
-      // isTaskOwner checks below), not just the ones they personally assigned. Managers get the
-      // same peer visibility within their own department(s), resolved server-side (manager_scope_id)
-      // since it depends on manager_departments membership, not just role.
+      // Owner and Partner are peer "assigner" roles over the same Manager tier — each sees, and
+      // (per isTaskOwner above) can fully manage, every Owner/Partner-assigned task, not just the
+      // ones they personally assigned. Managers get the same peer visibility within their own
+      // department(s), resolved server-side (manager_scope_id) since it depends on
+      // manager_departments membership, not just role — but stay assigner-only for management.
       const scopeParam = scopeToManagerDepartments
         ? `manager_scope_id=${encodeURIComponent(internalUserId)}`
         : `assigned_by=${encodeURIComponent(members.filter(m => m.role === 'Owner' || m.role === 'Partner').map(m => m.id).join(',') || internalUserId)}`
@@ -1721,6 +1726,14 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
       .subscribe()
     return () => { void supabase.removeChannel(channel) }
   }, [companyId, fetchKanban])
+
+  // Owner and Partner are peer "assigner" roles (a Partner is effectively a backup Owner) — same
+  // cross-management the Shifts page already gives them over each other's shifts. On this tier
+  // (!scopeToManagerDepartments), every task's assigner is guaranteed to be an Owner or Partner
+  // (strictly-one-level-down rule), so any signed-in viewer here may act on any task, not just
+  // ones they personally assigned. Manager's own tier (scopeToManagerDepartments) keeps the
+  // stricter assigner-only rule — mirrors assertIsTaskOwner in taskService.ts.
+  const isTaskOwner = (task: Task) => !!internalUserId && !!task.assigned_by && (task.assigned_by === internalUserId || !scopeToManagerDepartments)
 
   // ── Open task panel ────────────────────────────────────────────────────────
 
@@ -1789,12 +1802,11 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
         }
       }
     }
-    // Only the user who assigned this task may edit it — everyone else always gets the
-    // read-only Details view, regardless of which entry point (pencil, calendar bar, etc.) was used.
-    // Review/Complete tasks are never editable, even by the assigner: submitted work can only be
-    // approved/rejected, and approved work is final.
-    const isTaskOwner = !!internalUserId && task.assigned_by === internalUserId
-    setTaskViewMode(viewOnly || !isTaskOwner || task.status === 'Review' || task.status === 'Complete')
+    // Editable by the assigner or their peer (see isTaskOwner above) — everyone else always gets
+    // the read-only Details view, regardless of which entry point (pencil, calendar bar, etc.)
+    // was used. Review/Complete tasks are never editable, even by the assigner/peer: submitted
+    // work can only be approved/rejected, and approved work is final.
+    setTaskViewMode(viewOnly || !isTaskOwner(task) || task.status === 'Review' || task.status === 'Complete')
     setSelectedTask(task)
     setEditTitle(task.title)
     setEditDescription(task.description ?? '')
@@ -2856,28 +2868,24 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
       subTasksByParent.set(t.parent_task_id, arr)
     }
     for (const arr of subTasksByParent.values()) arr.sort((a, b) => (a.sequence_order ?? 0) - (b.sequence_order ?? 0))
-    const subTaskIndexById = new Map<string, number>()
-    for (const arr of subTasksByParent.values()) arr.forEach((t, idx) => subTaskIndexById.set(t.id, idx + 1))
 
-    // Sub-tasks only render once their parent is expanded — collapsed by default, same as Kanban.
-    const visibleTasks = allVisibleTasks.filter(t => !t.parent_task_id || expandedTaskIds.has(t.parent_task_id))
+    // The Deadline Calendar never shows sub-tasks as their own cards — only top-level tasks.
+    // A person's day cell pages between their top-level tasks only (see cellItems below), not
+    // in and out of a task's sub-task checklist.
+    const visibleTasks = allVisibleTasks.filter(t => !t.parent_task_id)
     // A card sits on the task's deadline date only (falling back to its assigned date when it has
     // no deadline) — a task assigned Mon with a Fri deadline shows one card in Friday's cell.
-    // Sub-tasks always sit in their PARENT card's cell: expanding a parent lists its sequence
-    // right under it, never scattering sub-tasks across other days.
     const cardDate = (task: Task) => task.due_at ? formatDateKey(new Date(task.due_at)) : kanbanDateKey(task)
     return visibleTasks.flatMap(task => {
-      const parent = task.parent_task_id ? allVisibleTasks.find(t => t.id === task.parent_task_id) : null
-      const deadlineDate = parent ? cardDate(parent) : cardDate(task)
+      const deadlineDate = cardDate(task)
       if (deadlineDate < calendarWeekDates[0] || deadlineDate > calendarWeekDates[6]) return []
       return [{
         task,
         deadlineDate,
-        subTaskCount: task.parent_task_id ? 0 : (subTasksByParent.get(task.id)?.length ?? 0),
-        subTaskIndex: task.parent_task_id ? subTaskIndexById.get(task.id) ?? null : null,
+        subTaskCount: subTasksByParent.get(task.id)?.length ?? 0,
       }]
     }).sort((a, b) => (PRIORITY_ORDER[a.task.priority ?? ''] ?? 4) - (PRIORITY_ORDER[b.task.priority ?? ''] ?? 4) || a.deadlineDate.localeCompare(b.deadlineDate))
-  }, [allVisibleTasks, calendarWeekDates, expandedTaskIds])
+  }, [allVisibleTasks, calendarWeekDates])
 
   const renderTaskCalendarView = () => {
     const todayStr = formatDateKey(new Date())
@@ -2915,26 +2923,16 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
       })
     })()
 
-    // Cards inside one day cell: top-level tasks by deadline time (earliest first), each
-    // immediately followed by its expanded sub-tasks; sub-tasks whose parent card sits in a
-    // different row (sub assigned to someone else) come last, in sequence order.
+    // Cards inside one day cell: top-level tasks only, by deadline time (earliest first). The
+    // pager below only appears — and only ever pages between these — when a person has more
+    // than one top-level task due that day.
     const cellItems = (items: typeof taskCalendarItems, date: string) => {
-      const inCell = items.filter(item => item.deadlineDate === date)
       const dueTime = (t: Task) => t.due_at ? new Date(t.due_at).getTime() : Number.MAX_SAFE_INTEGER
-      const topLevel = inCell.filter(item => !item.task.parent_task_id).sort((a, b) => (
+      return items.filter(item => item.deadlineDate === date).sort((a, b) => (
         dueTime(a.task) - dueTime(b.task) ||
         (PRIORITY_ORDER[a.task.priority ?? ''] ?? 4) - (PRIORITY_ORDER[b.task.priority ?? ''] ?? 4) ||
         a.task.title.localeCompare(b.task.title)
       ))
-      const subs = inCell.filter(item => item.task.parent_task_id)
-      const ordered: typeof inCell = []
-      for (const item of topLevel) {
-        ordered.push(item, ...subs.filter(s => s.task.parent_task_id === item.task.id).sort((a, b) => (a.subTaskIndex ?? 0) - (b.subTaskIndex ?? 0)))
-      }
-      ordered.push(...subs
-        .filter(s => !topLevel.some(p => p.task.id === s.task.parent_task_id))
-        .sort((a, b) => (a.subTaskIndex ?? 0) - (b.subTaskIndex ?? 0)))
-      return ordered
     }
 
     return (
@@ -3027,20 +3025,15 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                           {icon}
                         </button>
                       )
-                      const isSubTask = !!item?.task.parent_task_id
                       return (
-                        <div key={date} style={{ borderRight: i < 6 ? `1px solid ${TASK_BORDER}` : 'none', borderTop: rowSepBorder, background: '#FFFFFF', padding: items.length > 0 ? '10px 8px' : 0, display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0, boxSizing: 'border-box' }}>
+                        <div key={date} style={{ borderRight: i < 6 ? `1px solid ${TASK_BORDER}` : 'none', borderTop: rowSepBorder, background: '#FFFFFF', padding: items.length > 0 ? '10px 8px' : 0, display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0, boxSizing: 'border-box' }}>
                           {item && (
                             <div key={item.task.id} className={removingTaskIds.has(item.task.id) ? 'task-card-removing' : undefined} style={{ display: 'flex', alignItems: 'stretch', gap: 6 }}>
-                              {isSubTask && (
-                                <span style={{ width: 18, height: 18, marginTop: 10, borderRadius: '50%', background: '#FFF3E8', color: '#EA580C', fontSize: 10, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                                  {item.subTaskIndex}
-                                </span>
-                              )}
                               {/* Fixed height so every calendar card is the same size regardless of content —
-                                  sized to badges + a reserved 2-line title + time + 16px padding, so the
-                                  space under the time equals the card's top padding. */}
-                              <div style={{ flex: 1, minWidth: 0, height: 124 }}>
+                                  sized to fit badges + a 1-line title + time + the card's own compact padding.
+                                  A title long enough to need its 2nd line eats into this slack; accepted tradeoff
+                                  since most task titles are short and uniform card height matters more here. */}
+                              <div style={{ flex: 1, minWidth: 0, height: 96 }}>
                                 <TaskCard
                                   task={item.task}
                                   members={members}
@@ -3050,13 +3043,10 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                                   onClick={() => openTask(item.task, true)}
                                   onEdit={() => openTask(item.task, false)}
                                   subTaskCount={item.subTaskCount}
-                                  expanded={expandedTaskIds.has(item.task.id)}
-                                  onToggleExpand={() => toggleTaskExpanded(item.task.id)}
-                                  clickable={!isSubTask}
-                                  isOwner={!!internalUserId && item.task.assigned_by === internalUserId}
+                                  stacked={items.length > 1}
+                                  isOwner={isTaskOwner(item.task)}
                                   highlighted={highlightedDelayTaskIds.has(item.task.id)}
                                   noOuterMargin
-                                  isSubTask={isSubTask}
                                   compact
                                   fillHeight
                                 />
@@ -3479,7 +3469,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                 }}
               />
               {([
-                { id: 'kanban' as const, label: 'Kanban' },
+                { id: 'kanban' as const, label: 'Board' },
                 { id: 'calendar' as const, label: 'Deadline Calendar' },
               ]).map(tab => {
                 const active = boardViewMode === tab.id
@@ -4072,7 +4062,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                         ? <CalendarDays size={15} style={{ color: '#F97316' }} />
                         : <Layers size={15} style={{ color: '#F97316' }} />}
                     </div>
-                    <span style={{ fontWeight: 700, fontSize: '1rem', color: '#0F172A' }}>{boardViewMode === 'calendar' ? 'Deadline Calendar' : 'Kanban'}</span>
+                    <span style={{ fontWeight: 700, fontSize: '1rem', color: '#0F172A' }}>{boardViewMode === 'calendar' ? 'Deadline Calendar' : 'Board'}</span>
                     {boardViewMode === 'calendar' && (
                       <div style={{ position: 'relative', marginLeft: 10 }}>
                         <Search size={14} style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', color: '#94A3B8', pointerEvents: 'none' }} />
@@ -4253,7 +4243,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                                       subTaskCount={subTasks.length}
                                       expanded={isExpanded}
                                       onToggleExpand={() => toggleTaskExpanded(task.id)}
-                                      isOwner={!!internalUserId && task.assigned_by === internalUserId}
+                                      isOwner={isTaskOwner(task)}
                                       highlighted={highlightedDelayTaskIds.has(task.id)}
                                     />
                                     {isExpanded && subTasks.length > 0 && (
@@ -4314,7 +4304,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
           alignItems: 'center',
         }
         const viewEmpty: React.CSSProperties = { ...viewFieldValue, color: '#9CA3AF', fontStyle: 'italic' }
-        const isOwner = !!internalUserId && selectedTask.assigned_by === internalUserId
+        const isOwner = isTaskOwner(selectedTask)
         return (
           // Above the Workload Suggestion modal (110) when opened from its task card, like the member profile modal
           <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: workloadInsightOpen ? 130 : 100, animation: `${panelClosing ? 'overlayFadeOut' : 'overlayFadeIn'} 0.18s ease-out` }}>
@@ -4381,6 +4371,17 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                       )
                       : <div style={viewEmpty}>Unknown</div>
                     }
+                  </div>
+                )}
+
+                {/* Reviewed By — not always the same as Assigned By, since Owner/Partner are peer
+                    "assigner" roles and either may approve a task the other assigned */}
+                {selectedTask.status === 'Complete' && (
+                  <div>
+                    <label style={modalLabelStyle}>Reviewed By</label>
+                    <div style={selectedTask.reviewed_by ? viewFieldValue : viewEmpty}>
+                      {selectedTask.reviewed_by_name ?? members.find(m => m.id === selectedTask.reviewed_by)?.full_name ?? 'Unknown'}
+                    </div>
                   </div>
                 )}
 
@@ -5083,6 +5084,15 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                       setNewTitle(template.title)
                       setNewDescription(template.description ?? '')
                       setNewPriority(template.priority ?? '')
+                      // Mirror useTaskTemplate (the Templates list's "Apply template" entry point) —
+                      // this dropdown is a second way to apply the same template and must carry its
+                      // sub-tasks over too, not just title/description/priority.
+                      const subTasks = (template.sub_task_titles ?? []).map(title => ({ id: crypto.randomUUID(), title }))
+                      if (subTasks.length > 0) {
+                        setNewSubTaskEnabled(true)
+                        setNewSubTasks(subTasks)
+                        setNewSubTaskCollapsed(true)
+                      }
                     }}
                     placeholder="Use a template…"
                   />
@@ -5670,7 +5680,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                         .sort((a, b) => (a.sequence_order ?? 0) - (b.sequence_order ?? 0))
                       const isExpanded = expandedArchivedTaskIds.has(task.id)
                       const hasBadges = !!(priorityStyle && task.priority) || !!dept || subTasks.length > 0
-                      const canEdit = !!internalUserId && task.assigned_by === internalUserId
+                      const canEdit = isTaskOwner(task)
                       const actionsWidth = canEdit ? 86 : 58
                       return (
                         <Fragment key={task.id}>
@@ -5871,6 +5881,15 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                     <label style={modalLabelStyle}>Completed Time</label>
                     <div style={viewFieldValue}>
                       {new Date(task.completed_at ?? task.updated_at!).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    </div>
+                  </div>
+                )}
+
+                {task.status === 'Complete' && (
+                  <div>
+                    <label style={modalLabelStyle}>Reviewed By</label>
+                    <div style={task.reviewed_by ? viewFieldValue : viewEmpty}>
+                      {task.reviewed_by_name ?? members.find(m => m.id === task.reviewed_by)?.full_name ?? 'Unknown'}
                     </div>
                   </div>
                 )}
@@ -6186,7 +6205,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                       <div style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: 10 }}>
                         <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
                           <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: '0.8125rem', color: '#374151' }}>
-                            <GitBranch size={13} color="#7C3AED" /> Sub Task <span style={{ fontWeight: 400, color: '#9CA3AF' }}>(Optional)</span>
+                            <GitBranch size={13} color="#7C3AED" /> Sub Task
                           </span>
                           <input
                             type="checkbox"

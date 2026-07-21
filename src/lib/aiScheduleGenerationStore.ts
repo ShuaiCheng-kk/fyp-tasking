@@ -8,12 +8,18 @@
 // local state so edits (drag-reassign, selection) survive a navigate-away-and-back too.
 import { AiShiftSlot } from '@/types/SchedulingRule'
 
+// The backend suggestion payload carries no per-slot id. We mint one on receipt (see the 'block'
+// event handler below) and key selection/drag-reassign off it instead of the slot's position in
+// the array — array index breaks the moment a sibling slot is removed (splice reindexes whatever
+// shifted into the vacated slot, silently deselecting it).
+export type AiShiftSlotWithKey = AiShiftSlot & { key: string }
+
 export type AutoShiftBlock = {
   key: string
   department_id: string
   department_name: string
   shift_date: string
-  slots: AiShiftSlot[]
+  slots: AiShiftSlotWithKey[]
   warning: string | null
 }
 
@@ -201,14 +207,16 @@ export const aiScheduleGenerationStore = {
 
           if (eventName === 'block') {
             expectedBlockCount = payload.expectedBlockCount ?? expectedBlockCount
-            const block = payload.block as { department_id: string; department_name?: string; shift_date: string; slots: AiShiftSlot[]; warning: string | null }
+            const block = payload.block as { department_id: string; department_name?: string; shift_date: string; slots: Omit<AiShiftSlot, 'key'>[]; warning: string | null }
             const deptName = block.department_name ?? departmentNames.get(block.department_id) ?? block.department_id
             received.push({
               key: `${block.department_id}_${block.shift_date}`,
               department_id: block.department_id,
               department_name: deptName,
               shift_date: block.shift_date,
-              slots: Array.isArray(block.slots) ? block.slots : [],
+              // Mint a stable id per slot here (the backend payload has none) — selection and
+              // drag-reassign key off this instead of the slot's position in the array.
+              slots: (Array.isArray(block.slots) ? block.slots : []).map(slot => ({ ...slot, key: crypto.randomUUID() })),
               warning: block.warning,
             })
             if (expectedBlockCount > 0) setState({ progress: Math.min(96, (received.length / expectedBlockCount) * 100) })
@@ -238,7 +246,11 @@ export const aiScheduleGenerationStore = {
         progress: 100,
         blocks: received,
         knownRows,
-        selected: new Set(received.flatMap(b => b.slots.map((_, slotIndex) => `${b.key}_${slotIndex}`))),
+        // Slots with no assigned_user_id are "no eligible worker found" placeholders (rendered as
+        // the red coverage-gap pill, not a real shift) — they must never enter the create payload,
+        // or hard-rule validation checks a department+day that was never going to have a shift and
+        // blocks the entire (otherwise valid) batch from saving.
+        selected: new Set(received.flatMap(b => b.slots.flatMap(slot => slot.assigned_user_id ? [slot.key] : []))),
         notice: doneResult?.notice ?? `AI generated ${received.length} schedule block${received.length === 1 ? '' : 's'} for Owner review.`,
       })
 

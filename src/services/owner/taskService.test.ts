@@ -146,29 +146,16 @@ describe('taskService — Task (UC12-23)', () => {
       expect(taskRepository.createTask).toHaveBeenCalledOnce()
     })
 
-    it('rejects when Owner assigns to a Manager who has no shift on the task date', async () => {
+    // Task assignment is independent of shift scheduling — an Owner/Partner can assign a Manager
+    // a task for a date the Manager has no shift on (they might do the work outside a shift, or
+    // the shift just hasn't been scheduled yet). This must never block create/edit.
+    it('creates a task when Owner assigns to a Manager who has no shift on the task date', async () => {
       vi.mocked(taskRepository.getUserById).mockImplementation(async (id: string) => {
         if (id === 'owner-1') return { id: 'owner-1', role: 'Owner', company_id: 'company-1' } as any
         if (id === 'manager-1') return { id: 'manager-1', role: 'Manager', company_id: 'company-1' } as any
         return null
       })
       vi.mocked(taskRepository.hasShiftOnDate).mockResolvedValue(false)
-
-      await expect(taskService.assignTask({
-        company_id: 'company-1', department_id: 'dept-1', title: 'Task', task_date: '2026-06-25',
-        assigned_by: 'owner-1', assigned_user_id: 'manager-1',
-      })).rejects.toThrow('Selected manager does not have a shift on the task date')
-      expect(taskRepository.hasShiftOnDate).toHaveBeenCalledWith('manager-1', 'company-1', '2026-06-25')
-      expect(taskRepository.createTask).not.toHaveBeenCalled()
-    })
-
-    it('creates a task when Owner assigns to a Manager who has a shift on the task date', async () => {
-      vi.mocked(taskRepository.getUserById).mockImplementation(async (id: string) => {
-        if (id === 'owner-1') return { id: 'owner-1', role: 'Owner', company_id: 'company-1' } as any
-        if (id === 'manager-1') return { id: 'manager-1', role: 'Manager', company_id: 'company-1' } as any
-        return null
-      })
-      vi.mocked(taskRepository.hasShiftOnDate).mockResolvedValue(true)
       vi.mocked(taskRepository.createTask).mockResolvedValue(baseTask)
 
       const result = await taskService.assignTask({
@@ -178,6 +165,7 @@ describe('taskService — Task (UC12-23)', () => {
 
       expect(result).toEqual(baseTask)
       expect(taskRepository.createTask).toHaveBeenCalledOnce()
+      expect(taskRepository.hasShiftOnDate).not.toHaveBeenCalled()
     })
 
     it('rejects a Manager assigning outside their own department', async () => {
@@ -389,7 +377,36 @@ describe('taskService — Task (UC12-23)', () => {
 
     it('rejects when the acting user is not the one who assigned the task', async () => {
       vi.mocked(taskRepository.getTaskById).mockResolvedValue(unassignedTask)
+      vi.mocked(taskRepository.getUserById).mockResolvedValue(null)
       await expect(taskService.editTask('task-1', { status: 'In Progress' }, 'someone-else'))
+        .rejects.toThrow('Only the user who assigned this task can perform this action')
+    })
+
+    // Owner and Partner are peer "assigner" roles (a Partner is effectively a backup Owner) —
+    // either may act on a task the OTHER one assigned, same cross-management the Shifts page
+    // already gives them over each other's shifts.
+    it('allows a Partner to edit a task an Owner assigned', async () => {
+      vi.mocked(taskRepository.getTaskById).mockResolvedValue(unassignedTask) // assigned_by: 'owner-1'
+      vi.mocked(taskRepository.getUserById).mockImplementation(async (id: string) => {
+        if (id === 'owner-1') return { id: 'owner-1', role: 'Owner', company_id: 'company-1' } as any
+        if (id === 'partner-1') return { id: 'partner-1', role: 'Partner', company_id: 'company-1' } as any
+        return null
+      })
+      vi.mocked(taskRepository.updateTask).mockResolvedValue({ ...baseTask, status: 'In Progress' })
+
+      const result = await taskService.editTask('task-1', { status: 'In Progress' }, 'partner-1')
+
+      expect(result.status).toBe('In Progress')
+    })
+
+    it('still rejects a Manager editing a task assigned by someone else (no peer widening below Owner/Partner)', async () => {
+      vi.mocked(taskRepository.getTaskById).mockResolvedValue(unassignedTask) // assigned_by: 'owner-1'
+      vi.mocked(taskRepository.getUserById).mockImplementation(async (id: string) => {
+        if (id === 'owner-1') return { id: 'owner-1', role: 'Owner', company_id: 'company-1' } as any
+        if (id === 'manager-1') return { id: 'manager-1', role: 'Manager', company_id: 'company-1' } as any
+        return null
+      })
+      await expect(taskService.editTask('task-1', { status: 'In Progress' }, 'manager-1'))
         .rejects.toThrow('Only the user who assigned this task can perform this action')
     })
 
@@ -782,9 +799,11 @@ describe('taskService — Task (UC12-23)', () => {
       expect(result.map(t => t.task_date)).toEqual(['2026-07-02', '2026-07-09'])
     })
 
-    it('keeps the original assignee on occurrences where they have a shift', async () => {
+    // Task assignment is independent of shift scheduling (see assignTask/editTask) — every
+    // occurrence keeps the original's assignee regardless of shift presence on that date.
+    it('keeps the original assignee on every occurrence regardless of shift presence', async () => {
       vi.mocked(taskRepository.getTaskById).mockResolvedValue(baseTask) // assigned_user_id: 'manager-1'
-      vi.mocked(taskRepository.hasShiftOnDate).mockResolvedValue(true)
+      vi.mocked(taskRepository.hasShiftOnDate).mockResolvedValue(false)
       vi.mocked(taskRepository.createTask).mockImplementation(async (input) => ({
         ...baseTask, id: `copy-${input.task_date}`, task_date: input.task_date ?? null, assigned_user_id: input.assigned_user_id ?? null,
       }))
@@ -793,27 +812,11 @@ describe('taskService — Task (UC12-23)', () => {
         recurrence_rule: 'daily', recurrence_end_date: '2026-06-27', assigned_by: 'owner-1',
       })
 
-      expect(taskRepository.hasShiftOnDate).toHaveBeenCalledWith('manager-1', 'company-1', '2026-06-26')
-      expect(taskRepository.hasShiftOnDate).toHaveBeenCalledWith('manager-1', 'company-1', '2026-06-27')
+      expect(taskRepository.hasShiftOnDate).not.toHaveBeenCalled()
       expect(result.every(t => t.assigned_user_id === 'manager-1')).toBe(true)
     })
 
-    it('sends an occurrence out unassigned when the original assignee has no shift that day', async () => {
-      vi.mocked(taskRepository.getTaskById).mockResolvedValue(baseTask) // assigned_user_id: 'manager-1'
-      vi.mocked(taskRepository.hasShiftOnDate).mockImplementation(async (_userId, _companyId, date) => date !== '2026-06-26')
-      vi.mocked(taskRepository.createTask).mockImplementation(async (input) => ({
-        ...baseTask, id: `copy-${input.task_date}`, task_date: input.task_date ?? null, assigned_user_id: input.assigned_user_id ?? null,
-      }))
-
-      const result = await taskService.createRecurringTasks('task-1', {
-        recurrence_rule: 'daily', recurrence_end_date: '2026-06-27', assigned_by: 'owner-1',
-      })
-
-      expect(result.find(t => t.task_date === '2026-06-26')?.assigned_user_id).toBeNull()
-      expect(result.find(t => t.task_date === '2026-06-27')?.assigned_user_id).toBe('manager-1')
-    })
-
-    it('skips the shift check entirely when the original task has no assignee', async () => {
+    it('leaves every occurrence unassigned when the original task has no assignee', async () => {
       vi.mocked(taskRepository.getTaskById).mockResolvedValue({ ...baseTask, assigned_user_id: null })
       vi.mocked(taskRepository.createTask).mockImplementation(async (input) => ({
         ...baseTask, id: `copy-${input.task_date}`, task_date: input.task_date ?? null, assigned_user_id: input.assigned_user_id ?? null,
@@ -1343,9 +1346,23 @@ describe('taskService — Task (UC12-23)', () => {
       expect(result.status).toBe('Complete')
       expect(taskRepository.updateTask).toHaveBeenCalledWith('task-1', {
         status: 'Complete', percentage_complete: 100, rejection_reason: null, rejected_at: null,
-        completed_at: expect.any(String),
+        completed_at: expect.any(String), reviewed_by: 'owner-1',
       })
       expect(taskRepository.updateSubTasksByParent).toHaveBeenCalledWith('task-1', { status: 'Complete', percentage_complete: 100 })
+    })
+
+    it('records the actual reviewer, not the original assigner, when a peer Partner approves an Owner-assigned task', async () => {
+      vi.mocked(taskRepository.getTaskById).mockResolvedValue(reviewTask) // assigned_by: 'owner-1'
+      vi.mocked(taskRepository.getUserById).mockImplementation(async (id: string) => {
+        if (id === 'owner-1') return { id: 'owner-1', role: 'Owner', company_id: 'company-1' } as any
+        if (id === 'partner-1') return { id: 'partner-1', role: 'Partner', company_id: 'company-1' } as any
+        return null
+      })
+      vi.mocked(taskRepository.updateTask).mockResolvedValue({ ...reviewTask, status: 'Complete', percentage_complete: 100, reviewed_by: 'partner-1' })
+
+      await taskService.approveTask('task-1', 'partner-1')
+
+      expect(taskRepository.updateTask).toHaveBeenCalledWith('task-1', expect.objectContaining({ reviewed_by: 'partner-1' }))
     })
 
     it('reject requires a reason', async () => {

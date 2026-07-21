@@ -317,9 +317,10 @@ test('UC20 generates an AI task assignment suggestion', async ({ request }) => {
   expect(body.suggestion.sub_tasks).toEqual([])
 })
 
-test('UC20 excludes managers with no published shift on the given task_date', async ({ request }) => {
-  // Only managerA has a shift_assignments row on 2026-08-01 (seeded in beforeAll); managerB
-  // never does, so they must never appear as a candidate or be recommended for this date.
+test('UC20 considers every manager in the department regardless of shift presence on task_date', async ({ request }) => {
+  // Task assignment is independent of shift scheduling (see taskService.assignTask/editTask) —
+  // managerB has no shift_assignments row on 2026-08-01 (seeded in beforeAll) but must still be
+  // a real candidate, same as managerA who does.
   const res = await request.post('/api/ai/assign', {
     data: {
       company_id: seeded.companyId,
@@ -333,8 +334,8 @@ test('UC20 excludes managers with no published shift on the given task_date', as
   expect(res.status()).toBe(200)
   const body = await res.json()
   expect(body.success).toBe(true)
-  expect(body.suggestion.candidates.map((c: { id: string }) => c.id)).toEqual([managerA.userId])
-  expect(body.suggestion.recommended_manager_id).toBe(managerA.userId)
+  expect(body.suggestion.candidates.map((c: { id: string }) => c.id).sort()).toEqual([managerA.userId, managerB.userId].sort())
+  expect([managerA.userId, managerB.userId]).toContain(body.suggestion.recommended_manager_id)
 })
 
 test('UC20 returns AI-generated sub-tasks when want_sub_tasks is true', async ({ request }) => {

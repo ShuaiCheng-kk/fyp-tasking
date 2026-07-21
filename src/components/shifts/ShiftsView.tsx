@@ -45,7 +45,7 @@ import { deptColor, setDeptColorOverrides } from '@/lib/deptColor'
 import { TimelineRow, TimelineShiftBlock } from '@/types/Timeline'
 import { ShiftTemplate } from '@/types/ShiftTemplate'
 import { AiShiftSlot, ShiftTypeInput } from '@/types/SchedulingRule'
-import { aiScheduleGenerationStore, AutoShiftBlock, AI_SCHEDULE_RULE_STEPS } from '@/lib/aiScheduleGenerationStore'
+import { aiScheduleGenerationStore, AutoShiftBlock, AiShiftSlotWithKey, AI_SCHEDULE_RULE_STEPS } from '@/lib/aiScheduleGenerationStore'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -870,6 +870,14 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
   const aiStaffAvailability = aiGenState.staffAvailability
   const aiShiftKnownRows = aiGenState.knownRows
 
+  // Regenerating from an already-scrolled-down results grid (common once it's 4+ departments
+  // tall) would otherwise leave the progress bar rendered above the fold, in the scroll position
+  // the tall grid needed — making a fresh run look like it produced no loading feedback at all.
+  const aiWizardScrollRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    if (aiShiftLoading) aiWizardScrollRef.current?.scrollTo({ top: 0 })
+  }, [aiShiftLoading])
+
   const [bulkEditModalOpen, setBulkEditModalOpen] = useState(false)
   const [bulkEditDateFrom, setBulkEditDateFrom] = useState('')
   const [bulkEditDateTo, setBulkEditDateTo] = useState('')
@@ -1178,11 +1186,11 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
   }, [maxDate, minDate, viewerParams])
 
   const fetchShiftTemplates = useCallback(async (cid: string) => {
-    if (!cid || !internalUserId) return
-    const res = await fetch(`/api/shift-template?company_id=${cid}&created_by=${internalUserId}`)
+    if (!cid) return
+    const res = await fetch(`/api/shift-template?company_id=${cid}`)
     const data = await res.json()
     setShiftTemplates(data.success ? data.templates ?? [] : [])
-  }, [internalUserId])
+  }, [])
 
   const fetchFixedOffDays = useCallback(async (cid: string) => {
     if (!cid) return
@@ -1792,8 +1800,6 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
   }
 
 
-  const aiSlotSelectionKey = (blockKey: string, slotIndex: number) => `${blockKey}_${slotIndex}`
-
   const updateAiShiftSlot = (blockKey: string, slotIndex: number, fields: Partial<AiShiftSlot>) => {
     aiScheduleGenerationStore.setBlocks(prev => prev.map(block => {
       if (block.key !== blockKey) return block
@@ -1811,33 +1817,24 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
       const slot = fromBlock?.slots[slotIndex]
       if (!fromBlock || !slot) return prev
       const toKey = `${to.department_id}_${to.shift_date}`
-      const movedSlot: AiShiftSlot = { ...slot, assigned_user_id: to.assigned_user_id, assigned_user_name: to.assigned_user_name }
+      const movedSlot: AiShiftSlotWithKey = { ...slot, assigned_user_id: to.assigned_user_id, assigned_user_name: to.assigned_user_name }
 
       if (toKey === fromBlockKey) {
         return prev.map(b => b.key === fromBlockKey ? { ...b, slots: b.slots.map((s, i) => i === slotIndex ? movedSlot : s) } : b)
       }
 
-      const fromSelectionKey = aiSlotSelectionKey(fromBlockKey, slotIndex)
-      const wasSelected = aiShiftSelected.has(fromSelectionKey)
+      // movedSlot keeps the same slot.key as the original (spread above), so its selection state
+      // in aiShiftSelected carries over automatically — no need to touch the selected Set here.
+      // (Previously this re-derived a position-based key, which silently deselected whichever
+      // sibling slot in fromBlock shifted into the vacated array index.)
       let next = prev.map(b => b.key === fromBlockKey ? { ...b, slots: b.slots.filter((_, i) => i !== slotIndex) } : b)
       next = next.filter(b => b.key !== fromBlockKey || b.slots.length > 0)
       const toBlock = next.find(b => b.key === toKey)
-      let newSlotIndex: number
       if (toBlock) {
-        newSlotIndex = toBlock.slots.length
         next = next.map(b => b.key === toKey ? { ...b, slots: [...b.slots, movedSlot] } : b)
       } else {
-        newSlotIndex = 0
         const deptName = departments.find(d => d.id === to.department_id)?.name ?? fromBlock.department_name
         next = [...next, { key: toKey, department_id: to.department_id, department_name: deptName, shift_date: to.shift_date, slots: [movedSlot], warning: null }]
-      }
-      if (wasSelected) {
-        aiScheduleGenerationStore.setSelected(prevSel => {
-          const nextSel = new Set(prevSel)
-          nextSel.delete(fromSelectionKey)
-          nextSel.add(aiSlotSelectionKey(toKey, newSlotIndex))
-          return nextSel
-        })
       }
       return next
     })
@@ -1851,8 +1848,8 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
     setAiShiftCreateLoading(true); setAiShiftCreateError('')
     try {
       const selectedScheduleItems = aiShiftSuggestions
-        .flatMap(block => block.slots.map((shift, slotIndex) => ({ block, shift, slotIndex })))
-        .filter(({ block, slotIndex }) => aiShiftSelected.has(aiSlotSelectionKey(block.key, slotIndex)))
+        .flatMap(block => block.slots.map(shift => ({ block, shift })))
+        .filter(({ shift }) => aiShiftSelected.has(shift.key))
         .map(({ block, shift }) => ({
           department_id: block.department_id,
           shift_date: block.shift_date,
@@ -1883,15 +1880,14 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
       })
       const validationData = await validationRes.json()
       if (!validationData.success) throw new Error(validationData.message || 'Failed to validate generated schedule')
+      // AI-checked rules are advisory, not a gate — the Owner is the final authority on the
+      // schedule and must always be able to save it, hard-rule violations included. Validation
+      // still runs so the toast below can tell them what they're overriding.
       const validation = validationData.validation as { valid: boolean; errors: AiScheduleViolation[]; warnings: AiScheduleViolation[] }
-      if (!validation.valid) {
-        const firstErrors = validation.errors.slice(0, 4).map(item => `${item.rule_name}: ${item.message}`)
-        throw new Error(`AI schedule was not saved because it violates hard rules. ${firstErrors.join(' ')}`)
-      }
 
       const items = aiShiftSuggestions
-        .flatMap(block => block.slots.map((shift, slotIndex) => ({ block, shift, slotIndex })))
-        .filter(({ block, slotIndex }) => aiShiftSelected.has(aiSlotSelectionKey(block.key, slotIndex)))
+        .flatMap(block => block.slots.map(shift => ({ block, shift })))
+        .filter(({ shift }) => aiShiftSelected.has(shift.key))
         .map(({ block, shift }) => ({
           department_id: block.department_id,
           title: `${block.department_name} ${shift.shift_label}`,
@@ -1914,9 +1910,15 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
       }
       aiScheduleGenerationStore.clear()
       setAiShiftModal(false)
-      setSuccessToast(validation.warnings.length > 0
-        ? `Draft shifts created with ${validation.warnings.length} soft-rule warning${validation.warnings.length === 1 ? '' : 's'}`
-        : 'Draft shifts created')
+      const hardCount = validation.errors.length
+      const softCount = validation.warnings.length
+      setSuccessToast(
+        hardCount > 0
+          ? `Draft shifts created — ${hardCount} hard-rule violation${hardCount === 1 ? '' : 's'}${softCount > 0 ? ` and ${softCount} warning${softCount === 1 ? '' : 's'}` : ''} overridden`
+          : softCount > 0
+            ? `Draft shifts created with ${softCount} soft-rule warning${softCount === 1 ? '' : 's'}`
+            : 'Draft shifts created'
+      )
       if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
       toastTimerRef.current = setTimeout(() => setSuccessToast(null), 3000)
       void refreshShiftData()
@@ -2221,6 +2223,22 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
     })
   }
 
+  // Undo/Redo (and concurrent edits from another tab/user) act on the shift record directly, so
+  // the shift an already-open Edit/Duplicate modal is bound to can disappear underneath it. Rather
+  // than leaving the user stuck looking at a generic "Shift not found" error with no way forward,
+  // treat it as "the schedule moved on without you": close out and resync instead.
+  const handleShiftGoneError = (err: unknown): boolean => {
+    if (!(err instanceof Error) || err.message !== 'Shift not found') return false
+    setSelectedShift(null)
+    setDuplicateShiftModalOpen(false)
+    if (errorToastTimerRef.current) clearTimeout(errorToastTimerRef.current)
+    setSuccessToast(null)
+    setErrorToast('This shift no longer exists — it may have been undone or removed elsewhere. Schedule refreshed.')
+    errorToastTimerRef.current = setTimeout(() => setErrorToast(null), 4000)
+    void refreshShiftData()
+    return true
+  }
+
   const saveShiftEdit = async () => {
     if (!selectedShift || !internalUserId) return
     setShiftActionError('')
@@ -2364,7 +2382,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
         toastTimerRef.current = setTimeout(() => setSuccessToast(null), 3000)
       }
     } catch (err) {
-      setShiftActionError(err instanceof Error ? err.message : 'Failed to update shift')
+      if (!handleShiftGoneError(err)) setShiftActionError(err instanceof Error ? err.message : 'Failed to update shift')
     } finally {
       setShiftActionLoading(false)
     }
@@ -2381,11 +2399,14 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
       if (!data.success) throw new Error(data.message || 'Failed to delete shift')
       setSelectedShift(null)
       if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
-      setSuccessToast('Shift deleted')
+      const skippedCount = data.skipped_shifts?.length ?? 0
+      setSuccessToast(skippedCount > 0
+        ? `Shift deleted. ${skippedCount} occurrence${skippedCount === 1 ? '' : 's'} kept — attendance already recorded.`
+        : 'Shift deleted')
       toastTimerRef.current = setTimeout(() => setSuccessToast(null), 3000)
       await refreshShiftData()
     } catch (err) {
-      setShiftActionError(err instanceof Error ? err.message : 'Failed to delete shift')
+      if (!handleShiftGoneError(err)) setShiftActionError(err instanceof Error ? err.message : 'Failed to delete shift')
     } finally {
       setShiftActionLoading(false)
     }
@@ -2447,7 +2468,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
       toastTimerRef.current = setTimeout(() => setSuccessToast(null), 3000)
       await refreshShiftData()
     } catch (err) {
-      setDuplicateShiftError(err instanceof Error ? err.message : 'Failed to duplicate shift')
+      if (!handleShiftGoneError(err)) setDuplicateShiftError(err instanceof Error ? err.message : 'Failed to duplicate shift')
     } finally {
       setDuplicateShiftLoading(false)
     }
@@ -2669,7 +2690,6 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
           name: templateEditName.trim(),
           start_time: templateEditStartTime,
           end_time: templateEditEndTime,
-          requested_by: internalUserId,
         }),
       })
       const data = await res.json()
@@ -2691,7 +2711,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
     if (!companyId) return
     setTemplateDeleteLoadingId(templateId)
     try {
-      const res = await fetch(`/api/shift-template/${templateId}?requested_by=${internalUserId}`, { method: 'DELETE' })
+      const res = await fetch(`/api/shift-template/${templateId}`, { method: 'DELETE' })
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'Failed to delete template')
       await fetchShiftTemplates(companyId)
@@ -2748,7 +2768,6 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
           name: shiftTemplateFormName.trim(),
           start_time: shiftTemplateFormStartTime,
           end_time: shiftTemplateFormEndTime,
-          requested_by: internalUserId,
         } : {
           company_id: companyId,
           name: shiftTemplateFormName.trim(),
@@ -2775,7 +2794,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
   const handleDeleteShiftTemplateEntry = async (id: string) => {
     setDeleteShiftTemplateLoading(true)
     try {
-      const res = await fetch(`/api/shift-template/${id}?requested_by=${internalUserId}`, { method: 'DELETE' })
+      const res = await fetch(`/api/shift-template/${id}`, { method: 'DELETE' })
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'Failed to delete template')
       await fetchShiftTemplates(companyId)
@@ -4093,7 +4112,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                     ><X size={16} /></button>
                   </div>
 
-                  <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 28 }}>
+                  <div ref={aiWizardScrollRef} style={{ flex: 1, overflowY: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 28 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 8 }}>
                       {AI_WIZARD_STEPS.map((s, i) => {
                         const isDone = stepIdx > i
@@ -4337,7 +4356,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                       })
 
                       const cellsFor = (rowKey: string, date: string) => {
-                        const out: { block: AutoShiftBlock; slot: AiShiftSlot; slotIndex: number }[] = []
+                        const out: { block: AutoShiftBlock; slot: AiShiftSlotWithKey; slotIndex: number }[] = []
                         for (const block of aiShiftSuggestions) {
                           if (block.shift_date !== date) continue
                           block.slots.forEach((slot, slotIndex) => {
@@ -4367,7 +4386,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                             <button
                               type="button"
-                              onClick={() => aiScheduleGenerationStore.setSelected(() => new Set(aiShiftSuggestions.flatMap(block => block.slots.map((_, slotIndex) => aiSlotSelectionKey(block.key, slotIndex)))))}
+                              onClick={() => aiScheduleGenerationStore.setSelected(() => new Set(aiShiftSuggestions.flatMap(block => block.slots.flatMap(slot => slot.assigned_user_id ? [slot.key] : []))))}
                               title="Select all"
                               aria-label="Select all"
                               style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 7, background: 'none', border: '1px solid #E5E7EB', color: '#7C3AED', cursor: 'pointer' }}
@@ -4379,14 +4398,6 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                               aria-label="Clear"
                               style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 7, background: 'none', border: '1px solid #E5E7EB', color: '#9CA3AF', cursor: 'pointer' }}
                             ><X size={13} /></button>
-                            <button
-                              type="button"
-                              onClick={handleAiGenerateShifts}
-                              disabled={aiShiftLoading}
-                              title="Regenerate"
-                              aria-label="Regenerate"
-                              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 7, background: 'none', border: '1px solid #E5E7EB', color: '#F97316', cursor: aiShiftLoading ? 'default' : 'pointer', opacity: aiShiftLoading ? 0.5 : 1 }}
-                            ><RotateCw size={13} /></button>
                             </div>
                           </div>
 
@@ -4484,7 +4495,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                                                 <div style={{ borderRadius: 999, background: '#F3F4F6', height: 24 }} />
                                               )
                                             ) : cells.map(({ block, slot, slotIndex }, i) => {
-                                              const selectionKey = aiSlotSelectionKey(block.key, slotIndex)
+                                              const selectionKey = slot.key
                                               const checked = aiShiftSelected.has(selectionKey)
                                               const isEditingThis = aiEditingSlot?.blockKey === block.key && aiEditingSlot?.slotIndex === slotIndex
                                               return (
@@ -4572,6 +4583,14 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
 
                   {aiShiftWizardStep === 'generate' && aiShiftSuggestions.length > 0 && (
                     <div style={{ padding: '0 24px 20px', display: 'flex', justifyContent: 'flex-end', gap: 8, flexShrink: 0 }}>
+                      <button
+                        type="button"
+                        onClick={handleAiGenerateAndMinimize}
+                        disabled={aiShiftLoading}
+                        style={{ ...secondaryButtonStyle, opacity: aiShiftLoading ? 0.65 : 1, cursor: aiShiftLoading ? 'not-allowed' : 'pointer' }}
+                      >
+                        <RotateCw size={13} /> Regenerate
+                      </button>
                       <button
                         type="button"
                         onClick={handleAiCreateShifts}

@@ -46,8 +46,15 @@ vi.mock('@/services/owner/schedulingRuleService', () => ({
   },
 }))
 
+vi.mock('@/repositories/owner/attendanceRepository', () => ({
+  attendanceRepository: {
+    getAttendanceRecordsByAssignmentIds: vi.fn(),
+  },
+}))
+
 import { shiftService } from './shiftService'
 import { shiftRepository } from '@/repositories/owner/shiftRepository'
+import { attendanceRepository } from '@/repositories/owner/attendanceRepository'
 import { schedulingRuleService } from '@/services/owner/schedulingRuleService'
 
 const baseShift = {
@@ -79,6 +86,7 @@ describe('shiftService — Shift (UC1, UC3-10)', () => {
     vi.clearAllMocks()
     vi.mocked(shiftRepository.getAssignmentsByUserAndDateRange).mockResolvedValue([])
     vi.mocked(shiftRepository.getAssignmentsByShiftIds).mockResolvedValue([])
+    vi.mocked(attendanceRepository.getAttendanceRecordsByAssignmentIds).mockResolvedValue([])
   })
 
   describe('createShift (UC1)', () => {
@@ -914,7 +922,7 @@ describe('shiftService — Shift (UC1, UC3-10)', () => {
 
       await shiftService.deleteShift('shift-1')
 
-      expect(shiftRepository.deleteAssignmentsByShiftId).toHaveBeenCalledWith('shift-1')
+      expect(shiftRepository.deleteAssignmentsByShiftId).toHaveBeenCalledWith('shift-1', 'delete')
       expect(shiftRepository.deleteShift).toHaveBeenCalledWith('shift-1')
     })
 
@@ -958,6 +966,52 @@ describe('shiftService — Shift (UC1, UC3-10)', () => {
       expect(shiftRepository.getShiftsByRecurrenceGroupId).not.toHaveBeenCalled()
       expect(shiftRepository.deleteShift).toHaveBeenCalledTimes(1)
       expect(shiftRepository.deleteShift).toHaveBeenCalledWith('shift-2')
+    })
+
+    it('throws without deleting anything when the shift itself already has attendance recorded', async () => {
+      vi.mocked(shiftRepository.getShiftById).mockResolvedValue(baseShift)
+      vi.mocked(shiftRepository.getAssignmentsByShiftIds).mockResolvedValue([
+        { id: 'assign-1', shift_id: 'shift-1', user_id: 'user-1', assigned_by: 'owner-1', assignment_status: 'assigned', supervisor_employee_id: null, created_at: '', updated_at: '' },
+      ])
+      vi.mocked(attendanceRepository.getAttendanceRecordsByAssignmentIds).mockResolvedValue([
+        { id: 'att-1', shift_assignment_id: 'assign-1' } as never,
+      ])
+
+      await expect(shiftService.deleteShift('shift-1')).rejects.toThrow(
+        'Cannot delete this shift — attendance has already been recorded against it.',
+      )
+      expect(shiftRepository.deleteShift).not.toHaveBeenCalled()
+      expect(shiftRepository.deleteAssignmentsByShiftId).not.toHaveBeenCalled()
+    })
+
+    it('skips only the recurring occurrence with recorded attendance and still deletes the rest', async () => {
+      const original = { ...baseShift, id: 'shift-1', recurrence_group_id: 'rec-1', source_shift_id: null }
+      const sibling1 = { ...baseShift, id: 'shift-2', shift_date: '2026-06-29', recurrence_group_id: 'rec-1', source_shift_id: 'shift-1' }
+      const sibling2 = { ...baseShift, id: 'shift-3', shift_date: '2026-07-06', recurrence_group_id: 'rec-1', source_shift_id: 'shift-1' }
+      vi.mocked(shiftRepository.getShiftById).mockResolvedValue(original)
+      vi.mocked(shiftRepository.getShiftsByRecurrenceGroupId).mockResolvedValue([original, sibling1, sibling2])
+      vi.mocked(shiftRepository.getAssignmentsByShiftIds).mockResolvedValue([
+        { id: 'assign-1', shift_id: 'shift-1', user_id: 'user-1', assigned_by: 'owner-1', assignment_status: 'assigned', supervisor_employee_id: null, created_at: '', updated_at: '' },
+        { id: 'assign-2', shift_id: 'shift-2', user_id: 'user-1', assigned_by: 'owner-1', assignment_status: 'assigned', supervisor_employee_id: null, created_at: '', updated_at: '' },
+        { id: 'assign-3', shift_id: 'shift-3', user_id: 'user-1', assigned_by: 'owner-1', assignment_status: 'assigned', supervisor_employee_id: null, created_at: '', updated_at: '' },
+      ])
+      // Only shift-1's assignment (today's already-occurred instance) has attendance recorded.
+      vi.mocked(attendanceRepository.getAttendanceRecordsByAssignmentIds).mockResolvedValue([
+        { id: 'att-1', shift_assignment_id: 'assign-1' } as never,
+      ])
+      vi.mocked(shiftRepository.deleteAssignmentsByShiftId).mockResolvedValue(undefined)
+      vi.mocked(shiftRepository.deleteShift).mockResolvedValue(undefined)
+
+      const result = await shiftService.deleteShift('shift-1', 'owner-1')
+
+      expect(shiftRepository.deleteShift).not.toHaveBeenCalledWith('shift-1')
+      expect(shiftRepository.deleteShift).toHaveBeenCalledWith('shift-2')
+      expect(shiftRepository.deleteShift).toHaveBeenCalledWith('shift-3')
+      expect(shiftRepository.deleteAssignmentsByShiftId).not.toHaveBeenCalledWith('shift-1', 'delete')
+      expect(result.skipped_shifts.map(s => s.id)).toEqual(['shift-1'])
+      expect(shiftRepository.createActionHistory).toHaveBeenCalledWith(
+        expect.objectContaining({ affected_shift_ids: ['shift-2', 'shift-3'] }),
+      )
     })
   })
 
@@ -1213,7 +1267,7 @@ describe('shiftService — Shift (UC1, UC3-10)', () => {
 
       const result = await shiftService.undoLastShiftAction('company-1', 'owner-1')
 
-      expect(shiftRepository.deleteAssignmentsByShiftIds).toHaveBeenCalledWith(['shift-1'])
+      expect(shiftRepository.deleteAssignmentsByShiftIds).toHaveBeenCalledWith(['shift-1'], 'delete')
       expect(shiftRepository.deleteShiftsByIds).toHaveBeenCalledWith(['shift-1'])
       expect(shiftRepository.markActionUndone).toHaveBeenCalledWith('history-1', expect.objectContaining({
         recreate_shifts: [baseShift],
@@ -1298,7 +1352,7 @@ describe('shiftService — Shift (UC1, UC3-10)', () => {
 
       await shiftService.undoLastShiftAction('company-1', 'owner-1')
 
-      expect(shiftRepository.deleteAssignmentsByShiftIds).toHaveBeenCalledWith(['shift-1', 'shift-2'])
+      expect(shiftRepository.deleteAssignmentsByShiftIds).toHaveBeenCalledWith(['shift-1', 'shift-2'], 'delete')
       expect(shiftRepository.deleteShiftsByIds).toHaveBeenCalledWith(['shift-1', 'shift-2'])
     })
 
@@ -1374,7 +1428,7 @@ describe('shiftService — Shift (UC1, UC3-10)', () => {
 
       const result = await shiftService.redoLastUndoneAction('company-1', 'owner-1')
 
-      expect(shiftRepository.deleteAssignmentsByShiftIds).toHaveBeenCalledWith(['shift-1'])
+      expect(shiftRepository.deleteAssignmentsByShiftIds).toHaveBeenCalledWith(['shift-1'], 'delete')
       expect(shiftRepository.deleteShiftsByIds).toHaveBeenCalledWith(['shift-1'])
       expect(result.action_type).toBe('delete')
     })

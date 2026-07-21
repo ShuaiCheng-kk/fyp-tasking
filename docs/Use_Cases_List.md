@@ -55,9 +55,9 @@ Platform-level roles (outside the company hierarchy): **User Admin** and **Marke
 - UC27 Send Direct Invitation — O, P
 - UC28 Search Members — O, P, M
 - UC29 Activate / Deactivate Casual Worker — O, P
-- UC30 Remove Team Member — O, P
+- UC30 Remove Team Member — O
 - UC31 Change Member Department — O
-- UC32 Invite Members by CSV — O
+- UC32 Invite Members by CSV — O, P
 - UC33 Import Departments by CSV — O
 - UC34 Edit Company Profile — O
 

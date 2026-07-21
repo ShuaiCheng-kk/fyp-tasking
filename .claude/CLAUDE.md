@@ -19,7 +19,7 @@ Internal company hierarchy is a strict superset chain — a higher role has ever
 Owner  ⊇  Partner  ⊇  Manager  ⊇  Employee
 ```
 - **Owner** — all departments/companies; can schedule & assign across all departments; only role that can delete a company.
-- **Partner** — Owner clone, EXCEPT: cannot delete a company they were *invited into*, and the following are Owner-only per `docs/Use_Cases_List.md` Module 3 — create/edit/delete department (UC24–26), change member department (UC31), invite members by CSV (UC32), import departments by CSV (UC33), edit company profile (UC34).
+- **Partner** — Owner clone, EXCEPT: cannot delete a company they were *invited into*, and the following are Owner-only per `docs/Use_Cases_List.md` Module 3 — create/edit/delete department (UC24–26), remove team member (UC30), change member department (UC31), import departments by CSV (UC33), edit company profile (UC34).
 - **Manager** — scoped to their assigned department(s).
 - **Employee** — own shifts/tasks; supervises Casual Workers under them. Employees ARE scheduled on shifts and assigned tasks (full-time internal staff).
 

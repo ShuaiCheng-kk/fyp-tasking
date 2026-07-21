@@ -16,27 +16,25 @@ export const shiftTemplateService = {
     return shiftTemplateRepository.createTemplate(input)
   },
 
-  async listTemplates(company_id: string, created_by: string): Promise<ShiftTemplate[]> {
+  // Shift templates are shared across the whole company (any Owner/Partner can use, edit, or
+  // delete any of them) — not scoped to whoever happened to create it. Same policy as Task
+  // Templates (taskTemplateService), which never gated on created_by either.
+  async listTemplates(company_id: string): Promise<ShiftTemplate[]> {
     if (!company_id) throw new Error('company_id is required')
-    if (!created_by) throw new Error('created_by is required')
-    return shiftTemplateRepository.getTemplatesByCompany(company_id, created_by)
+    return shiftTemplateRepository.getTemplatesByCompany(company_id)
   },
 
-  async deleteTemplate(id: string, requested_by: string): Promise<void> {
+  async deleteTemplate(id: string): Promise<void> {
     if (!id) throw new Error('Template id is required')
-    if (!requested_by) throw new Error('requested_by is required')
     const existing = await shiftTemplateRepository.getTemplateById(id)
     if (!existing) throw new Error('Template not found')
-    if (existing.created_by !== requested_by) throw new Error('You can only delete templates you created')
     await shiftTemplateRepository.deleteTemplate(id)
   },
 
-  async updateTemplate(id: string, requested_by: string, fields: Partial<Pick<ShiftTemplateInput, 'name' | 'start_time' | 'end_time'>>): Promise<ShiftTemplate> {
+  async updateTemplate(id: string, fields: Partial<Pick<ShiftTemplateInput, 'name' | 'start_time' | 'end_time'>>): Promise<ShiftTemplate> {
     if (!id) throw new Error('Template id is required')
-    if (!requested_by) throw new Error('requested_by is required')
     const existing = await shiftTemplateRepository.getTemplateById(id)
     if (!existing) throw new Error('Template not found')
-    if (existing.created_by !== requested_by) throw new Error('You can only edit templates you created')
     const name = fields.name !== undefined ? fields.name.trim() : existing.name
     if (!name) throw new Error('Please name this template.')
     const start_time = fields.start_time ?? existing.start_time

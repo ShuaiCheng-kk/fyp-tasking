@@ -2151,12 +2151,24 @@ export default function TeamView({ sidebar, basePath, permissions }: {
     setDepartmentModalTab('manual')
     setActiveDepartment(null)
     setDepartmentNameInput('')
-    setDepartmentColorInput(DEPT_COLORS[companyDepartments.length % DEPT_COLORS.length])
+    // Default to the first color not already taken by another department (same "used" set the
+    // picker itself checks) — cycling by department count could still land on a taken color
+    // (e.g. after a department was deleted or its color changed manually), which used to
+    // pre-select an unusable color with no visible "taken" mark until the user picked something
+    // else. Only reuse a color when every swatch is already taken.
+    const usedColors = new Set(companyDepartments.map(d => d.color ?? deptColor(d.id)))
+    const firstAvailableColor = DEPT_COLORS.find(color => !usedColors.has(color))
+    setDepartmentColorInput(firstAvailableColor ?? DEPT_COLORS[companyDepartments.length % DEPT_COLORS.length])
     setDepartmentImportRows([])
     setDepartmentActionError('')
   }
 
   const openEditDepartment = (department: Department) => {
+    // The pencil button that normally opens this is already hidden without canManageDepartments,
+    // but the Organisation Chart's department-node click calls this directly with no such gate —
+    // guard here too so a Partner clicking a node in the org chart can't open an edit form they
+    // have no way to actually save (create/update/delete-department are Owner-only server-side).
+    if (!permissions.canManageDepartments) return
     setDepartmentModal('edit')
     setActiveDepartment(department)
     setDepartmentNameInput(department.name)
@@ -2612,7 +2624,7 @@ export default function TeamView({ sidebar, basePath, permissions }: {
             className="all-block-cw"
             icon={<HardHat size={15} style={{ color: sharedIconColor }} />}
             title="Casual Workers"
-            rightContent={<CWStatusBar activeCount={cwActiveCount} inactiveCount={cwInactiveCount} totalCount={casualWorkers.length} />}
+            rightContent={casualWorkers.length > 0 ? <CWStatusBar activeCount={cwActiveCount} inactiveCount={cwInactiveCount} totalCount={casualWorkers.length} /> : undefined}
             searchValue={cwSearchQuery}
             onSearchChange={setCwSearchQuery}
           >
@@ -2691,7 +2703,7 @@ export default function TeamView({ sidebar, basePath, permissions }: {
             className="all-block-internal"
             icon={<Users size={15} style={{ color: sharedIconColor }} />}
             title="Internal Members"
-            rightContent={<InternalMembersBar partnerCount={partnerMembers.length} managerCount={managerMembers.length} employeeCount={employeeMembers.length} />}
+            rightContent={(partnerMembers.length + managerMembers.length + employeeMembers.length) > 0 ? <InternalMembersBar partnerCount={partnerMembers.length} managerCount={managerMembers.length} employeeCount={employeeMembers.length} /> : undefined}
             searchValue={internalSearchQuery}
             onSearchChange={setInternalSearchQuery}
           >
@@ -3353,7 +3365,7 @@ export default function TeamView({ sidebar, basePath, permissions }: {
                       className="all-block-cw"
                       icon={<HardHat size={15} style={{ color: sharedIconColor }} />}
                       title="Casual Workers"
-                      rightContent={<CWStatusBar activeCount={cwActiveCount} inactiveCount={cwInactiveCount} totalCount={casualWorkers.length} />}
+                      rightContent={casualWorkers.length > 0 ? <CWStatusBar activeCount={cwActiveCount} inactiveCount={cwInactiveCount} totalCount={casualWorkers.length} /> : undefined}
                       searchValue={cwSearchQuery}
                       onSearchChange={setCwSearchQuery}
                     >
@@ -3430,7 +3442,7 @@ export default function TeamView({ sidebar, basePath, permissions }: {
                       className="all-block-internal"
                       icon={<Users size={15} style={{ color: sharedIconColor }} />}
                       title="Internal Members"
-                      rightContent={<InternalMembersBar partnerCount={partnerMembers.length} managerCount={managerMembers.length} employeeCount={employeeMembers.length} />}
+                      rightContent={(partnerMembers.length + managerMembers.length + employeeMembers.length) > 0 ? <InternalMembersBar partnerCount={partnerMembers.length} managerCount={managerMembers.length} employeeCount={employeeMembers.length} /> : undefined}
                       searchValue={internalSearchQuery}
                       onSearchChange={setInternalSearchQuery}
                     >

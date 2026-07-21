@@ -73,7 +73,7 @@ export const taskRepository = {
   async getTasksByCompany(company_id: string, assigned_by?: string | string[], department_ids?: string[]): Promise<Task[]> {
     let query = supabase
       .from('tasks')
-      .select('id, shift_id, company_id, department_id, parent_task_id, sequence_order, title, description, assigned_user_id, assigned_by, status, percentage_complete, priority, due_at, task_date, recurrence_group_id, source_task_id, is_archived, rejection_reason, rejected_at, completed_at, created_at, updated_at, shifts(shift_date)')
+      .select('id, shift_id, company_id, department_id, parent_task_id, sequence_order, title, description, assigned_user_id, assigned_by, status, percentage_complete, priority, due_at, task_date, recurrence_group_id, source_task_id, is_archived, rejection_reason, rejected_at, completed_at, reviewed_by, created_at, updated_at, shifts(shift_date)')
       .eq('company_id', company_id)
       .eq('is_archived', false)
     if (Array.isArray(assigned_by)) {
@@ -98,7 +98,7 @@ export const taskRepository = {
   async getArchivedTasksByCompany(company_id: string): Promise<Task[]> {
     const { data, error } = await supabase
       .from('tasks')
-      .select('id, shift_id, company_id, department_id, parent_task_id, sequence_order, title, description, assigned_user_id, assigned_by, status, percentage_complete, priority, due_at, task_date, recurrence_group_id, source_task_id, is_archived, rejection_reason, rejected_at, completed_at, created_at, updated_at, shifts(shift_date)')
+      .select('id, shift_id, company_id, department_id, parent_task_id, sequence_order, title, description, assigned_user_id, assigned_by, status, percentage_complete, priority, due_at, task_date, recurrence_group_id, source_task_id, is_archived, rejection_reason, rejected_at, completed_at, reviewed_by, created_at, updated_at, shifts(shift_date)')
       .eq('company_id', company_id)
       .eq('is_archived', true)
       // Sub-tasks and recurring sibling occurrences (source_task_id set) archive alongside their
@@ -127,17 +127,24 @@ export const taskRepository = {
     return tasks.map(t => ({ ...t, assigned_user_ids: byTaskId.get(t.id) ?? (t.assigned_user_id ? [t.assigned_user_id] : []) }))
   },
 
-  // Batch-attaches the assigner's display name so every Task detail view (any role) can show
-  // "Assigned By" without a separate members-list fetch — needed in particular by Casual Worker's
-  // task board, which never loads the full company member list.
+  // Batch-attaches the assigner's and reviewer's display names so every Task detail view (any
+  // role) can show "Assigned By" / "Reviewed By" without a separate members-list fetch — needed
+  // in particular by Casual Worker's task board, which never loads the full company member list.
   async attachAssignedByNames(tasks: Task[]): Promise<Task[]> {
     if (tasks.length === 0) return tasks
-    const ids = [...new Set(tasks.map(t => t.assigned_by).filter((id): id is string => !!id))]
+    const ids = [...new Set([
+      ...tasks.map(t => t.assigned_by),
+      ...tasks.map(t => t.reviewed_by),
+    ].filter((id): id is string => !!id))]
     if (ids.length === 0) return tasks
     const { data, error } = await supabase.from('users').select('id, full_name').in('id', ids)
     if (error) throw new Error(error.message)
     const nameById = new Map((data ?? []).map(u => [u.id as string, u.full_name as string]))
-    return tasks.map(t => ({ ...t, assigned_by_name: t.assigned_by ? nameById.get(t.assigned_by) ?? null : null }))
+    return tasks.map(t => ({
+      ...t,
+      assigned_by_name: t.assigned_by ? nameById.get(t.assigned_by) ?? null : null,
+      reviewed_by_name: t.reviewed_by ? nameById.get(t.reviewed_by) ?? null : null,
+    }))
   },
 
   async getTasksByShift(shift_id: string): Promise<Task[]> {
