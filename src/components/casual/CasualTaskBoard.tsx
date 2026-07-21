@@ -341,6 +341,13 @@ export default function CasualTaskBoard({ companyId, shiftId, userId }: Props) {
               </div>
 
               <div>
+                <label style={modalLabelStyle}>Assigned By</label>
+                <div style={viewFieldValue}>
+                  {detailTask.assigned_by_name ?? 'Unknown'}
+                </div>
+              </div>
+
+              <div>
                 <label style={modalLabelStyle}>Assigned Time</label>
                 <div style={viewFieldValue}>
                   {new Date(detailTask.created_at).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}

@@ -38,7 +38,7 @@ vi.mock('@/repositories/owner/attendanceRepository', () => ({
 }))
 
 vi.mock('@/services/owner/ownerTeamService', () => ({
-  ownerTeamService: { getManagerDepartments: vi.fn() },
+  ownerTeamService: { getManagerDepartments: vi.fn(), getTeamByCompany: vi.fn() },
 }))
 
 import { ownerDashboardService } from './ownerDashboardService'
@@ -62,6 +62,9 @@ function setDefaults() {
   vi.mocked(recruitmentService.getApplicants).mockResolvedValue([])
   vi.mocked(attendanceRepository.getOffDayRequestsByCompanyAndWeek).mockResolvedValue([])
   vi.mocked(attendanceRepository.getUsersByIds).mockResolvedValue([])
+  vi.mocked(ownerTeamService.getTeamByCompany).mockResolvedValue([
+    { id: 'owner-1', role: 'Owner' } as any,
+  ])
 }
 
 describe('ownerDashboardService.getDashboardSummary', () => {
@@ -324,5 +327,38 @@ describe('Manager viewer scope (role scope: own departments only)', () => {
     expect(summary.waiting_on_you.find(i => i.id === 'shift_swap')?.count).toBe(2)
     expect(summary.waiting_on_you.some(i => i.id === 'job_posting_approval')).toBe(true)
     expect(ownerTeamService.getManagerDepartments).not.toHaveBeenCalled()
+  })
+})
+
+describe('Owner/Partner peer task visibility', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    setDefaults()
+  })
+
+  it('scopes the Task Overview and Waiting On You kanban/delay-alert calls to every Owner+Partner in the company, not just the current viewer', async () => {
+    vi.mocked(ownerTeamService.getTeamByCompany).mockResolvedValue([
+      { id: 'owner-1', role: 'Owner' } as any,
+      { id: 'partner-1', role: 'Partner' } as any,
+      { id: 'mgr-1', role: 'Manager' } as any,
+    ])
+
+    await ownerDashboardService.getDashboardSummary('company-1', 'partner-1', 'Partner')
+
+    expect(taskService.getKanbanTasks).toHaveBeenCalledWith('company-1', expect.arrayContaining(['owner-1', 'partner-1']))
+    expect(taskService.getTaskDelayAlerts).toHaveBeenCalledWith('company-1', undefined, expect.arrayContaining(['owner-1', 'partner-1']), undefined, 'partner-1')
+    const kanbanCallArg = vi.mocked(taskService.getKanbanTasks).mock.calls[0][1] as string[]
+    expect(kanbanCallArg).not.toContain('mgr-1')
+  })
+
+  it('a Manager viewer keeps the existing self-only scope (unchanged)', async () => {
+    vi.mocked(ownerTeamService.getManagerDepartments).mockResolvedValue([
+      { department_id: 'dept-1', department_name: 'Kitchen' },
+    ])
+
+    await ownerDashboardService.getDashboardSummary('company-1', 'manager-1', 'Manager')
+
+    expect(taskService.getKanbanTasks).toHaveBeenCalledWith('company-1', 'manager-1')
+    expect(ownerTeamService.getTeamByCompany).not.toHaveBeenCalled()
   })
 })

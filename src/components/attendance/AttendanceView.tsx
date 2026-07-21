@@ -71,6 +71,7 @@ interface FixedOffGroup {
   source: FixedOffDaySource
   created_at: string
   reviewed_at: string | null
+  reviewer_name: string | null
   requests: FixedOffDayRequestView[]
 }
 
@@ -82,12 +83,15 @@ function groupFixedOff(rows: FixedOffDayRequestView[]): FixedOffGroup[] {
     if (existing) {
       existing.requests.push(req)
       if (new Date(req.created_at ?? 0).getTime() < new Date(existing.created_at ?? 0).getTime()) existing.created_at = req.created_at
-      if (new Date(req.reviewed_at ?? req.created_at ?? 0).getTime() > new Date(existing.reviewed_at ?? existing.created_at ?? 0).getTime()) existing.reviewed_at = req.reviewed_at ?? req.created_at
+      if (new Date(req.reviewed_at ?? req.created_at ?? 0).getTime() > new Date(existing.reviewed_at ?? existing.created_at ?? 0).getTime()) {
+        existing.reviewed_at = req.reviewed_at ?? req.created_at
+        existing.reviewer_name = req.reviewer_name
+      }
     } else {
       byKey.set(key, {
         key, user_id: req.user_id, requester_name: req.requester_name, requester_role: req.requester_role,
         department_id: req.department_id, week_start: req.week_start, status: req.status, source: req.source,
-        created_at: req.created_at, reviewed_at: req.reviewed_at ?? req.created_at, requests: [req],
+        created_at: req.created_at, reviewed_at: req.reviewed_at ?? req.created_at, reviewer_name: req.reviewer_name, requests: [req],
       })
     }
   }
@@ -2897,6 +2901,9 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                                 <span title={req.status === 'approved' ? 'Approved' : 'Rejected'} style={{ width: 30, height: 30, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: statusTone.bg, color: statusTone.text, border: `1.5px solid ${statusTone.border}`, borderRadius: 999, flexShrink: 0 }}>
                                   <StatusIcon size={12} strokeWidth={3} />
                                 </span>
+                                {req.reviewer_name && (
+                                  <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#94A3B8', whiteSpace: 'nowrap' }}>by {req.reviewer_name}</span>
+                                )}
                               </>
                             )}
                           </div>
@@ -3347,9 +3354,14 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                             </button>
                           </div>
                         ) : (
-                          <span title={statusTone.label} style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.78rem', fontWeight: 700, color: statusTone.text, background: statusTone.bg, border: `1.5px solid ${statusTone.border}`, borderRadius: 999, padding: '6px 16px', flexShrink: 0 }}>
-                            <StatusIcon size={13} strokeWidth={3} /> {statusTone.label}
-                          </span>
+                          <div style={{ marginLeft: 'auto', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0 }}>
+                            <span title={statusTone.label} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.78rem', fontWeight: 700, color: statusTone.text, background: statusTone.bg, border: `1.5px solid ${statusTone.border}`, borderRadius: 999, padding: '6px 16px', flexShrink: 0 }}>
+                              <StatusIcon size={13} strokeWidth={3} /> {statusTone.label}
+                            </span>
+                            {group.reviewer_name && (
+                              <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#94A3B8', whiteSpace: 'nowrap' }}>by {group.reviewer_name}</span>
+                            )}
+                          </div>
                         )}
                       </div>
 
@@ -3700,74 +3712,78 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                                 onMouseLeave={e => { e.currentTarget.style.borderColor = PANEL_BORDER; e.currentTarget.style.boxShadow = 'none' }}
                                 style={{ position: 'relative', display: 'flex', flexDirection: 'column', gap: 12, border: `1px solid ${PANEL_BORDER}`, borderRadius: 12, padding: '18px 16px', background: '#FFFFFF', cursor: queueIdx >= 0 ? 'pointer' : 'default', transition: 'border-color 0.15s, box-shadow 0.15s' }}
                               >
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14 }}>
                                   <RoleAvatar role={req.requester_role} size={48} photoUrl={person?.profile_photo_url ?? null} />
-                                  <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                                    {/* First line — department badge on the left, decision time + status
-                                        circle on the right, same arrangement as the swap card header. */}
-                                    {(deptName || isDecided) && (
-                                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', rowGap: 6 }}>
-                                        {deptName && (
-                                          <span style={{ fontSize: '0.72rem', fontWeight: 800, color: dc, background: `${dc}1a`, borderRadius: 999, padding: '4px 10px', flexShrink: 0 }}>{deptName}</span>
-                                        )}
-                                        {isDecided && (
-                                          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, flexShrink: 0 }}>
-                                            {req.reviewed_at && (
-                                              <span style={{ fontSize: '0.76rem', fontWeight: 800, color: '#64748B', whiteSpace: 'nowrap' }}>{formatOwnerDecisionTime(req.reviewed_at)}</span>
-                                            )}
-                                            <span title="Approved" style={{ width: 30, height: 30, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: '#ECFDF5', color: '#047857', border: '1.5px solid #86EFAC', borderRadius: 999, flexShrink: 0 }}>
-                                              <Check size={12} strokeWidth={3} />
-                                            </span>
-                                          </div>
-                                        )}
-                                      </div>
+                                  <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8, paddingRight: (isDecided || verdict) ? 150 : 0 }}>
+                                    {deptName && (
+                                      <span style={{ fontSize: '0.72rem', fontWeight: 800, color: dc, background: `${dc}1a`, borderRadius: 999, padding: '4px 10px', flexShrink: 0, alignSelf: 'flex-start' }}>{deptName}</span>
                                     )}
                                     <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{req.requester_name}</span>
-                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
                                       {requestedDates.map(r => (
                                         <span key={r.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.76rem', fontWeight: 700, color: '#C2410C', background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: 999, padding: '4px 10px', whiteSpace: 'nowrap' }}>
                                           <Calendar size={11} style={{ flexShrink: 0 }} />
                                           {formatFixedOffRequestDay(r.request_date)}
                                         </span>
                                       ))}
+                                      {canModifyDecided && (
+                                        <button
+                                          type="button"
+                                          onClick={e => {
+                                            e.stopPropagation()
+                                            if (detailModifyComplete) {
+                                              decideFixedOffGroup(group!.requests.map(r => r.id), 'modified', group!.requester_name, [...fixedOffModifyDates].sort())
+                                            } else if (isModifyingThis) {
+                                              setModifyingFixedOffKey(null)
+                                              setFixedOffModifyDates([])
+                                            } else {
+                                              setFixedOffModifyDates([])
+                                              setModifyingFixedOffKey(group!.key)
+                                            }
+                                          }}
+                                          disabled={reqActionLoading}
+                                          style={detailModifyComplete
+                                            ? { marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.76rem', fontWeight: 700, color: '#FFFFFF', background: 'linear-gradient(135deg, #F97316, #EA580C)', border: '1px solid transparent', borderRadius: 999, padding: '4px 10px', whiteSpace: 'nowrap', cursor: reqActionLoading ? 'default' : 'pointer', opacity: reqActionLoading ? 0.6 : 1, flexShrink: 0, transition: 'background 0.15s, border-color 0.15s' }
+                                            : { marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.76rem', fontWeight: 700, color: '#C2410C', background: isModifyingThis ? '#FFEDD5' : '#FFF7ED', border: `1px solid ${isModifyingThis ? '#FDBA74' : '#FED7AA'}`, borderRadius: 999, padding: '4px 10px', whiteSpace: 'nowrap', cursor: reqActionLoading ? 'default' : 'pointer', opacity: reqActionLoading ? 0.6 : 1, flexShrink: 0, transition: 'background 0.15s, border-color 0.15s' }}
+                                        >
+                                          {detailModifyComplete
+                                            ? <>{reqActionLoading ? <Spinner size={11} /> : <Check size={11} />} Confirm</>
+                                            : <><Pencil size={11} /> Modify</>}
+                                        </button>
+                                      )}
                                     </div>
                                   </div>
-                                  {verdict === 'safe' && (
-                                    <span title="Safe to approve as requested" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.72rem', fontWeight: 800, color: '#15803D', background: '#DCFCE7', borderRadius: 999, padding: '4px 10px', whiteSpace: 'nowrap', flexShrink: 0 }}>
-                                      <Check size={12} strokeWidth={3} style={{ flexShrink: 0 }} /> Suggest Approve
-                                    </span>
-                                  )}
-                                  {verdict === 'flagged' && (
-                                    <span title="Requested day is already taken — needs review" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.72rem', fontWeight: 800, color: '#B45309', background: '#FEF3C7', borderRadius: 999, padding: '4px 10px', whiteSpace: 'nowrap', flexShrink: 0 }}>
-                                      <AlertTriangle size={12} style={{ flexShrink: 0 }} /> Review
-                                    </span>
-                                  )}
-                                  {canModifyDecided && (
-                                    <button
-                                      type="button"
-                                      onClick={e => {
-                                        e.stopPropagation()
-                                        if (detailModifyComplete) {
-                                          decideFixedOffGroup(group!.requests.map(r => r.id), 'modified', group!.requester_name, [...fixedOffModifyDates].sort())
-                                        } else if (isModifyingThis) {
-                                          setModifyingFixedOffKey(null)
-                                          setFixedOffModifyDates([])
-                                        } else {
-                                          setFixedOffModifyDates([])
-                                          setModifyingFixedOffKey(group!.key)
-                                        }
-                                      }}
-                                      disabled={reqActionLoading}
-                                      style={detailModifyComplete
-                                        ? { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: '0.78rem', fontWeight: 700, color: '#FFFFFF', background: 'linear-gradient(135deg, #F97316, #EA580C)', border: '1.5px solid transparent', borderRadius: 999, padding: '6px 16px', cursor: reqActionLoading ? 'default' : 'pointer', opacity: reqActionLoading ? 0.6 : 1, flexShrink: 0, transition: 'background 0.15s, border-color 0.15s' }
-                                        : { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: '0.78rem', fontWeight: 700, color: '#C2410C', background: isModifyingThis ? '#FFEDD5' : '#FFF7ED', border: `1.5px solid ${isModifyingThis ? '#FDBA74' : '#FED7AA'}`, borderRadius: 999, padding: '6px 16px', cursor: reqActionLoading ? 'default' : 'pointer', opacity: reqActionLoading ? 0.6 : 1, flexShrink: 0, transition: 'background 0.15s, border-color 0.15s' }}
-                                    >
-                                      {detailModifyComplete
-                                        ? <>{reqActionLoading ? <Spinner size={13} /> : <Check size={13} />} Confirm</>
-                                        : <><Pencil size={13} /> Modify</>}
-                                    </button>
-                                  )}
                                 </div>
+                                {/* Decision time + status circle top-right of the card, verdict mark
+                                    stacked below it in the same right-aligned column. Absolutely
+                                    positioned so this column's height never pushes the name/dates down. */}
+                                {(isDecided || verdict) && (
+                                  <div style={{ position: 'absolute', top: 18, right: 16, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
+                                    {isDecided && (
+                                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, flexShrink: 0 }}>
+                                        {req.reviewed_at && (
+                                          <span style={{ fontSize: '0.76rem', fontWeight: 800, color: '#64748B', whiteSpace: 'nowrap' }}>{formatOwnerDecisionTime(req.reviewed_at)}</span>
+                                        )}
+                                        <span title="Approved" style={{ width: 30, height: 30, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: '#ECFDF5', color: '#047857', border: '1.5px solid #86EFAC', borderRadius: 999, flexShrink: 0 }}>
+                                          <Check size={12} strokeWidth={3} />
+                                        </span>
+                                      </div>
+                                    )}
+                                    {isDecided && req.reviewer_name && (
+                                      <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#94A3B8', whiteSpace: 'nowrap' }}>by {req.reviewer_name}</span>
+                                    )}
+                                    {verdict === 'safe' && (
+                                      <span title="Safe to approve as requested" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.72rem', fontWeight: 800, color: '#15803D', background: '#DCFCE7', borderRadius: 999, padding: '4px 10px', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                                        <Check size={12} strokeWidth={3} style={{ flexShrink: 0 }} /> Suggest Approve
+                                      </span>
+                                    )}
+                                    {verdict === 'flagged' && (
+                                      <span title="Requested day is already taken — needs review" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.72rem', fontWeight: 800, color: '#B45309', background: '#FEF3C7', borderRadius: 999, padding: '4px 10px', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                                        <AlertTriangle size={12} style={{ flexShrink: 0 }} /> Review
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
                                 {canModifyDecided && isModifyingThis && group && <ModifyDaysPicker group={group} />}
                               </div>
                             )
@@ -4002,6 +4018,20 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                 </div>
               )}
 
+              {/* Read-only clock times for roles that can view but not modify (UC50: M/E/CW). */}
+              {!canModifyClockTimes && reviewRecord.record && (
+                <div style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div>
+                    <label style={{ ...modalLabelStyle, marginBottom: 4 }}>Clock In</label>
+                    <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>{fmtClockStamp(reviewRecord.record.clock_in_time)}</p>
+                  </div>
+                  <div>
+                    <label style={{ ...modalLabelStyle, marginBottom: 4 }}>Clock Out</label>
+                    <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>{fmtClockStamp(reviewRecord.record.clock_out_time)}</p>
+                  </div>
+                </div>
+              )}
+
               {/* Editable break pair — same picker UI as Clock In/Out (UC56 direct modification). */}
               {canModifyClockTimes && reviewRecord.record && (
                 <div style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
@@ -4024,6 +4054,20 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                       </select>
                       <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: '#6B7280', fontSize: 12 }}>▾</span>
                     </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Read-only break pair, only if a break was actually recorded. */}
+              {!canModifyClockTimes && reviewRecord.record && reviewRecord.record.break_in_time && (
+                <div style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div>
+                    <label style={{ ...modalLabelStyle, marginBottom: 4 }}>Break In</label>
+                    <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>{fmtClockStamp(reviewRecord.record.break_in_time)}</p>
+                  </div>
+                  <div>
+                    <label style={{ ...modalLabelStyle, marginBottom: 4 }}>Break Out</label>
+                    <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>{fmtClockStamp(reviewRecord.record.break_out_time)}</p>
                   </div>
                 </div>
               )}
@@ -4251,7 +4295,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                     <DropdownField
                       value={swapReviewOnLimitExceeded ? 'review' : 'reject'}
                       onChange={v => setSwapReviewOnLimitExceeded(v === 'review')}
-                      options={[{ value: 'review', label: 'Send to Owner' }, { value: 'reject', label: 'Auto Reject' }]}
+                      options={[{ value: 'review', label: 'Send to Owner/Partner' }, { value: 'reject', label: 'Auto Reject' }]}
                     />
                   </div>
                   <div>
@@ -4259,7 +4303,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                     <DropdownField
                       value={swapReviewOnDeadlineExceeded ? 'review' : 'reject'}
                       onChange={v => setSwapReviewOnDeadlineExceeded(v === 'review')}
-                      options={[{ value: 'review', label: 'Send to Owner' }, { value: 'reject', label: 'Auto Reject' }]}
+                      options={[{ value: 'review', label: 'Send to Owner/Partner' }, { value: 'reject', label: 'Auto Reject' }]}
                     />
                   </div>
                 </div>

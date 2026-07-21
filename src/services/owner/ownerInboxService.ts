@@ -1,4 +1,5 @@
 import { ownerInboxRepository } from '@/repositories/owner/ownerInboxRepository'
+import { managerInboxRepository } from '@/repositories/manager/managerInboxRepository'
 
 export const ownerInboxService = {
 
@@ -75,10 +76,21 @@ export const ownerInboxService = {
   async sendMessage(fromUserId: string, toUserId: string, companyId: string, content: string) {
     if (!content || !content.trim()) throw new Error('Message content cannot be empty')
     let senderName: string | undefined
+    let senderRole: string | undefined
     try {
       const sender = await ownerInboxRepository.findUserById(fromUserId)
-      if (sender) senderName = (sender as any).full_name ?? undefined
+      if (sender) {
+        senderName = (sender as any).full_name ?? undefined
+        senderRole = (sender as any).role ?? undefined
+      }
     } catch {}
+    // Managers may only message the Owner, Partner, or Managers/Employees in their own department.
+    if (senderRole === 'Manager') {
+      const contacts = await managerInboxRepository.getManagerContacts(fromUserId)
+      if (!contacts.some(c => c.id === toUserId)) {
+        throw new Error('Managers can only message the Owner, Partner, or members of their own department')
+      }
+    }
     return ownerInboxRepository.insertMessage(fromUserId, toUserId, companyId, content.trim(), senderName)
   },
 

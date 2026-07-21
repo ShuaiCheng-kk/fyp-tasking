@@ -17,7 +17,7 @@ let seeded: TestOwner
 let departments: { primary: string; secondary: string }
 const members: SeededMember[] = []
 
-async function createMember(role: 'Manager' | 'Employee', label: string, departmentId: string): Promise<SeededMember> {
+async function createMember(role: 'Manager' | 'Employee' | 'Partner', label: string, departmentId?: string): Promise<SeededMember> {
   const email = `test-module3-${label}-${Date.now()}@tasking-tests.local`
   const { data: authData, error: authError } = await admin.auth.admin.createUser({
     email,
@@ -45,7 +45,7 @@ async function createMember(role: 'Manager' | 'Employee', label: string, departm
       .from('manager_departments')
       .insert({ manager_id: user.id, company_id: seeded.companyId, department_id: departmentId, assigned_by: seeded.ownerId })
     if (error) throw new Error(`Failed to assign manager department: ${error.message}`)
-  } else {
+  } else if (role === 'Employee') {
     const { error } = await admin
       .from('employee_departments')
       .insert({ employee_id: user.id, department_id: departmentId })
@@ -285,6 +285,25 @@ test('UC30 removes a manager who created shifts without leaving a partial member
     .single()
   expect(updatedShiftError).toBeNull()
   expect(updatedShift!.created_by).toBe(seeded.ownerId)
+})
+
+test('UC30 a Partner cannot remove any member — not another Partner, not a Manager, not an Employee', async ({ request }) => {
+  const partner = await createMember('Partner', 'remover')
+  const otherPartner = await createMember('Partner', 'remove-target')
+  const manager = await createMember('Manager', 'remove-target-mgr', departments.primary)
+  const employee = await createMember('Employee', 'remove-target-emp', departments.primary)
+
+  for (const target of [otherPartner, manager, employee]) {
+    const remove = await request.delete('/api/team/remove-member', {
+      data: {
+        company_id: seeded.companyId,
+        user_id_to_remove: target.userId,
+        requesting_user_id: partner.userId,
+      },
+    })
+    expect(remove.status()).toBe(400)
+    expect(await remove.json()).toMatchObject({ success: false, message: 'Insufficient permissions to remove a member' })
+  }
 })
 
 test('UC31 changes an employee department in the employee department mapping', async ({ request }) => {

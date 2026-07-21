@@ -194,6 +194,7 @@ export interface ShiftSwapRequestView extends ShiftSwapRequest {
   counterpart_name: string
   counterpart_role: string
   counterpart_photo_url: string | null
+  reviewer_name: string | null
   department_name: string | null
   // Requester's shift info
   requester_shift_title: string | null
@@ -303,6 +304,7 @@ export interface FixedOffDayCreateInput {
 export interface FixedOffDayRequestView extends FixedOffDayRequest {
   requester_name: string
   requester_role: string
+  reviewer_name: string | null
   department_id: string | null
 }
 

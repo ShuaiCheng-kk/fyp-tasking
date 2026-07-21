@@ -87,9 +87,11 @@ export const recruitmentRepository = {
   },
 
   async approveJobPosting(id: string): Promise<JobPosting> {
+    // Clears any earlier rejection record — an approved posting must not still carry a stale
+    // "rejected by / reason" from a prior submission attempt.
     const { data, error } = await supabase
       .from('job_postings')
-      .update({ status: 'open' })
+      .update({ status: 'open', rejection_reason: null, rejected_by: null })
       .eq('id', id)
       .select()
       .single()
@@ -97,10 +99,10 @@ export const recruitmentRepository = {
     return data as JobPosting
   },
 
-  async rejectJobPosting(id: string, rejection_reason: string): Promise<JobPosting> {
+  async rejectJobPosting(id: string, rejection_reason: string, rejected_by: string): Promise<JobPosting> {
     const { data, error } = await supabase
       .from('job_postings')
-      .update({ status: 'rejected', rejection_reason })
+      .update({ status: 'rejected', rejection_reason, rejected_by })
       .eq('id', id)
       .select()
       .single()
@@ -177,7 +179,7 @@ export const recruitmentRepository = {
     if (error) throw new Error(error.message)
   },
 
-  async updateJobPosting(id: string, fields: Partial<JobPostingInput> & { status?: string; archived_at?: string | null; archived_from_status?: string | null }): Promise<JobPosting> {
+  async updateJobPosting(id: string, fields: Partial<JobPostingInput> & { status?: string; archived_at?: string | null; archived_from_status?: string | null; rejection_reason?: string | null; rejected_by?: string | null }): Promise<JobPosting> {
     const { data, error } = await supabase
       .from('job_postings')
       .update(fields)
@@ -476,38 +478,6 @@ export const recruitmentRepository = {
       .maybeSingle()
     if (error) throw new Error(error.message)
     return (data as { role: string } | null)?.role ?? null
-  },
-
-  async getManagerDepartmentIds(manager_id: string, company_id: string): Promise<string[]> {
-    const { data, error } = await supabase
-      .from('manager_departments')
-      .select('department_id')
-      .eq('manager_id', manager_id)
-      .eq('company_id', company_id)
-    if (error) throw new Error(error.message)
-    return (data ?? []).map((r: { department_id: string }) => r.department_id)
-  },
-
-  async getJobPostingsByManagerDepts(company_id: string, department_ids: string[]): Promise<JobPosting[]> {
-    if (department_ids.length === 0) return []
-    const { data: managerUsers, error: userError } = await supabase
-      .from('users')
-      .select('id')
-      .eq('company_id', company_id)
-      .eq('role', 'Manager')
-    if (userError) throw new Error(userError.message)
-    const managerIds = (managerUsers ?? []).map((u: { id: string }) => u.id)
-    if (managerIds.length === 0) return []
-    const { data, error } = await supabase
-      .from('job_postings')
-      .select('*')
-      .eq('company_id', company_id)
-      .in('department_id', department_ids)
-      .in('created_by', managerIds)
-      .not('status', 'in', '("draft")')
-      .order('created_at', { ascending: false })
-    if (error) throw new Error(error.message)
-    return (data ?? []) as JobPosting[]
   },
 
   async getCasualWorkersByCompany(company_id: string): Promise<CasualWorkerStatus[]> {

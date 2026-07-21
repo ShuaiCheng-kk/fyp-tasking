@@ -46,6 +46,11 @@ describe('shiftSwapSettingsService', () => {
       await expect(shiftSwapSettingsService.assertOwner('owner-1', 'company-1')).resolves.toBeUndefined()
     })
 
+    it('passes for a Partner in the same company', async () => {
+      vi.mocked(authRepository.findByAuthIdOrInternalId).mockResolvedValue({ id: 'partner-1', role: 'Partner', company_id: 'company-1' } as any)
+      await expect(shiftSwapSettingsService.assertOwner('partner-1', 'company-1')).resolves.toBeUndefined()
+    })
+
     it('rejects a non-Owner caller', async () => {
       vi.mocked(authRepository.findByAuthIdOrInternalId).mockResolvedValue(nonOwner as any)
       await expect(shiftSwapSettingsService.assertOwner('mgr-1', 'company-1')).rejects.toThrow('Only Owner')

@@ -139,6 +139,18 @@ type BulkEditRow = {
   end_time: string
   department_id: string
   assigned_user_id: string
+  // Carried through from the timeline row so the Assigned To dropdown can still show who's
+  // assigned even when that person (e.g. a Casual Worker) isn't in the Manager/Employee
+  // reassignment options list — without this it falls back to the placeholder as if unassigned.
+  assigned_user_name: string
+  // Snapshot of start_time/end_time/department_id/assigned_user_id as loaded, so Save Changes can
+  // submit only the rows the user actually touched instead of every row currently in the table —
+  // with a wide date range that can be 100+ rows, and each one is a real sequential edit on the
+  // server, so resubmitting untouched rows made a one-row change take as long as editing all of them.
+  original_start_time: string
+  original_end_time: string
+  original_department_id: string
+  original_assigned_user_id: string
 }
 
 type AiScheduleViolation = {
@@ -1166,11 +1178,11 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
   }, [maxDate, minDate, viewerParams])
 
   const fetchShiftTemplates = useCallback(async (cid: string) => {
-    if (!cid) return
-    const res = await fetch(`/api/shift-template?company_id=${cid}`)
+    if (!cid || !internalUserId) return
+    const res = await fetch(`/api/shift-template?company_id=${cid}&created_by=${internalUserId}`)
     const data = await res.json()
     setShiftTemplates(data.success ? data.templates ?? [] : [])
-  }, [])
+  }, [internalUserId])
 
   const fetchFixedOffDays = useCallback(async (cid: string) => {
     if (!cid) return
@@ -1256,9 +1268,11 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
   }, [companyId, fetchAssignmentData, fetchFutureRows, fetchTimeline, fetchShiftTemplates, fetchFixedOffDays, timelineDate])
 
   useEffect(() => {
-    if (!companyId || shiftViewMode !== 'calendar') return
+    // Manager view shows the Calendar section alongside the Timeline at all times (no tab switching),
+    // so it needs calendar week data regardless of shiftViewMode.
+    if (!companyId || (shiftViewMode !== 'calendar' && !scopeToManagerDepartments)) return
     void fetchCalWeek(companyId, timelineDate)
-  }, [companyId, shiftViewMode, timelineDate, fetchCalWeek])
+  }, [companyId, shiftViewMode, timelineDate, fetchCalWeek, scopeToManagerDepartments])
 
   // approved fixed off: `${user_id}|${YYYY-MM-DD}` → true (same keying as the Attendance page)
   const fixedOffByUserDate = useMemo(() => {
@@ -2480,6 +2494,11 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
             end_time: shift.end_time,
             department_id: shift.department_id,
             assigned_user_id: row.user_id ?? '',
+            assigned_user_name: row.user_id ? row.full_name : '',
+            original_start_time: shift.start_time,
+            original_end_time: shift.end_time,
+            original_department_id: shift.department_id,
+            original_assigned_user_id: row.user_id ?? '',
           })
         }
       }
@@ -2505,6 +2524,20 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
   const submitBulkEdit = async () => {
     const editableRows = bulkEditRows.filter(row => row.shift_date >= todayStr)
     if (!companyId || !internalUserId || editableRows.length === 0) return
+    // Only resubmit rows the user actually touched — with a wide date range the table can hold
+    // 100+ rows, and every item is a real sequential edit on the server, so sending the whole table
+    // back on every save made changing one row take as long as editing all of them.
+    const changedRows = editableRows.filter(row =>
+      row.shift_date !== row.original_shift_date ||
+      row.start_time !== row.original_start_time ||
+      row.end_time !== row.original_end_time ||
+      row.department_id !== row.original_department_id ||
+      row.assigned_user_id !== row.original_assigned_user_id,
+    )
+    if (changedRows.length === 0) {
+      setBulkEditModalOpen(false)
+      return
+    }
     setBulkEditSaving(true)
     setBulkEditError('')
     setBulkEditRowErrors({})
@@ -2515,7 +2548,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
         body: JSON.stringify({
           company_id: companyId,
           performed_by: internalUserId,
-          items: editableRows.map(row => ({
+          items: changedRows.map(row => ({
             id: row.id,
             shift_date: row.shift_date,
             start_time: row.start_time,
@@ -2636,6 +2669,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
           name: templateEditName.trim(),
           start_time: templateEditStartTime,
           end_time: templateEditEndTime,
+          requested_by: internalUserId,
         }),
       })
       const data = await res.json()
@@ -2657,7 +2691,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
     if (!companyId) return
     setTemplateDeleteLoadingId(templateId)
     try {
-      const res = await fetch(`/api/shift-template/${templateId}`, { method: 'DELETE' })
+      const res = await fetch(`/api/shift-template/${templateId}?requested_by=${internalUserId}`, { method: 'DELETE' })
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'Failed to delete template')
       await fetchShiftTemplates(companyId)
@@ -2714,6 +2748,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
           name: shiftTemplateFormName.trim(),
           start_time: shiftTemplateFormStartTime,
           end_time: shiftTemplateFormEndTime,
+          requested_by: internalUserId,
         } : {
           company_id: companyId,
           name: shiftTemplateFormName.trim(),
@@ -2740,7 +2775,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
   const handleDeleteShiftTemplateEntry = async (id: string) => {
     setDeleteShiftTemplateLoading(true)
     try {
-      const res = await fetch(`/api/shift-template/${id}`, { method: 'DELETE' })
+      const res = await fetch(`/api/shift-template/${id}?requested_by=${internalUserId}`, { method: 'DELETE' })
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'Failed to delete template')
       await fetchShiftTemplates(companyId)
@@ -2951,12 +2986,19 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
             )
           })()}
           {row.shifts.map(shift => {
-            const startMin = Math.max(timeToMinutes(shift.start_time), rangeStartHour * 60)
-            const endMin = Math.min(timeToMinutes(shift.end_time), rangeEndHour * 60)
+            const rawStartMin = timeToMinutes(shift.start_time)
+            const rawEndMin = timeToMinutes(shift.end_time)
+            const windowStartMin = rangeStartHour * 60
+            const windowEndMin = rangeEndHour * 60
+            // A shift entirely before/after the visible hour window would otherwise clamp to a
+            // negative-width bar and vanish with no trace. Pin it to a thin marker at the nearest
+            // edge instead, so it stays visible (and clickable) even outside the current window.
+            const outsideWindow = rawEndMin <= windowStartMin || rawStartMin >= windowEndMin
+            const startMin = outsideWindow ? (rawEndMin <= windowStartMin ? windowStartMin : windowEndMin) : Math.max(rawStartMin, windowStartMin)
+            const endMin = outsideWindow ? startMin : Math.min(rawEndMin, windowEndMin)
             const left = tlPad(startMin)
             const right = tlPad(endMin)
-            const width = right - left
-            if (width <= 0) return null
+            const width = Math.max(right - left, 0)
             const shiftColor = isUnassignedRow ? '#94A3B8' : deptColor(row.department_id)
             const isDraft = shift.publication_status === 'draft'
             return (
@@ -3274,6 +3316,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
           </div>
         </div>
 
+        {!scopeToManagerDepartments && (
         <div style={{ padding: '0 28px 16px', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start' }}>
             <div
@@ -3343,6 +3386,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
             </div>
           </div>
         </div>
+        )}
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 24, padding: '0 28px 24px', flex: 1, minHeight: 0, overflow: 'hidden' }}>
           {initialReady && !companyId && (
@@ -3351,7 +3395,118 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
             </div>
           )}
 
-          {companyId && (
+          {companyId && scopeToManagerDepartments && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16, flex: 1, minHeight: 0, overflowY: 'auto' }}>
+              <section className="shift-timeline-panel" style={{ background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '14px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, flexWrap: 'wrap', flexShrink: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <CalendarDays size={15} style={{ color: '#F97316' }} />
+                    </div>
+                    <span style={SECTION_TITLE_STYLE}>{orderedDepartments[0] ? `${orderedDepartments[0].name} Shift Timeline` : 'Shift Timeline'}</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <div ref={timelineControlsRef} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <button type="button" onClick={() => setTimelineDateAndClearSelection(formatDateKey(new Date()))} style={{ height: 38, padding: '0 14px', border: `1px solid ${PANEL_BORDER}`, borderRadius: 8, background: timelineDate === formatDateKey(new Date()) ? '#F97316' : '#FFFFFF', color: timelineDate === formatDateKey(new Date()) ? '#FFFFFF' : TEXT_DARK, fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'background 0.15s, color 0.15s' }}>Today</button>
+                      <button type="button" onClick={() => setTimelineByOffset(-1)} style={iconButtonStyle}><ChevronLeft size={16} /></button>
+                      <TimelineDatePicker value={timelineDate} onChange={setTimelineDateAndClearSelection} shiftDates={datesWithShifts} anchorRef={timelineControlsRef} />
+                      <button type="button" onClick={() => setTimelineByOffset(1)} style={iconButtonStyle}><ChevronRight size={16} /></button>
+                    </div>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger
+                        data-testid="shift-timeline-menu"
+                        aria-label="Timeline options"
+                        style={{ ...iconButtonStyle, width: 38, height: 38 }}
+                      >
+                        <MoreHorizontal size={16} />
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" sideOffset={10} style={{ width: 280, borderRadius: 16, padding: 16, border: `1px solid ${PANEL_BORDER}`, background: '#FFFFFF', boxShadow: '0 4px 24px rgba(0,0,0,0.10)' }}>
+                        <p style={{ margin: '0 0 10px', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.07em', color: '#9CA3AF' }}>Time Window</p>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 14 }}>
+                          {[
+                            {
+                              label: 'Auto-fit',
+                              onClick: () => { setRangeStartHour(autoFitRange.from); setRangeEndHour(autoFitRange.to); setIsAutoFit(true) },
+                              active: isAutoFit,
+                            },
+                            {
+                              label: 'Full day',
+                              onClick: () => { setRangeStartHour(0); setRangeEndHour(24); setIsAutoFit(false) },
+                              active: !isAutoFit && rangeStartHour === 0 && rangeEndHour === 24,
+                            },
+                          ].map(option => (
+                            <button
+                              key={option.label}
+                              type="button"
+                              onClick={option.onClick}
+                              style={{
+                                cursor: 'pointer',
+                                borderRadius: 10,
+                                border: option.active ? '1.5px solid #FDBA74' : `1px solid ${PANEL_BORDER}`,
+                                background: option.active ? '#FFF7ED' : '#F9FAFB',
+                                padding: '8px 6px',
+                                textAlign: 'center',
+                              }}
+                            >
+                              <p style={{ margin: 0, fontSize: 12, fontWeight: 600, color: option.active ? '#EA580C' : '#374151' }}>{option.label}</p>
+                            </button>
+                          ))}
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                          {[
+                            { label: 'From', val: rangeStartHour, dec: () => { setIsAutoFit(false); setRangeStartHour(Math.max(0, rangeStartHour - 1)) }, inc: () => { setIsAutoFit(false); setRangeStartHour(Math.min(rangeEndHour - 1, rangeStartHour + 1)) } },
+                            { label: 'To', val: rangeEndHour, dec: () => { setIsAutoFit(false); setRangeEndHour(Math.max(rangeStartHour + 1, rangeEndHour - 1)) }, inc: () => { setIsAutoFit(false); setRangeEndHour(Math.min(24, rangeEndHour + 1)) } },
+                          ].map(control => (
+                            <div key={control.label}>
+                              <p style={{ margin: '0 0 6px', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.07em', color: '#9CA3AF' }}>{control.label}</p>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <button type="button" onClick={control.dec} aria-label={`Decrease ${control.label}`} style={{ width: 28, height: 28, borderRadius: 7, border: `1px solid ${PANEL_BORDER}`, background: '#F9FAFB', cursor: 'pointer', fontSize: 14, color: MUTED, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>−</button>
+                                <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: TEXT_DARK, textAlign: 'center' }}>{formatHourLabel(control.val)}</span>
+                                <button type="button" onClick={control.inc} aria-label={`Increase ${control.label}`} style={{ width: 28, height: 28, borderRadius: 7, border: `1px solid ${PANEL_BORDER}`, background: '#F9FAFB', cursor: 'pointer', fontSize: 14, color: MUTED, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>+</button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                </div>
+                {renderTimeline()}
+              </section>
+
+              <section className="shift-calendar-panel" style={{ background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '14px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, flexWrap: 'wrap', flexShrink: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <CalendarDays size={15} style={{ color: '#F97316' }} />
+                    </div>
+                    <span style={SECTION_TITLE_STYLE}>{orderedDepartments[0] ? `${orderedDepartments[0].name} Shift Calendar` : 'Shift Calendar'}</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    {(() => {
+                      const anchor = new Date(`${timelineDate}T00:00:00`)
+                      const dow = (anchor.getDay() + 6) % 7  // 0=Mon … 6=Sun
+                      const mon = new Date(anchor); mon.setDate(anchor.getDate() - dow)
+                      const sun = new Date(mon); sun.setDate(mon.getDate() + 6)
+                      const fmt = (d: Date) => `${String(d.getDate()).padStart(2,'0')} ${d.toLocaleDateString('en-AU',{month:'short'})}`
+                      const weekLabel = `${fmt(mon)} – ${fmt(sun)} ${sun.getFullYear()}`
+                      const goWeek = (dir: number) => setTimelineDateAndClearSelection(formatDateKey(addDays(mon, dir * 7)))
+                      return (
+                        <>
+                          <button type="button" onClick={() => goWeek(-1)} style={iconButtonStyle}><ChevronLeft size={16} /></button>
+                          <span style={{ fontSize: 13, fontWeight: 500, color: TEXT_DARK, padding: '0 12px', minWidth: 176, textAlign: 'center', height: 38, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, border: `1px solid ${PANEL_BORDER}`, borderRadius: 9, background: '#FFFFFF', fontFamily: 'var(--font-body), system-ui, sans-serif' }}><CalendarDays size={14} color="#64748B" style={{ flexShrink: 0 }} />{weekLabel}</span>
+                          <button type="button" onClick={() => goWeek(1)} style={iconButtonStyle}><ChevronRight size={16} /></button>
+                        </>
+                      )
+                    })()}
+                  </div>
+                </div>
+                {renderCalendarView()}
+              </section>
+            </div>
+          )}
+
+          {companyId && !scopeToManagerDepartments && (
             <>
               <div style={{ display: 'grid', gridTemplateColumns: 'minmax(300px, 326px) minmax(0, 1fr)', gap: 16, alignItems: 'stretch', flex: 1, minHeight: 0, overflow: 'hidden' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minWidth: 0, minHeight: 0, overflowY: 'auto' }}>
@@ -5786,6 +5941,13 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                     {bulkEditRows.map(row => {
                       const rowError = bulkEditRowErrors[row.id]
                       const rowMembers = members.filter(m => m.department_id === row.department_id)
+                      const assignedUserOptions = rowMembers.map(m => ({ value: m.id, label: m.full_name }))
+                      // The currently assigned person may not be in the Manager/Employee reassignment
+                      // list (e.g. a Casual Worker) — still show who they are instead of the dropdown
+                      // silently falling back to its "unassigned" placeholder.
+                      if (row.assigned_user_id && !rowMembers.some(m => m.id === row.assigned_user_id)) {
+                        assignedUserOptions.unshift({ value: row.assigned_user_id, label: row.assigned_user_name || 'Assigned' })
+                      }
                       const isPast = row.shift_date < todayStr
                       const isDeleting = bulkEditDeletingId === row.id
                       return (
@@ -5810,15 +5972,15 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                             <DropdownField
                               value={row.department_id}
                               options={departments.map(dept => ({ value: dept.id, label: dept.name }))}
-                              onChange={v => updateBulkEditRow(row.id, { department_id: v, assigned_user_id: '' })}
+                              onChange={v => updateBulkEditRow(row.id, { department_id: v, assigned_user_id: '', assigned_user_name: '' })}
                               disabled={isPast}
                             />
                           </td>
                           <td style={{ padding: '6px 8px', borderBottom: `1px solid ${PANEL_BORDER}` }}>
                             <DropdownField
                               value={row.assigned_user_id}
-                              options={rowMembers.map(m => ({ value: m.id, label: m.full_name }))}
-                              onChange={v => updateBulkEditRow(row.id, { assigned_user_id: v })}
+                              options={assignedUserOptions}
+                              onChange={v => updateBulkEditRow(row.id, { assigned_user_id: v, assigned_user_name: rowMembers.find(m => m.id === v)?.full_name ?? '' })}
                               placeholder={isPast ? 'Unassigned' : 'Open — needs staffing'}
                               disabled={isPast}
                             />

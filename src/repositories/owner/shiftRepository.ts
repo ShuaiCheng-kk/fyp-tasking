@@ -211,7 +211,7 @@ export const shiftRepository = {
       .from('shift_assignments')
       .delete()
       .eq('shift_id', shift_id)
-    if (error) throw new Error(error.message)
+    if (error) throw new Error(error.code === '23503' ? 'Cannot reassign this shift — attendance has already been recorded against it.' : error.message)
   },
 
   async deleteAssignmentsByShiftIds(shift_ids: string[]): Promise<void> {
@@ -220,7 +220,7 @@ export const shiftRepository = {
       .from('shift_assignments')
       .delete()
       .in('shift_id', shift_ids)
-    if (error) throw new Error(error.message)
+    if (error) throw new Error(error.code === '23503' ? 'Cannot reassign this shift — attendance has already been recorded against it.' : error.message)
   },
 
   async deleteAssignmentById(assignment_id: string): Promise<void> {
@@ -228,7 +228,7 @@ export const shiftRepository = {
       .from('shift_assignments')
       .delete()
       .eq('id', assignment_id)
-    if (error) throw new Error(error.message)
+    if (error) throw new Error(error.code === '23503' ? 'Cannot remove this assignment — attendance has already been recorded against it.' : error.message)
   },
 
   async getAssignmentById(assignment_id: string): Promise<ShiftAssignment | null> {
@@ -255,13 +255,23 @@ export const shiftRepository = {
 
   async getAssignmentsByShiftIds(ids: string[]): Promise<ShiftAssignment[]> {
     if (ids.length === 0) return []
-    const { data, error } = await supabase
-      .from('shift_assignments')
-      .select('*')
-      .in('shift_id', ids)
-      .order('created_at', { ascending: true })
-    if (error) throw new Error(error.message)
-    return (data ?? []) as ShiftAssignment[]
+    // A wide date range (e.g. Bulk Edit's up-to-31-day window, or a large company's Timeline) can
+    // push this past a few hundred ids — a single .in() GET request encodes every id into the URL
+    // and a long enough one fails at the transport level (a raw "TypeError: fetch failed" with no
+    // HTTP status), so batch it instead of sending it as one call.
+    const CHUNK_SIZE = 200
+    const chunks: string[][] = []
+    for (let i = 0; i < ids.length; i += CHUNK_SIZE) chunks.push(ids.slice(i, i + CHUNK_SIZE))
+    const results = await Promise.all(chunks.map(async chunk => {
+      const { data, error } = await supabase
+        .from('shift_assignments')
+        .select('*')
+        .in('shift_id', chunk)
+        .order('created_at', { ascending: true })
+      if (error) throw new Error(error.message)
+      return (data ?? []) as ShiftAssignment[]
+    }))
+    return results.flat().sort((a, b) => a.created_at.localeCompare(b.created_at))
   },
 
   async getAssignmentsByUserAndDateRange(

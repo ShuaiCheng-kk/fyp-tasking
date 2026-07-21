@@ -1096,13 +1096,10 @@ export type TeamViewPermissions = {
   canInviteMembersCsv: boolean       // UC32
 }
 
-export default function TeamView({ sidebar, basePath, permissions, scopeToManagerDepartments = false }: {
+export default function TeamView({ sidebar, basePath, permissions }: {
   sidebar: React.ReactNode
   basePath: string
   permissions: TeamViewPermissions
-  // Manager role scope: restrict members + department blocks to the viewer's own
-  // departments (Owner/Partner leaders stay visible so the org chart keeps its root).
-  scopeToManagerDepartments?: boolean
 }) {
   const router = useRouter()
   const [userId, setUserId] = useState('')
@@ -1566,40 +1563,16 @@ export default function TeamView({ sidebar, basePath, permissions, scopeToManage
     return () => document.removeEventListener('keydown', onKey)
   }, [closeModal])
 
-  // Manager scope: null = scoping off or not yet resolved; a Set = filter to these departments.
-  const scopedDeptIdsRef = useRef<Set<string> | null>(null)
-
-  const scopeMembers = useCallback((members: TeamMember[]): TeamMember[] => {
-    const ids = scopedDeptIdsRef.current
-    if (!ids) return members
-    return members.filter(m => m.role === 'Owner' || m.role === 'Partner' || (m.department_id != null && ids.has(m.department_id)))
-  }, [])
-
   const fetchTeamMembers = useCallback(async (cid: string) => {
     if (!cid) return
     setTeamLoading(true)
     try {
       const res = await fetch(`/api/team/members?company_id=${cid}`)
       const data = await res.json()
-      if (data.success) { setTeamMembers(scopeMembers(data.members)); setLastRefreshed(new Date()) }
+      if (data.success) { setTeamMembers(data.members); setLastRefreshed(new Date()) }
     } catch {}
     finally { setTeamLoading(false) }
-  }, [scopeMembers])
-
-  // Resolve the manager's own departments, then re-filter the member list through them.
-  useEffect(() => {
-    if (!scopeToManagerDepartments || !internalUserId || !companyId) return
-    let cancelled = false
-    fetch(`/api/manager/departments?manager_id=${internalUserId}&company_id=${companyId}`)
-      .then(r => r.json())
-      .then(d => {
-        if (cancelled || !d.success) return
-        scopedDeptIdsRef.current = new Set((d.departments as { department_id: string }[]).map(x => x.department_id))
-        fetchTeamMembers(companyId)
-      })
-      .catch(() => {})
-    return () => { cancelled = true }
-  }, [scopeToManagerDepartments, internalUserId, companyId, fetchTeamMembers])
+  }, [])
 
   // Realtime: auto-refresh team list when a new user joins the company
   useEffect(() => {
@@ -1720,9 +1693,7 @@ export default function TeamView({ sidebar, basePath, permissions, scopeToManage
 
       if (storedCid) {
         setCompanyId(storedCid)
-        // Under manager scoping, the first member load waits for the department
-        // resolution effect (it re-fetches once scoped ids are known).
-        if (!scopeToManagerDepartments) fetchTeamMembers(storedCid)
+        fetchTeamMembers(storedCid)
         fetchActivityLogs(storedCid)
         try {
           const params = new URLSearchParams({ user_id: uid, company_id: storedCid })
@@ -1746,7 +1717,7 @@ export default function TeamView({ sidebar, basePath, permissions, scopeToManage
             })
           }
           if (!cancelled && deptData.success) {
-            setCompanyDepartments(scopedDeptIdsRef.current ? deptData.departments.filter((d: Department) => scopedDeptIdsRef.current!.has(d.id)) : deptData.departments)
+            setCompanyDepartments(deptData.departments)
             setDeptColorOverrides(deptData.departments)
           }
         } catch {}
@@ -2238,7 +2209,7 @@ export default function TeamView({ sidebar, basePath, permissions, scopeToManage
       await Promise.all([fetchTeamMembers(companyId), (async () => {
         const deptRes = await fetch(`/api/company/departments?company_id=${companyId}`)
         const deptData = await deptRes.json()
-        if (deptData.success) { setCompanyDepartments(scopedDeptIdsRef.current ? deptData.departments.filter((d: Department) => scopedDeptIdsRef.current!.has(d.id)) : deptData.departments); setDeptColorOverrides(deptData.departments) }
+        if (deptData.success) { setCompanyDepartments(deptData.departments); setDeptColorOverrides(deptData.departments) }
       })()])
     } catch (err) {
       setDepartmentActionError(err instanceof Error ? err.message : 'Failed to save department')
@@ -2269,7 +2240,7 @@ export default function TeamView({ sidebar, basePath, permissions, scopeToManage
         (async () => {
           const deptRes = await fetch(`/api/company/departments?company_id=${companyId}`)
           const deptData = await deptRes.json()
-          if (deptData.success) { setCompanyDepartments(scopedDeptIdsRef.current ? deptData.departments.filter((d: Department) => scopedDeptIdsRef.current!.has(d.id)) : deptData.departments); setDeptColorOverrides(deptData.departments) }
+          if (deptData.success) { setCompanyDepartments(deptData.departments); setDeptColorOverrides(deptData.departments) }
         })(),
       ])
     } catch (err) {
@@ -2281,13 +2252,12 @@ export default function TeamView({ sidebar, basePath, permissions, scopeToManage
 
   const isCreator = !!internalUserId && !!companyOwnerId && internalUserId === companyOwnerId
 
+  // Removing members is Owner-only — Partner is a clone of Owner everywhere else, but cannot
+  // remove anyone (not another Partner, not a Manager, not an Employee).
   const canRemove = (member: TeamMember): boolean => {
     if (member.id === internalUserId) return false
     if (member.id === companyOwnerId) return false
-    if (isCreator) return true
-    // Non-creator Owner or Partner can remove anyone except an Owner
-    if ((currentUserRole === 'Owner' || currentUserRole === 'Partner') && member.role !== 'Owner') return true
-    return false
+    return isCreator
   }
 
   const sendDisabled = inviteLoading ||

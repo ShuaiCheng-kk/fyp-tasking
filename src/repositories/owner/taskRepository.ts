@@ -68,26 +68,37 @@ export const taskRepository = {
     return (data ?? []) as TaskAssignment[]
   },
 
-  async getTasksByCompany(company_id: string, assigned_by?: string): Promise<Task[]> {
+  // department_ids is a security-scoping filter (e.g. a Manager's own departments), distinct from
+  // any single department_id a caller applies afterwards as a UI-level "show just this one" filter.
+  async getTasksByCompany(company_id: string, assigned_by?: string | string[], department_ids?: string[]): Promise<Task[]> {
     let query = supabase
       .from('tasks')
-      .select('id, shift_id, company_id, department_id, parent_task_id, sequence_order, title, description, assigned_user_id, assigned_by, status, percentage_complete, priority, due_at, task_date, recurrence_group_id, source_task_id, is_archived, rejection_reason, rejected_at, delay_alert_read_at, completed_at, created_at, updated_at, shifts(shift_date)')
+      .select('id, shift_id, company_id, department_id, parent_task_id, sequence_order, title, description, assigned_user_id, assigned_by, status, percentage_complete, priority, due_at, task_date, recurrence_group_id, source_task_id, is_archived, rejection_reason, rejected_at, completed_at, created_at, updated_at, shifts(shift_date)')
       .eq('company_id', company_id)
       .eq('is_archived', false)
-    if (assigned_by) query = query.eq('assigned_by', assigned_by)
+    if (Array.isArray(assigned_by)) {
+      if (assigned_by.length === 0) return []
+      query = query.in('assigned_by', assigned_by)
+    } else if (assigned_by) {
+      query = query.eq('assigned_by', assigned_by)
+    }
+    if (department_ids) {
+      if (department_ids.length === 0) return []
+      query = query.in('department_id', department_ids)
+    }
     const { data, error } = await query.order('created_at', { ascending: false })
     if (error) throw new Error(error.message)
     const tasks = ((data ?? []) as unknown as (Task & { shifts: { shift_date: string }[] | null })[]).map(row => ({
       ...row,
       shift_date: row.shifts && row.shifts.length > 0 ? row.shifts[0].shift_date : null,
     }))
-    return this.attachAssignedUserIds(tasks)
+    return this.attachAssignedByNames(await this.attachAssignedUserIds(tasks))
   },
 
   async getArchivedTasksByCompany(company_id: string): Promise<Task[]> {
     const { data, error } = await supabase
       .from('tasks')
-      .select('id, shift_id, company_id, department_id, parent_task_id, sequence_order, title, description, assigned_user_id, assigned_by, status, percentage_complete, priority, due_at, task_date, recurrence_group_id, source_task_id, is_archived, rejection_reason, rejected_at, delay_alert_read_at, completed_at, created_at, updated_at, shifts(shift_date)')
+      .select('id, shift_id, company_id, department_id, parent_task_id, sequence_order, title, description, assigned_user_id, assigned_by, status, percentage_complete, priority, due_at, task_date, recurrence_group_id, source_task_id, is_archived, rejection_reason, rejected_at, completed_at, created_at, updated_at, shifts(shift_date)')
       .eq('company_id', company_id)
       .eq('is_archived', true)
       // Sub-tasks and recurring sibling occurrences (source_task_id set) archive alongside their
@@ -100,7 +111,7 @@ export const taskRepository = {
       ...row,
       shift_date: row.shifts && row.shifts.length > 0 ? row.shifts[0].shift_date : null,
     }))
-    return this.attachAssignedUserIds(tasks)
+    return this.attachAssignedByNames(await this.attachAssignedUserIds(tasks))
   },
 
   // Batch-attaches the full assignee set onto each top-level task (one extra query, not per row).
@@ -114,6 +125,19 @@ export const taskRepository = {
       byTaskId.set(a.task_id, ids)
     }
     return tasks.map(t => ({ ...t, assigned_user_ids: byTaskId.get(t.id) ?? (t.assigned_user_id ? [t.assigned_user_id] : []) }))
+  },
+
+  // Batch-attaches the assigner's display name so every Task detail view (any role) can show
+  // "Assigned By" without a separate members-list fetch — needed in particular by Casual Worker's
+  // task board, which never loads the full company member list.
+  async attachAssignedByNames(tasks: Task[]): Promise<Task[]> {
+    if (tasks.length === 0) return tasks
+    const ids = [...new Set(tasks.map(t => t.assigned_by).filter((id): id is string => !!id))]
+    if (ids.length === 0) return tasks
+    const { data, error } = await supabase.from('users').select('id, full_name').in('id', ids)
+    if (error) throw new Error(error.message)
+    const nameById = new Map((data ?? []).map(u => [u.id as string, u.full_name as string]))
+    return tasks.map(t => ({ ...t, assigned_by_name: t.assigned_by ? nameById.get(t.assigned_by) ?? null : null }))
   },
 
   async getTasksByShift(shift_id: string): Promise<Task[]> {
@@ -161,7 +185,7 @@ export const taskRepository = {
       .eq('is_archived', false)
       .order('created_at', { ascending: true })
     if (error) throw new Error(error.message)
-    return (data ?? []) as Task[]
+    return this.attachAssignedByNames((data ?? []) as Task[])
   },
 
   async getSubTasks(parent_task_id: string): Promise<Task[]> {
@@ -229,6 +253,44 @@ export const taskRepository = {
         return Array.isArray(row.users) ? row.users[0] ?? null : row.users
       })
       .filter((user): user is { id: string; full_name: string } => !!user)
+  },
+
+  // Batch version of getManagersByDepartment — every manager assigned to ANY of the given
+  // departments, de-duplicated. A manager assigned to two of the given departments still only
+  // appears once (needed so a multi-department manager is correctly counted as a shared peer).
+  async getManagersByDepartmentIds(company_id: string, department_ids: string[]): Promise<{ id: string; full_name: string }[]> {
+    if (department_ids.length === 0) return []
+    const { data, error } = await supabase
+      .from('manager_departments')
+      .select('users!manager_departments_manager_id_fkey!inner(id, full_name)')
+      .eq('company_id', company_id)
+      .in('department_id', department_ids)
+    if (error) throw new Error(error.message)
+    const byId = new Map<string, { id: string; full_name: string }>()
+    for (const row of (data ?? []) as { users?: { id: string; full_name: string } | { id: string; full_name: string }[] | null }[]) {
+      const user = Array.isArray(row.users) ? row.users[0] : row.users
+      if (user) byId.set(user.id, user)
+    }
+    return [...byId.values()]
+  },
+
+  // Mirrors getManagersByDepartment for the Employee tier — the AI Workload Suggestion candidate
+  // pool for a Manager's own team (Employees only, never Managers).
+  async getEmployeesByDepartment(company_id: string, department_id: string): Promise<{ id: string; full_name: string }[]> {
+    const { data: links, error: linksError } = await supabase
+      .from('employee_departments')
+      .select('employee_id')
+      .eq('department_id', department_id)
+    if (linksError) throw new Error(linksError.message)
+    const employeeIds = [...new Set((links ?? []).map((row: { employee_id: string }) => row.employee_id))]
+    if (employeeIds.length === 0) return []
+    const { data: users, error: usersError } = await supabase
+      .from('users')
+      .select('id, full_name')
+      .eq('company_id', company_id)
+      .in('id', employeeIds)
+    if (usersError) throw new Error(usersError.message)
+    return (users ?? []) as { id: string; full_name: string }[]
   },
 
   async getEmployeeDepartmentIds(user_id: string): Promise<string[]> {
@@ -490,11 +552,33 @@ export const taskRepository = {
     if (error) throw new Error(error.message)
   },
 
-  async markDelayAlertsRead(task_ids: string[]): Promise<void> {
+  // Per-viewer acknowledgement — Owner and Partner are peer assigner roles viewing the same
+  // tasks, so one of them dismissing an alert must not dismiss it for the other.
+  async markDelayAlertsRead(task_ids: string[], user_id: string): Promise<void> {
     const { error } = await supabase
-      .from('tasks')
-      .update({ delay_alert_read_at: new Date().toISOString() })
-      .in('id', task_ids)
+      .from('task_delay_alert_reads')
+      .upsert(
+        task_ids.map(task_id => ({ task_id, user_id, read_at: new Date().toISOString() })),
+        { onConflict: 'task_id,user_id' },
+      )
+    if (error) throw new Error(error.message)
+  },
+
+  async getDelayAlertReadsByUser(user_id: string): Promise<Map<string, string>> {
+    const { data, error } = await supabase
+      .from('task_delay_alert_reads')
+      .select('task_id, read_at')
+      .eq('user_id', user_id)
+    if (error) throw new Error(error.message)
+    return new Map((data ?? []).map(row => [row.task_id as string, row.read_at as string]))
+  },
+
+  // A new deadline is a new delay window — un-dismiss for every viewer who had acknowledged it.
+  async clearDelayAlertReads(task_id: string): Promise<void> {
+    const { error } = await supabase
+      .from('task_delay_alert_reads')
+      .delete()
+      .eq('task_id', task_id)
     if (error) throw new Error(error.message)
   },
 

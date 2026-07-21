@@ -114,7 +114,10 @@ export const shiftService = {
     assignment?: {
       assigned_user_id: string | null
       assigned_by: string
-      supervisor_employee_id: string | null
+      // undefined = caller did not specify a supervisor, so keep whatever the assignment
+      // already has instead of clobbering it — callers like Bulk Edit have no supervisor
+      // field in their UI and must not silently wipe it on an unrelated save.
+      supervisor_employee_id?: string | null
     },
     performed_by?: string,
   ): Promise<ShiftMutationResult> {
@@ -138,6 +141,18 @@ export const shiftService = {
 
     const previousAssignments = await shiftRepository.getAssignmentsByShiftIds([id])
     const previousUserId = previousAssignments[0]?.user_id ?? null
+    const previousSupervisorId = previousAssignments[0]?.supervisor_employee_id ?? null
+    const nextSupervisorId = assignment?.supervisor_employee_id !== undefined
+      ? assignment.supervisor_employee_id
+      : previousSupervisorId
+    // Skip touching shift_assignments entirely when nothing about the assignment actually
+    // changed (e.g. saving other shift fields with the assignee dropdown left as-is) — deleting
+    // and recreating the row for a no-op reassignment would violate the FK from attendance_records
+    // once attendance has been recorded against that assignment.
+    const assignmentChanged = !!assignment && (
+      assignment.assigned_user_id !== previousUserId ||
+      nextSupervisorId !== previousSupervisorId
+    )
 
     // Reassigning to someone who is already working that day would otherwise double-book them.
     // Swap instead: give the new assignee's existing same-day shift to whoever this shift is being taken from.
@@ -163,14 +178,14 @@ export const shiftService = {
     const shift = Object.keys(fields).length > 0
       ? await shiftRepository.updateShift(id, fields)
       : existing
-    if (assignment) {
+    if (assignmentChanged) {
       await shiftRepository.deleteAssignmentsByShiftId(id)
-      if (assignment.assigned_user_id) {
+      if (assignment!.assigned_user_id) {
         await shiftRepository.createShiftAssignment({
           shift_id: id,
-          user_id: assignment.assigned_user_id,
-          assigned_by: assignment.assigned_by,
-          supervisor_employee_id: assignment.supervisor_employee_id,
+          user_id: assignment!.assigned_user_id,
+          assigned_by: assignment!.assigned_by,
+          supervisor_employee_id: nextSupervisorId,
         })
       }
     }
@@ -193,7 +208,7 @@ export const shiftService = {
     if (fields.department_id !== undefined) cascadeFields.department_id = fields.department_id
     const hasFieldCascade = Object.keys(cascadeFields).length > 0
 
-    if (isRecurrenceOriginal && (hasFieldCascade || assignment)) {
+    if (isRecurrenceOriginal && (hasFieldCascade || assignmentChanged)) {
       const siblings = (await shiftRepository.getShiftsByRecurrenceGroupId(existing.recurrence_group_id!))
         .filter(s => s.id !== id)
 
@@ -206,12 +221,12 @@ export const shiftService = {
           siblingChanged = true
         }
 
-        if (assignment) {
+        if (assignmentChanged) {
           const siblingAssignments = await shiftRepository.getAssignmentsByShiftIds([sibling.id])
-          if (assignment.assigned_user_id) {
+          if (assignment!.assigned_user_id) {
             const siblingDate = cascadeFields.shift_date ?? sibling.shift_date
             const siblingConflicts = await shiftRepository.getAssignmentsByUserAndDateRange(
-              assignment.assigned_user_id,
+              assignment!.assigned_user_id,
               siblingDate,
               siblingDate,
               sibling.id,
@@ -219,13 +234,16 @@ export const shiftService = {
             if (siblingConflicts.some(a => a.shifts)) continue
           }
           cascadedPreviousAssignments.push(...siblingAssignments)
+          const siblingSupervisorId = assignment!.supervisor_employee_id !== undefined
+            ? assignment!.supervisor_employee_id
+            : (siblingAssignments[0]?.supervisor_employee_id ?? null)
           await shiftRepository.deleteAssignmentsByShiftId(sibling.id)
-          if (assignment.assigned_user_id) {
+          if (assignment!.assigned_user_id) {
             await shiftRepository.createShiftAssignment({
               shift_id: sibling.id,
-              user_id: assignment.assigned_user_id,
-              assigned_by: assignment.assigned_by,
-              supervisor_employee_id: assignment.supervisor_employee_id,
+              user_id: assignment!.assigned_user_id,
+              assigned_by: assignment!.assigned_by,
+              supervisor_employee_id: siblingSupervisorId,
             })
           }
           siblingChanged = true
@@ -283,7 +301,9 @@ export const shiftService = {
           fields,
           item.assigned_user_id === undefined
             ? undefined
-            : { assigned_user_id: item.assigned_user_id, assigned_by: performed_by, supervisor_employee_id: null },
+            // Bulk Edit has no supervisor field — omit supervisor_employee_id so editShift
+            // preserves whatever the assignment already has instead of clearing it.
+            : { assigned_user_id: item.assigned_user_id, assigned_by: performed_by },
         )
         updated.push(result.shift)
         previousShifts.push(existing)

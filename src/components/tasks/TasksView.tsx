@@ -1023,7 +1023,10 @@ function TaskCard({
   const showStack = !!subTaskCount && !expanded
   // Rejected in Review and back to In Progress — the assignee owes rework on this one.
   const needsRework = !isSubTask && !!task.rejection_reason && task.status === 'In Progress'
-  const hasTopRowBadges = !!(priority && task.priority) || !!dept || !!subTaskCount || needsRework
+  // Surfaced only when someone ELSE assigned this task (isOwner false) — e.g. a peer Manager in
+  // the same department, or a peer Owner/Partner. On your own tasks it would just be redundant.
+  const assignedByLabel = !isOwner && !isSubTask && !compact ? task.assigned_by_name : null
+  const hasTopRowBadges = !!(priority && task.priority) || !!dept || !!subTaskCount || needsRework || !!assignedByLabel
   // Review cards pulse to nudge the viewer toward the pending sign-off — every Review card on the
   // board, regardless of who assigned it. Skipped in the compact calendar (too noisy in a dense
   // grid) and when the delay-alert highlight ring is already on.
@@ -1086,6 +1089,11 @@ function TaskCard({
             </span>
           )}
           {dept && <DepartmentBadge departmentId={dept.id} departmentName={dept.name} />}
+          {assignedByLabel && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: compact ? '0.6rem' : '0.68rem', fontWeight: 700, padding: compact ? '3px 8px' : '4px 10px', borderRadius: '99px', background: '#F1F5F9', color: '#475569' }}>
+              <UserRound size={10} /> {assignedByLabel}
+            </span>
+          )}
           {!!subTaskCount && (
             <button
               type="button"
@@ -1672,12 +1680,20 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
     if (!cid || !internalUserId) return
     if (!silent) setKanbanLoading(true)
     try {
-      const res = await fetch(`/api/task?company_id=${cid}&kanban=true&assigned_by=${encodeURIComponent(internalUserId)}`)
+      // Owner and Partner are peer "assigner" roles over the same Manager tier — each should see
+      // every Owner/Partner-assigned task (edit/delete stays restricted to the actual assigner via
+      // isTaskOwner checks below), not just the ones they personally assigned. Managers get the
+      // same peer visibility within their own department(s), resolved server-side (manager_scope_id)
+      // since it depends on manager_departments membership, not just role.
+      const scopeParam = scopeToManagerDepartments
+        ? `manager_scope_id=${encodeURIComponent(internalUserId)}`
+        : `assigned_by=${encodeURIComponent(members.filter(m => m.role === 'Owner' || m.role === 'Partner').map(m => m.id).join(',') || internalUserId)}`
+      const res = await fetch(`/api/task?company_id=${cid}&kanban=true&${scopeParam}&viewer_id=${encodeURIComponent(internalUserId)}`)
       const data = await res.json()
       if (data.success) setKanban(data.groups)
     } catch {}
     finally { if (!silent) setKanbanLoading(false) }
-  }, [internalUserId])
+  }, [internalUserId, members, scopeToManagerDepartments])
 
   useEffect(() => {
     if (!companyId) return
@@ -2108,6 +2124,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          action: 'apply_workload_suggestion',
           id: suggestion.suggested_task_id,
           assigned_user_id: suggestion.recommended_user_id,
           assigned_by: internalUserId || undefined,
@@ -2188,7 +2205,13 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
     if (!companyId || !internalUserId) return
     setInsightLoading('workload'); setInsightError('')
     try {
-      const userParam = `&assigned_by=${encodeURIComponent(internalUserId)}`
+      // Same peer scope as fetchKanban — Owner and Partner are peers over the same Manager
+      // tier, so the rebalancing pool must include tasks either of them assigned, not just the
+      // current viewer's own. Otherwise a Partner who rarely assigns tasks personally would see
+      // (and be able to reassign) almost nothing.
+      const userParam = scopeToManagerDepartments
+        ? `&manager_scope_id=${encodeURIComponent(internalUserId)}`
+        : `&assigned_by=${encodeURIComponent(members.filter(m => m.role === 'Owner' || m.role === 'Partner').map(m => m.id).join(',') || internalUserId)}`
       const res = await fetch(`/api/task?company_id=${companyId}&suggestion=workload${userParam}`)
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
@@ -2197,7 +2220,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
       if (suggestions.length === 0) setWorkloadInsightOpen(false)
     } catch (err) { setInsightError(err instanceof Error ? err.message : 'Failed to refresh task insight') }
     finally { setInsightLoading('') }
-  }, [companyId, internalUserId])
+  }, [companyId, internalUserId, members, scopeToManagerDepartments])
 
   // Task Delay Alert never needs a network call to refresh — delayAlerts is derived straight from
   // kanban + the current time (see the useMemo above), so "refresh" here just re-anchors the tick.
@@ -2264,19 +2287,20 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
     setPendingCompletedHighlight(false)
   }, [pendingCompletedHighlight, kanban])
 
-  // Step 2 — the Owner has seen the delayed tasks (they can only follow up in person, not act on
-  // the board), so Mark as read dismisses exactly those alerts and the card turns green. A task
-  // that becomes delayed later, or whose deadline is edited, alerts again.
+  // Step 2 — this viewer has seen the delayed tasks (they can only follow up in person, not act
+  // on the board), so Mark as read dismisses exactly those alerts for THEM and the card turns
+  // green. Owner and Partner are peers viewing the same tasks but dismiss independently — a task
+  // that becomes delayed later, or whose deadline is edited, alerts again for everyone.
   const [delayMarkReadLoading, setDelayMarkReadLoading] = useState(false)
   const handleMarkDelayAlertsRead = useCallback(async () => {
     const readIds = delayAlerts.map(a => a.task_id)
-    if (readIds.length === 0 || delayMarkReadLoading) return
+    if (readIds.length === 0 || delayMarkReadLoading || !internalUserId) return
     setDelayMarkReadLoading(true)
     try {
       const res = await fetch('/api/task', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'mark_delay_alerts_read', task_ids: readIds }),
+        body: JSON.stringify({ action: 'mark_delay_alerts_read', task_ids: readIds, user_id: internalUserId }),
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
@@ -2290,7 +2314,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
       showTaskToast(`${readIds.length} delay alert${readIds.length === 1 ? '' : 's'} marked as read.`)
     } catch (err) { setInsightError(err instanceof Error ? err.message : 'Failed to mark delay alerts as read') }
     finally { setDelayMarkReadLoading(false) }
-  }, [delayAlerts, delayMarkReadLoading, showTaskToast])
+  }, [delayAlerts, delayMarkReadLoading, internalUserId, showTaskToast])
 
   useEffect(() => {
     if (!companyId) return
@@ -3036,12 +3060,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
   const assignableMembers = members.filter(m => m.role === assigneeRole)
   const deptDropdownOptions = departments.map(d => ({ value: d.id, label: d.name }))
   const newAssigneeMembers = newAssigneeIds.map(id => members.find(m => m.id === id)).filter((m): m is Member => !!m)
-  // Same "keep the pre-selected person in the list even if they wouldn't otherwise qualify"
-  // rule as the edit modal's editTaskDeptMembers.
-  const newAssigneeDeptMembers = assignableMembers.filter(m =>
-    newAssigneeIds.includes(m.id) ||
-    ((!newDeptId || m.department_id === newDeptId) && userIdsWithShiftOnDate(newStartDate).has(m.id))
-  )
+  const newAssigneeDeptMembers = assignableMembers.filter(m => !newDeptId || m.department_id === newDeptId)
   const newAssigneeDropdownOptions = newAssigneeDeptMembers.map(m => ({ value: m.id, label: m.full_name }))
   const priorityDropdownOptions: { value: string; label: string }[] =
     (['Low', 'Medium', 'High', 'Urgent'] as PriorityLevel[]).map(p => ({ value: p, label: p }))
@@ -3134,10 +3153,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
     else base.setDate(base.getDate() + editDeadlineRuleOffsetAmount)
     return base.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
   }
-  const editTaskDeptMembers = assignableMembers.filter(m =>
-    editAssigneeIds.includes(m.id) ||
-    ((!editDeptId || m.department_id === editDeptId) && userIdsWithShiftOnDate(editStartDate).has(m.id))
-  )
+  const editTaskDeptMembers = assignableMembers.filter(m => !editDeptId || m.department_id === editDeptId)
   const editAssigneeDropdownOptions = editTaskDeptMembers.map(m => ({ value: m.id, label: m.full_name }))
   const isEditTaskValid = editTitle.trim() !== '' && editDeptId !== '' && editStartDate !== '' && editPriority !== '' && editDueAt !== '' && editDeadlineTime !== '' && editAssigneeIds.length > 0
   const isEditRecurringFormValid = !editRecurringEnabled || (
@@ -4308,6 +4324,14 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                   }
                 </div>
 
+                {/* Assigned By */}
+                <div>
+                  <label style={modalLabelStyle}>Assigned By</label>
+                  <div style={viewFieldValue}>
+                    {selectedTask.assigned_by_name ?? members.find(m => m.id === selectedTask.assigned_by)?.full_name ?? 'Unknown'}
+                  </div>
+                </div>
+
                 {/* Assigned Time */}
                 <div>
                   <label style={modalLabelStyle}>Assigned Time</label>
@@ -5055,15 +5079,26 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                 </div>
               </div>
 
-              {/* Assign To — one Manager per task */}
-              <div>
-                <label style={modalLabelStyle}>Assign To</label>
-                <DropdownField
-                  value={newAssigneeIds[0] ?? ''}
-                  options={newAssigneeDropdownOptions}
-                  onChange={v => setNewAssigneeIds(v ? [v] : [])}
-                  placeholder="Select assignee"
-                />
+              {/* Department + Assign To */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <div>
+                  <label style={modalLabelStyle}>Department</label>
+                  <DropdownField
+                    value={newDeptId}
+                    options={deptDropdownOptions}
+                    onChange={v => { setNewDeptId(v); setNewAssigneeIds([]); setNewShiftId('') }}
+                    placeholder="Select department"
+                  />
+                </div>
+                <div>
+                  <label style={modalLabelStyle}>Assign To</label>
+                  <DropdownField
+                    value={newAssigneeIds[0] ?? ''}
+                    options={newAssigneeDropdownOptions}
+                    onChange={v => { setNewAssigneeIds(v ? [v] : []); setNewShiftId('') }}
+                    placeholder="Select assignee"
+                  />
+                </div>
               </div>
 
               {/* Description */}
@@ -5790,6 +5825,13 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                 </div>
 
                 <div>
+                  <label style={modalLabelStyle}>Assigned By</label>
+                  <div style={viewFieldValue}>
+                    {task.assigned_by_name ?? members.find(m => m.id === task.assigned_by)?.full_name ?? 'Unknown'}
+                  </div>
+                </div>
+
+                <div>
                   <label style={modalLabelStyle}>Assigned Time</label>
                   <div style={viewFieldValue}>
                     {new Date(task.created_at).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
@@ -5967,7 +6009,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
         // Eligibility is based on the task's own deadline date, not whatever date happens to be
         // selected on the board — those can differ once the user picks a Deadline in this modal.
         const aiAssignDate = boardViewMode === 'kanban' && taskDate > todayTaskDate ? taskDate : todayTaskDate
-        const aiDeptManagers = members.filter(m => m.role === assigneeRole && m.department_id === aiDeptId && userIdsWithShiftOnDate(aiAssignDate).has(m.id))
+        const aiDeptManagers = members.filter(m => m.role === assigneeRole && m.department_id === aiDeptId)
         const aiManagerDropdownOptions = aiDeptManagers.map(m => ({ value: m.id, label: m.full_name }))
 
         const handleGenerate = async () => {

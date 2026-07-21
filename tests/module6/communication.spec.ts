@@ -142,6 +142,32 @@ test('UC58 rejects an Employee attempting to post an announcement', async ({ req
   expect(body).toMatchObject({ success: false, error: 'Employees cannot post announcements' })
 })
 
+test('Manager cannot post a company-wide announcement or target another department', async ({ request }) => {
+  const companyWideAttempt = await request.post('/api/inbox/announcements', {
+    data: {
+      from_user_id: managerOps.userId,
+      company_id: seeded.companyId,
+      department_id: null,
+      title: 'Should not be allowed',
+      content: 'Managers cannot go company-wide.',
+    },
+  })
+  expect(companyWideAttempt.status()).toBe(403)
+  expect(await companyWideAttempt.json()).toMatchObject({ success: false, error: 'Managers can only post announcements to their own department' })
+
+  const crossDeptAttempt = await request.post('/api/inbox/announcements', {
+    data: {
+      from_user_id: managerOps.userId,
+      company_id: seeded.companyId,
+      department_id: departments.marketing,
+      title: 'Should not be allowed',
+      content: 'Managers cannot target another department.',
+    },
+  })
+  expect(crossDeptAttempt.status()).toBe(403)
+  expect(await crossDeptAttempt.json()).toMatchObject({ success: false, error: 'Managers can only post announcements to their own department' })
+})
+
 test('Manager-posted announcement is scoped to its own department only', async ({ request }) => {
   const opsView = await request.get(`/api/employee/announcements?user_id=${employeeOps.userId}`)
   expect(opsView.status()).toBe(200)
@@ -256,4 +282,30 @@ test('Employee contact list is scoped to own department only', async ({ request 
   expect(ids).toContain(managerOps.userId)
   expect(ids).not.toContain(managerMarketing.userId)
   expect(ids).not.toContain(employeeMarketing.userId)
+})
+
+test('Manager contact list includes Owner and own department only, excluding self', async ({ request }) => {
+  const contacts = await request.get(`/api/manager/contacts?user_id=${managerOps.userId}`)
+  expect(contacts.status()).toBe(200)
+  const body = await contacts.json()
+  const ids = body.contacts.map((c: { id: string }) => c.id)
+  expect(ids).toContain(seeded.ownerId)
+  expect(ids).toContain(employeeOps.userId)
+  expect(ids).not.toContain(managerOps.userId)
+  expect(ids).not.toContain(managerMarketing.userId)
+  expect(ids).not.toContain(employeeMarketing.userId)
+})
+
+test('Manager cannot send a direct message to a user outside their department scope', async ({ request }) => {
+  const res = await request.post('/api/inbox/messages', {
+    data: {
+      from_user_id: managerOps.userId,
+      to_user_id: employeeMarketing.userId,
+      company_id: seeded.companyId,
+      content: 'This should not be allowed.',
+    },
+  })
+  expect(res.status()).toBe(403)
+  const body = await res.json()
+  expect(body).toMatchObject({ success: false, error: 'Managers can only message the Owner, Partner, or members of their own department' })
 })

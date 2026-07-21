@@ -45,12 +45,18 @@ export async function PATCH(
   if (publication_status === 'draft' || publication_status === 'published') fields.publication_status = publication_status
   if (typeof template_id === 'string' || template_id === null) fields.template_id = template_id
 
+  // supervisor_employee_id is only touched when the caller's body explicitly includes the key —
+  // callers with no supervisor field (e.g. Bulk Edit) must leave the existing supervisor alone
+  // rather than have it silently default to null on every unrelated save.
+  const supervisorProvided = Object.prototype.hasOwnProperty.call(body as Record<string, unknown>, 'supervisor_employee_id')
   const assignment = assigned_user_id === undefined
     ? undefined
     : {
         assigned_user_id: typeof assigned_user_id === 'string' && assigned_user_id ? assigned_user_id : null,
         assigned_by: typeof assigned_by === 'string' ? assigned_by : '',
-        supervisor_employee_id: typeof supervisor_employee_id === 'string' && supervisor_employee_id ? supervisor_employee_id : null,
+        supervisor_employee_id: supervisorProvided
+          ? (typeof supervisor_employee_id === 'string' && supervisor_employee_id ? supervisor_employee_id : null)
+          : undefined,
       }
 
   if (assignment?.assigned_user_id && !assignment.assigned_by) {

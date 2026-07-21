@@ -16,8 +16,8 @@ const DEFAULT_SETTINGS: Omit<ShiftSwapSettings, 'company_id' | 'updated_by' | 'u
 export const shiftSwapSettingsService = {
   async assertOwner(user_id: string, company_id: string): Promise<void> {
     const user = await authRepository.findByAuthIdOrInternalId(user_id)
-    if (!user || user.role !== 'Owner' || user.company_id !== company_id) {
-      throw new Error('Only Owner can manage Shift Swap settings')
+    if (!user || (user.role !== 'Owner' && user.role !== 'Partner') || user.company_id !== company_id) {
+      throw new Error('Only Owner or Partner can manage Shift Swap settings')
     }
   },
 

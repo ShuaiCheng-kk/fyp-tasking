@@ -354,7 +354,7 @@ test('UC36 creates, lists, edits, and deletes a job template', async ({ request 
   createdTemplateIds.push(created.id)
   expect(created.name).toBe('Weekend Cashier Template')
 
-  const listRes = await request.get(`/api/job-template?company_id=${seeded.companyId}`)
+  const listRes = await request.get(`/api/job-template?company_id=${seeded.companyId}&created_by=${seeded.ownerId}`)
   expect(listRes.status()).toBe(200)
   const { templates } = await listRes.json()
   expect(templates.some((t: { id: string }) => t.id === created.id)).toBe(true)
@@ -369,7 +369,7 @@ test('UC36 creates, lists, edits, and deletes a job template', async ({ request 
   expect(deleteRes.status()).toBe(200)
   createdTemplateIds.splice(createdTemplateIds.indexOf(created.id), 1)
 
-  const listAfterDeleteRes = await request.get(`/api/job-template?company_id=${seeded.companyId}`)
+  const listAfterDeleteRes = await request.get(`/api/job-template?company_id=${seeded.companyId}&created_by=${seeded.ownerId}`)
   const { templates: templatesAfterDelete } = await listAfterDeleteRes.json()
   expect(templatesAfterDelete.some((t: { id: string }) => t.id === created.id)).toBe(false)
 })
@@ -582,7 +582,7 @@ test('UC44 view applicant list resolves full_name and email_address from the app
     .single()
   if (applicantError || !applicant) throw new Error(`Failed to seed applicant: ${applicantError?.message}`)
 
-  const listRes = await request.get(`/api/recruitment?resource=applicants&job_id=${jobId}`)
+  const listRes = await request.get(`/api/recruitment?resource=applicants&job_id=${jobId}&viewer_id=${seeded.ownerId}`)
   expect(listRes.status()).toBe(200)
   const { applicants } = await listRes.json()
   expect(applicants).toHaveLength(1)
@@ -640,7 +640,7 @@ test('UC42: owner rejects a pending job posting with a reason', async ({ request
   createdJobIds.push(jobId)
 
   const rejectRes = await request.patch('/api/recruitment', {
-    data: { action: 'reject_posting', job_id: jobId, rejection_reason: 'Please add the salary details.' },
+    data: { action: 'reject_posting', job_id: jobId, rejection_reason: 'Please add the salary details.', rejected_by: seeded.ownerId },
   })
   expect(rejectRes.status()).toBe(200)
   const rejectBody = await rejectRes.json()
@@ -1099,7 +1099,7 @@ test('a rejected posting can be edited and resubmitted for approval', async ({ r
   createdJobIds.push(jobId)
 
   const rejectRes = await request.patch('/api/recruitment', {
-    data: { action: 'reject_posting', job_id: jobId, rejection_reason: 'Add salary details.' },
+    data: { action: 'reject_posting', job_id: jobId, rejection_reason: 'Add salary details.', rejected_by: seeded.ownerId },
   })
   expect(rejectRes.status()).toBe(200)
 
@@ -1114,6 +1114,138 @@ test('a rejected posting can be edited and resubmitted for approval', async ({ r
   })
   expect(resubmitRes.status()).toBe(200)
   expect((await resubmitRes.json()).posting.status).toBe('pending_approval')
+})
+
+test('UC42: rejecting a posting records who rejected it, and resubmitting clears that record', async ({ request }) => {
+  const jobRes = await request.post('/api/recruitment', {
+    data: {
+      company_id: seeded.companyId,
+      department_id: departmentId,
+      created_by: seeded.ownerId,
+      assigned_employee_id: employeeId,
+      title: 'Rejection Record Role',
+      description: 'Checking rejected_by tracking.',
+      formType: 'oneoff',
+      shift_date: '2030-03-18',
+      job_start_time: '09:00',
+      status: 'pending_approval',
+    },
+  })
+  const jobId = (await jobRes.json()).posting.id as string
+  createdJobIds.push(jobId)
+
+  const rejectRes = await request.patch('/api/recruitment', {
+    data: { action: 'reject_posting', job_id: jobId, rejection_reason: 'Add uniform details.', rejected_by: seeded.ownerId },
+  })
+  expect(rejectRes.status()).toBe(200)
+  const rejected = (await rejectRes.json()).posting
+  expect(rejected.rejection_reason).toBe('Add uniform details.')
+  expect(rejected.rejected_by).toBe(seeded.ownerId)
+
+  const resubmitRes = await request.patch('/api/recruitment', {
+    data: { action: 'submit_for_review', job_id: jobId },
+  })
+  const resubmitted = (await resubmitRes.json()).posting
+  expect(resubmitted.status).toBe('pending_approval')
+  expect(resubmitted.rejection_reason).toBeNull()
+  expect(resubmitted.rejected_by).toBeNull()
+})
+
+test('Manager Recruitment: Job Visibility is department-wide regardless of who created the posting', async ({ request }) => {
+  // Owner-created and Manager-created postings in the same department must both show up when
+  // filtering by department_id — Job Visibility is scoped by department, not by creator.
+  const ownerJobRes = await request.post('/api/recruitment', {
+    data: {
+      company_id: seeded.companyId, department_id: departmentId, created_by: seeded.ownerId,
+      assigned_employee_id: employeeId, title: 'Owner Dept Job', description: 'Owner-posted role in the shared department.',
+      formType: 'oneoff', shift_date: '2030-03-19', job_start_time: '09:00', status: 'open',
+    },
+  })
+  const ownerJobId = (await ownerJobRes.json()).posting.id as string
+  createdJobIds.push(ownerJobId)
+
+  const mgrJobRes = await request.post('/api/recruitment', {
+    data: {
+      company_id: seeded.companyId, department_id: departmentId, created_by: managerId,
+      assigned_employee_id: employeeId, title: 'Manager Dept Job', description: 'Manager-posted role in the shared department.',
+      formType: 'oneoff', shift_date: '2030-03-19', job_start_time: '10:00', status: 'pending_approval',
+    },
+  })
+  const mgrJobId = (await mgrJobRes.json()).posting.id as string
+  createdJobIds.push(mgrJobId)
+  await request.patch('/api/recruitment', { data: { action: 'approve_posting', job_id: mgrJobId } })
+
+  const listRes = await request.get(`/api/recruitment?company_id=${seeded.companyId}&department_id=${departmentId}`)
+  expect(listRes.status()).toBe(200)
+  const { postings } = await listRes.json()
+  const ids = (postings as { id: string }[]).map(p => p.id)
+  expect(ids).toContain(ownerJobId)
+  expect(ids).toContain(mgrJobId)
+})
+
+test('Manager Recruitment: Candidate Management is Recruitment-Owner-only, even for a job visible to the Manager', async ({ request }) => {
+  // A second Manager in the same department: Job Visibility lets them see the first Manager's
+  // posting, but Candidate Management must still block them from touching its applicants.
+  const otherManagerEmail = `test-recruitment-manager2-${Date.now()}@tasking-tests.local`
+  const { data: otherManagerAuth, error: otherManagerAuthError } = await admin.auth.admin.createUser({
+    email: otherManagerEmail, password: 'Test-Password-123!', email_confirm: true,
+  })
+  if (otherManagerAuthError || !otherManagerAuth.user) throw new Error(`Failed to create second manager auth user: ${otherManagerAuthError?.message}`)
+  const { data: otherManager, error: otherManagerError } = await admin
+    .from('users')
+    .insert({
+      supabase_auth_id: otherManagerAuth.user.id, full_name: 'Test Recruitment Manager Two',
+      email_address: otherManagerEmail, role: 'Manager', company_id: seeded.companyId,
+    })
+    .select('id')
+    .single()
+  if (otherManagerError || !otherManager) throw new Error(`Failed to create second manager: ${otherManagerError?.message}`)
+  const otherManagerId = otherManager.id as string
+
+  try {
+    const jobRes = await request.post('/api/recruitment', {
+      data: {
+        company_id: seeded.companyId, department_id: departmentId, created_by: managerId,
+        assigned_employee_id: employeeId, title: 'Owned By Manager One', description: 'Only Manager One may manage its applicants.',
+        formType: 'oneoff', shift_date: '2030-03-20', job_start_time: '09:00', status: 'pending_approval',
+      },
+    })
+    const jobId = (await jobRes.json()).posting.id as string
+    createdJobIds.push(jobId)
+    await request.patch('/api/recruitment', { data: { action: 'approve_posting', job_id: jobId } })
+
+    const guest = await seedGuest('candidate-mgmt')
+    const { data: applicant, error: applicantError } = await admin
+      .from('job_applicants')
+      .insert({ job_id: jobId, user_id: guest.userId, status: 'pending' })
+      .select()
+      .single()
+    if (applicantError || !applicant) throw new Error(`Failed to seed applicant: ${applicantError?.message}`)
+
+    // Manager Two can see the posting (Job Visibility)...
+    const jobDetailRes = await request.get(`/api/recruitment?resource=job_posting&job_id=${jobId}`)
+    expect(jobDetailRes.status()).toBe(200)
+
+    // ...but cannot view its applicants...
+    const blockedListRes = await request.get(`/api/recruitment?resource=applicants&job_id=${jobId}&viewer_id=${otherManagerId}`)
+    expect(blockedListRes.status()).toBe(500)
+    expect((await blockedListRes.json()).message).toContain('Only the recruitment owner')
+
+    // ...nor decide on them...
+    const blockedDecideRes = await request.patch('/api/recruitment', {
+      data: { action: 'decide_applicant', applicant_id: applicant.id, decision: 'accepted', decided_by: otherManagerId },
+    })
+    expect(blockedDecideRes.status()).toBe(400)
+    expect((await blockedDecideRes.json()).message).toContain('Only the recruitment owner')
+
+    // ...while Manager One (the recruitment owner) can do both.
+    const allowedListRes = await request.get(`/api/recruitment?resource=applicants&job_id=${jobId}&viewer_id=${managerId}`)
+    expect(allowedListRes.status()).toBe(200)
+    expect((await allowedListRes.json()).applicants).toHaveLength(1)
+  } finally {
+    await admin.from('users').delete().eq('id', otherManagerId)
+    await admin.auth.admin.deleteUser(otherManagerAuth.user.id).catch(() => undefined)
+  }
 })
 
 test("worker times must sit inside the supervisor's own shift on that date", async ({ request }) => {

@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
-import AiScheduleStatusWidget from '@/components/owner/AiScheduleStatusWidget'
+import AiScheduleStatusWidget from '@/components/shifts/AiScheduleStatusWidget'
 
 const ROLE_DASHBOARD: Record<string, string> = {
   Partner: '/partner/dashboard',

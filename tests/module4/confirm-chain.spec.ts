@@ -257,7 +257,7 @@ test('declining an offer withdraws the application and drops it from the employe
   const { data: applicant } = await admin.from('job_applicants').select('status').eq('id', declinerSeed.applicantId).single()
   expect(applicant?.status).toBe('withdrawn')
 
-  const listRes = await request.get(`/api/recruitment?resource=applicants&job_id=${job.id}`)
+  const listRes = await request.get(`/api/recruitment?resource=applicants&job_id=${job.id}&viewer_id=${seeded.ownerId}`)
   const { applicants } = await listRes.json()
   expect(applicants.some((a: { id: string }) => a.id === declinerSeed.applicantId)).toBe(false)
 })

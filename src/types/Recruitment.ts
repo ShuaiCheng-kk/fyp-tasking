@@ -33,6 +33,9 @@ export interface JobPosting {
   job_start_time: string | null
   assigned_employee_id: string | null
   rejection_reason: string | null
+  // Who rejected the posting (Owner/Partner) — set alongside rejection_reason, cleared on
+  // approve/resubmit so a fresh submission never carries a stale rejection record.
+  rejected_by: string | null
   expires_at: string | null
   template_id: string | null
   experience_required: string | null
@@ -91,6 +94,8 @@ export interface JobPostingSummary extends JobPosting {
   assigned_employee_photo_url: string | null
   // Who published the posting (Owner / Partner / Manager) — shown as "Posted by" in the detail.
   created_by_name: string | null
+  // Who rejected the posting, resolved for display next to rejection_reason.
+  rejected_by_name: string | null
 }
 
 export interface ApplicantCertificateSnapshot {

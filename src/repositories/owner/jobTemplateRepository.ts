@@ -35,11 +35,12 @@ export const jobTemplateRepository = {
     return data as JobTemplate
   },
 
-  async getTemplatesByCompany(company_id: string): Promise<JobTemplate[]> {
+  async getTemplatesByCompany(company_id: string, created_by: string): Promise<JobTemplate[]> {
     const { data, error } = await supabase
       .from('job_templates')
       .select('*')
       .eq('company_id', company_id)
+      .eq('created_by', created_by)
       .order('updated_at', { ascending: false })
     if (error) throw new Error(error.message)
     return (data ?? []) as JobTemplate[]

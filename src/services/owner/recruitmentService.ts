@@ -17,6 +17,50 @@ function awaitingConfirmationCount(rows: { status: string; invitation_status: st
   return rows.filter(r => r.status === 'accepted' && r.invitation_status !== 'accepted').length
 }
 
+// Candidate Management follows the Recruitment Owner principle: viewing a job (Job Visibility,
+// department-wide) never implies permission to manage its applicants. A Manager may only view
+// applicants, decide on them, or hand out offers for jobs THEY created — Owner/Partner postings
+// and other Managers' postings in the same department stay view-only. Owner/Partner are never
+// restricted (they own everything below them).
+async function assertCanManageApplicants(job_id: string, actor_id: string): Promise<JobPosting> {
+  const job = await recruitmentRepository.getJobPostingById(job_id)
+  if (!job) throw new Error('Job posting not found')
+  const role = await recruitmentRepository.getUserRole(actor_id)
+  if (role === 'Manager' && job.created_by !== actor_id) {
+    throw new Error('Only the recruitment owner can manage applicants for this job')
+  }
+  return job
+}
+
+// Shared by every "list of live/closed postings" entry point (company-wide, department-scoped) —
+// resolves department names, applicant counts, and the handful of user names (creator, assigned
+// employee, whoever rejected it) each summary card needs.
+async function buildJobPostingSummaries(postings: JobPosting[]): Promise<JobPostingSummary[]> {
+  const applicantRows = await recruitmentRepository.getApplicantCounts(postings.map(posting => posting.id))
+  const deptIds = [...new Set(postings.map(posting => posting.department_id).filter((id): id is string => Boolean(id)))]
+  const departments = await recruitmentRepository.getDepartmentsByIds(deptIds)
+  const deptMap = new Map(departments.map(department => [department.id, department.name]))
+  const empIds = [...new Set(postings.flatMap(posting => [posting.assigned_employee_id, posting.created_by, posting.rejected_by]).filter((id): id is string => Boolean(id)))]
+  const employees = await recruitmentRepository.getUsersByIds(empIds)
+  const empMap = new Map(employees.map(e => [e.id, e]))
+  return postings.map(posting => {
+    const rows = applicantRows.filter(row => row.job_id === posting.id)
+    return {
+      ...posting,
+      department_name: posting.department_id ? deptMap.get(posting.department_id) ?? null : null,
+      applicant_count: rows.length,
+      pending_count: rows.filter(row => row.status === 'pending').length,
+      accepted_count: rows.filter(row => row.status === 'accepted').length,
+      confirmed_count: confirmedCount(rows),
+      awaiting_confirmation_count: awaitingConfirmationCount(rows),
+      assigned_employee_name: posting.assigned_employee_id ? empMap.get(posting.assigned_employee_id)?.full_name ?? null : null,
+      assigned_employee_photo_url: posting.assigned_employee_id ? empMap.get(posting.assigned_employee_id)?.profile_photo_url ?? null : null,
+      created_by_name: empMap.get(posting.created_by)?.full_name ?? null,
+      rejected_by_name: posting.rejected_by ? empMap.get(posting.rejected_by)?.full_name ?? null : null,
+    }
+  })
+}
+
 export const recruitmentService = {
   async getPublicJobPostings(): Promise<JobPosting[]> {
     return recruitmentRepository.getPublicJobPostings()
@@ -33,92 +77,24 @@ export const recruitmentService = {
     if (!company_id || !department_id) throw new Error('company_id and department_id are required')
     await recruitmentRepository.sweepExpiredJobPostings(company_id)
     const postings = await recruitmentRepository.getJobPostingsByDepartment(company_id, department_id)
-    const applicantRows = await recruitmentRepository.getApplicantCounts(postings.map(posting => posting.id))
-    const deptIds = [...new Set(postings.map(posting => posting.department_id).filter((id): id is string => Boolean(id)))]
-    const departments = await recruitmentRepository.getDepartmentsByIds(deptIds)
-    const deptMap = new Map(departments.map(department => [department.id, department.name]))
-    const empIds = [...new Set(postings.flatMap(posting => [posting.assigned_employee_id, posting.created_by]).filter((id): id is string => Boolean(id)))]
-    const employees = await recruitmentRepository.getUsersByIds(empIds)
-    const empMap = new Map(employees.map(e => [e.id, e]))
-    return postings.map(posting => {
-      const rows = applicantRows.filter(row => row.job_id === posting.id)
-      return {
-        ...posting,
-        department_name: posting.department_id ? deptMap.get(posting.department_id) ?? null : null,
-        applicant_count: rows.length,
-        pending_count: rows.filter(row => row.status === 'pending').length,
-        accepted_count: rows.filter(row => row.status === 'accepted').length,
-        confirmed_count: confirmedCount(rows),
-        awaiting_confirmation_count: awaitingConfirmationCount(rows),
-        assigned_employee_name: posting.assigned_employee_id ? empMap.get(posting.assigned_employee_id)?.full_name ?? null : null,
-        assigned_employee_photo_url: posting.assigned_employee_id ? empMap.get(posting.assigned_employee_id)?.profile_photo_url ?? null : null,
-        created_by_name: empMap.get(posting.created_by)?.full_name ?? null,
-      }
-    })
-  },
-
-  async getJobPostingsForManager(company_id: string, manager_id: string): Promise<JobPostingSummary[]> {
-    if (!company_id || !manager_id) throw new Error('company_id and manager_id are required')
-    await recruitmentRepository.sweepExpiredJobPostings(company_id)
-    const deptIds = await recruitmentRepository.getManagerDepartmentIds(manager_id, company_id)
-    const postings = await recruitmentRepository.getJobPostingsByManagerDepts(company_id, deptIds)
-    const applicantRows = await recruitmentRepository.getApplicantCounts(postings.map(p => p.id))
-    const uniqueDeptIds = [...new Set(postings.map(p => p.department_id).filter((id): id is string => Boolean(id)))]
-    const empIds = [...new Set(postings.flatMap(p => [p.assigned_employee_id, p.created_by]).filter((id): id is string => Boolean(id)))]
-    const [departments, employees] = await Promise.all([
-      recruitmentRepository.getDepartmentsByIds(uniqueDeptIds),
-      recruitmentRepository.getUsersByIds(empIds),
-    ])
-    const deptMap = new Map(departments.map(d => [d.id, d.name]))
-    const empMap = new Map(employees.map(e => [e.id, e]))
-    return postings.map(posting => {
-      const rows = applicantRows.filter(r => r.job_id === posting.id)
-      return {
-        ...posting,
-        department_name: posting.department_id ? deptMap.get(posting.department_id) ?? null : null,
-        applicant_count: rows.length,
-        pending_count: rows.filter(row => row.status === 'pending').length,
-        accepted_count: rows.filter(row => row.status === 'accepted').length,
-        confirmed_count: confirmedCount(rows),
-        awaiting_confirmation_count: awaitingConfirmationCount(rows),
-        assigned_employee_name: posting.assigned_employee_id ? empMap.get(posting.assigned_employee_id)?.full_name ?? null : null,
-        assigned_employee_photo_url: posting.assigned_employee_id ? empMap.get(posting.assigned_employee_id)?.profile_photo_url ?? null : null,
-        created_by_name: empMap.get(posting.created_by)?.full_name ?? null,
-      }
-    })
+    return buildJobPostingSummaries(postings)
   },
 
   async getJobPostings(company_id: string): Promise<JobPostingSummary[]> {
     if (!company_id) throw new Error('company_id is required')
     await recruitmentRepository.sweepExpiredJobPostings(company_id)
     const postings = await recruitmentRepository.getJobPostingsByCompany(company_id)
-    const applicantRows = await recruitmentRepository.getApplicantCounts(postings.map(posting => posting.id))
-    const deptIds = [...new Set(postings.map(posting => posting.department_id).filter((id): id is string => Boolean(id)))]
-    const departments = await recruitmentRepository.getDepartmentsByIds(deptIds)
-    const deptMap = new Map(departments.map(department => [department.id, department.name]))
-    const empIds = [...new Set(postings.flatMap(posting => [posting.assigned_employee_id, posting.created_by]).filter((id): id is string => Boolean(id)))]
-    const employees = await recruitmentRepository.getUsersByIds(empIds)
-    const empMap = new Map(employees.map(e => [e.id, e]))
-
-    return postings.map(posting => {
-      const rows = applicantRows.filter(row => row.job_id === posting.id)
-      return {
-        ...posting,
-        department_name: posting.department_id ? deptMap.get(posting.department_id) ?? null : null,
-        applicant_count: rows.length,
-        pending_count: rows.filter(row => row.status === 'pending').length,
-        accepted_count: rows.filter(row => row.status === 'accepted').length,
-        confirmed_count: confirmedCount(rows),
-        awaiting_confirmation_count: awaitingConfirmationCount(rows),
-        assigned_employee_name: posting.assigned_employee_id ? empMap.get(posting.assigned_employee_id)?.full_name ?? null : null,
-        assigned_employee_photo_url: posting.assigned_employee_id ? empMap.get(posting.assigned_employee_id)?.profile_photo_url ?? null : null,
-        created_by_name: empMap.get(posting.created_by)?.full_name ?? null,
-      }
-    })
+    return buildJobPostingSummaries(postings)
   },
 
-  async getApplicants(job_id: string): Promise<JobApplicant[]> {
+  // UC44 view applicants. Candidate Management is Recruitment-Owner-only: a Manager who can SEE
+  // this job (department-wide Job Visibility) still can't view who applied unless they created it
+  // — enforced here, not just by the Manager UI hiding the panel, since a client-side omission
+  // alone can't stop a direct API call.
+  async getApplicants(job_id: string, viewer_id: string): Promise<JobApplicant[]> {
     if (!job_id) throw new Error('job_id is required')
+    if (!viewer_id) throw new Error('viewer_id is required')
+    await assertCanManageApplicants(job_id, viewer_id)
     const applicants = await recruitmentRepository.getApplicantsByJob(job_id)
     const userIds = [...new Set(applicants.map(a => a.user_id).filter((id): id is string => Boolean(id)))]
     const cancellationCounts = await recruitmentRepository.getWorkerCancellationCounts(userIds)
@@ -145,8 +121,7 @@ export const recruitmentService = {
     const reason = input.reason?.trim()
     if (!reason) throw new Error('A reason is required to remove a confirmed worker')
 
-    const job = await recruitmentRepository.getJobPostingById(input.job_id)
-    if (!job) throw new Error('Job posting not found')
+    const job = await assertCanManageApplicants(input.job_id, input.removed_by)
     const applicant = await recruitmentRepository.getApplicantById(input.applicant_id)
     if (!applicant || applicant.job_id !== input.job_id) throw new Error('Applicant not found on this job')
     if (!applicant.user_id) throw new Error('Applicant has no linked worker account')
@@ -230,6 +205,8 @@ export const recruitmentService = {
       assigned_employee_name: p.assigned_employee_id ? empMap.get(p.assigned_employee_id)?.full_name ?? null : null,
       assigned_employee_photo_url: p.assigned_employee_id ? empMap.get(p.assigned_employee_id)?.profile_photo_url ?? null : null,
       created_by_name: empMap.get(p.created_by)?.full_name ?? null,
+      // A draft was never submitted, so it can never carry a rejection record.
+      rejected_by_name: null,
     }))
   },
 
@@ -249,7 +226,9 @@ export const recruitmentService = {
   async submitForReview(id: string): Promise<JobPosting> {
     if (!id) throw new Error('job_id is required')
     await assertPublishable(id)
-    return recruitmentRepository.updateJobPosting(id, { status: 'pending_approval' })
+    // Resubmitting (e.g. after fixing a rejected posting) clears the old rejection record — a
+    // fresh submission must not still show the previous reviewer's reason while it's pending again.
+    return recruitmentRepository.updateJobPosting(id, { status: 'pending_approval', rejection_reason: null, rejected_by: null })
   },
 
   async deleteDraft(id: string): Promise<void> {
@@ -405,6 +384,7 @@ export const recruitmentService = {
     }
     const applicant = await recruitmentRepository.getApplicantById(input.applicant_id)
     if (!applicant) throw new Error('Applicant not found')
+    await assertCanManageApplicants(applicant.job_id, input.decided_by)
     // A worker who already confirmed the offer is a committed hire — reversing that goes through
     // removeConfirmedWorker (mandatory reason, shift cancellation, opening reopened), not this
     // quick reject.
@@ -469,10 +449,11 @@ export const recruitmentService = {
     return recruitmentRepository.approveJobPosting(id)
   },
 
-  async rejectJobPosting(id: string, rejection_reason: string): Promise<JobPosting> {
+  async rejectJobPosting(id: string, rejection_reason: string, rejected_by: string): Promise<JobPosting> {
     if (!id) throw new Error('job_id is required')
     if (!rejection_reason?.trim()) throw new Error('rejection_reason is required')
-    return recruitmentRepository.rejectJobPosting(id, rejection_reason.trim())
+    if (!rejected_by) throw new Error('rejected_by is required')
+    return recruitmentRepository.rejectJobPosting(id, rejection_reason.trim(), rejected_by)
   },
 
   // The verified worker pool — people who already showed up and finished a shift here. These are
@@ -498,8 +479,7 @@ export const recruitmentService = {
     if (!input.sent_by) throw new Error('sent_by is required')
     if (!input.user_ids?.length) throw new Error('At least one worker must be selected')
 
-    const job = await recruitmentRepository.getJobPostingById(input.job_id)
-    if (!job) throw new Error('Job posting not found')
+    const job = await assertCanManageApplicants(input.job_id, input.sent_by)
     if (job.status !== 'open') throw new Error('This job is not open for offers')
 
     const results: PoolInviteResult[] = []

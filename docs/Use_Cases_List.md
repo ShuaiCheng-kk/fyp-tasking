@@ -84,9 +84,9 @@ Platform-level roles (outside the company hierarchy): **User Admin** and **Marke
 - UC50 Review Attendance Record — O, P, M, E, CW
 - UC51 View Attendance Status — O, P, M
 - UC52 Submit Shift Swap Request — M, E
-- UC53 Approve / Reject Shift Swap Request — O, P, M
+- UC53 Approve / Reject Shift Swap Request — M (for Employee requests), O, P (for a Manager's own request)
 - UC54 Submit Fixed Day Off — M, E
-- UC55 Approve / Reject Fixed Day Off — O, P, M
+- UC55 Approve / Reject Fixed Day Off — O, P (always — regardless of whether the requester is Manager or Employee)
 - UC56 Modify Clock In / Out Time — O, P
 - UC57 AI Review Requests — O, P, M
 

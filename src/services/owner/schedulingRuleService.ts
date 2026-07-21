@@ -117,8 +117,8 @@ export const DEFAULT_SCHEDULING_RULES: SchedulingRule[] = [
 export const schedulingRuleService = {
   async assertOwner(user_id: string, company_id: string): Promise<void> {
     const user = await authRepository.findByAuthIdOrInternalId(user_id)
-    if (!user || user.role !== 'Owner' || user.company_id !== company_id) {
-      throw new Error('Only Owner can access AI scheduling rules')
+    if (!user || (user.role !== 'Owner' && user.role !== 'Partner') || user.company_id !== company_id) {
+      throw new Error('Only Owner or Partner can access AI scheduling rules')
     }
   },
 

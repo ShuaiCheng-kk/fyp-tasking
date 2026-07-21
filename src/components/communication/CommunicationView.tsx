@@ -482,20 +482,30 @@ export default function CommunicationView({ renderSidebar, basePath }: {
       openPanel(found.partnerId)
       if (pre) setPanelInputs(p => ({ ...p, [found.partnerId]: pre }))
     } else {
-      fetch(`/api/team/members?company_id=${companyId}`)
-        .then(r => r.json())
-        .then(d => {
-          if (!d.success) return
-          const eligible = (d.members as CompanyMember[]).filter(m => m.role !== 'Casual Worker' && m.id !== internalUserId)
-          setCompanyMembers(eligible)
-          const partner = eligible.find(m => m.id === pid)
-          if (partner) {
-            selectComposeRecipient(partner)
-            if (pre) setPanelInputs(p => ({ ...p, [partner.id]: pre }))
-          }
-        })
+      fetchEligibleContacts().then(eligible => {
+        setCompanyMembers(eligible)
+        const partner = eligible.find(m => m.id === pid)
+        if (partner) {
+          selectComposeRecipient(partner)
+          if (pre) setPanelInputs(p => ({ ...p, [partner.id]: pre }))
+        }
+      })
     }
   }, [pendingPartnerId, conversations, internalUserId, conversationsFetched, companyId, pendingPrefill])
+
+  // A Manager's contact list is scoped to Owner/Partner plus same-department Managers/Employees
+  // (enforced server-side via /api/manager/contacts); every other role sees the full company.
+  function fetchEligibleContacts(): Promise<CompanyMember[]> {
+    if (userRole === 'Manager' && internalUserId) {
+      return fetch(`/api/manager/contacts?user_id=${internalUserId}`)
+        .then(r => r.json())
+        .then(d => d.success ? (d.contacts as CompanyMember[]) : [])
+    }
+    if (!companyId) return Promise.resolve([])
+    return fetch(`/api/team/members?company_id=${companyId}`)
+      .then(r => r.json())
+      .then(d => d.success ? (d.members as CompanyMember[]).filter(m => m.role !== 'Casual Worker' && m.id !== internalUserId) : [])
+  }
 
   useEffect(() => {
     if (!internalUserId) return
@@ -633,7 +643,7 @@ export default function CommunicationView({ renderSidebar, basePath }: {
         body: JSON.stringify({
           from_user_id: internalUserId, company_id: companyId,
           department_id: annDeptId === 'company-wide' ? null : annDeptId,
-          title: annTitle, content: annContent, user_role: userRole,
+          title: annTitle, content: annContent,
         }),
       })
       const data = await res.json()
@@ -714,20 +724,22 @@ export default function CommunicationView({ renderSidebar, basePath }: {
   }
 
   const canPostCompanyWide = ['owner', 'partner'].includes(userRole?.toLowerCase())
+  // Managers may only broadcast within their own department — never company-wide, never another department.
+  const isManagerRole = userRole === 'Manager'
+  const announcementAudienceOptions = isManagerRole
+    ? (userDeptId ? [{ value: userDeptId, label: departments.find(d => d.id === userDeptId)?.name ?? 'My Department' }] : [])
+    : [
+        ...(canPostCompanyWide ? [{ value: 'company-wide', label: 'Company-wide' }] : []),
+        ...departments.map(d => ({ value: d.id, label: d.name })),
+      ]
   const communicationReady = Boolean(internalUserId && companyId)
 
   const openCompose = useCallback(() => {
     if (!companyId || !internalUserId) return
     setComposeOpen(true)
     setComposeSearch('')
-    fetch(`/api/team/members?company_id=${companyId}`)
-      .then(r => r.json())
-      .then(d => {
-        if (d.success) {
-          setCompanyMembers((d.members as CompanyMember[]).filter(m => m.role !== 'Casual Worker' && m.id !== internalUserId))
-        }
-      })
-  }, [companyId, internalUserId])
+    fetchEligibleContacts().then(setCompanyMembers)
+  }, [companyId, internalUserId, userRole])
 
   async function handleAcceptInvite(invite: InboxInvite) {
     if (!internalUserId) return
@@ -1013,9 +1025,10 @@ export default function CommunicationView({ renderSidebar, basePath }: {
   const othersAnnouncements = announcements
     .filter(ann => ann.from_user_id !== internalUserId)
     .filter(ann => !othersSearch || matchesAnnSearch(ann, othersSearch))
-    .filter(ann => othersDeptFilter === 'all' || ann.poster_department_id === othersDeptFilter)
+    // Matches the badge on the card, which shows the announcement's audience scope.
+    .filter(ann => othersDeptFilter === 'all' || ann.department_id === othersDeptFilter)
 
-  function renderAnnouncementCard(ann: Announcement, i: number, showAudience: boolean) {
+  function renderAnnouncementCard(ann: Announcement, i: number) {
     const unread = !readIds.has(ann.id)
     const selected = selectedAnn?.id === ann.id
     const deptName = ann.department_id ? (departments.find(d => d.id === ann.department_id)?.name ?? 'Dept') : null
@@ -1035,9 +1048,10 @@ export default function CommunicationView({ renderSidebar, basePath }: {
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-          {showAudience
-            ? <DepartmentBadge departmentId={ann.department_id} departmentName={deptName} fallbackIcon={<Globe size={9} />} />
-            : <DepartmentBadge departmentId={ann.poster_department_id} departmentName={ann.poster_department_name} fallbackLabel="Owner/Partner" fallbackIcon={<Globe size={9} />} />}
+          {/* Always shows the announcement's own audience/scope (department or Company-wide) — never
+              the poster's department, which is a different concept (who posted it, not who can see
+              it) and was showing "Owner/Partner" instead of "Company-wide" for company-wide posts. */}
+          <DepartmentBadge departmentId={ann.department_id} departmentName={deptName} fallbackIcon={<Globe size={9} />} />
           <span style={{ fontSize: 11.5, color: '#9CA3AF', fontWeight: 500, flexShrink: 0 }}>{formatAnnouncementTimestamp(ann)}</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
@@ -1616,7 +1630,7 @@ export default function CommunicationView({ renderSidebar, basePath }: {
                         style={{ flex: 1, minWidth: 0, border: 'none', background: 'transparent', outline: 'none', fontSize: 13, color: '#0F172A', fontWeight: 500 }}
                       />
                     </div>
-                    <button onClick={() => setShowNewAnnModal(true)} title="Post announcement"
+                    <button onClick={() => { setAnnDeptId(isManagerRole ? (userDeptId ?? '') : 'company-wide'); setShowNewAnnModal(true) }} title="Post announcement"
                       className="comm-action-btn"
                       style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 36, height: 36, background: '#F97316', border: 'none', borderRadius: 10, color: '#fff', cursor: 'pointer', flexShrink: 0 }}
                     >
@@ -1630,7 +1644,7 @@ export default function CommunicationView({ renderSidebar, basePath }: {
                         <Megaphone size={24} strokeWidth={1.5} />
                         {annSearch ? 'No matching announcements' : 'No announcements yet'}
                       </div>
-                    ) : myAnnouncements.map((ann, i) => renderAnnouncementCard(ann, i, true))}
+                    ) : myAnnouncements.map((ann, i) => renderAnnouncementCard(ann, i))}
                   </div>
                 </div>
 
@@ -1686,7 +1700,7 @@ export default function CommunicationView({ renderSidebar, basePath }: {
                         <Megaphone size={24} strokeWidth={1.5} />
                         {othersSearch || othersDeptFilter !== 'all' ? 'No matching announcements' : 'No announcements from others yet'}
                       </div>
-                    ) : othersAnnouncements.map((ann, i) => renderAnnouncementCard(ann, i, false))}
+                    ) : othersAnnouncements.map((ann, i) => renderAnnouncementCard(ann, i))}
                   </div>
                 </div>
               </div>
@@ -1855,10 +1869,7 @@ export default function CommunicationView({ renderSidebar, basePath }: {
                 <label style={modalLabelStyle}>Audience</label>
                 <DropdownField
                   value={editAudience === 'company-wide' ? 'company-wide' : (editDeptId ?? '')}
-                  options={[
-                    { value: 'company-wide', label: 'Company-wide' },
-                    ...departments.map(d => ({ value: d.id, label: d.name })),
-                  ]}
+                  options={announcementAudienceOptions}
                   onChange={v => {
                     if (v === 'company-wide') { setEditAudience('company-wide'); setEditDeptId(null) }
                     else { setEditAudience('specific-dept'); setEditDeptId(v) }
@@ -1896,10 +1907,7 @@ export default function CommunicationView({ renderSidebar, basePath }: {
                 <label style={modalLabelStyle}>Audience</label>
                 <DropdownField
                   value={annDeptId}
-                  options={[
-                    ...(canPostCompanyWide ? [{ value: 'company-wide', label: 'Company-wide' }] : []),
-                    ...departments.map(d => ({ value: d.id, label: d.name })),
-                  ]}
+                  options={announcementAudienceOptions}
                   onChange={v => setAnnDeptId(v)}
                   placeholder="Select audience"
                 />

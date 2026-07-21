@@ -84,12 +84,22 @@ export const schedulingRuleRepository = {
 
   async getAssignmentsByShiftIds(ids: string[]): Promise<ShiftAssignment[]> {
     if (ids.length === 0) return []
-    const { data, error } = await supabase
-      .from('shift_assignments')
-      .select('*')
-      .in('shift_id', ids)
-    if (error) throw new Error(error.message)
-    return (data ?? []) as ShiftAssignment[]
+    // AI schedule generation pulls a whole company's shifts across a 28-day lookback plus the
+    // requested range, which can push this past a few hundred ids — a single .in() GET request
+    // encodes every id into the URL and a long enough one fails at the transport level (a raw
+    // "TypeError: fetch failed" with no HTTP status), so batch it instead of sending it as one call.
+    const CHUNK_SIZE = 200
+    const chunks: string[][] = []
+    for (let i = 0; i < ids.length; i += CHUNK_SIZE) chunks.push(ids.slice(i, i + CHUNK_SIZE))
+    const results = await Promise.all(chunks.map(async chunk => {
+      const { data, error } = await supabase
+        .from('shift_assignments')
+        .select('*')
+        .in('shift_id', chunk)
+      if (error) throw new Error(error.message)
+      return (data ?? []) as ShiftAssignment[]
+    }))
+    return results.flat()
   },
 
   async getApprovedTimeOffByCompany(company_id: string): Promise<ApprovedTimeOffRow[]> {

@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
 import {
   Archive, ArchiveRestore, ArrowRight, Briefcase, Building2, Cake, Check, CheckCircle, ChevronDown, ChevronLeft, ChevronRight,
-  ClipboardList, Clock, Copy, Crown, DollarSign, Eye, FileText, LayoutGrid, MapPin,
+  ClipboardList, Clock, Copy, Crown, DollarSign, Eye, FileText, LayoutGrid, Lock, MapPin,
   Pencil, Plus, Repeat, Send, Shirt, Sparkles, Timer, Trash2, UserCheck, UserX, Users,
   X, XCircle, Zap,
 } from 'lucide-react'
@@ -841,6 +841,9 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
   const [formOpen, setFormOpen] = useState(false)
   const [editingId, setEditingId] = useState('')
   const [editingDraft, setEditingDraft] = useState(false)
+  // A rejected posting reopened for edit — "Save Changes" must resubmit it for approval
+  // (submit_for_review) instead of publishing it directly, matching the Manager approval workflow.
+  const [editingRejected, setEditingRejected] = useState(false)
   // wizard step: 'type' | 'ai' | 'form'
   const [wizardStep, setWizardStep] = useState<'type' | 'ai' | 'form'>('type')
   const [formJobType, setFormJobType] = useState<'shift' | 'oneoff'>('oneoff')
@@ -973,6 +976,14 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
 
   const selectedLive = useMemo(() => livePostings.find(p => p.id === selectedLiveId) ?? null, [livePostings, selectedLiveId])
   const selectedArchived = useMemo(() => livePostings.find(p => p.id === selectedArchivedId) ?? null, [livePostings, selectedArchivedId])
+  // Candidate Management is Recruitment-Owner-only: Job Visibility (scopeToManagerDepartments)
+  // already lets a Manager see every posting in their department, but only the job's own creator
+  // may view/manage its applicants. Owner/Partner (scopeToManagerDepartments=false) are never
+  // restricted — they own everything below them.
+  const canManageApplicants = useCallback(
+    (job: { created_by: string } | null | undefined) => !scopeToManagerDepartments || !job || job.created_by === internalUserId,
+    [scopeToManagerDepartments, internalUserId],
+  )
   const selectedPending = useMemo(() => pendingPostings.find(p => p.id === selectedPendingId) ?? null, [pendingPostings, selectedPendingId])
   const selectedTemplate = useMemo(() => templates.find(t => t.id === selectedTemplateId) ?? null, [templates, selectedTemplateId])
 
@@ -1005,7 +1016,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
         fetch(`/api/recruitment?company_id=${cid}&resource=pending_approval`),
         fetch(`/api/recruitment?company_id=${cid}&resource=drafts&user_id=${uid}`),
         fetch(`/api/company/departments?company_id=${cid}`),
-        fetch(`/api/job-template?company_id=${cid}`),
+        fetch(`/api/job-template?company_id=${cid}&created_by=${uid}`),
       ])
       const [liveData, pendingData, draftsData, deptData, templatesData] = await Promise.all([
         liveRes.json(), pendingRes.json(), draftsRes.json(), deptRes.json(), templatesRes.json(),
@@ -1038,19 +1049,19 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
     }
   }, [])
 
-  const fetchApplicants = useCallback(async (jobId: string) => {
-    if (!jobId) { setApplicants([]); return }
+  const fetchApplicants = useCallback(async (jobId: string, viewerId: string) => {
+    if (!jobId || !viewerId) { setApplicants([]); return }
     try {
-      const res = await fetch(`/api/recruitment?resource=applicants&job_id=${jobId}`)
+      const res = await fetch(`/api/recruitment?resource=applicants&job_id=${jobId}&viewer_id=${viewerId}`)
       const data = await res.json()
       if (data.success) setApplicants(data.applicants ?? [])
     } catch { setApplicants([]) }
   }, [])
 
-  const fetchArchivedApplicants = useCallback(async (jobId: string) => {
-    if (!jobId) { setArchivedApplicants([]); return }
+  const fetchArchivedApplicants = useCallback(async (jobId: string, viewerId: string) => {
+    if (!jobId || !viewerId) { setArchivedApplicants([]); return }
     try {
-      const res = await fetch(`/api/recruitment?resource=applicants&job_id=${jobId}`)
+      const res = await fetch(`/api/recruitment?resource=applicants&job_id=${jobId}&viewer_id=${viewerId}`)
       const data = await res.json()
       if (data.success) setArchivedApplicants(data.applicants ?? [])
     } catch { setArchivedApplicants([]) }
@@ -1127,19 +1138,21 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
   }, [livePostings])
 
   useEffect(() => {
-    void fetchApplicants(selectedLiveId)
+    if (canManageApplicants(selectedLive)) void fetchApplicants(selectedLiveId, internalUserId)
+    else setApplicants([])
     setRecommendations([])
-  }, [selectedLiveId, fetchApplicants])
+  }, [selectedLiveId, fetchApplicants, selectedLive, canManageApplicants, internalUserId])
 
   useEffect(() => {
-    void fetchArchivedApplicants(selectedArchivedId)
-  }, [selectedArchivedId, fetchArchivedApplicants])
+    if (canManageApplicants(selectedArchived)) void fetchArchivedApplicants(selectedArchivedId, internalUserId)
+    else setArchivedApplicants([])
+  }, [selectedArchivedId, fetchArchivedApplicants, selectedArchived, canManageApplicants, internalUserId])
 
 
   // ── form helpers ─────────────────────────────────────────────────────────────
 
   const resetForm = () => {
-    setEditingId(''); setEditingDraft(false); setWizardStep('type'); setFormJobType('oneoff')
+    setEditingId(''); setEditingDraft(false); setEditingRejected(false); setWizardStep('type'); setFormJobType('oneoff')
     setFormTemplateId('')
     setFormTitle(''); setFormDeptId(''); setFormEmpType('casual')
     setFormLocation(''); setFormSalaryAmt(''); setFormSalaryType('per hour')
@@ -1289,6 +1302,49 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
       template_id: formTemplateId || null,
       status,
     }
+  }
+
+  // Reopens a rejected posting in the same wizard a draft reopens in — it was never publicly
+  // visible either, so every field is fair game to fix before resubmitting. Reuses the draft
+  // reopen logic to populate the form, then swaps it from "background draft" (draftId) to
+  // "editing an existing posting" (editingId) so Save Changes patches this job in place instead
+  // of creating a new one.
+  const openRejectedInWizard = async (p: JobPostingSummary) => {
+    await openDraftInWizard(p)
+    setDraftId('')
+    setEditingId(p.id)
+    setEditingDraft(false)
+    setEditingRejected(true)
+  }
+
+  // Fixes a rejected posting and puts it back in front of Owner/Partner: edit_posting saves the
+  // corrected fields, then submit_for_review moves it back to pending_approval (also clearing the
+  // old rejection reason/rejected_by — see recruitmentService.submitForReview).
+  const saveRejectedEdit = async () => {
+    setActionLoading(true); setFormError('')
+    try {
+      const body = buildBody('open')
+      const editRes = await fetch('/api/recruitment', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...body, action: 'edit_posting', job_id: editingId }),
+      })
+      const editData = await editRes.json()
+      if (!editData.success) throw new Error(editData.message || 'Failed to save job')
+
+      const resubmitRes = await fetch('/api/recruitment', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'submit_for_review', job_id: editingId }),
+      })
+      const resubmitData = await resubmitRes.json()
+      if (!resubmitData.success) throw new Error(resubmitData.message || 'Failed to resubmit job')
+
+      setFormOpen(false); resetForm()
+      await fetchAll(companyId, internalUserId)
+      setActiveTab('jobs')
+      showToast('Job updated and resubmitted for approval')
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : 'Failed to save job')
+    } finally { setActionLoading(false) }
   }
 
   // ── job templates (UC36) ─────────────────────────────────────────────────────
@@ -1704,7 +1760,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'Failed to update applicant')
-      await Promise.all([fetchApplicants(selectedLiveId), fetchAll(companyId, internalUserId)])
+      await Promise.all([fetchApplicants(selectedLiveId, internalUserId), fetchAll(companyId, internalUserId)])
       showToast(decision === 'accepted' ? 'Applicant accepted' : 'Applicant rejected')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update applicant')
@@ -1745,7 +1801,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
       if (!data.success) throw new Error(data.message || 'Failed to send offers')
       setPoolResults(data.results ?? [])
       setPoolSelected(new Set())
-      await Promise.all([fetchApplicants(selectedLiveId), fetchAll(companyId, internalUserId)])
+      await Promise.all([fetchApplicants(selectedLiveId, internalUserId), fetchAll(companyId, internalUserId)])
       const sent = (data.results ?? []).filter((r: PoolInviteResult) => r.invited).length
       if (sent > 0) showToast(sent === 1 ? 'Offer sent' : `${sent} offers sent`)
     } catch (err) {
@@ -1777,7 +1833,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'Failed to remove worker')
       setRemoveWorkerTarget(null); setCancelReason('')
-      await Promise.all([fetchApplicants(selectedLiveId), fetchAll(companyId, internalUserId)])
+      await Promise.all([fetchApplicants(selectedLiveId, internalUserId), fetchAll(companyId, internalUserId)])
       showToast('Worker removed — they have been notified')
     } catch (err) {
       setCancelSubmitError(err instanceof Error ? err.message : 'Failed to remove worker')
@@ -2286,6 +2342,30 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                             )}
                           </div>
                         )}
+
+                        {/* Rejected Job Status: reason + who rejected it, visible to everyone who can
+                            see the job (department-wide Job Visibility) — but only the job's own
+                            creator gets Edit / Resubmit, since that's this Manager's own submission
+                            to fix, not something a viewing peer can touch. */}
+                        {p.status === 'rejected' && (
+                          <div style={{ border: '1.5px solid #FECACA', background: '#FEF2F2', borderRadius: 12, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.8rem', fontWeight: 700, color: '#B91C1C' }}>
+                              <XCircle size={14} /> Rejected{p.rejected_by_name ? ` by ${p.rejected_by_name}` : ''}
+                            </div>
+                            {p.rejection_reason && (
+                              <p style={{ margin: 0, fontSize: '0.8125rem', color: '#7F1D1D', lineHeight: 1.5 }}>{p.rejection_reason}</p>
+                            )}
+                            {canManageApplicants(p) && (
+                              <button
+                                type="button"
+                                onClick={() => void openRejectedInWizard(p)}
+                                style={{ alignSelf: 'flex-start', marginTop: 4, display: 'inline-flex', alignItems: 'center', gap: 6, border: 'none', borderRadius: 9, background: 'linear-gradient(135deg, #F97316, #EA580C)', color: '#FFFFFF', height: 32, padding: '0 14px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}
+                              >
+                                <Pencil size={13} /> Edit &amp; Resubmit for Approval
+                              </button>
+                            )}
+                          </div>
+                        )}
                         {/* Job Board card look-alike */}
                         <div style={{ background: '#FFFFFF', border: '1.5px solid #EDE9E3', borderRadius: 16, padding: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
                           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -2422,7 +2502,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                         breakpoint (this PANEL's own width, not the window's) the buttons drop
                         their text label (icon + title tooltip only) so they never spill past the
                         panel edge into the next column. */}
-                    {activeTab !== 'closed' && (
+                    {activeTab !== 'closed' && canManageApplicants(selectedLive) && (
                       <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
                         <button
                           onClick={openPoolModal}
@@ -2443,7 +2523,17 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                     )}
                   </div>
                   <div style={{ padding: '18px 20px', overflowY: 'auto', overscrollBehavior: 'contain', flex: 1, minHeight: 0 }}>
-                        {pendingApplicants.length === 0 ? (
+                        {!canManageApplicants(selectedLive) ? (
+                          // Candidate Management is Recruitment-Owner-only — Job Visibility already let this
+                          // Manager see the posting itself, but who applied and what happens to them stays
+                          // hidden from everyone except whoever created it.
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '48px 24px', background: '#F8FAFC', borderRadius: 12, border: '1.5px dashed #E5E7EB' }}>
+                            <div style={{ width: 48, height: 48, borderRadius: 14, background: '#F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
+                              <Lock size={20} style={{ color: '#D1D5DB' }} />
+                            </div>
+                            <p style={{ margin: 0, fontSize: '0.875rem', fontWeight: 600, color: '#6B7280', textAlign: 'center' }}>Only {selectedLive?.created_by_name ?? 'the recruitment owner'} can manage applicants for this job</p>
+                          </div>
+                        ) : pendingApplicants.length === 0 ? (
                           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '48px 24px', background: '#FFFFFF', borderRadius: 12, border: '1.5px dashed #E5E7EB' }}>
                             <div style={{ width: 48, height: 48, borderRadius: 14, background: '#F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
                               <UserX size={22} style={{ color: '#D1D5DB' }} />
@@ -2517,12 +2607,21 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                       <UserCheck size={15} style={{ color: '#059669' }} />
                     </div>
                     <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>Confirmed</span>
-                    <span title="Confirmed hires / positions to fill" style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 700, background: '#ECFDF5', color: '#059669', border: '1px solid #A7F3D0', flexShrink: 0 }}>
-                      {confirmedApplicants.length} / {selectedLive.openings ?? 1}
-                    </span>
+                    {canManageApplicants(selectedLive) && (
+                      <span title="Confirmed hires / positions to fill" style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 700, background: '#ECFDF5', color: '#059669', border: '1px solid #A7F3D0', flexShrink: 0 }}>
+                        {confirmedApplicants.length} / {selectedLive.openings ?? 1}
+                      </span>
+                    )}
                   </div>
                   <div style={{ padding: '18px 20px', overflowY: 'auto', overscrollBehavior: 'contain', flex: 1, minHeight: 0 }}>
-                    {confirmedApplicants.length === 0 ? (
+                    {!canManageApplicants(selectedLive) ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '48px 24px', background: '#F8FAFC', borderRadius: 12, border: '1.5px dashed #E5E7EB' }}>
+                        <div style={{ width: 48, height: 48, borderRadius: 14, background: '#F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
+                          <Lock size={20} style={{ color: '#D1D5DB' }} />
+                        </div>
+                        <p style={{ margin: 0, fontSize: '0.875rem', fontWeight: 600, color: '#6B7280', textAlign: 'center' }}>Only {selectedLive?.created_by_name ?? 'the recruitment owner'} can manage this job's hires</p>
+                      </div>
+                    ) : confirmedApplicants.length === 0 ? (
                       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '48px 24px', background: '#FFFFFF', borderRadius: 12, border: '1.5px dashed #E5E7EB' }}>
                         <div style={{ width: 48, height: 48, borderRadius: 14, background: '#F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
                           <UserCheck size={22} style={{ color: '#D1D5DB' }} />
@@ -3208,12 +3307,21 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                     </div>
                     <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>Applicants</span>
                     {/* Confirmed (both employer accepted + worker confirmed the invitation) vs openings — sits right next to the title */}
-                    <span title="Confirmed workers / positions to fill" style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 700, background: '#ECFDF5', color: '#059669', border: '1px solid #A7F3D0', flexShrink: 0 }}>
-                      {archivedApplicants.filter(a => a.status === 'accepted' && a.invitation_status === 'accepted').length} / {selectedArchived.openings ?? 1}
-                    </span>
+                    {canManageApplicants(selectedArchived) && (
+                      <span title="Confirmed workers / positions to fill" style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 700, background: '#ECFDF5', color: '#059669', border: '1px solid #A7F3D0', flexShrink: 0 }}>
+                        {archivedApplicants.filter(a => a.status === 'accepted' && a.invitation_status === 'accepted').length} / {selectedArchived.openings ?? 1}
+                      </span>
+                    )}
                   </div>
                   <div style={{ padding: '18px 20px' }}>
-                        {archivedApplicants.length === 0 ? (
+                        {!canManageApplicants(selectedArchived) ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '48px 24px', background: '#F8FAFC', borderRadius: 12, border: '1.5px dashed #E5E7EB' }}>
+                            <div style={{ width: 48, height: 48, borderRadius: 14, background: '#F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
+                              <Lock size={20} style={{ color: '#D1D5DB' }} />
+                            </div>
+                            <p style={{ margin: 0, fontSize: '0.875rem', fontWeight: 600, color: '#6B7280', textAlign: 'center' }}>Only {selectedArchived?.created_by_name ?? 'the recruitment owner'} can view applicants for this job</p>
+                          </div>
+                        ) : archivedApplicants.length === 0 ? (
                           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '48px 24px', background: '#FFFFFF', borderRadius: 12, border: '1.5px dashed #E5E7EB' }}>
                             <div style={{ width: 48, height: 48, borderRadius: 14, background: '#F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
                               <UserX size={22} style={{ color: '#D1D5DB' }} />
@@ -4012,7 +4120,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
         // was originally created from a template — it's a half-finished job, not a template apply.
         const isTemplateMode = !editingId && !draftId && !!formTemplateId
         const modalTitle = editingId
-          ? (editingDraft ? 'Edit Draft' : 'Edit Job Posting')
+          ? (editingDraft ? 'Edit Draft' : editingRejected ? 'Edit & Resubmit Job Posting' : 'Edit Job Posting')
           : isTemplateMode ? 'Apply Template'
           : wizardStep === 'type' ? 'Choose Job Type'
           : 'Complete Job Description'
@@ -4810,12 +4918,12 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                       )
                     })()
                   ) : (
-                    <button onClick={() => saveForm(editingDraft ? 'draft' : 'open')} disabled={postDisabled}
+                    <button onClick={() => (editingRejected ? saveRejectedEdit() : saveForm(editingDraft ? 'draft' : 'open'))} disabled={postDisabled}
                       style={{
                         ...(editingId ? modalPrimaryButtonStyle(postDisabled) : { ...modalPrimaryButtonStyle(postDisabled), background: postDisabled ? accentDisabledBg : accentGradient }),
                         ...(isTemplateMode ? { flex: 1, justifyContent: 'center' } : {}),
                       }}>
-                      {actionLoading ? <Spinner size={13} /> : <Check size={13} />} {editingDraft ? 'Save Changes' : editingId ? 'Save Changes' : 'Post Job'}
+                      {actionLoading ? <Spinner size={13} /> : <Check size={13} />} {editingRejected ? 'Save & Resubmit' : editingDraft ? 'Save Changes' : editingId ? 'Save Changes' : 'Post Job'}
                     </button>
                   )}
                 </div>
