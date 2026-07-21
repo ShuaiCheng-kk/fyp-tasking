@@ -1269,8 +1269,14 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
   const [profileMember, setProfileMember] = useState<Member | null>(null)
   const [workloadInsightOpen, setWorkloadInsightOpen] = useState(false)
   // Clicking the delay count sorts every delayed task to the top of its Kanban column and
-  // highlights them in place — no modal, no jumping into a department.
+  // highlights them in place — no modal, no jumping into a department. Also reused for the
+  // dashboard's Overdue/Completed deep links (same visual treatment, different task set).
   const [highlightedDelayTaskIds, setHighlightedDelayTaskIds] = useState<Set<string>>(new Set())
+  // 'delay' = live-synced against delayAlerts (auto-clears as tasks change, see the effect
+  // below); 'snapshot' = a one-time highlight from a dashboard deep link (Overdue/Completed)
+  // that should NOT be pruned by the delay-alert sync effect, since those tasks are never in
+  // delayAlerts to begin with.
+  const [highlightSource, setHighlightSource] = useState<'delay' | 'snapshot' | null>(null)
   const [insightLoading, setInsightLoading] = useState('')
   const [insightError, setInsightError] = useState('')
   // Task Delay Alert threshold — percent of a task's assigned-to-deadline window that may pass
@@ -1315,15 +1321,18 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
   }, [kanban, selectedDeptId, delayThresholdPercent, delayNowTick])
 
   // Keep the highlight set in sync with reality: a task that got started (dragged out of
-  // Assigned) or fell out of the alert list must lose its highlight automatically.
+  // Assigned) or fell out of the alert list must lose its highlight automatically. Only applies
+  // to a live 'delay' highlight — a 'snapshot' highlight (Overdue/Completed deep link) is a
+  // fixed set of task ids that were never in delayAlerts, so this must not prune it.
   useEffect(() => {
+    if (highlightSource !== 'delay') return
     setHighlightedDelayTaskIds(prev => {
       if (prev.size === 0) return prev
       const alertIds = new Set(delayAlerts.map(a => a.task_id))
       const next = new Set([...prev].filter(id => alertIds.has(id)))
       return next.size === prev.size ? prev : next
     })
-  }, [delayAlerts])
+  }, [delayAlerts, highlightSource])
 
   // Kanban toolbar — priority filter, title/description search, and board-wide sort order
   const [kanbanSearch, setKanbanSearch] = useState('')
@@ -2248,21 +2257,25 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
   // is on display the badge turns into a Mark-as-read button (step 2 below).
   const showDelayHighlights = useCallback(() => {
     setBoardViewMode('kanban')
+    setHighlightSource('delay')
     setHighlightedDelayTaskIds(new Set(delayAlerts.map(a => a.task_id)))
   }, [delayAlerts])
 
   // Deep links from the dashboard's Task Overview: ?sort=deadline|priority|newest presets the
   // Kanban sort; ?show=delay_alerts highlights the delayed tasks once the board data arrives;
-  // ?show=completed_today floats today's completed tasks to the top of the Complete column
-  // (same highlight treatment the Task Delay Alert count uses).
+  // ?show=completed_today / ?show=overdue float today's completed / currently-overdue tasks to
+  // the top of their column (same highlight treatment the Task Delay Alert count uses, but as a
+  // fixed snapshot — see the highlightSource comment above).
   const [pendingDelayHighlight, setPendingDelayHighlight] = useState(false)
   const [pendingCompletedHighlight, setPendingCompletedHighlight] = useState(false)
+  const [pendingOverdueHighlight, setPendingOverdueHighlight] = useState(false)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const sort = params.get('sort')
     if (sort === 'deadline' || sort === 'priority' || sort === 'newest') setKanbanSortBy(sort)
     if (params.get('show') === 'delay_alerts') setPendingDelayHighlight(true)
     if (params.get('show') === 'completed_today') setPendingCompletedHighlight(true)
+    if (params.get('show') === 'overdue') setPendingOverdueHighlight(true)
   }, [])
   useEffect(() => {
     if (pendingDelayHighlight && delayAlerts.length > 0) {
@@ -2282,10 +2295,25 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
     })
     if (completedToday.length > 0) {
       setBoardViewMode('kanban')
+      setHighlightSource('snapshot')
       setHighlightedDelayTaskIds(new Set(completedToday.map(t => t.id)))
     }
     setPendingCompletedHighlight(false)
   }, [pendingCompletedHighlight, kanban])
+  useEffect(() => {
+    if (!pendingOverdueHighlight || !kanban) return
+    const now = Date.now()
+    // Assigned + In Progress only, top-level — matches the dashboard's Overdue group definition.
+    const overdueNow = [...(kanban.Assigned ?? []), ...(kanban['In Progress'] ?? [])].filter(t => (
+      !t.parent_task_id && !!t.due_at && new Date(t.due_at).getTime() < now
+    ))
+    if (overdueNow.length > 0) {
+      setBoardViewMode('kanban')
+      setHighlightSource('snapshot')
+      setHighlightedDelayTaskIds(new Set(overdueNow.map(t => t.id)))
+    }
+    setPendingOverdueHighlight(false)
+  }, [pendingOverdueHighlight, kanban])
 
   // Step 2 — this viewer has seen the delayed tasks (they can only follow up in person, not act
   // on the board), so Mark as read dismisses exactly those alerts for THEM and the card turns

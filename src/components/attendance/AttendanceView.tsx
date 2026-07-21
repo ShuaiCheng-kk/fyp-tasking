@@ -2898,12 +2898,12 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                                 {approved && req.reviewed_by === null && (
                                   <span title="Approved automatically by the Shift Swap auto-approval rules" style={{ fontSize: '0.62rem', fontWeight: 800, color: '#7C3AED', background: '#F5F3FF', borderRadius: 999, padding: '3px 8px', whiteSpace: 'nowrap' }}>Auto-Approved</span>
                                 )}
-                                <span title={req.status === 'approved' ? 'Approved' : 'Rejected'} style={{ width: 30, height: 30, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: statusTone.bg, color: statusTone.text, border: `1.5px solid ${statusTone.border}`, borderRadius: 999, flexShrink: 0 }}>
-                                  <StatusIcon size={12} strokeWidth={3} />
-                                </span>
                                 {req.reviewer_name && (
                                   <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#94A3B8', whiteSpace: 'nowrap' }}>by {req.reviewer_name}</span>
                                 )}
+                                <span title={req.status === 'approved' ? 'Approved' : 'Rejected'} style={{ width: 30, height: 30, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: statusTone.bg, color: statusTone.text, border: `1.5px solid ${statusTone.border}`, borderRadius: 999, flexShrink: 0 }}>
+                                  <StatusIcon size={12} strokeWidth={3} />
+                                </span>
                               </>
                             )}
                           </div>
@@ -3714,11 +3714,13 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                               >
                                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14 }}>
                                   <RoleAvatar role={req.requester_role} size={48} photoUrl={person?.profile_photo_url ?? null} />
-                                  <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8, paddingRight: (isDecided || verdict) ? 150 : 0 }}>
-                                    {deptName && (
-                                      <span style={{ fontSize: '0.72rem', fontWeight: 800, color: dc, background: `${dc}1a`, borderRadius: 999, padding: '4px 10px', flexShrink: 0, alignSelf: 'flex-start' }}>{deptName}</span>
-                                    )}
-                                    <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{req.requester_name}</span>
+                                  <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingRight: (isDecided || verdict) ? 150 : 0 }}>
+                                      {deptName && (
+                                        <span style={{ fontSize: '0.72rem', fontWeight: 800, color: dc, background: `${dc}1a`, borderRadius: 999, padding: '4px 10px', flexShrink: 0, alignSelf: 'flex-start' }}>{deptName}</span>
+                                      )}
+                                      <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{req.requester_name}</span>
+                                    </div>
                                     <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
                                       {requestedDates.map(r => (
                                         <span key={r.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.76rem', fontWeight: 700, color: '#C2410C', background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: 999, padding: '4px 10px', whiteSpace: 'nowrap' }}>
@@ -3764,13 +3766,13 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                                         {req.reviewed_at && (
                                           <span style={{ fontSize: '0.76rem', fontWeight: 800, color: '#64748B', whiteSpace: 'nowrap' }}>{formatOwnerDecisionTime(req.reviewed_at)}</span>
                                         )}
+                                        {req.reviewer_name && (
+                                          <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#94A3B8', whiteSpace: 'nowrap' }}>by {req.reviewer_name}</span>
+                                        )}
                                         <span title="Approved" style={{ width: 30, height: 30, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: '#ECFDF5', color: '#047857', border: '1.5px solid #86EFAC', borderRadius: 999, flexShrink: 0 }}>
                                           <Check size={12} strokeWidth={3} />
                                         </span>
                                       </div>
-                                    )}
-                                    {isDecided && req.reviewer_name && (
-                                      <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#94A3B8', whiteSpace: 'nowrap' }}>by {req.reviewer_name}</span>
                                     )}
                                     {verdict === 'safe' && (
                                       <span title="Safe to approve as requested" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.72rem', fontWeight: 800, color: '#15803D', background: '#DCFCE7', borderRadius: 999, padding: '4px 10px', whiteSpace: 'nowrap', flexShrink: 0 }}>
