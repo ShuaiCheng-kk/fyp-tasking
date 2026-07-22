@@ -9,6 +9,11 @@ import { usePathname } from 'next/navigation'
 import Link from 'next/link'
 import { LayoutDashboard, Clock, ClipboardList, User, LogOut } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
+import { useIsCompactViewport } from '@/hooks/useIsCompactViewport'
+
+// Phone-width tier — below this, hover has no touch equivalent, so the hover-expand rail is
+// replaced by a fixed bottom tab bar instead. Desktop/tablet (>=640px) render is untouched.
+const PHONE_BREAKPOINT = 640
 
 const NAV_ITEMS = [
   { label: 'Dashboard',     Icon: LayoutDashboard, href: '/casual/dashboard' },
@@ -28,6 +33,7 @@ const THEME = {
 export default function CasualSidebar({ disabled = false }: { disabled?: boolean }) {
   const pathname = usePathname()
   const [expanded, setExpanded] = useState(false)
+  const isPhone = useIsCompactViewport(PHONE_BREAKPOINT)
 
   const handleLogout = async () => {
     const supabase = createBrowserClient(
@@ -44,6 +50,44 @@ export default function CasualSidebar({ disabled = false }: { disabled?: boolean
     localStorage.removeItem('apply_job_id')
     sessionStorage.removeItem('tasking_session_active')
     window.location.href = '/signout'
+  }
+
+  // Phone — fixed bottom tab bar, same NAV_ITEMS/active/disabled logic as the desktop rail, just
+  // icon-over-label per tab and no hover state. Logout lives in casual/layout.tsx's phone header
+  // instead of a 5th tab.
+  if (isPhone) {
+    return (
+      <nav
+        style={{
+          position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 20,
+          height: 64, display: 'flex',
+          background: THEME.sidebarBg,
+          borderTop: `1px solid ${THEME.sidebarBorder}`,
+        }}
+      >
+        {NAV_ITEMS.map(({ label, Icon, href }) => {
+          const active = pathname === href
+          const itemDisabled = disabled && label !== 'Profile'
+          return (
+            <Link
+              key={label}
+              href={itemDisabled ? '#' : href}
+              aria-disabled={itemDisabled}
+              onClick={e => { if (itemDisabled) e.preventDefault() }}
+              style={{
+                flex: 1,
+                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 3,
+                color: itemDisabled ? '#D1D5DB' : (active ? THEME.sidebarActiveText : THEME.sidebarText),
+                textDecoration: 'none',
+              }}
+            >
+              <Icon size={20} strokeWidth={active ? 2.4 : 2.1} style={{ flexShrink: 0, color: 'currentColor' }} />
+              <span style={{ fontSize: '0.68rem', fontWeight: active ? 700 : 500 }}>{label}</span>
+            </Link>
+          )
+        })}
+      </nav>
+    )
   }
 
   return (

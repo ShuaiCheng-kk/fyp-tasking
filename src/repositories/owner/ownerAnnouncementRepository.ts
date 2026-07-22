@@ -18,8 +18,13 @@ export const ownerAnnouncementRepository = {
         if (isEmployee) {
           return !!departmentId && row.department_id === departmentId && row.poster?.role === 'Manager'
         }
+        // Owner/Partner never see Manager-posted announcements — those are scoped to that
+        // Manager's own department only, visible to Managers/Employees within it.
+        if (isOwnerOrPartner) {
+          return row.poster?.role !== 'Manager'
+        }
         // Non-owners only see company-wide or their own department's announcements
-        if (!isOwnerOrPartner && departmentId) {
+        if (departmentId) {
           return row.department_id === null || row.department_id === departmentId
         }
         return true

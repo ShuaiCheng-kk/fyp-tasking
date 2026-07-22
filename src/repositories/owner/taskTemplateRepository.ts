@@ -11,6 +11,7 @@ export const taskTemplateRepository = {
       .from('task_templates')
       .insert({
         company_id: input.company_id,
+        department_id: input.department_id ?? null,
         title: input.title,
         description: input.description ?? null,
         priority: input.priority ?? null,
@@ -23,12 +24,20 @@ export const taskTemplateRepository = {
     return data as TaskTemplate
   },
 
-  async getTemplatesByCompany(company_id: string): Promise<TaskTemplate[]> {
-    const { data, error } = await supabase
+  // department_id null = an Owner/Partner template, shared only between the two of them — never
+  // department-scoped, never shown to a Manager. department_ids omitted (Owner/Partner viewer) →
+  // every template in the company, both kinds. Passed (Manager viewer) → ONLY templates tagged to
+  // a department the manager is in; null (Owner/Partner) templates are excluded, not included.
+  async getTemplatesByCompany(company_id: string, department_ids?: string[]): Promise<TaskTemplate[]> {
+    let query = supabase
       .from('task_templates')
       .select('*')
       .eq('company_id', company_id)
-      .order('created_at', { ascending: true })
+    if (department_ids) {
+      if (department_ids.length === 0) return []
+      query = query.in('department_id', department_ids)
+    }
+    const { data, error } = await query.order('created_at', { ascending: true })
     if (error) throw new Error(error.message)
     return (data ?? []) as TaskTemplate[]
   },

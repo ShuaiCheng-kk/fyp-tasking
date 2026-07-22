@@ -31,6 +31,9 @@ export async function GET(req: NextRequest) {
   // whole peer id list, not just the caller) — used to look up THIS viewer's own Task Delay
   // Alert read state so a peer's dismissal doesn't hide it for anyone else.
   const viewer_id = searchParams.get('viewer_id') ?? undefined
+  // Manager Tasks page's My Tasks tab: tasks assigned TO this user (by Owner/Partner, per the
+  // one-level-down assignment rule), the inverse of assigned_by/manager_scope_id above.
+  const assigned_user_id = searchParams.get('assigned_user_id') ?? undefined
 
   if (!company_id) {
     return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
@@ -43,7 +46,7 @@ export async function GET(req: NextRequest) {
       : assigned_by?.includes(',') ? assigned_by.split(',').filter(Boolean) : assigned_by
 
     if (kanban) {
-      const groups = await taskService.getKanbanTasks(company_id, assignedByFilter, managerScope?.departmentIds, viewer_id)
+      const groups = await taskService.getKanbanTasks(company_id, assignedByFilter, managerScope?.departmentIds, viewer_id, assigned_user_id)
       return NextResponse.json({ success: true, groups })
     }
     if (stats) {
@@ -63,7 +66,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: true, tasks })
     }
     if (archived) {
-      const tasks = await taskService.getArchivedTasks(company_id)
+      const tasks = await taskService.getArchivedTasks(company_id, assignedByFilter, managerScope?.departmentIds)
       return NextResponse.json({ success: true, tasks })
     }
     if (suggestion === 'workload') {

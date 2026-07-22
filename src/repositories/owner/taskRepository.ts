@@ -70,7 +70,10 @@ export const taskRepository = {
 
   // department_ids is a security-scoping filter (e.g. a Manager's own departments), distinct from
   // any single department_id a caller applies afterwards as a UI-level "show just this one" filter.
-  async getTasksByCompany(company_id: string, assigned_by?: string | string[], department_ids?: string[]): Promise<Task[]> {
+  // assigned_user_id is the inverse of assigned_by — "tasks assigned TO this person" (Manager Tasks
+  // page's My Tasks tab) rather than "tasks assigned BY this person" — the two are never combined
+  // by any current caller, but nothing here prevents it.
+  async getTasksByCompany(company_id: string, assigned_by?: string | string[], department_ids?: string[], assigned_user_id?: string): Promise<Task[]> {
     let query = supabase
       .from('tasks')
       .select('id, shift_id, company_id, department_id, parent_task_id, sequence_order, title, description, assigned_user_id, assigned_by, status, percentage_complete, priority, due_at, task_date, recurrence_group_id, source_task_id, is_archived, rejection_reason, rejected_at, completed_at, reviewed_by, created_at, updated_at, shifts(shift_date)')
@@ -86,6 +89,9 @@ export const taskRepository = {
       if (department_ids.length === 0) return []
       query = query.in('department_id', department_ids)
     }
+    if (assigned_user_id) {
+      query = query.eq('assigned_user_id', assigned_user_id)
+    }
     const { data, error } = await query.order('created_at', { ascending: false })
     if (error) throw new Error(error.message)
     const tasks = ((data ?? []) as unknown as (Task & { shifts: { shift_date: string }[] | null })[]).map(row => ({
@@ -95,8 +101,8 @@ export const taskRepository = {
     return this.attachAssignedByNames(await this.attachAssignedUserIds(tasks))
   },
 
-  async getArchivedTasksByCompany(company_id: string): Promise<Task[]> {
-    const { data, error } = await supabase
+  async getArchivedTasksByCompany(company_id: string, assigned_by?: string | string[], department_ids?: string[]): Promise<Task[]> {
+    let query = supabase
       .from('tasks')
       .select('id, shift_id, company_id, department_id, parent_task_id, sequence_order, title, description, assigned_user_id, assigned_by, status, percentage_complete, priority, due_at, task_date, recurrence_group_id, source_task_id, is_archived, rejection_reason, rejected_at, completed_at, reviewed_by, created_at, updated_at, shifts(shift_date)')
       .eq('company_id', company_id)
@@ -105,7 +111,17 @@ export const taskRepository = {
       // parent/original but only the top-level original task is listed in the archive view.
       .is('parent_task_id', null)
       .is('source_task_id', null)
-      .order('updated_at', { ascending: false })
+    if (Array.isArray(assigned_by)) {
+      if (assigned_by.length === 0) return []
+      query = query.in('assigned_by', assigned_by)
+    } else if (assigned_by) {
+      query = query.eq('assigned_by', assigned_by)
+    }
+    if (department_ids) {
+      if (department_ids.length === 0) return []
+      query = query.in('department_id', department_ids)
+    }
+    const { data, error } = await query.order('updated_at', { ascending: false })
     if (error) throw new Error(error.message)
     const tasks = ((data ?? []) as unknown as (Task & { shifts: { shift_date: string }[] | null })[]).map(row => ({
       ...row,

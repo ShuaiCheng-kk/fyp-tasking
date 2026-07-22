@@ -87,11 +87,17 @@ const THEME_DARK = {
   logoutHoverBg: 'rgba(239,68,68,0.15)',
 }
 
-// Manager's sidebar: same white layout as Owner, blue accent instead of orange (CLAUDE.md §2).
+// Manager's sidebar: navy-blue background (same treatment as Partner's black), same orange accent as everyone else (CLAUDE.md §2, confirmed 2026-07-22).
 const THEME_MANAGER = {
-  ...THEME_LIGHT,
-  sidebarActiveText: '#3B82F6',
-  sidebarActiveTint: 'rgba(59,130,246,0.12)',
+  sidebarBg: '#1E3A5F',
+  sidebarText: '#FFFFFF',
+  sidebarActiveBg: 'transparent',
+  sidebarActiveText: '#F97316',
+  sidebarActiveTint: 'rgba(249,115,22,0.15)',
+  sidebarHoverBg: 'rgba(255,255,255,0.07)',
+  sidebarBorder: '#2E507D',
+  logoBorder: '#2E507D',
+  logoutHoverBg: 'rgba(239,68,68,0.18)',
 }
 
 export default function OwnerSidebar({
@@ -245,7 +251,9 @@ export default function OwnerSidebar({
           .then(r => r.json())
           .then(data => {
             if (data.success) {
-              const unread = (data.announcements as { id: string }[]).filter(a => !readIds.has(a.id)).length
+              // Own posts are never "unread" — matches CommunicationView's unreadAnnCount rule.
+              const unread = (data.announcements as { id: string; from_user_id: string; created_at: string; updated_at?: string | null }[])
+                .filter(a => a.from_user_id !== internalId && !readIds.has(`${a.id}:${a.updated_at ?? a.created_at}`)).length
               setAnnCount(unread)
             }
           })
@@ -282,7 +290,10 @@ export default function OwnerSidebar({
           fetch(`/api/inbox/announcements?company_id=${cid}&role=${role}`)
             .then(r => r.json())
             .then(data => {
-              if (data.success) setAnnCount((data.announcements as { id: string }[]).filter(a => !rids.has(a.id)).length)
+              if (data.success) {
+                setAnnCount((data.announcements as { id: string; from_user_id: string; created_at: string; updated_at?: string | null }[])
+                  .filter(a => a.from_user_id !== internalId && !rids.has(`${a.id}:${a.updated_at ?? a.created_at}`)).length)
+              }
             }).catch(() => {})
         }
 
@@ -328,27 +339,17 @@ export default function OwnerSidebar({
     return () => window.removeEventListener('task-insights-updated', handler)
   }, [])
 
+  // Reset the badges to 0 the moment the Communication page mounts, for instant feedback —
+  // CommunicationView is the source of truth for which announcements are actually read (it
+  // tracks per-announcement `id:updated_at` keys in localStorage) and pushes the real counts
+  // back down via the `unreadMessages`/`unreadAnnouncements` props once it has fetched them.
+  // This must NOT also write to that same localStorage key with plain announcement ids — doing
+  // so previously clobbered CommunicationView's `id:updated_at` keys with bare ids, so on the
+  // next reload none of them matched readKey() anymore and every announcement looked unread again.
   useEffect(() => {
     if (pathname !== `/${role}/communication`) return
     setMsgCount(0)
     setAnnCount(0)
-    const authUid = typeof localStorage !== 'undefined' ? localStorage.getItem('tasking_user_id') : null
-    if (!authUid) return
-    fetch(`/api/user/me?user_id=${authUid}`)
-      .then(r => r.json())
-      .then(d => {
-        if (!d.success) return
-        const internalId: string = d.user.id
-        const cid = localStorage.getItem('tasking_company_id') ?? localStorage.getItem(`tasking_company_id_${authUid}`)
-        if (!cid) return
-        fetch(`/api/inbox/announcements?company_id=${cid}&role=${role}`)
-          .then(r => r.json())
-          .then(data => {
-            if (!data.success) return
-            const allIds = (data.announcements as { id: string }[]).map(a => a.id)
-            localStorage.setItem(`ann_read_ids_${cid}_${internalId}`, JSON.stringify(allIds))
-          }).catch(() => {})
-      }).catch(() => {})
   }, [pathname])
 
   useEffect(() => { if (unreadMessages !== undefined) setMsgCount(unreadMessages) }, [unreadMessages])
@@ -403,7 +404,7 @@ export default function OwnerSidebar({
         }}
       >
         <svg width="28" height="28" viewBox="0 0 32 32" fill="none" style={{ flexShrink: 0 }}>
-          <rect width="32" height="32" rx="8" fill={role === 'manager' ? '#3B82F6' : '#F97316'} />
+          <rect width="32" height="32" rx="8" fill="#F97316" />
           <rect x="8" y="9" width="9" height="2.5" rx="1.25" fill="white" />
           <rect x="8" y="14.75" width="16" height="2.5" rx="1.25" fill="white" />
           <rect x="8" y="20.5" width="12" height="2.5" rx="1.25" fill="white" />

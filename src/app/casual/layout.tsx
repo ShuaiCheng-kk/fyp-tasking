@@ -10,13 +10,34 @@
 
 import { useEffect, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
+import { LogOut } from 'lucide-react'
+import { createBrowserClient } from '@supabase/ssr'
 import CasualSidebar from '@/components/CasualSidebar'
+import { useIsCompactViewport } from '@/hooks/useIsCompactViewport'
+
+const PHONE_BREAKPOINT = 640
 
 export default function CasualLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const pathname = usePathname()
   const [paymentMissing, setPaymentMissing] = useState(false)
   const [checked, setChecked] = useState(false)
+  const isPhone = useIsCompactViewport(PHONE_BREAKPOINT)
+
+  const handleLogout = async () => {
+    const supabase = createBrowserClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    )
+    await supabase.auth.signOut()
+    localStorage.removeItem('tasking_user_id')
+    localStorage.removeItem('tasking_user_role')
+    localStorage.removeItem('tasking_company_id')
+    localStorage.removeItem('tasking_active_session')
+    localStorage.removeItem('apply_job_id')
+    sessionStorage.removeItem('tasking_session_active')
+    window.location.href = '/signout'
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -69,7 +90,26 @@ export default function CasualLayout({ children }: { children: React.ReactNode }
   return (
     <div style={{ minHeight: '100vh', background: '#F9FAFB' }}>
       <CasualSidebar disabled={checked && paymentMissing} />
-      <main style={{ marginLeft: 64, minHeight: '100vh' }}>
+      {isPhone && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, zIndex: 20, height: 44,
+          display: 'flex', alignItems: 'center', justifyContent: 'flex-end', padding: '0 14px',
+          background: '#FFFFFF', borderBottom: '1px solid #E5E7EB',
+        }}>
+          <button
+            type="button"
+            onClick={handleLogout}
+            aria-label="Logout"
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, border: 'none', background: 'none', color: '#EF4444', cursor: 'pointer' }}
+          >
+            <LogOut size={18} strokeWidth={2} />
+          </button>
+        </div>
+      )}
+      <main style={isPhone
+        ? { marginLeft: 0, minHeight: '100vh', paddingTop: 44, paddingBottom: 64 }
+        : { marginLeft: 64, minHeight: '100vh' }}
+      >
         {children}
       </main>
     </div>

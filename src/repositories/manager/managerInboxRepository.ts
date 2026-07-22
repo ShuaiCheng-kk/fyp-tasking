@@ -31,7 +31,7 @@ export const managerInboxRepository = {
 
     const { data: deptManagers } = await supabase
       .from('manager_departments')
-      .select('manager_id, users!inner(id, full_name, role, email_address, profile_photo_url)')
+      .select('manager_id, users!manager_departments_manager_id_fkey(id, full_name, role, email_address, profile_photo_url)')
       .eq('department_id', department_id)
       .neq('manager_id', manager_id)
     for (const row of (deptManagers ?? []) as any[]) if (row.users) contacts.push(row.users)

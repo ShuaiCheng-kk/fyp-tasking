@@ -18,6 +18,7 @@ let departments: { ops: string; marketing: string }
 const members: SeededMember[] = []
 
 let managerOps: SeededMember
+let managerOps2: SeededMember
 let managerMarketing: SeededMember
 let employeeOps: SeededMember
 let employeeMarketing: SeededMember
@@ -80,6 +81,7 @@ test.beforeAll(async () => {
   }
 
   managerOps = await createMember('Manager', 'mgr-ops', departments.ops)
+  managerOps2 = await createMember('Manager', 'mgr-ops2', departments.ops)
   managerMarketing = await createMember('Manager', 'mgr-mkt', departments.marketing)
   employeeOps = await createMember('Employee', 'emp-ops', departments.ops)
   employeeMarketing = await createMember('Employee', 'emp-mkt', departments.marketing)
@@ -178,6 +180,14 @@ test('Manager-posted announcement is scoped to its own department only', async (
   expect(mktView.status()).toBe(200)
   const mktBody = await mktView.json()
   expect(mktBody.announcements.map((a: { title: string }) => a.title)).not.toContain('Ops department notice')
+})
+
+test('Manager-posted announcement is invisible to Owner and Partner', async ({ request }) => {
+  const ownerView = await request.get(`/api/inbox/announcements?company_id=${seeded.companyId}&role=owner`)
+  expect(ownerView.status()).toBe(200)
+  const ownerBody = await ownerView.json()
+  expect(ownerBody.announcements.map((a: { title: string }) => a.title)).not.toContain('Ops department notice')
+  expect(ownerBody.announcements.map((a: { title: string }) => a.title)).toContain('Company-wide notice')
 })
 
 test('UC59 edits own announcement but rejects editing someone else\'s', async ({ request }) => {
@@ -284,12 +294,13 @@ test('Employee contact list is scoped to own department only', async ({ request 
   expect(ids).not.toContain(employeeMarketing.userId)
 })
 
-test('Manager contact list includes Owner and own department only, excluding self', async ({ request }) => {
+test('Manager contact list includes Owner, own-department Managers, and own-department Employees, excluding self and other departments', async ({ request }) => {
   const contacts = await request.get(`/api/manager/contacts?user_id=${managerOps.userId}`)
   expect(contacts.status()).toBe(200)
   const body = await contacts.json()
   const ids = body.contacts.map((c: { id: string }) => c.id)
   expect(ids).toContain(seeded.ownerId)
+  expect(ids).toContain(managerOps2.userId)
   expect(ids).toContain(employeeOps.userId)
   expect(ids).not.toContain(managerOps.userId)
   expect(ids).not.toContain(managerMarketing.userId)

@@ -8,7 +8,7 @@ import {
   CheckCircle, Clock, Eye, Layers, Users,
   Crown, UserCog, UserRound, Pencil, Trash2, CalendarDays, ChevronLeft, ChevronRight,
   Sparkles, Check, Archive, ArchiveRestore, Repeat, Copy, GitBranch, Bell, ArrowRightLeft, LayoutTemplate, AlertTriangle, RefreshCw, MailOpen, Search,
-  CalendarClock, Filter as FilterIcon, Flag, RotateCw, Info,
+  CalendarClock, Filter as FilterIcon, Flag, RotateCw, Info, GripVertical,
 } from 'lucide-react'
 import { AiAssignSuggestion } from '@/types/AI'
 import { createBrowserClient } from '@supabase/ssr'
@@ -327,8 +327,6 @@ type ShiftOption = TimelineShiftBlock & {
   user_id: string | null
 }
 
-const EMPTY_USER_ID_SET: Set<string> = new Set()
-
 type DeptTaskStats = {
   department_id: string
   department_name: string
@@ -373,6 +371,9 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string; 
 }
 
 const COLUMNS: Task['status'][] = ['Assigned', 'In Progress', 'Review', 'Complete']
+// Manager's My Tasks board drag-to-advance (mirrors CasualTaskBoard.tsx's STATUS_PERCENT) — the
+// same 0/33/66/100 steps handleAdvanceMyTask's button uses, so dragging and the button agree.
+const MY_TASKS_STATUS_PERCENT: Record<Task['status'], number> = { Assigned: 0, 'In Progress': 33, Review: 66, Complete: 100 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -992,7 +993,7 @@ function SubTaskOrderList({ items, onReorder, onRemove, onRename, disabled, acce
 // ─── Task Card ────────────────────────────────────────────────────────────────
 
 function TaskCard({
-  task, members, shiftOptions, departments, showDept, onClick, onEdit, subTaskCount, expanded, onToggleExpand, clickable = true, isOwner = true, highlighted = false, noOuterMargin = false, fillHeight = false, isSubTask = false, compact = false, stacked,
+  task, members, shiftOptions, departments, showDept, onClick, onEdit, subTaskCount, expanded, onToggleExpand, clickable = true, isOwner = true, highlighted = false, noOuterMargin = false, fillHeight = false, isSubTask = false, compact = false, stacked, viewerId, showAssignee = true,
 }: {
   task: Task
   members: Member[]
@@ -1013,12 +1014,21 @@ function TaskCard({
   // Deadline Calendar cards: the cell already gives the assignee (row) and date (column),
   // so hide the assignee and show only the deadline's time.
   compact?: boolean
+  // My Tasks (Manager only): every card on that board is already the viewer's own — showing their
+  // own avatar/name on every single card is pure noise, unlike everywhere else this component is
+  // used, where the assignee varies card to card and is the whole point of showing it.
+  showAssignee?: boolean
   // Explicit override for the "peeking cards behind" visual. Kanban (unset) derives it from
   // subTaskCount — a collapsed task with sub-tasks looks stacked. The Deadline Calendar passes
   // this directly instead, meaning "this person has more tasks behind this one today" — it never
   // shows sub-tasks there, so subTaskCount would be the wrong signal for it.
   stacked?: boolean
+  // Manager-only feature: a department can have several peer Managers posting tasks, so a card
+  // whose assigner isn't the viewer shows "Posted by X" to make that visible. Left undefined for
+  // Owner/Partner — postedByName then never renders, same as if this prop didn't exist.
+  viewerId?: string
 }) {
+  const postedByName = !isSubTask && viewerId && task.assigned_by && task.assigned_by !== viewerId ? task.assigned_by_name : null
   const assigneeIds = task.assigned_user_ids ?? (task.assigned_user_id ? [task.assigned_user_id] : [])
   const assignees = assigneeIds.map(id => members.find(m => m.id === id)).filter((m): m is Member => !!m)
   const shift = task.shift_id ? shiftOptions.find(s => s.id === task.shift_id) : null
@@ -1028,7 +1038,7 @@ function TaskCard({
   const showStack = stacked !== undefined ? stacked : (!!subTaskCount && !expanded)
   // Rejected in Review and back to In Progress — the assignee owes rework on this one.
   const needsRework = !isSubTask && !!task.rejection_reason && task.status === 'In Progress'
-  const hasTopRowBadges = !!(priority && task.priority) || !!dept || !!subTaskCount || needsRework
+  const hasTopRowBadges = !!(priority && task.priority) || !!dept || !!subTaskCount || needsRework || !!postedByName
   // Review cards pulse to nudge the viewer toward the pending sign-off — every Review card on the
   // board, regardless of who assigned it. Skipped in the compact calendar (too noisy in a dense
   // grid) and when the delay-alert highlight ring is already on.
@@ -1085,6 +1095,13 @@ function TaskCard({
               {task.priority}
             </span>
           )}
+          {/* Manager-only (see viewerId prop): whose task this is, when it isn't the viewer's own —
+              styled to match the "Posted by" badge on the Owner Recruitment Active Jobs cards. */}
+          {postedByName && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: compact ? '3px 8px' : '3px 10px', borderRadius: 99, fontSize: compact ? '0.65rem' : '0.72rem', fontWeight: 600, background: '#F1F5F9', color: '#475569', border: '1px solid #E2E8F0', whiteSpace: 'nowrap' }}>
+              Posted by {postedByName}
+            </span>
+          )}
           {needsRework && (
             <span title={task.rejection_reason ?? undefined} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: compact ? '0.65rem' : '0.72rem', fontWeight: 800, padding: compact ? '3px 8px' : '4px 10px', borderRadius: '99px', background: '#FEF2F2', color: '#DC2626', letterSpacing: '0.01em' }}>
               <AlertTriangle size={10} /> Rework
@@ -1114,12 +1131,27 @@ function TaskCard({
       )}
 
       {/* Title */}
-      <p title={compact ? task.title : undefined} style={{ fontWeight: 600, fontSize: isSubTask ? (compact ? '0.75rem' : '0.8rem') : (compact ? '0.8rem' : '0.875rem'), color: '#111827', margin: !compact ? '0 0 8px' : ((!isSubTask && task.due_at) ? '0 0 6px' : 0), lineHeight: compact ? 1.55 : 1.4, paddingRight: !clickable || !isOwner || hasTopRowBadges ? 0 : 24, ...(compact ? { display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as const, overflow: 'hidden' } : {}) }}>
+      <p title={compact ? task.title : undefined} style={{ fontWeight: 600, fontSize: isSubTask ? (compact ? '0.75rem' : '0.8rem') : (compact ? '0.8rem' : '0.875rem'), color: '#111827', margin: !showAssignee ? '0 0 12px' : (!compact ? '0 0 8px' : ((!isSubTask && task.due_at) ? '0 0 6px' : 0)), lineHeight: compact ? 1.55 : 1.4, paddingRight: !clickable || !isOwner || hasTopRowBadges ? 0 : 24, ...(compact ? { display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as const, overflow: 'hidden' } : {}) }}>
         {task.title}
       </p>
 
-      {/* Footer: assignee + deadline time (compact cards drop the assignee and the date) */}
-      {(!compact || (!isSubTask && task.due_at)) && (
+      {/* My Tasks (showAssignee=false): deadline moves up directly under the title instead of
+          sitting in the footer — with the assignee row gone (it's always the viewer's own task,
+          see showAssignee prop doc) there'd be nothing else in the footer to anchor it to. Sized
+          up from the footer's 0.7rem/600 (unchanged everywhere else) since without an avatar next
+          to it for visual weight, that size reads as smaller here even though it measures the same. */}
+      {!showAssignee && !isSubTask && task.due_at && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5, margin: '0 0 8px' }}>
+          {deadlineWarning ? <AlertCircle size={13} color="#EF4444" /> : <Clock size={13} color="#9CA3AF" />}
+          <span style={{ fontSize: '0.8125rem', fontWeight: 700, color: deadlineWarning ? '#EF4444' : '#6B7280', whiteSpace: 'nowrap' }}>
+            {formatDeadlineDisplay(task.due_at)}
+          </span>
+        </div>
+      )}
+
+      {/* Footer: assignee + deadline time (compact cards drop the assignee; showAssignee=false
+          cards skip the footer entirely — both assignee and date already live above). */}
+      {showAssignee && ((!compact) || (!isSubTask && task.due_at)) && (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: compact ? 'flex-end' : 'space-between', gap: 8, minHeight: compact ? undefined : 26 }}>
         {!compact && (assignees.length > 0 ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
@@ -1199,6 +1231,56 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
 
   const [kanban,        setKanban]        = useState<KanbanGroup | null>(null)
   const [kanbanLoading, setKanbanLoading] = useState(false)
+  // Manager-only "My Tasks" tab — tasks assigned directly to this Manager by Owner/Partner, kept
+  // in its own state/fetch entirely separate from the team-scoped `kanban` above (that one is
+  // scoped to tasks THIS manager's tier assigned out, not tasks assigned to them).
+  const [myTasksKanban,        setMyTasksKanban]        = useState<KanbanGroup | null>(null)
+  const [myTasksKanbanLoading, setMyTasksKanbanLoading] = useState(false)
+  const [myTaskActionLoading,  setMyTaskActionLoading]  = useState(false)
+  // My Tasks "new task" notification dot — since My Tasks is the Manager's default landing tab,
+  // a tab-visit can't be what clears it (they're already there the instant it loads). Track which
+  // specific task STATES have actually been opened/acted on instead, persisted per-Manager so it
+  // survives a refresh; a task stays flagged until the Manager looks at or moves it, regardless of
+  // which tab they're on. Keyed on id + rejected_at (not just id) so a rejection — the assigner
+  // sending it back with a new rejected_at — re-flags a task the Manager had already seen once,
+  // the same as a brand-new assignment would.
+  const myTaskSignature = (task: Task) => `${task.id}::${task.rejected_at ?? ''}`
+  const [seenMyTaskSigs, setSeenMyTaskSigs] = useState<Set<string>>(new Set())
+  const myTasksSeenKey = companyId && internalUserId ? `manager_mytasks_seen_${companyId}_${internalUserId}` : null
+  const markMyTaskSeen = useCallback((task: Task) => {
+    const sig = myTaskSignature(task)
+    setSeenMyTaskSigs(prev => {
+      if (prev.has(sig)) return prev
+      const next = new Set(prev); next.add(sig)
+      if (myTasksSeenKey) { try { localStorage.setItem(myTasksSeenKey, JSON.stringify([...next])) } catch {} }
+      return next
+    })
+  }, [myTasksSeenKey])
+  useEffect(() => {
+    if (!myTasksSeenKey) return
+    try {
+      const raw = localStorage.getItem(myTasksSeenKey)
+      if (raw) setSeenMyTaskSigs(new Set(JSON.parse(raw)))
+    } catch {}
+  }, [myTasksSeenKey])
+  // Garbage-collect signatures no longer on the board (completed/reassigned/archived, or a stale
+  // pre-rejection signature superseded by the task's current one) so the stored set doesn't grow
+  // forever.
+  useEffect(() => {
+    if (!myTasksKanban || !myTasksSeenKey) return
+    const liveSigs = new Set(COLUMNS.flatMap(col => myTasksKanban[col] ?? []).map(myTaskSignature))
+    setSeenMyTaskSigs(prev => {
+      const pruned = new Set([...prev].filter(sig => liveSigs.has(sig)))
+      if (pruned.size === prev.size) return prev
+      try { localStorage.setItem(myTasksSeenKey, JSON.stringify([...pruned])) } catch {}
+      return pruned
+    })
+  }, [myTasksKanban, myTasksSeenKey])
+  const hasNewMyTasks = !!myTasksKanban && COLUMNS.flatMap(col => myTasksKanban[col] ?? []).some(t => !seenMyTaskSigs.has(myTaskSignature(t)))
+  // My Tasks drag-to-advance (mirrors CasualTaskBoard.tsx) — separate from any drag state
+  // elsewhere on this board, since no other tab here supports dragging.
+  const [draggingMyTaskId, setDraggingMyTaskId] = useState<string | null>(null)
+  const [dragOverMyTaskCol, setDragOverMyTaskCol] = useState<Task['status'] | null>(null)
   const [taskDate,      setTaskDate]      = useState(() => formatDateKey(new Date()))
   const [expandedTaskIds, setExpandedTaskIds] = useState<Set<string>>(new Set())
   const toggleTaskExpanded = (id: string) => {
@@ -1359,14 +1441,17 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
   const [calendarSearch, setCalendarSearch] = useState('')
   const [collapsedFilterGroups, setCollapsedFilterGroups] = useState<Set<string>>(new Set())
 
-  // Board view mode (Kanban / Calendar) + animated tab indicator
-  const [boardViewMode, setBoardViewMode] = useState<'kanban' | 'calendar'>('kanban')
+  // Board view mode (Kanban / Calendar for Owner+Partner; My Tasks / Team Tasks for Manager) +
+  // animated tab indicator. Manager opens on 'mytasks' — their own Owner/Partner-assigned work —
+  // rather than the team board, since that's the first thing they'd want to check in on.
+  const [boardViewMode, setBoardViewMode] = useState<'kanban' | 'calendar' | 'mytasks'>(() => scopeToManagerDepartments ? 'mytasks' : 'kanban')
   const boardTabBarRef = useRef<HTMLDivElement>(null)
-  const boardTabButtonRefs = useRef<Record<'kanban' | 'calendar', HTMLButtonElement | null>>({ kanban: null, calendar: null })
+  const boardTabButtonRefs = useRef<Record<'kanban' | 'calendar' | 'mytasks', HTMLButtonElement | null>>({ kanban: null, calendar: null, mytasks: null })
   const [boardTabIndicator, setBoardTabIndicator] = useState({ left: 0, width: 0, opacity: 0 })
 
   // The Kanban tab shows a notification dot (same UI as Attendance's Requests tab); the dot
-  // widens the button, so the indicator must re-measure when it appears/disappears.
+  // widens the button, so the indicator must re-measure when it appears/disappears. My Tasks
+  // (Manager only) gets the same treatment for its own new-task dot.
   const hasTaskNotifications = delayAlerts.length > 0 || workloadSuggestions.length > 0
 
   useLayoutEffect(() => {
@@ -1376,7 +1461,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
     const containerRect = container.getBoundingClientRect()
     const activeRect = activeButton.getBoundingClientRect()
     setBoardTabIndicator({ left: activeRect.left - containerRect.left, width: activeRect.width, opacity: 1 })
-  }, [boardViewMode, hasTaskNotifications])
+  }, [boardViewMode, hasTaskNotifications, hasNewMyTasks])
 
   // Department card order (drag-to-reorder, local-only like the Shifts page)
   const [departmentOrder, setDepartmentOrder] = useState<string[]>([])
@@ -1475,6 +1560,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
   }, [templateModalOpen])
   const [templateFormMode,     setTemplateFormMode]     = useState<'create' | 'edit'>('create')
   const [templateFormId,       setTemplateFormId]       = useState('')
+  const [templateFormDeptId,   setTemplateFormDeptId]   = useState('')
   const [templateFormTitle,    setTemplateFormTitle]    = useState('')
   const [templateFormDesc,     setTemplateFormDesc]     = useState('')
   const [templateFormPriority, setTemplateFormPriority] = useState('')
@@ -1638,10 +1724,12 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
 
   const fetchTaskTemplates = useCallback(async (cid: string) => {
     if (!cid) return
-    const res = await fetch(`/api/task-template?company_id=${cid}`)
+    if (scopeToManagerDepartments && !internalUserId) return
+    const scopeParam = scopeToManagerDepartments && internalUserId ? `&manager_scope_id=${encodeURIComponent(internalUserId)}` : ''
+    const res = await fetch(`/api/task-template?company_id=${cid}${scopeParam}`)
     const data = await res.json()
     setTaskTemplates(data.success ? data.templates ?? [] : [])
-  }, [])
+  }, [scopeToManagerDepartments, internalUserId])
 
   useEffect(() => {
     if (!companyId) return
@@ -1709,6 +1797,24 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
     finally { if (!silent) setKanbanLoading(false) }
   }, [internalUserId, members, scopeToManagerDepartments])
 
+  // My Tasks (Manager only) — tasks where assigned_user_id is this Manager, which per the
+  // one-level-down assignment rule can only ever have been assigned by an Owner or Partner.
+  const fetchMyTasksKanban = useCallback(async (cid: string, silent = false) => {
+    if (!cid || !internalUserId || !scopeToManagerDepartments) return
+    if (!silent) setMyTasksKanbanLoading(true)
+    try {
+      const res = await fetch(`/api/task?company_id=${cid}&kanban=true&assigned_user_id=${encodeURIComponent(internalUserId)}&viewer_id=${encodeURIComponent(internalUserId)}`)
+      const data = await res.json()
+      if (data.success) setMyTasksKanban(data.groups)
+    } catch {}
+    finally { if (!silent) setMyTasksKanbanLoading(false) }
+  }, [internalUserId, scopeToManagerDepartments])
+
+  useEffect(() => {
+    if (!companyId || !scopeToManagerDepartments) return
+    void Promise.resolve().then(() => fetchMyTasksKanban(companyId))
+  }, [companyId, scopeToManagerDepartments, fetchMyTasksKanban])
+
   useEffect(() => {
     if (!companyId) return
     void Promise.resolve().then(() => fetchKanban(companyId))
@@ -1734,6 +1840,20 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
   // ones they personally assigned. Manager's own tier (scopeToManagerDepartments) keeps the
   // stricter assigner-only rule — mirrors assertIsTaskOwner in taskService.ts.
   const isTaskOwner = (task: Task) => !!internalUserId && !!task.assigned_by && (task.assigned_by === internalUserId || !scopeToManagerDepartments)
+
+  // Same assigner-only-with-O/P-peer-widening rule as isTaskOwner (mirrors assertIsTemplateOwner
+  // in taskTemplateService.ts), but templates don't get isTaskOwner's "every row here is
+  // guaranteed O/P-created" shortcut — a Manager viewer's list already only ever contains their
+  // own templates plus company-wide ones (never a peer manager's), but an Owner/Partner viewer's
+  // list is company-wide and DOES include Manager-created, department-tagged templates, so the
+  // creator's actual role has to be looked up.
+  const isTemplateOwner = (template: TaskTemplate) => {
+    if (!internalUserId || !template.created_by) return false
+    if (template.created_by === internalUserId) return true
+    if (scopeToManagerDepartments) return false
+    const creator = members.find(m => m.id === template.created_by)
+    return !!creator && (creator.role === 'Owner' || creator.role === 'Partner')
+  }
 
   // ── Open task panel ────────────────────────────────────────────────────────
 
@@ -2137,6 +2257,72 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
     finally { setTaskActionLoading('') }
   }
 
+  // My Tasks (Manager only): the Manager is the assignee here, not the assigner, so the usual
+  // isOwner-gated edit form (assertIsTaskOwner, assigner-only) never applies to these cards — this
+  // is the one status-progress action the assignee themselves gets, same percentage steps
+  // (0/33/66/100) as the Employee's own drag-to-advance board. Review stays a hard stop: only the
+  // Owner/Partner who assigned it can approve/reject it back on their own board.
+  const handleAdvanceMyTask = async (task: Task, nextStatus: 'In Progress' | 'Review') => {
+    setMyTaskActionLoading(true); setPanelError('')
+    try {
+      const percentage_complete = MY_TASKS_STATUS_PERCENT[nextStatus]
+      const res = await fetch('/api/task', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: task.id, status: nextStatus, percentage_complete }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message)
+      await fetchMyTasksKanban(companyId)
+      closePanel()
+      showTaskToast(nextStatus === 'Review' ? 'Task submitted for review.' : 'Task started.')
+    } catch (err) { setPanelError(err instanceof Error ? err.message : 'Failed to update task') }
+    finally { setMyTaskActionLoading(false) }
+  }
+
+  // My Tasks drag-to-advance — same mechanics as CasualTaskBoard.tsx's handleDrop: one column
+  // forward only, sub-tasks carried along with their parent, optimistic update with a full
+  // re-fetch fallback on any failure. Uses the same permission-free quick-update PATCH as
+  // handleAdvanceMyTask above (and the Employee/Casual Worker boards), so no new server work.
+  const canDragMyTask = (task: Task): boolean => task.status !== 'Review' && task.status !== 'Complete'
+
+  const handleDropMyTask = async (task: Task, targetStatus: Task['status']) => {
+    setDragOverMyTaskCol(null)
+    setDraggingMyTaskId(null)
+    if (!canDragMyTask(task)) return
+    const currentIdx = COLUMNS.indexOf(task.status)
+    const targetIdx = COLUMNS.indexOf(targetStatus)
+    if (targetIdx !== currentIdx + 1) return
+
+    const allTasks = COLUMNS.flatMap(col => myTasksKanban?.[col] ?? [])
+    const subTasks = allTasks.filter(t => t.parent_task_id === task.id)
+    const affectedIds = new Set([task.id, ...subTasks.map(t => t.id)])
+    const percentage_complete = MY_TASKS_STATUS_PERCENT[targetStatus]
+
+    setMyTasksKanban(prev => {
+      if (!prev) return prev
+      const moved = COLUMNS.flatMap(col => prev[col] ?? [])
+        .filter(t => affectedIds.has(t.id))
+        .map(t => ({ ...t, status: targetStatus, percentage_complete }))
+      const next = { ...prev } as KanbanGroup
+      for (const col of COLUMNS) next[col] = (prev[col] ?? []).filter(t => !affectedIds.has(t.id))
+      next[targetStatus] = [...next[targetStatus], ...moved]
+      return next
+    })
+
+    try {
+      const results = await Promise.all([...affectedIds].map(id => fetch('/api/task', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, status: targetStatus, percentage_complete }),
+      }).then(r => r.json())))
+      if (results.some(r => !r.success)) throw new Error()
+      showTaskToast(targetStatus === 'Review' ? 'Task submitted for review.' : targetStatus === 'In Progress' ? 'Task started.' : 'Task updated.')
+    } catch {
+      void fetchMyTasksKanban(companyId, true)
+    }
+  }
+
   const handleApplyWorkloadSuggestion = async (suggestion: TaskWorkloadSuggestion) => {
     if (!suggestion.suggested_task_id || !suggestion.recommended_user_id) return
     setWorkloadApplyLoadingId(suggestion.suggested_task_id); setWorkloadApplyError('')
@@ -2538,7 +2724,10 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
   // Kanban tab: pre-fill with the selected day, clamped to today (a task can't start in the past).
   // Calendar tab shows a whole week, not one day, so the user must pick the start date themselves — leave it blank.
   const openNewTaskFor = (memberId: string, deptId: string) => {
-    setNewDeptId(deptId)
+    // Manager only ever has one department — force it regardless of the caller's deptId (e.g. a
+    // company-wide template passes '', which would otherwise leave the form's only-ever-valid
+    // department unset with no picker to fix it, since the field is hidden for Manager below).
+    setNewDeptId(scopeToManagerDepartments ? (orderedDepartments[0]?.id ?? deptId) : deptId)
     setNewAssigneeIds(memberId ? [memberId] : [])
     setNewShiftId('')
     setNewStartDate(boardViewMode === 'kanban' && taskDate > todayTaskDate ? taskDate : todayTaskDate)
@@ -2554,6 +2743,9 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
   const openCreateTemplate = () => {
     setTemplateFormMode('create')
     setTemplateFormId('')
+    // Manager only ever has one department, so it's set automatically (no picker shown, see the
+    // form JSX below) — Owner/Partner default to "company-wide" and can pick one if they want.
+    setTemplateFormDeptId(scopeToManagerDepartments ? (orderedDepartments[0]?.id ?? '') : '')
     setTemplateFormTitle('')
     setTemplateFormDesc('')
     setTemplateFormPriority('')
@@ -2572,7 +2764,12 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
     setArchiveListError('')
     setSelectedArchivedTask(null)
     try {
-      const res = await fetch(`/api/task?company_id=${companyId}&archived=true`)
+      // Same manager-scope resolution as fetchKanban above — Manager only ever sees their own
+      // department's archived tasks, Owner/Partner see every peer O/P-assigned one.
+      const archiveScopeParam = scopeToManagerDepartments
+        ? `manager_scope_id=${encodeURIComponent(internalUserId)}`
+        : `assigned_by=${encodeURIComponent(members.filter(m => m.role === 'Owner' || m.role === 'Partner').map(m => m.id).join(',') || internalUserId)}`
+      const res = await fetch(`/api/task?company_id=${companyId}&archived=true&${archiveScopeParam}`)
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
       const tasks = data.tasks ?? []
@@ -2590,6 +2787,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
   const openEditTemplate = (template: TaskTemplate) => {
     setTemplateFormMode('edit')
     setTemplateFormId(template.id)
+    setTemplateFormDeptId(template.department_id ?? '')
     setTemplateFormTitle(template.title)
     setTemplateFormDesc(template.description ?? '')
     setTemplateFormPriority(template.priority ?? '')
@@ -2604,7 +2802,9 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
 
   const useTaskTemplate = (template: TaskTemplate) => {
     setTemplateModalOpen(false)
-    openNewTaskFor('', '')
+    // A department-tagged template pre-fills its department too (mirrors Job Templates) — a
+    // company-wide (null) template still leaves it for the user to pick, same as before.
+    openNewTaskFor('', template.department_id ?? '')
     setNewTitle(template.title)
     setNewDescription(template.description ?? '')
     setNewPriority(template.priority ?? '')
@@ -2631,12 +2831,15 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
         method: isEdit ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(isEdit ? {
+          department_id: templateFormDeptId || null,
           title: templateFormTitle.trim(),
           description: templateFormDesc.trim() || null,
           priority: templateFormPriority || null,
           sub_task_titles: subTaskTitles,
+          acting_user_id: internalUserId || undefined,
         } : {
           company_id: companyId,
+          department_id: templateFormDeptId || null,
           title: templateFormTitle.trim(),
           description: templateFormDesc.trim() || null,
           priority: templateFormPriority || null,
@@ -2661,7 +2864,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
   const handleDeleteTemplate = async (id: string) => {
     setDeleteTemplateLoading(true)
     try {
-      const res = await fetch(`/api/task-template/${id}`, { method: 'DELETE' })
+      const res = await fetch(`/api/task-template/${id}?acting_user_id=${encodeURIComponent(internalUserId || '')}`, { method: 'DELETE' })
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'Failed to delete template')
       await fetchTaskTemplates(companyId)
@@ -2672,24 +2875,6 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
       setDeleteTemplateLoading(false)
     }
   }
-
-  // ── Members with a shift on a given date ───────────────────────────────────
-
-  const shiftUserIdsByDate = useMemo(() => {
-    const map = new Map<string, Set<string>>()
-    // A draft shift isn't a real commitment yet, so it can't make someone eligible for a task.
-    for (const shift of shiftOptions) {
-      if (!shift.user_id || shift.publication_status !== 'published') continue
-      const set = map.get(shift.shift_date) ?? new Set<string>()
-      set.add(shift.user_id)
-      map.set(shift.shift_date, set)
-    }
-    return map
-  }, [shiftOptions])
-  const userIdsWithShiftOnDate = useCallback(
-    (date: string) => shiftUserIdsByDate.get(date) ?? EMPTY_USER_ID_SET,
-    [shiftUserIdsByDate],
-  )
 
   // ── Dates that have tasks (for calendar dots) ─────────────────────────────
 
@@ -2819,7 +3004,10 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
     // Deadline Calendar sidebar filters gate top-level tasks only — a sub-task follows its
     // parent, so an expanded parent never renders with holes in its sequence.
     const search = calendarSearch.trim().toLowerCase()
-    const bucketTaskIds = deadlineBucketFilter
+    // Manager's Deadline Summary block lives on the Board tab now (see deadlineSummarySection),
+    // where a click highlights tasks instead of filtering — deadlineBucketFilter there only drives
+    // that card's ring, so it must never leak into the Deadline Calendar tab's own task list.
+    const bucketTaskIds = (deadlineBucketFilter && !scopeToManagerDepartments)
       ? new Set(({ overdue: deadlineSummary.overdue, today: deadlineSummary.dueToday, week: deadlineSummary.dueThisWeek })[deadlineBucketFilter].map(t => t.id))
       : null
     const matchesCalendarFilters = (t: Task) => (
@@ -2843,7 +3031,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
         const bTime = b.due_at ? new Date(b.due_at).getTime() : 0
         return aTime - bTime || (PRIORITY_ORDER[a.priority ?? ''] ?? 4) - (PRIORITY_ORDER[b.priority ?? ''] ?? 4)
       })
-  }, [kanban, calendarPriorityFilter, calendarStatusFilter, calendarDeptFilter, calendarReworkOnly, calendarSearch, deadlineBucketFilter, deadlineSummary, departments])
+  }, [kanban, calendarPriorityFilter, calendarStatusFilter, calendarDeptFilter, calendarReworkOnly, calendarSearch, deadlineBucketFilter, deadlineSummary, departments, scopeToManagerDepartments])
 
   const calendarWeekDates = useMemo(() => {
     const anchor = new Date(`${taskDate}T00:00:00`)
@@ -3075,6 +3263,115 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
     )
   }
 
+  // Manager-only "My Tasks" board — tasks Owner/Partner assigned directly to this Manager.
+  // Deliberately minimal (no filters/search/sort, no left sidebar, no Add Task/Archive/Templates —
+  // the Manager doesn't own or create these, they're just working through them): four status
+  // columns of the same TaskCard used everywhere else on this board, each opening the same
+  // read-only Details panel (isOwner is always false here, since assigned_by is never this viewer).
+  const renderMyTasksView = () => {
+    const subTasksByParent = new Map<string, Task[]>()
+    for (const col of COLUMNS) {
+      for (const t of myTasksKanban?.[col] ?? []) {
+        if (!t.parent_task_id) continue
+        const arr = subTasksByParent.get(t.parent_task_id) ?? []
+        arr.push(t)
+        subTasksByParent.set(t.parent_task_id, arr)
+      }
+    }
+    for (const arr of subTasksByParent.values()) arr.sort((a, b) => (a.sequence_order ?? 0) - (b.sequence_order ?? 0))
+
+    return (
+      <div style={{ display: 'flex', gap: 16, alignItems: 'stretch', flex: 1, minHeight: 0 }}>
+        <section className="task-board-panel" style={{ flex: 1, minWidth: 0, minHeight: 0, alignSelf: 'stretch', display: 'flex', flexDirection: 'column', background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, overflow: 'hidden' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '14px 18px', borderBottom: '1px solid #F3F4F6', flexShrink: 0 }}>
+            <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <Layers size={15} style={{ color: '#F97316' }} />
+            </div>
+            <span style={{ fontWeight: 700, fontSize: '1rem', color: '#0F172A' }}>My Tasks</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', fontWeight: 600, color: '#9CA3AF', background: '#F3F4F6', padding: '3px 9px', borderRadius: 999, whiteSpace: 'nowrap', flexShrink: 0 }}>
+              <GripVertical size={12} /> Drag cards to move
+            </span>
+          </div>
+          <div className="task-tab-content" style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'row', alignItems: 'stretch', padding: '16px 16px 20px', gap: 0 }}>
+            {COLUMNS.map((col, colIdx) => {
+              const cfg = STATUS_CONFIG[col]
+              const topLevelTasks = (myTasksKanban?.[col] ?? []).filter(t => !t.parent_task_id)
+              const isOver = dragOverMyTaskCol === col
+              return (
+                <Fragment key={col}>
+                  {colIdx > 0 && (
+                    <div style={{ flexShrink: 0, width: 48, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'linear-gradient(135deg, #F97316, #EA580C)', color: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 6px rgba(249,115,22,0.35)' }}>
+                        <ArrowRight size={15} strokeWidth={2.5} />
+                      </div>
+                    </div>
+                  )}
+                  <div
+                    className="kanban-col"
+                    onDragOver={e => { e.preventDefault(); setDragOverMyTaskCol(col) }}
+                    onDragLeave={() => setDragOverMyTaskCol(prev => (prev === col ? null : prev))}
+                    onDrop={e => {
+                      e.preventDefault()
+                      const allTasks = COLUMNS.flatMap(c => myTasksKanban?.[c] ?? [])
+                      const task = allTasks.find(t => t.id === draggingMyTaskId)
+                      if (task) void handleDropMyTask(task, col)
+                    }}
+                    style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', background: isOver ? '#FFF7ED' : '#F7F8FA', borderRadius: '12px', overflow: 'hidden', minHeight: 0, height: '100%', border: `1px solid ${isOver ? '#F97316' : '#F0F1F3'}`, transition: 'background 0.12s, border-color 0.12s' }}
+                  >
+                    <div style={{ padding: '11px 14px 10px', display: 'flex', alignItems: 'center', gap: 7, flexShrink: 0, borderBottom: '1px solid #ECEEF1' }}>
+                      <div style={{ color: cfg.color, display: 'flex', alignItems: 'center' }}>{cfg.icon}</div>
+                      <span style={{ fontWeight: 700, fontSize: '0.8125rem', color: cfg.color, flex: 1 }}>{cfg.label}</span>
+                      <span style={{ fontSize: '0.72rem', fontWeight: 700, background: cfg.bg, color: cfg.color, padding: '2px 8px', borderRadius: '99px' }}>{topLevelTasks.length}</span>
+                    </div>
+                    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '10px 18px 12px', display: 'flex', flexDirection: 'column' }}>
+                      {topLevelTasks.length === 0 ? (
+                        <div style={{ flex: 1, minHeight: 164, margin: '8px 0', padding: '32px 0', textAlign: 'center', background: '#F8FAFC', borderRadius: 14, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                          {{ Assigned: <Layers size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />, 'In Progress': <Clock size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />, Review: <Eye size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />, Complete: <CheckCircle size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} /> }[col]}
+                          <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>No {cfg.label.toLowerCase()} tasks</p>
+                        </div>
+                      ) : (
+                        topLevelTasks.map(task => {
+                          const draggable = canDragMyTask(task)
+                          const isNew = !seenMyTaskSigs.has(myTaskSignature(task))
+                          return (
+                            <div
+                              key={task.id}
+                              draggable={draggable}
+                              onDragStart={() => { if (draggable) { setDraggingMyTaskId(task.id); markMyTaskSeen(task) } }}
+                              onDragEnd={() => { setDraggingMyTaskId(null); setDragOverMyTaskCol(null) }}
+                              style={{ position: 'relative', opacity: draggingMyTaskId === task.id ? 0.5 : 1, cursor: draggable ? 'grab' : undefined }}
+                            >
+                              {isNew && (
+                                <span title={task.rejection_reason ? 'Sent back for rework' : 'New task'} style={{ position: 'absolute', top: -3, right: -3, width: 10, height: 10, borderRadius: '50%', background: '#EF4444', border: '2px solid #FFFFFF', zIndex: 1 }} />
+                              )}
+                              <TaskCard
+                                task={task}
+                                members={members}
+                                shiftOptions={shiftOptions}
+                                departments={departments}
+                                showDept={false}
+                                onClick={() => { markMyTaskSeen(task); openTask(task, true) }}
+                                onEdit={() => {}}
+                                subTaskCount={(subTasksByParent.get(task.id) ?? []).length}
+                                isOwner={false}
+                                viewerId={internalUserId}
+                                showAssignee={false}
+                              />
+                            </div>
+                          )
+                        })
+                      )}
+                    </div>
+                  </div>
+                </Fragment>
+              )
+            })}
+          </div>
+        </section>
+      </div>
+    )
+  }
+
   const assignableMembers = members.filter(m => m.role === assigneeRole)
   const deptDropdownOptions = departments.map(d => ({ value: d.id, label: d.name }))
   const newAssigneeMembers = newAssigneeIds.map(id => members.find(m => m.id === id)).filter((m): m is Member => !!m)
@@ -3206,6 +3503,14 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
     const orderedIds = saved.length > 0 ? [...saved, ...remaining] : departments.map(d => d.id)
     return orderedIds.map(id => byId.get(id)!).filter(Boolean)
   }, [departments, departmentOrder])
+
+  // Manager only ever has their own single department in scope (scopeToManagerDepartments), so
+  // the department card grid — which exists to pick between multiple departments — has nothing to
+  // pick between. Auto-select it so the sidebar goes straight to the member list, no click needed.
+  useEffect(() => {
+    if (!scopeToManagerDepartments || selectedDeptId || orderedDepartments.length === 0) return
+    setSelectedDeptId(orderedDepartments[0].id)
+  }, [scopeToManagerDepartments, selectedDeptId, orderedDepartments, setSelectedDeptId])
 
   // Departments load async — check newly seen ones in the Deadline Calendar filter as they
   // arrive, without resurrecting departments the user has explicitly unchecked.
@@ -3468,10 +3773,16 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                   pointerEvents: 'none',
                 }}
               />
-              {([
-                { id: 'kanban' as const, label: 'Board' },
-                { id: 'calendar' as const, label: 'Deadline Calendar' },
-              ]).map(tab => {
+              {(scopeToManagerDepartments
+                ? [
+                    { id: 'mytasks' as const, label: 'My Tasks' },
+                    { id: 'kanban' as const, label: 'Team Tasks' },
+                  ]
+                : [
+                    { id: 'kanban' as const, label: 'Board' },
+                    { id: 'calendar' as const, label: 'Deadline Calendar' },
+                  ]
+              ).map(tab => {
                 const active = boardViewMode === tab.id
                 return (
                   <button
@@ -3503,6 +3814,9 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                     {tab.id === 'kanban' && hasTaskNotifications && (
                       <span style={{ width: 10, height: 10, borderRadius: 999, background: '#EF4444', flexShrink: 0, border: active ? '1.5px solid #111827' : '1.5px solid #fff' }} />
                     )}
+                    {tab.id === 'mytasks' && hasNewMyTasks && (
+                      <span title="New task assigned" style={{ width: 10, height: 10, borderRadius: 999, background: '#EF4444', flexShrink: 0, border: active ? '1.5px solid #111827' : '1.5px solid #fff' }} />
+                    )}
                   </button>
                 )
               })}
@@ -3511,66 +3825,87 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
         </div>
 
         <div style={{ padding: '0 28px 28px', flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
-          {!initialReady || kanbanLoading ? (
+          {!initialReady || (boardViewMode === 'mytasks' ? myTasksKanbanLoading : kanbanLoading) ? (
             <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', flex: 1 }}>
               <Spinner size={24} dark />
             </div>
-          ) : (
+          ) : boardViewMode === 'mytasks' ? renderMyTasksView() : (
             <div style={{ display: 'flex', gap: 16, alignItems: 'stretch', flex: 1, minHeight: 0 }}>
 
               {/* ── SIDEBAR PANEL ──────────────────────────────────────────── */}
               {/* Keyed on the view mode so switching Kanban ⇄ Deadline Calendar replays the
                   same tabContentIn entrance the board content gets — matching the Shifts page. */}
+              {(() => {
+                // Manager (scopeToManagerDepartments) moves this block onto the Board tab, right
+                // under Notification, instead of leaving it on the Deadline Calendar tab like
+                // Owner/Partner — same JSX, just rendered in a different slot below.
+                const deadlineSummarySection = (
+                  <section className="task-side-section" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, overflow: 'hidden', animationDelay: '0.05s' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 18px', borderBottom: '1px solid #F3F4F6' }}>
+                      <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                        <CalendarClock size={15} style={{ color: '#F97316' }} />
+                      </div>
+                      <span style={{ fontWeight: 700, fontSize: '1rem', color: '#0F172A' }}>Deadline Summary</span>
+                    </div>
+                    <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                      {([
+                        { key: 'overdue' as const, label: 'Overdue', count: deadlineSummary.overdue.length, tasks: deadlineSummary.overdue, icon: <AlertCircle size={14} />, iconBg: '#FEF2F2', iconColor: '#DC2626' },
+                        { key: 'today' as const, label: 'Due Today', count: deadlineSummary.dueToday.length, tasks: deadlineSummary.dueToday, icon: <Clock size={14} />, iconBg: '#FFF7ED', iconColor: '#EA580C' },
+                        { key: 'week' as const, label: `Due ${deadlineSummary.weekEndLabel}`, count: deadlineSummary.dueThisWeek.length, tasks: deadlineSummary.dueThisWeek, icon: <CalendarDays size={14} />, iconBg: '#EEF2FF', iconColor: '#4F46E5' },
+                      ]).map((card, cardIdx) => {
+                        const active = deadlineBucketFilter === card.key
+                        const clickable = card.count > 0 || active
+                        const ring = `0 0 0 2px #FFFFFF, 0 0 0 3.5px ${card.iconColor}`
+                        return (
+                          <div key={card.key} className="task-side-card" style={{ border: '1px solid #E5E7EB', borderRadius: 12, background: '#F9FAFB', padding: '11px 12px', display: 'flex', alignItems: 'center', gap: 10, animationDelay: `${0.12 + cardIdx * 0.06}s` }}>
+                            <span style={{ width: 28, height: 28, borderRadius: 9, background: card.iconBg, color: card.iconColor, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                              {card.icon}
+                            </span>
+                            <p style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 600, color: '#374151', lineHeight: 1.2, flex: 1, minWidth: 0 }}>{card.label}</p>
+                            {/* Only the count pill is clickable. Manager (scopeToManagerDepartments):
+                                this block lives on the Board tab, so a click highlights the matching
+                                tasks right there on the board — same treatment as Task Delay Alert's
+                                highlight (see showDelayHighlights). Owner/Partner: this block lives on
+                                the Deadline Calendar tab, so a click filters the calendar instead;
+                                clicking the active bucket again clears it either way. */}
+                            <button
+                              type="button"
+                              onClick={clickable ? () => {
+                                if (active) {
+                                  setDeadlineBucketFilter(null)
+                                  if (scopeToManagerDepartments) { setHighlightSource(null); setHighlightedDelayTaskIds(new Set()) }
+                                  return
+                                }
+                                setDeadlineBucketFilter(card.key)
+                                if (scopeToManagerDepartments) {
+                                  setBoardViewMode('kanban')
+                                  setHighlightSource('snapshot')
+                                  setHighlightedDelayTaskIds(new Set(card.tasks.map(t => t.id)))
+                                } else if (card.key !== 'week') {
+                                  // Snap the calendar to the current week so the bucket's tasks are in
+                                  // view — except the week bucket, which refers to the displayed week.
+                                  setTaskDate(formatDateKey(new Date()))
+                                }
+                              } : undefined}
+                              disabled={!clickable}
+                              title={active ? 'Clear' : !clickable ? undefined : scopeToManagerDepartments ? `Highlight ${card.label} tasks on the board` : `Show ${card.label} tasks in the calendar`}
+                              style={{ minWidth: 30, height: 30, padding: '0 9px', border: 'none', borderRadius: 999, background: clickable ? card.iconBg : '#F3F4F6', color: clickable ? card.iconColor : '#6B7280', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 800, flexShrink: 0, boxSizing: 'border-box', cursor: clickable ? 'pointer' : 'default', boxShadow: active ? ring : 'none', transition: 'box-shadow 0.15s ease, transform 0.15s ease' }}
+                              onMouseEnter={e => { if (clickable) { e.currentTarget.style.boxShadow = ring; e.currentTarget.style.transform = 'scale(1.08)' } }}
+                              onMouseLeave={e => { e.currentTarget.style.boxShadow = active ? ring : 'none'; e.currentTarget.style.transform = 'none' }}
+                            >
+                              {card.count}
+                            </button>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </section>
+                )
+                return (
               <div key={`sidebar-${boardViewMode}`} className="task-tab-content" style={{ width: 326, flexShrink: 0, alignSelf: 'stretch', minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 12 }}>
                 {boardViewMode === 'calendar' ? (
                 <>
-                {/* ── Deadline Summary (Deadline Calendar sidebar) ── */}
-                <section className="task-side-section" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, overflow: 'hidden', animationDelay: '0.05s' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 18px', borderBottom: '1px solid #F3F4F6' }}>
-                    <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                      <CalendarClock size={15} style={{ color: '#F97316' }} />
-                    </div>
-                    <span style={{ fontWeight: 700, fontSize: '1rem', color: '#0F172A' }}>Deadline Summary</span>
-                  </div>
-                  <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
-                    {([
-                      { key: 'overdue' as const, label: 'Overdue', count: deadlineSummary.overdue.length, icon: <AlertCircle size={14} />, iconBg: '#FEF2F2', iconColor: '#DC2626' },
-                      { key: 'today' as const, label: 'Due Today', count: deadlineSummary.dueToday.length, icon: <Clock size={14} />, iconBg: '#FFF7ED', iconColor: '#EA580C' },
-                      { key: 'week' as const, label: `Due ${deadlineSummary.weekEndLabel}`, count: deadlineSummary.dueThisWeek.length, icon: <CalendarDays size={14} />, iconBg: '#EEF2FF', iconColor: '#4F46E5' },
-                    ]).map((card, cardIdx) => {
-                      const active = deadlineBucketFilter === card.key
-                      const clickable = card.count > 0 || active
-                      const ring = `0 0 0 2px #FFFFFF, 0 0 0 3.5px ${card.iconColor}`
-                      return (
-                        <div key={card.key} className="task-side-card" style={{ border: '1px solid #E5E7EB', borderRadius: 12, background: '#F9FAFB', padding: '11px 12px', display: 'flex', alignItems: 'center', gap: 10, animationDelay: `${0.12 + cardIdx * 0.06}s` }}>
-                          <span style={{ width: 28, height: 28, borderRadius: 9, background: card.iconBg, color: card.iconColor, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                            {card.icon}
-                          </span>
-                          <p style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 600, color: '#374151', lineHeight: 1.2, flex: 1, minWidth: 0 }}>{card.label}</p>
-                          {/* Only the count pill is clickable — it filters the Deadline Calendar to
-                              this bucket's tasks; clicking again clears the filter. */}
-                          <button
-                            type="button"
-                            onClick={clickable ? () => {
-                              if (active) { setDeadlineBucketFilter(null); return }
-                              setDeadlineBucketFilter(card.key)
-                              // Snap the calendar to the current week so the bucket's tasks are in
-                              // view — except the week bucket, which refers to the displayed week.
-                              if (card.key !== 'week') setTaskDate(formatDateKey(new Date()))
-                            } : undefined}
-                            disabled={!clickable}
-                            title={active ? 'Clear filter' : clickable ? `Show ${card.label} tasks in the calendar` : undefined}
-                            style={{ minWidth: 30, height: 30, padding: '0 9px', border: 'none', borderRadius: 999, background: clickable ? card.iconBg : '#F3F4F6', color: clickable ? card.iconColor : '#6B7280', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 800, flexShrink: 0, boxSizing: 'border-box', cursor: clickable ? 'pointer' : 'default', boxShadow: active ? ring : 'none', transition: 'box-shadow 0.15s ease, transform 0.15s ease' }}
-                            onMouseEnter={e => { if (clickable) { e.currentTarget.style.boxShadow = ring; e.currentTarget.style.transform = 'scale(1.08)' } }}
-                            onMouseLeave={e => { e.currentTarget.style.boxShadow = active ? ring : 'none'; e.currentTarget.style.transform = 'none' }}
-                          >
-                            {card.count}
-                          </button>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </section>
+                {!scopeToManagerDepartments && deadlineSummarySection}
 
                 {/* ── Filter (Deadline Calendar sidebar) ── */}
                 <section className="task-side-section" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, overflow: 'hidden', animationDelay: '0.12s' }}>
@@ -3808,9 +4143,28 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                   </div>
                 </section>
 
+                {scopeToManagerDepartments && deadlineSummarySection}
+
               <section className="task-dept-panel" style={{ width: '100%', background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, overflow: 'visible' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '16px 18px', borderBottom: '1px solid #F3F4F6' }}>
-                  {selectedDept ? (
+                  {scopeToManagerDepartments ? (
+                    // Manager only ever has the one department in scope — no back button (nothing
+                    // to go back to) and no department color dot (no other department to tell it
+                    // apart from), just the flat member list below.
+                    <>
+                      <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                        <Users size={15} style={{ color: '#F97316' }} />
+                      </div>
+                      <span style={{ fontWeight: 700, fontSize: '1rem', color: '#0F172A' }}>Member</span>
+                      <button
+                        type="button"
+                        onClick={openAiAssign}
+                        style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, border: 0, borderRadius: 8, background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', color: '#FFFFFF', height: 30, padding: '0 12px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', flexShrink: 0 }}
+                      >
+                        <Sparkles size={13} strokeWidth={2.5} /> AI Assign
+                      </button>
+                    </>
+                  ) : selectedDept ? (
                     <>
                       <button
                         type="button"
@@ -3973,12 +4327,15 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                         for (const id of ids) acc[id] = (acc[id] ?? 0) + 1
                         return acc
                       }, {})
-                    // Grouped by today's shift, not workload — a Manager who's off today can still
-                    // be assigned a task right now (the assignment just waits for them), so this
-                    // split is purely informational and never blocks the "+" button below.
-                    const todayShiftUserIds = userIdsWithShiftOnDate(todayTaskDate)
-                    const onShiftMembers = deptMembers.filter(m => todayShiftUserIds.has(m.id))
-                    const offShiftMembers = deptMembers.filter(m => !todayShiftUserIds.has(m.id))
+                    // Sorted by current workload, ascending — whoever has the fewest (or no) tasks
+                    // right now sits at the top, so the user can see at a glance who to assign next.
+                    // Today's shift status no longer splits/labels the list: assigning a task never
+                    // depends on whether the person is on shift today.
+                    const sortedDeptMembers = [...deptMembers].sort((a, b) => {
+                      const countA = dateTaskCountByUser[a.id] ?? 0
+                      const countB = dateTaskCountByUser[b.id] ?? 0
+                      return countA - countB
+                    })
 
                     const workloadColor = (count: number) => {
                       if (count === 0) return { bg: '#F3F4F6', text: '#6B7280' }
@@ -4030,20 +4387,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
 
                     return (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                        {/* On shift today first */}
-                        {onShiftMembers.length > 0 && (
-                          <>
-                            <p style={{ margin: '0 2px 6px', fontWeight: 600, fontSize: '0.875rem', color: '#374151' }}>On Shift Today</p>
-                            {onShiftMembers.map(renderMember)}
-                          </>
-                        )}
-                        {/* Off today below — still assignable, they just aren't working right now */}
-                        {offShiftMembers.length > 0 && (
-                          <>
-                            <p style={{ margin: `${onShiftMembers.length > 0 ? '10px' : '0'} 2px 6px`, fontWeight: 600, fontSize: '0.875rem', color: '#374151' }}>Off Today</p>
-                            {offShiftMembers.map(renderMember)}
-                          </>
-                        )}
+                        {sortedDeptMembers.map(renderMember)}
                       </div>
                     )
                   })()}
@@ -4052,6 +4396,8 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                 </>
                 )}
               </div>
+                )
+              })()}
 
               {/* ── BOARD PANEL ────────────────────────────────────────────── */}
               <section className="task-board-panel" style={{ flex: 1, minWidth: 0, minHeight: 0, alignSelf: 'stretch', display: 'flex', flexDirection: 'column', background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, overflow: 'hidden' }}>
@@ -4188,18 +4534,28 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
 
                 {boardViewMode === 'calendar' ? renderTaskCalendarView() : (
                   <div key={`kanban-${taskDate}-${selectedDeptId}-${boardViewMode}`} className="task-tab-content" style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'row', alignItems: 'stretch', padding: '16px 16px 20px', gap: 0 }}>
-                    {COLUMNS.map((col, colIdx) => {
+                    {/* Sub-task counts/lists are built once across ALL columns, not per-column —
+                        a sub-task's own status can differ from its parent's (e.g. one sub-task
+                        already Complete while the parent sits in In Progress), so scoping this to
+                        a single column's filteredTasks() silently dropped sub-tasks that had moved
+                        to a different column and made the parent's card look like it had none. */}
+                    {(() => {
+                      const subTaskPool = COLUMNS.flatMap(col => (kanban?.[col] ?? [])
+                        .filter(t => !selectedDeptId || t.department_id === selectedDeptId)
+                        .filter(t => !selectedMemberId || (t.assigned_user_ids ?? (t.assigned_user_id ? [t.assigned_user_id] : [])).includes(selectedMemberId)))
+                      const subTasksByParentAll = new Map<string, Task[]>()
+                      for (const t of subTaskPool) {
+                        if (!t.parent_task_id) continue
+                        const arr = subTasksByParentAll.get(t.parent_task_id) ?? []
+                        arr.push(t)
+                        subTasksByParentAll.set(t.parent_task_id, arr)
+                      }
+                      for (const arr of subTasksByParentAll.values()) arr.sort((a, b) => (a.sequence_order ?? 0) - (b.sequence_order ?? 0))
+                      return COLUMNS.map((col, colIdx) => {
                       const cfg = STATUS_CONFIG[col]
                       const tasks = filteredTasks(col)
                       const topLevelTasks = tasks.filter(t => !t.parent_task_id)
-                      const subTasksByParent = new Map<string, Task[]>()
-                      for (const t of tasks) {
-                        if (!t.parent_task_id) continue
-                        const arr = subTasksByParent.get(t.parent_task_id) ?? []
-                        arr.push(t)
-                        subTasksByParent.set(t.parent_task_id, arr)
-                      }
-                      for (const arr of subTasksByParent.values()) arr.sort((a, b) => (a.sequence_order ?? 0) - (b.sequence_order ?? 0))
+                      const subTasksByParent = subTasksByParentAll
                       return (
                         <Fragment key={col}>
                         {colIdx > 0 && (
@@ -4237,7 +4593,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                                       members={members}
                                       shiftOptions={shiftOptions}
                                       departments={departments}
-                                      showDept={selectedDeptId === ''}
+                                      showDept={selectedDeptId === '' && !scopeToManagerDepartments}
                                       onClick={() => openTask(task, true)}
                                       onEdit={() => openTask(task, false)}
                                       subTaskCount={subTasks.length}
@@ -4245,6 +4601,11 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                                       onToggleExpand={() => toggleTaskExpanded(task.id)}
                                       isOwner={isTaskOwner(task)}
                                       highlighted={highlightedDelayTaskIds.has(task.id)}
+                                      // Manager-only: several peer Managers can post to the same
+                                      // department, so it's worth labeling whose task this is.
+                                      // Owner/Partner don't get this — not asked for, and their
+                                      // board already only shows tasks either of them assigned.
+                                      viewerId={scopeToManagerDepartments ? internalUserId : undefined}
                                     />
                                     {isExpanded && subTasks.length > 0 && (
                                       <div style={{ marginTop: -6, marginBottom: 14, paddingLeft: 6, paddingRight: 20 }}>
@@ -4267,7 +4628,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                                                 members={members}
                                                 shiftOptions={shiftOptions}
                                                 departments={departments}
-                                                showDept={selectedDeptId === ''}
+                                                showDept={selectedDeptId === '' && !scopeToManagerDepartments}
                                                 onClick={() => {}}
                                                 onEdit={() => openTask(sub, false)}
                                                 clickable={false}
@@ -4286,7 +4647,8 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                         </div>
                         </Fragment>
                       )
-                    })}
+                      })
+                    })()}
                   </div>
                 )}
               </section>
@@ -4399,8 +4761,47 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                 <InlineError message={panelError} />
               </div>
 
-              {/* Review sign-off — the assigner decides whether submitted work is done */}
-              {isOwner && selectedTask.status === 'Review' && (
+              {/* My Tasks (Manager only): the Manager is the assignee, not the assigner, so the
+                  usual isOwner-gated edit form never applies here (assertIsTaskOwner would reject
+                  it server-side) — this is the one self-service action they get on their own
+                  received tasks, advancing status one step via the same permission-free quick
+                  PATCH the Employee's own board uses to drag cards forward. Review is a hard stop:
+                  only the Owner/Partner who assigned it can approve/reject it, from their own board. */}
+              {boardViewMode === 'mytasks' && selectedTask.status !== 'Review' && selectedTask.status !== 'Complete' && (
+                <div style={{ padding: '0 20px 18px' }}>
+                  <button
+                    type="button"
+                    onClick={() => handleAdvanceMyTask(selectedTask, selectedTask.status === 'Assigned' ? 'In Progress' : 'Review')}
+                    disabled={myTaskActionLoading}
+                    style={{ width: '100%', height: 38, border: 'none', borderRadius: 8, background: myTaskActionLoading ? '#FDBA74' : 'linear-gradient(135deg, #F97316, #EA580C)', color: '#FFFFFF', fontSize: 12, fontWeight: 700, cursor: myTaskActionLoading ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                  >
+                    {myTaskActionLoading
+                      ? <Spinner size={12} />
+                      : selectedTask.status === 'Assigned' ? <><Clock size={13} /> Start Task</> : <><Eye size={13} /> Submit for Review</>}
+                  </button>
+                </div>
+              )}
+              {boardViewMode === 'mytasks' && selectedTask.status === 'Review' && (
+                <div style={{ padding: '0 20px 18px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderRadius: 10, background: '#FFF7ED', border: '1px solid #FED7AA', color: '#9A3412', fontSize: 12.5, lineHeight: 1.5 }}>
+                    <Eye size={14} style={{ flexShrink: 0 }} />
+                    Waiting for review
+                  </div>
+                </div>
+              )}
+
+              {/* Review sign-off — a peer action, not assigner-only (mirrors approveTask/rejectTask
+                  in taskService.ts): any task that reaches this panel in Review status is already
+                  guaranteed to have come from the viewer's own peer-scoped Kanban/Archive/Calendar
+                  data (Owner/Partner see only O/P-assigned tasks, Manager sees only their own
+                  department's peer managers' tasks), so no extra isOwner check is needed here —
+                  unlike the Duplicate/Archive/Delete footer below, which stays assigner-only.
+                  EXCEPT My Tasks (boardViewMode === 'mytasks'): there the viewer IS the assignee,
+                  never a peer of the assigner (assigned_by is always Owner/Partner, never this
+                  Manager or a fellow Manager) — assertCanActOnTaskAsPeer would reject the request
+                  server-side anyway, but the button must not even be offered: reviewing your own
+                  submitted work is exactly what the Review checkpoint exists to prevent. */}
+              {selectedTask.status === 'Review' && boardViewMode !== 'mytasks' && (
                 <div style={{ padding: '0 20px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {rejectReasonOpen ? (
                     <>
@@ -4513,17 +4914,22 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                 <textarea value={editDescription} onChange={e => setEditDescription(e.target.value)} onKeyDown={e => handleDescriptionKeyDown(e, editDescription, setEditDescription)} rows={2} placeholder="Add more context..." style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }} />
               </div>
 
-              {/* Department + Assign To */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                <div>
-                  <label style={modalLabelStyle}>Department</label>
-                  <DropdownField
-                    value={editDeptId}
-                    options={deptDropdownOptions}
-                    onChange={v => { setEditDeptId(v); setEditAssigneeIds([]); setEditShiftId('') }}
-                    placeholder="Select department"
-                  />
-                </div>
+              {/* Department + Assign To — Manager only ever has the one department (already
+                  forced onto editDeptId when the panel opened), so the field is just noise; the
+                  Assign To field stays, since reassigning an existing task to someone else in
+                  that department is a real edit, not a redundant restatement. */}
+              <div style={scopeToManagerDepartments ? undefined : { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                {!scopeToManagerDepartments && (
+                  <div>
+                    <label style={modalLabelStyle}>Department</label>
+                    <DropdownField
+                      value={editDeptId}
+                      options={deptDropdownOptions}
+                      onChange={v => { setEditDeptId(v); setEditAssigneeIds([]); setEditShiftId('') }}
+                      placeholder="Select department"
+                    />
+                  </div>
+                )}
                 <div>
                   <label style={modalLabelStyle}>Assign To</label>
                   <DropdownField
@@ -5117,17 +5523,35 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                 </div>
               </div>
 
-              {/* Department + Assign To */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                <div>
-                  <label style={modalLabelStyle}>Department</label>
-                  <DropdownField
-                    value={newDeptId}
-                    options={deptDropdownOptions}
-                    onChange={v => { setNewDeptId(v); setNewAssigneeIds([]); setNewShiftId('') }}
-                    placeholder="Select department"
-                  />
+              {/* Department + Assign To — Manager only ever has the one department (already
+                  forced onto newDeptId by openNewTaskFor), and once an assignee arrived pre-picked
+                  (the title above already reads "Assign Task to X" — from clicking + next to that
+                  person, or Duplicate) restating either field is pure redundancy, so both are
+                  hidden. Opened with no assignee yet (e.g. applying a company-wide template),
+                  Assign To still needs picking, so it stays — just without the Department field
+                  next to it, since that part is never in question for a Manager. */}
+              {!scopeToManagerDepartments ? (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <div>
+                    <label style={modalLabelStyle}>Department</label>
+                    <DropdownField
+                      value={newDeptId}
+                      options={deptDropdownOptions}
+                      onChange={v => { setNewDeptId(v); setNewAssigneeIds([]); setNewShiftId('') }}
+                      placeholder="Select department"
+                    />
+                  </div>
+                  <div>
+                    <label style={modalLabelStyle}>Assign To</label>
+                    <DropdownField
+                      value={newAssigneeIds[0] ?? ''}
+                      options={newAssigneeDropdownOptions}
+                      onChange={v => { setNewAssigneeIds(v ? [v] : []); setNewShiftId('') }}
+                      placeholder="Select assignee"
+                    />
+                  </div>
                 </div>
+              ) : newAssigneeMembers.length === 0 && (
                 <div>
                   <label style={modalLabelStyle}>Assign To</label>
                   <DropdownField
@@ -5137,7 +5561,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                     placeholder="Select assignee"
                   />
                 </div>
-              </div>
+              )}
 
               {/* Description */}
               <div>
@@ -5571,27 +5995,40 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                   {taskTemplates.map(t => {
                     const priorityStyle = t.priority ? PRIORITY_COLORS[t.priority] : null
+                    // Manager already knows every template here is either their own department's
+                    // or company-wide (same reasoning as hiding the Kanban card's department badge)
+                    // — only Owner/Partner, who see every department at once, need this to tell
+                    // templates apart.
+                    const templateDept = !scopeToManagerDepartments && t.department_id
+                      ? departments.find(d => d.id === t.department_id)
+                      : null
+                    const canManageTemplate = isTemplateOwner(t)
                     return (
                       <div key={t.id} className="task-card" style={{ position: 'relative', border: '1px solid #E5E7EB', borderRadius: 10, padding: '12px 16px', background: '#FFFFFF' }}>
-                        {priorityStyle && (
+                        {(priorityStyle || templateDept) && (
                           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 10, paddingRight: 88 }}>
-                            <span style={{ fontSize: '0.72rem', fontWeight: 800, padding: '4px 10px', borderRadius: '99px', background: priorityStyle.bg, color: priorityStyle.text, letterSpacing: '0.01em' }}>
-                              {t.priority}
-                            </span>
+                            {priorityStyle && (
+                              <span style={{ fontSize: '0.72rem', fontWeight: 800, padding: '4px 10px', borderRadius: '99px', background: priorityStyle.bg, color: priorityStyle.text, letterSpacing: '0.01em' }}>
+                                {t.priority}
+                              </span>
+                            )}
+                            {templateDept && <DepartmentBadge departmentId={templateDept.id} departmentName={templateDept.name} />}
                           </div>
                         )}
                         <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#111827', margin: 0, lineHeight: 1.4, paddingRight: 88, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.title}</p>
                         <div style={{ position: 'absolute', top: 12, right: 12, display: 'flex', alignItems: 'center', gap: 4, zIndex: 1 }}>
-                          <button
-                            type="button"
-                            onClick={() => { setTemplatesModalOpen(false); openEditTemplate(t) }}
-                            title="Edit template"
-                            style={{ width: 24, height: 24, border: 'none', borderRadius: 6, background: 'transparent', color: '#9CA3AF', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}
-                            onMouseEnter={e => { e.currentTarget.style.background = '#E5E7EB'; e.currentTarget.style.color = '#F97316' }}
-                            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#9CA3AF' }}
-                          >
-                            <Pencil size={14} />
-                          </button>
+                          {canManageTemplate && (
+                            <button
+                              type="button"
+                              onClick={() => { setTemplatesModalOpen(false); openEditTemplate(t) }}
+                              title="Edit template"
+                              style={{ width: 24, height: 24, border: 'none', borderRadius: 6, background: 'transparent', color: '#9CA3AF', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}
+                              onMouseEnter={e => { e.currentTarget.style.background = '#E5E7EB'; e.currentTarget.style.color = '#F97316' }}
+                              onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#9CA3AF' }}
+                            >
+                              <Pencil size={14} />
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => { setTemplatesModalOpen(false); useTaskTemplate(t) }}
@@ -5602,17 +6039,19 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                           >
                             <ArrowRight size={14} />
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => void handleDeleteTemplate(t.id)}
-                            disabled={deleteTemplateLoading}
-                            title="Delete template"
-                            style={{ width: 24, height: 24, border: 'none', borderRadius: 6, background: 'transparent', color: '#DC2626', cursor: deleteTemplateLoading ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0, opacity: deleteTemplateLoading ? 0.55 : 1 }}
-                            onMouseEnter={e => { if (!deleteTemplateLoading) e.currentTarget.style.background = '#FEE2E2' }}
-                            onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
-                          >
-                            {deleteTemplateLoading ? <Spinner size={12} dark /> : <Trash2 size={14} />}
-                          </button>
+                          {canManageTemplate && (
+                            <button
+                              type="button"
+                              onClick={() => void handleDeleteTemplate(t.id)}
+                              disabled={deleteTemplateLoading}
+                              title="Delete template"
+                              style={{ width: 24, height: 24, border: 'none', borderRadius: 6, background: 'transparent', color: '#DC2626', cursor: deleteTemplateLoading ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0, opacity: deleteTemplateLoading ? 0.55 : 1 }}
+                              onMouseEnter={e => { if (!deleteTemplateLoading) e.currentTarget.style.background = '#FEE2E2' }}
+                              onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+                            >
+                              {deleteTemplateLoading ? <Spinner size={12} dark /> : <Trash2 size={14} />}
+                            </button>
+                          )}
                         </div>
                       </div>
                     )
@@ -6076,6 +6515,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                 priority: aiPriority,
                 want_sub_tasks: aiSubTaskEnabled,
                 task_date: aiAssignDate,
+                manager_scope_id: scopeToManagerDepartments ? internalUserId : undefined,
               }),
             })
             const data = await res.json()
@@ -6255,17 +6695,21 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                         />
                       </div>
 
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                        {/* Department */}
-                        <div style={aiReviewFieldStyle}>
-                          <label style={{ ...modalLabelStyle, marginBottom: 0 }}>Department</label>
-                          <DropdownField
-                            value={aiDeptId}
-                            options={deptDropdownOptions}
-                            onChange={v => { setAiDeptId(v); setAiManagerId('') }}
-                            placeholder="Select department"
-                          />
-                        </div>
+                      {/* Department — Manager's is forced server-side (generateAssignmentSuggestion
+                          never guesses across departments for them), so there's nothing to show
+                          here; Assignee alone takes the full row. */}
+                      <div style={scopeToManagerDepartments ? undefined : { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                        {!scopeToManagerDepartments && (
+                          <div style={aiReviewFieldStyle}>
+                            <label style={{ ...modalLabelStyle, marginBottom: 0 }}>Department</label>
+                            <DropdownField
+                              value={aiDeptId}
+                              options={deptDropdownOptions}
+                              onChange={v => { setAiDeptId(v); setAiManagerId('') }}
+                              placeholder="Select department"
+                            />
+                          </div>
+                        )}
 
                         {/* Assignee */}
                         <div style={aiReviewFieldStyle}>
@@ -6274,7 +6718,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                             value={aiManagerId}
                             options={aiManagerDropdownOptions}
                             onChange={setAiManagerId}
-                            placeholder={aiManagerDropdownOptions.length === 0 ? 'No managers available' : 'Select assignee'}
+                            placeholder={aiManagerDropdownOptions.length === 0 ? `No ${scopeToManagerDepartments ? 'employees' : 'managers'} available` : 'Select assignee'}
                             disabled={aiManagerDropdownOptions.length === 0}
                           />
                         </div>
