@@ -152,6 +152,55 @@ export const emailService = {
     })
   },
 
+  // Sent by the daily shift-reminder cron the day before a confirmed shift — repeats the same
+  // when/where/who-to-report-to details sendOfferConfirmedEmail already sent at confirmation
+  // time, so a worker isn't relying on an email from weeks ago if their phone/computer dies.
+  async sendShiftReminderEmail(data: {
+    to: string
+    fullName: string
+    jobTitle: string
+    companyName: string
+    shiftDate: string | null
+    startTime: string | null
+    location: string | null
+    supervisorName: string | null
+    supervisorPhone: string | null
+    supervisorEmail: string | null
+  }): Promise<void> {
+    const detailRow = (label: string, value: string | null) =>
+      value ? `<tr><td style="padding: 4px 12px 4px 0; color: #9CA3AF; font-size: 13px; white-space: nowrap;">${label}</td><td style="padding: 4px 0; color: #1C1C1E; font-size: 14px; font-weight: 600;">${value}</td></tr>` : ''
+
+    await resend.emails.send({
+      from: 'Tasking <noreply@gettasking.com>',
+      to: data.to,
+      subject: `Reminder: your shift for ${data.jobTitle} is tomorrow`,
+      html: `
+        <div style="font-family: Inter, sans-serif; max-width: 480px; margin: 0 auto; padding: 32px 24px; background: #ffffff;">
+          <span style="font-size: 20px; font-weight: 700; color: #F97316;">Tasking</span>
+          <h2 style="font-size: 22px; font-weight: 700; color: #1C1C1E; margin: 24px 0 8px 0;">
+            Your shift is coming up
+          </h2>
+          <p style="font-size: 15px; color: #6B7280; margin: 0 0 16px 0;">
+            Hi ${data.fullName}, just a reminder that your job <strong>${data.jobTitle}</strong> at ${data.companyName} is tomorrow.
+          </p>
+          <table style="border-collapse: collapse; margin: 8px 0 16px 0;">
+            ${detailRow('Date', data.shiftDate)}
+            ${detailRow('Start time', data.startTime)}
+            ${detailRow('Location', data.location)}
+            ${detailRow('Report to', data.supervisorName)}
+            ${detailRow('Phone', data.supervisorPhone)}
+            ${detailRow('Email', data.supervisorEmail)}
+          </table>
+          <p style="font-size: 13px; color: #9CA3AF; margin: 0;">
+            You can always find these details on your Tasking dashboard.
+          </p>
+          <hr style="border: none; border-top: 1px solid #F3F4F6; margin: 24px 0;">
+          <p style="font-size: 12px; color: #9CA3AF; margin: 0;">© 2025 Tasking. All rights reserved.</p>
+        </div>
+      `,
+    })
+  },
+
   // Employer-side cancellation (single worker removed, or the whole job called off) — the
   // worker had already confirmed, so this must reach them even when they're offline.
   async sendEngagementCancelledEmail(data: {

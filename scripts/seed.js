@@ -11,7 +11,7 @@
  *   2. 删除 auth.users 里的旧测试账号（含 Playwright 遗留的 @tasking-tests.local 垃圾账号）
  *   3. 确保平台级 Admin 账号存在（madmin/uadmin，只建不删）
  *   4. 创建 auth 账号（密码统一 111111）+ public.users
- *   5. 创建 1 Company + 4 Department，并分配 Manager/Employee 到各部门
+ *   5. 创建 1 Company + 4 Department，并分配 Manager/Employee 到各部门（每部门 2 Manager + 2 Employee）
  *   6. 创建 5 个 Guest User 求职者账号（带 skills/resume/certificates）
  *   7. 创建 6 条 Job Posting：3 条 Open（覆盖 oneoff/shift 两种表单 + 全部徽章字段）/
  *      Pending Approval（Manager 提交，等 Owner/Partner 审批）/ Draft / Rejected（可测
@@ -34,10 +34,16 @@
  * 测试账号结构：
  *   1 Owner   owner@test.com
  *   1 Partner partner1@test.com
- *   4 Manager manager1-4@test.com（每部门 1 个）
- *   5 Employee employee1-4@test.com（每部门 1 个）+ employee5@test.com（Grace Lim，Operations 第 2 个）
+ *   8 Manager manager1-4@test.com（每部门第 1 个）+ manager5-8@test.com（每部门第 2 个，同一部门顺序对应）
+ *   8 Employee employee1-4@test.com（每部门第 1 个）+ employee5-8@test.com（每部门第 2 个，同一部门顺序对应）
  *   1 Casual Worker casual1@test.com（Marcus Lee，带一个可立即 Clock In 的开放班次）
  *   5 Guest   guest1-5@test.com（求职者，未受雇，不属于任何 company）
+ *
+ *   部门对应关系（i=0..3，department 与 manager{i+1}/manager{i+5}、employee{i+1}/employee{i+5} 一一对应）：
+ *     Operations       → manager1 (David Lim) + manager5 (Wendy Ho)   / employee1 (Ben Seah) + employee5 (Grace Lim)
+ *     Marketing        → manager2 (Rachel Koh) + manager6 (Kelvin Ang) / employee2 (Chloe Yeo) + employee6 (Hannah Lee)
+ *     Engineering      → manager3 (Aaron Wong) + manager7 (Natalie Goh) / employee3 (Daniel Tay) + employee7 (Ivan Koh)
+ *     Customer Support → manager4 (Fiona Chen) + manager8 (Samuel Ng)  / employee4 (Elaine Chua) + employee8 (Sophia Tan)
  *
  * 使用方法：
  *   node scripts/seed.js
@@ -176,17 +182,27 @@ const accounts = [
   { email: 'manager2@test.com', full_name: 'Rachel Koh',     role: 'Manager',  phone_number: '+65 9567 8901', date_of_birth: '1990-09-28', hourly_rate: 27.50 },
   { email: 'manager3@test.com', full_name: 'Aaron Wong',     role: 'Manager',  phone_number: '+65 9678 9012', date_of_birth: '1987-01-17', hourly_rate: 26.00 },
   { email: 'manager4@test.com', full_name: 'Fiona Chen',     role: 'Manager',  phone_number: '+65 9789 0123', date_of_birth: '1991-06-03', hourly_rate: 29.00 },
+  // 2nd Manager per department (manager{i+5} pairs with manager{i+1} on the same department, see
+  // the deptStaff/Step 7 assignment loop) — every department now has 2 Managers, so the Manager
+  // Tasks/Shifts pages have a real peer-manager-in-the-same-department scenario to test against,
+  // not just a single manager per department.
+  { email: 'manager5@test.com', full_name: 'Wendy Ho',       role: 'Manager',  phone_number: '+65 9890 1234', date_of_birth: '1989-11-02', hourly_rate: 27.00 },
+  { email: 'manager6@test.com', full_name: 'Kelvin Ang',     role: 'Manager',  phone_number: '+65 9901 2345', date_of_birth: '1986-05-19', hourly_rate: 28.50 },
+  { email: 'manager7@test.com', full_name: 'Natalie Goh',    role: 'Manager',  phone_number: '+65 9012 3456', date_of_birth: '1992-02-25', hourly_rate: 27.00 },
+  { email: 'manager8@test.com', full_name: 'Samuel Ng',      role: 'Manager',  phone_number: '+65 9123 4560', date_of_birth: '1985-12-08', hourly_rate: 26.50 },
   { email: 'employee1@test.com', full_name: 'Ben Seah',      role: 'Employee', phone_number: '+65 8123 4567', date_of_birth: '1995-02-18', hourly_rate: 19.00 },
   { email: 'employee2@test.com', full_name: 'Chloe Yeo',     role: 'Employee', phone_number: '+65 8234 5678', date_of_birth: '1997-10-05', hourly_rate: 18.50 },
   { email: 'employee3@test.com', full_name: 'Daniel Tay',    role: 'Employee', phone_number: '+65 8345 6789', date_of_birth: '1994-07-30', hourly_rate: 20.00 },
   { email: 'employee4@test.com', full_name: 'Elaine Chua',   role: 'Employee', phone_number: '+65 8456 7890', date_of_birth: '1996-04-11', hourly_rate: 19.50 },
-  // 5th Employee, Operations-only (no manager5 counterpart) — every other department has exactly
-  // 1 Employee, which makes MIN_EMPLOYEES_PER_DAY=1 unsatisfiable the moment that one person takes
-  // a day off, so a Fixed Day Off request there is ALWAYS flagged and the AI can never find a safe
-  // replacement date either (see suggestFixedOffDayGroup/suggestFixedOffDayQueue in
-  // requestAISuggestService.ts). Operations gets a 2nd Employee so UC57's "safe" verdict and its
-  // AI-suggested replacement date are both actually reachable in Step 15.
+  // 2nd Employee per department (employee{i+5} pairs with employee{i+1} on the same department,
+  // same i as its manager{i+5} above) — every department now has 2 Employees, not just Operations,
+  // which also means MIN_EMPLOYEES_PER_DAY=1 is satisfiable everywhere: a Fixed Day Off request no
+  // longer has to be structurally flagged with no safe alternative just because a department only
+  // has 1 Employee (see suggestFixedOffDayGroup/suggestFixedOffDayQueue in requestAISuggestService.ts).
   { email: 'employee5@test.com', full_name: 'Grace Lim',     role: 'Employee', phone_number: '+65 8567 8901', date_of_birth: '1998-08-14', hourly_rate: 18.00 },
+  { email: 'employee6@test.com', full_name: 'Hannah Lee',    role: 'Employee', phone_number: '+65 8678 9012', date_of_birth: '1999-03-21', hourly_rate: 18.50 },
+  { email: 'employee7@test.com', full_name: 'Ivan Koh',      role: 'Employee', phone_number: '+65 8789 0123', date_of_birth: '1996-08-09', hourly_rate: 19.00 },
+  { email: 'employee8@test.com', full_name: 'Sophia Tan',    role: 'Employee', phone_number: '+65 8890 1234', date_of_birth: '1997-01-27', hourly_rate: 18.50 },
 ]
 
 // Guest Users — public job-board applicants (role 'Guest User', not scoped to any company yet).
@@ -220,16 +236,14 @@ const platformAdmins = [
   { email: 'uadmin@tasking.com', full_name: 'User Admin',      role: 'User Admin' },
 ]
 
-// 之前完整版种子建过的账号也要一并从 auth 清掉（cw1-10 / guest1-10 / partner2 /
-// manager5-8 / employee5-8），否则会留下孤儿 auth 账号。
+// 之前完整版种子建过的账号也要一并从 auth 清掉（cw1-10 / guest1-10 / partner2），否则会留下
+// 孤儿 auth 账号。manager5-8/employee5-8 现在本来就在 accounts[] 里，不用再重复列一次。
 const legacyTestEmailsToDelete = [
   ...accounts.map(a => a.email),
   ...guestApplicants.map(g => g.email),
   'casual1@test.com',
   'casual2@test.com',
   'partner2@test.com',
-  ...[5, 6, 7, 8].map(n => `manager${n}@test.com`),
-  ...[5, 6, 7, 8].map(n => `employee${n}@test.com`),
   ...Array.from({ length: 10 }, (_, i) => `cw${i + 1}@test.com`),
   ...Array.from({ length: 10 }, (_, i) => `guest${i + 1}@test.com`),
 ]
@@ -475,39 +489,36 @@ async function main() {
     console.log(`  ✓ users: ${account.full_name} (${account.role})`)
   }
 
-  // ── Step 7: 分配部门（每部门 1 Manager + 1 Employee）─────────────────────
+  // ── Step 7: 分配部门（每部门 2 Manager + 2 Employee）─────────────────────
+  // manager{i+1}/employee{i+1} 是每部门第 1 个，manager{i+5}/employee{i+5} 是第 2 个
+  // （见 accounts[] 里的注释和对应关系）。
   console.log('\nStep 7: 分配部门...')
   for (let i = 0; i < 4; i++) {
-    const managerEmail = `manager${i + 1}@test.com`
-    const employeeEmail = `employee${i + 1}@test.com`
     const dept = depts[i]
+    const managerEmails = [`manager${i + 1}@test.com`, `manager${i + 5}@test.com`]
+    const employeeEmails = [`employee${i + 1}@test.com`, `employee${i + 5}@test.com`]
 
-    const { error: mdErr } = await supabase.from('manager_departments').insert({
-      manager_id: userIdMap[managerEmail].internalId,
-      department_id: dept.id,
-      company_id: company.id,
-      assigned_by: ownerUser.id,
-    })
-    if (mdErr) console.warn(`  ⚠ manager_departments 失败: ${mdErr.message}`)
-    else console.log(`  ✓ ${managerEmail} → ${dept.name}`)
+    for (const managerEmail of managerEmails) {
+      const { error: mdErr } = await supabase.from('manager_departments').insert({
+        manager_id: userIdMap[managerEmail].internalId,
+        department_id: dept.id,
+        company_id: company.id,
+        assigned_by: ownerUser.id,
+      })
+      if (mdErr) console.warn(`  ⚠ manager_departments 失败: ${mdErr.message}`)
+      else console.log(`  ✓ ${managerEmail} → ${dept.name}`)
+    }
 
-    const { error: edErr } = await supabase.from('employee_departments').insert({
-      employee_id: userIdMap[employeeEmail].internalId,
-      department_id: dept.id,
-      company_id: company.id,
-    })
-    if (edErr) console.warn(`  ⚠ employee_departments 失败: ${edErr.message}`)
-    else console.log(`  ✓ ${employeeEmail} → ${dept.name}`)
+    for (const employeeEmail of employeeEmails) {
+      const { error: edErr } = await supabase.from('employee_departments').insert({
+        employee_id: userIdMap[employeeEmail].internalId,
+        department_id: dept.id,
+        company_id: company.id,
+      })
+      if (edErr) console.warn(`  ⚠ employee_departments 失败: ${edErr.message}`)
+      else console.log(`  ✓ ${employeeEmail} → ${dept.name}`)
+    }
   }
-
-  // Grace Lim (employee5) is Operations' 2nd Employee — see the accounts[] comment above.
-  const { error: ed5Err } = await supabase.from('employee_departments').insert({
-    employee_id: userIdMap['employee5@test.com'].internalId,
-    department_id: depts[0].id,
-    company_id: company.id,
-  })
-  if (ed5Err) console.warn(`  ⚠ employee_departments 失败: ${ed5Err.message}`)
-  else console.log(`  ✓ employee5@test.com → ${depts[0].name}（Operations 第 2 个 Employee）`)
 
   // ── Step 8: 创建 Guest User 求职者账号 ──────────────────────────────────
   console.log('\nStep 8: 创建 Guest User 求职者账号...')
@@ -1172,7 +1183,7 @@ async function main() {
     status: 'pending',
   })
   if (offMgrErr) console.warn(`  ⚠ 创建 pending Off Day 失败 (manager3): ${offMgrErr.message}`)
-  else console.log(`  ✓ Off Day（待审批）：Aaron Wong → ${dateKey(NEXT_TUE)}（Manager 自己的申请，同样是 O/P 审批；Engineering 只有他 1 个 Manager，AI Process 会判定 flagged 且给不出替代日——部门人数结构性问题，不是 bug）`)
+  else console.log(`  ✓ Off Day（待审批）：Aaron Wong → ${dateKey(NEXT_TUE)}（Manager 自己的申请，同样是 O/P 审批；Engineering 现在有 manager3+manager7 两个 Manager，AI Process 应判定 safe——覆盖"Manager 自己申请 Off Day"这个提交路径，跟 Ben/Grace 那组 Employee 场景分开测）`)
 
   const { error: offConflictErr } = await supabase.from('employee_off_day_requests').insert({
     user_id: userIdMap['employee4@test.com'].internalId,
@@ -1474,6 +1485,64 @@ async function main() {
       status: 'Assigned', due_at: dueAtOn(TOMORROW),
     })
   }
+
+  // ── Step 19a: Operations 部门第二位 Manager（Wendy Ho）分派的 Tasks ──────────
+  // manager1@test.com (David Lim) 登录后测 Manager Tasks 页时，Kanban 的团队范围（
+  // getManagerTeamScope）会把同部门的 peer Manager 也算进去——之前 Operations 里所有 Task
+  // 都是 David 自己分派的，Wendy Ho 一条没有，Manager 选择器/看板永远看不到"来自另一位
+  // Manager 的任务"这个真实场景。这里补齐 Wendy → Ben Seah / Grace Lim 的任务，四种状态
+  // 各覆盖到（含一条 Review，供 David 用 Approve/Reject 测 assertCanActOnTaskAsPeer），
+  // 且每条都带齐 description/priority/due_at——不是只有 title 的半成品数据。
+  const wendyOpsTask1 = await createTask({
+    company_id: company.id, department_id: depts[0].id, title: 'Reconcile weekend register discrepancies',
+    description: "Compare Saturday and Sunday's register totals against the POS sales report and flag any discrepancy over $5.",
+    assigned_user_id: userIdMap['employee1@test.com'].internalId, assigned_by: userIdMap['manager5@test.com'].internalId,
+    status: 'In Progress', due_at: dueAtOn(TOMORROW), percentage_complete: 35, priority: 'High',
+  })
+  await createTask({
+    company_id: company.id, department_id: depts[0].id, title: 'Prepare loading dock for incoming stock',
+    description: "Clear the loading dock and stage the pallet jacks ahead of tomorrow's delivery truck.",
+    assigned_user_id: userIdMap['employee5@test.com'].internalId, assigned_by: userIdMap['manager5@test.com'].internalId,
+    status: 'Assigned', due_at: dueAtOn(YESTERDAY), priority: 'Medium',
+  })
+  await createTask({
+    company_id: company.id, department_id: depts[0].id, title: 'Submit weekly cash-handling report',
+    description: 'Compile this week\'s cash-handling log into the standard template and submit it for manager sign-off.',
+    assigned_user_id: userIdMap['employee1@test.com'].internalId, assigned_by: userIdMap['manager5@test.com'].internalId,
+    status: 'Review', due_at: dueAtOn(TODAY), percentage_complete: 100, priority: 'Medium',
+  })
+  await createTask({
+    company_id: company.id, department_id: depts[0].id, title: "Archive last month's supplier invoices",
+    description: 'Scan and file last month\'s supplier invoices into the shared archive folder, sorted by vendor.',
+    assigned_user_id: userIdMap['employee5@test.com'].internalId, assigned_by: userIdMap['manager5@test.com'].internalId,
+    status: 'Complete', due_at: dueAtOn(TWO_DAYS_AGO), percentage_complete: 100, completed_at: dueAtOn(TWO_DAYS_AGO),
+  })
+  if (wendyOpsTask1) {
+    await createTask({
+      company_id: company.id, department_id: depts[0].id, title: 'Cross-check till counts',
+      parent_task_id: wendyOpsTask1.id, sequence_order: 1,
+      assigned_user_id: userIdMap['employee1@test.com'].internalId, assigned_by: userIdMap['manager5@test.com'].internalId,
+      status: 'Complete', percentage_complete: 100,
+    })
+    await createTask({
+      company_id: company.id, department_id: depts[0].id, title: 'File discrepancy report',
+      parent_task_id: wendyOpsTask1.id, sequence_order: 2,
+      assigned_user_id: userIdMap['employee1@test.com'].internalId, assigned_by: userIdMap['manager5@test.com'].internalId,
+      status: 'Assigned', due_at: dueAtOn(TOMORROW),
+    })
+  }
+  // David Lim (manager1) 自己也需要一条 Review 状态的 Task——之前 Operations 里 David 分派的
+  // 任务只有 Assigned/In Progress/Complete，没有 Review，Approve/Reject 面板测不到"审批自己
+  // 分派的任务"这条路径（跟上面 Wendy 那条"审批同事分派的任务"的 peer 场景分开测）。
+  await createTask({
+    company_id: company.id, department_id: depts[0].id, title: 'Review new hire onboarding paperwork',
+    description: "Check Grace's signed onboarding forms and W-9 for completeness before filing with HR.",
+    assigned_user_id: userIdMap['employee5@test.com'].internalId, assigned_by: userIdMap['manager1@test.com'].internalId,
+    status: 'Review', due_at: dueAtOn(TODAY), percentage_complete: 100, priority: 'Low',
+  })
+  console.log('  ✓ Operations 另加 Wendy Ho（manager5）分派给 Ben Seah/Grace Lim 的 4 条 Task（含 2 条子任务，4 种状态齐全）')
+  console.log('    + David Lim（manager1）自己的 1 条 Review Task —— Manager Tasks 页现在同部门两位 Manager 的任务都有真实数据可测')
+
   // 再补几条 due_at 落在更早几天（3-7 天前）的已完成任务——Dashboard 的三个桶只看"最近"，
   // 但 Report 页的 On-time Task Completion Rate 是按所选日期范围统计 due_at 落在范围内的任务，
   // 默认范围不一定包含"今天/昨天"，所以这里单独给 Report 铺一批历史上按时完成的任务。
@@ -1484,18 +1553,18 @@ async function main() {
   // chart instead of flatlining at 0%; Customer Support is left onTime:false on purpose (see the
   // backlog block below).
   const historicalTaskDefs = [
-    { dept: 0, title: 'Weekly stock reconciliation', manager: 'manager1@test.com', employee: 'employee1@test.com', daysAgo: 3, onTime: true },
-    { dept: 1, title: 'Social media performance recap', manager: 'manager2@test.com', employee: 'employee2@test.com', daysAgo: 4, onTime: true },
-    { dept: 2, title: 'Equipment maintenance check', manager: 'manager3@test.com', employee: 'employee3@test.com', daysAgo: 5, onTime: true },
-    { dept: 3, title: 'Customer feedback summary', manager: 'manager4@test.com', employee: 'employee4@test.com', daysAgo: 6, onTime: false },
-    { dept: 0, title: 'Team briefing notes', manager: 'manager1@test.com', employee: 'employee5@test.com', daysAgo: 7, onTime: true },
+    { dept: 0, title: 'Weekly stock reconciliation', description: "Reconcile this week's physical stock count against the system inventory and log variances.", priority: 'Medium', manager: 'manager1@test.com', employee: 'employee1@test.com', daysAgo: 3, onTime: true },
+    { dept: 1, title: 'Social media performance recap', description: "Pull engagement numbers for this week's posts and summarize in the campaign tracker.", priority: 'Low', manager: 'manager2@test.com', employee: 'employee2@test.com', daysAgo: 4, onTime: true },
+    { dept: 2, title: 'Equipment maintenance check', description: 'Run the scheduled maintenance checklist on the workshop equipment and log any faults.', priority: 'Medium', manager: 'manager3@test.com', employee: 'employee3@test.com', daysAgo: 5, onTime: true },
+    { dept: 3, title: 'Customer feedback summary', description: "Summarize this week's customer feedback tickets into the monthly report template.", priority: 'Medium', manager: 'manager4@test.com', employee: 'employee4@test.com', daysAgo: 6, onTime: false },
+    { dept: 0, title: 'Team briefing notes', description: "Write up notes from this week's team briefing and share with the department.", priority: 'Low', manager: 'manager1@test.com', employee: 'employee5@test.com', daysAgo: 7, onTime: true },
   ]
   for (const def of historicalTaskDefs) {
     const taskDueAt = dueAtOn(addDays(TODAY, -def.daysAgo))
     await createTask({
-      company_id: company.id, department_id: depts[def.dept].id, title: def.title,
+      company_id: company.id, department_id: depts[def.dept].id, title: def.title, description: def.description,
       assigned_user_id: userIdMap[def.employee].internalId, assigned_by: userIdMap[def.manager].internalId,
-      status: 'Complete', due_at: taskDueAt, percentage_complete: 100,
+      status: 'Complete', due_at: taskDueAt, percentage_complete: 100, priority: def.priority,
       completed_at: def.onTime ? taskDueAt : null,
     })
   }
@@ -1535,21 +1604,21 @@ async function main() {
   // task_date when it's set, and only falls back to created_at (today, outside the window) when it
   // isn't — due_at is left null so these don't also skew the on-time-rate chart.
   const opsWorkloadDefs = [
-    { title: 'Unload delivery truck', assignee: 'employee1@test.com', daysAgo: 6, status: 'Complete', percentage_complete: 100 },
-    { title: 'Restock aisle 3 shelving', assignee: 'employee1@test.com', daysAgo: 5, status: 'Complete', percentage_complete: 100 },
-    { title: 'Process customer return items', assignee: 'employee1@test.com', daysAgo: 5, status: 'Complete', percentage_complete: 100 },
-    { title: 'Set up weekend promo display', assignee: 'employee1@test.com', daysAgo: 4, status: 'Complete', percentage_complete: 100 },
-    { title: 'Sweep and mop stockroom', assignee: 'employee1@test.com', daysAgo: 3, status: 'In Progress', percentage_complete: 50 },
-    { title: 'Label new inventory batch', assignee: 'employee1@test.com', daysAgo: 2, status: 'In Progress', percentage_complete: 20 },
-    { title: 'Cover front register during lunch', assignee: 'employee5@test.com', daysAgo: 4, status: 'Complete', percentage_complete: 100 },
-    { title: 'Review weekend staffing plan', assignee: 'manager1@test.com', daysAgo: 3, status: 'In Progress', percentage_complete: 40 },
+    { title: 'Unload delivery truck', description: "Unload this morning's supplier truck and stage pallets in the receiving bay.", priority: 'Medium', assignee: 'employee1@test.com', daysAgo: 6, status: 'Complete', percentage_complete: 100 },
+    { title: 'Restock aisle 3 shelving', description: 'Restock aisle 3 from the backroom overflow and front-face all items.', priority: 'Low', assignee: 'employee1@test.com', daysAgo: 5, status: 'Complete', percentage_complete: 100 },
+    { title: 'Process customer return items', description: "Inspect and process yesterday's customer returns — restock sellable items, log damaged ones.", priority: 'Medium', assignee: 'employee1@test.com', daysAgo: 5, status: 'Complete', percentage_complete: 100 },
+    { title: 'Set up weekend promo display', description: 'Build the weekend promo end-cap display per the layout sent by Marketing.', priority: 'Medium', assignee: 'employee1@test.com', daysAgo: 4, status: 'Complete', percentage_complete: 100 },
+    { title: 'Sweep and mop stockroom', description: 'Sweep and mop the stockroom floor and clear any blocked walkways.', priority: 'Low', assignee: 'employee1@test.com', daysAgo: 3, status: 'In Progress', percentage_complete: 50 },
+    { title: 'Label new inventory batch', description: "Print and apply shelf labels for this week's new inventory batch.", priority: 'Medium', assignee: 'employee1@test.com', daysAgo: 2, status: 'In Progress', percentage_complete: 20 },
+    { title: 'Cover front register during lunch', description: "Cover the front register during Ben's lunch break, 12–1pm.", priority: 'Medium', assignee: 'employee5@test.com', daysAgo: 4, status: 'Complete', percentage_complete: 100 },
+    { title: 'Review weekend staffing plan', description: 'Review the draft weekend roster for gaps before it goes out to the team.', priority: 'High', assignee: 'manager1@test.com', daysAgo: 3, status: 'In Progress', percentage_complete: 40 },
   ]
   for (const def of opsWorkloadDefs) {
     const assignerId = def.assignee === 'manager1@test.com' ? ownerUser.id : userIdMap['manager1@test.com'].internalId
     await createTask({
-      company_id: company.id, department_id: depts[0].id, title: def.title,
+      company_id: company.id, department_id: depts[0].id, title: def.title, description: def.description,
       assigned_user_id: userIdMap[def.assignee].internalId, assigned_by: assignerId,
-      status: def.status, percentage_complete: def.percentage_complete,
+      status: def.status, percentage_complete: def.percentage_complete, priority: def.priority,
       task_date: dateKey(addDays(TODAY, -def.daysAgo)),
     })
   }
@@ -1598,8 +1667,9 @@ async function main() {
   console.log('  完成！账号结构（密码全部 111111）：')
   console.log('  Owner:    owner@test.com')
   console.log('  Partner:  partner1@test.com')
-  console.log('  Manager:  manager1-4@test.com（Operations / Marketing / Engineering / Customer Support）')
-  console.log('  Employee: employee1-4@test.com（同上一一对应）+ employee5@test.com（Grace Lim，Operations 第 2 个 Employee）')
+  console.log('  Manager:  manager1-4@test.com（Operations / Marketing / Engineering / Customer Support，每部门第 1 个）')
+  console.log('            + manager5-8@test.com（同一部门顺序对应，每部门第 2 个）')
+  console.log('  Employee: employee1-4@test.com（同上一一对应，每部门第 1 个）+ employee5-8@test.com（每部门第 2 个）')
   console.log('  Guest:    guest1-5@test.com（求职者，带 skills/resume/certificates）')
   console.log('  Casual Worker: casual1@test.com（Marcus Lee，带一个现在就能 Clock In 的开放班次，见下）')
   console.log('  Recruitment 已种 6 条 Job Posting：')
@@ -1622,7 +1692,7 @@ async function main() {
   console.log('    Shift Swap：David Lim ↔ Rachel Koh（对方已同意，Owner/Partner 可直接 Approve/Reject，UC53）')
   console.log('               Ben Seah ↔ Chloe Yeo（Employee 之间，应只在 Manager 队列可见，验证隔离规则）')
   console.log('    Off Day 待审批：Ben Seah + Grace Lim 撞同一天（Operations 2 人）—— AI Process 应判 Ben 为 safe、Grace 为 flagged 并给出替代日建议')
-  console.log('                   Aaron Wong（Manager 自己的申请，Engineering 只有他 1 人，AI Process 判 flagged 但给不出替代日）')
+  console.log('                   Aaron Wong（Manager 自己的申请；Engineering 现有 manager3+manager7 两个 Manager，AI Process 应判 safe）')
   console.log('                   Elaine Chua（当天已有排班冲突，仅供手动测试，AI Process 不检查排班）')
   console.log('  Casual Worker Clock In：casual1@test.com 登录后 Dashboard 有 Same-Day Café Cover Shift 可直接 Clock In（UC49）')
   console.log('  Templates：Job Template ×2（Standard Event Crew / Weekend Warehouse Shift）+ Shift Template ×2')

@@ -780,6 +780,9 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
   // limits rows to the viewer's departments; the department panel is filtered the same way.
   scopeToManagerDepartments?: boolean
 }) {
+  // Manager only ever sees their own department's people on this page, so department
+  // color-coding is meaningless — fall back to the brand orange instead of deptColor().
+  const shiftBarColor = (departmentId: string) => scopeToManagerDepartments ? '#F97316' : deptColor(departmentId)
   const router = useRouter()
   const timelineControlsRef = useRef<HTMLDivElement>(null)
   const todayStr = useMemo(() => formatDateKey(new Date()), [])
@@ -820,6 +823,9 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
   const [timelineLoading, setTimelineLoading] = useState(false)
   const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null)
   const [timelineDate, setTimelineDate] = useState(formatDateKey(new Date()))
+  // Independent from timelineDate: the Timeline (single day) and Calendar (week) panels
+  // navigate separately — moving one must never jump the other's date/week underneath it.
+  const [calWeekAnchorDate, setCalWeekAnchorDate] = useState(formatDateKey(new Date()))
   const [rangeStartHour, setRangeStartHour] = useState(7)
   const [rangeEndHour, setRangeEndHour] = useState(23)
   const [isAutoFit, setIsAutoFit] = useState(false)
@@ -1258,11 +1264,11 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
     await Promise.all([
       fetchTimeline(companyId, timelineDate),
       fetchFutureRows(companyId),
-      fetchCalWeek(companyId, timelineDate),
+      fetchCalWeek(companyId, calWeekAnchorDate),
       fetchFixedOffDays(companyId),
     ])
     setLastRefreshed(new Date())
-  }, [companyId, fetchCalWeek, fetchFutureRows, fetchTimeline, fetchFixedOffDays, timelineDate])
+  }, [companyId, fetchCalWeek, fetchFutureRows, fetchTimeline, fetchFixedOffDays, timelineDate, calWeekAnchorDate])
 
   useEffect(() => {
     if (!companyId) return
@@ -1279,8 +1285,8 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
     // Manager view shows the Calendar section alongside the Timeline at all times (no tab switching),
     // so it needs calendar week data regardless of shiftViewMode.
     if (!companyId || (shiftViewMode !== 'calendar' && !scopeToManagerDepartments)) return
-    void fetchCalWeek(companyId, timelineDate)
-  }, [companyId, shiftViewMode, timelineDate, fetchCalWeek, scopeToManagerDepartments])
+    void fetchCalWeek(companyId, calWeekAnchorDate)
+  }, [companyId, shiftViewMode, calWeekAnchorDate, fetchCalWeek, scopeToManagerDepartments])
 
   // approved fixed off: `${user_id}|${YYYY-MM-DD}` → true (same keying as the Attendance page)
   const fixedOffByUserDate = useMemo(() => {
@@ -2871,7 +2877,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
 
   const visibleScheduleRange = (): { date_from: string; date_to: string } => {
     if (shiftViewMode === 'calendar') {
-      const anchor = new Date(`${timelineDate}T00:00:00`)
+      const anchor = new Date(`${calWeekAnchorDate}T00:00:00`)
       const dow = (anchor.getDay() + 6) % 7  // 0=Mon … 6=Sun
       const mon = new Date(anchor); mon.setDate(anchor.getDate() - dow)
       const sun = new Date(mon); sun.setDate(mon.getDate() + 6)
@@ -2955,7 +2961,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
     </div>
   )
 
-  const renderShiftRow = (row: TimelineRow, isDeptBoundary = false, barColor = deptColor(row.department_id)) => {
+  const renderShiftRow = (row: TimelineRow, isDeptBoundary = false, barColor = shiftBarColor(row.department_id)) => {
     const EDGE = '2px solid rgba(15,23,42,0.45)'
     const borderTop = isDeptBoundary ? EDGE : 'none'
     const isUnassignedRow = row.user_id === null
@@ -2993,12 +2999,12 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
             return (
               <button
                 type="button"
-                className="off-bar"
+                className={canManageShifts ? 'off-bar' : undefined}
                 onClick={() => { if (!isTimelinePast && dept) openBatchDrawer(dept, row.user_id!, timelineDate) }}
-                onMouseEnter={e => { if (!isTimelinePast) e.currentTarget.style.background = '#CBD5E1' }}
+                onMouseEnter={e => { if (canManageShifts && !isTimelinePast) e.currentTarget.style.background = '#CBD5E1' }}
                 onMouseLeave={e => { e.currentTarget.style.background = '#E2E8F0' }}
-                style={{ position: 'absolute', top: 10, bottom: 10, left: `${TL_PAD}%`, right: `${TL_PAD}%`, borderRadius: 999, background: '#E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1, border: 'none', cursor: isTimelinePast ? 'default' : 'pointer', transition: 'background 0.15s' }}
-                title={isTimelinePast ? undefined : `Assign shift to ${row.full_name}`}
+                style={{ position: 'absolute', top: 10, bottom: 10, left: `${TL_PAD}%`, right: `${TL_PAD}%`, borderRadius: 999, background: '#E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1, border: 'none', cursor: (canManageShifts && !isTimelinePast) ? 'pointer' : 'default', transition: 'background 0.15s' }}
+                title={(canManageShifts && !isTimelinePast) ? `Assign shift to ${row.full_name}` : undefined}
               >
                 <span style={{ fontSize: '0.78rem', fontWeight: 600, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.05em', pointerEvents: 'none' }}>Off</span>
               </button>
@@ -3018,15 +3024,15 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
             const left = tlPad(startMin)
             const right = tlPad(endMin)
             const width = Math.max(right - left, 0)
-            const shiftColor = isUnassignedRow ? '#94A3B8' : deptColor(row.department_id)
+            const shiftColor = isUnassignedRow ? '#94A3B8' : shiftBarColor(row.department_id)
             const isDraft = shift.publication_status === 'draft'
             return (
               <button
                 key={`${shift.id}_${shift.assignment_id ?? 'open'}`}
                 type="button"
-                className="shift-bar"
+                className={canManageShifts ? 'shift-bar' : undefined}
                 onClick={() => openShiftDetail(shift, row, timelineDate < formatDateKey(new Date()))}
-                onMouseEnter={e => { if (timelineDate >= formatDateKey(new Date())) e.currentTarget.style.filter = 'brightness(1.08)' }}
+                onMouseEnter={e => { if (canManageShifts && timelineDate >= formatDateKey(new Date())) e.currentTarget.style.filter = 'brightness(1.08)' }}
                 onMouseLeave={e => { e.currentTarget.style.filter = 'none' }}
                 style={{
                   position: 'absolute',
@@ -3039,7 +3045,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                   opacity: isDraft ? 0.72 : 1,
                   color: '#FFFFFF',
                   boxShadow: '0 2px 8px rgba(15,23,42,0.18)',
-                  cursor: timelineDate < formatDateKey(new Date()) ? 'default' : 'pointer',
+                  cursor: (canManageShifts && timelineDate >= formatDateKey(new Date())) ? 'pointer' : 'default',
                   padding: '0 8px',
                   textAlign: 'center',
                   overflow: 'hidden',
@@ -3067,7 +3073,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
   }
 
   const renderCalendarView = () => {
-    const anchor = new Date(`${timelineDate}T00:00:00`)
+    const anchor = new Date(`${calWeekAnchorDate}T00:00:00`)
     const dow = (anchor.getDay() + 6) % 7  // 0=Mon … 6=Sun
     const mon = new Date(anchor); mon.setDate(anchor.getDate() - dow)
     const weekDates: string[] = Array.from({ length: 7 }, (_, i) => {
@@ -3140,7 +3146,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
           ) : (
             <div style={{ borderLeft: EDGE, borderRight: EDGE, borderBottom: EDGE }}>
               {deptOrderCal.map((deptId, deptIdx) => {
-                const barColor = deptColor(deptId)
+                const barColor = shiftBarColor(deptId)
                 return deptRowsCal[deptId].map((row, rowIdx) => {
                   const isManager = row.role === 'Manager'
                   const isDeptBoundary = deptIdx > 0 && rowIdx === 0
@@ -3174,16 +3180,16 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                                   <span style={{ fontSize: 10, fontWeight: 600, color: '#7C3AED', whiteSpace: 'nowrap' }}>Off Day</span>
                                 </div>
                               ) : (
-                              <div style={{ borderRadius: 999, background: '#E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'center', height: 24, cursor: isPastDate ? 'default' : 'pointer', transition: 'background 0.15s' }}
+                              <div style={{ borderRadius: 999, background: '#E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'center', height: 24, cursor: (canManageShifts && !isPastDate) ? 'pointer' : 'default', transition: 'background 0.15s' }}
                                 onClick={() => {
                                   if (isPastDate) return
                                   const dept = departments.find(d => d.id === row.department_id)
                                   if (!dept) return
                                   openBatchDrawer(dept, row.user_id!, date)
                                 }}
-                                onMouseEnter={e => { if (!isPastDate) e.currentTarget.style.background = '#CBD5E1' }}
+                                onMouseEnter={e => { if (canManageShifts && !isPastDate) e.currentTarget.style.background = '#CBD5E1' }}
                                 onMouseLeave={e => { e.currentTarget.style.background = '#E2E8F0' }}
-                                title={isPastDate ? undefined : `Assign shift to ${row.full_name} on ${date}`}
+                                title={(canManageShifts && !isPastDate) ? `Assign shift to ${row.full_name} on ${date}` : undefined}
                               >
                                 <span style={{ fontSize: 10, fontWeight: 600, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Off</span>
                               </div>
@@ -3200,10 +3206,10 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                                     padding: '0 8px', height: 28, flexShrink: 0,
                                     background: barColor,
                                     border: isDraft ? '1.5px dashed rgba(255,255,255,0.85)' : 'none', borderRadius: 999,
-                                    cursor: isPastDate ? 'default' : 'pointer', width: '100%',
+                                    cursor: (canManageShifts && !isPastDate) ? 'pointer' : 'default', width: '100%',
                                     opacity: isPastDate ? 0.7 : (isDraft ? 0.72 : 1),
                                   }}
-                                  onMouseEnter={e => { if (!isPastDate) e.currentTarget.style.filter = 'brightness(1.08)' }}
+                                  onMouseEnter={e => { if (canManageShifts && !isPastDate) e.currentTarget.style.filter = 'brightness(1.08)' }}
                                   onMouseLeave={e => { e.currentTarget.style.filter = 'none' }}
                                 >
                                   <span style={{ fontSize: 10.5, fontWeight: 600, color: '#FFFFFF', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -3248,7 +3254,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
     for (const row of visibleTimelineRows) {
       if (!deptMap[row.department_id]) {
         deptOrder.push(row.department_id)
-        deptMap[row.department_id] = { color: deptColor(row.department_id), name: row.department_name, rows: [] }
+        deptMap[row.department_id] = { color: shiftBarColor(row.department_id), name: row.department_name, rows: [] }
       }
       deptMap[row.department_id].rows.push(row)
     }
@@ -3503,13 +3509,13 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                   </div>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                     {(() => {
-                      const anchor = new Date(`${timelineDate}T00:00:00`)
+                      const anchor = new Date(`${calWeekAnchorDate}T00:00:00`)
                       const dow = (anchor.getDay() + 6) % 7  // 0=Mon … 6=Sun
                       const mon = new Date(anchor); mon.setDate(anchor.getDate() - dow)
                       const sun = new Date(mon); sun.setDate(mon.getDate() + 6)
                       const fmt = (d: Date) => `${String(d.getDate()).padStart(2,'0')} ${d.toLocaleDateString('en-AU',{month:'short'})}`
                       const weekLabel = `${fmt(mon)} – ${fmt(sun)} ${sun.getFullYear()}`
-                      const goWeek = (dir: number) => setTimelineDateAndClearSelection(formatDateKey(addDays(mon, dir * 7)))
+                      const goWeek = (dir: number) => setCalWeekAnchorDate(formatDateKey(addDays(mon, dir * 7)))
                       return (
                         <>
                           <button type="button" onClick={() => goWeek(-1)} style={iconButtonStyle}><ChevronLeft size={16} /></button>
@@ -3883,13 +3889,13 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                 {shiftViewMode === 'calendar' ? (
                   // Calendar week navigation — no Today button, no date picker
                   (() => {
-                    const anchor = new Date(`${timelineDate}T00:00:00`)
+                    const anchor = new Date(`${calWeekAnchorDate}T00:00:00`)
                     const dow = (anchor.getDay() + 6) % 7  // 0=Mon … 6=Sun
                     const mon = new Date(anchor); mon.setDate(anchor.getDate() - dow)
                     const sun = new Date(mon); sun.setDate(mon.getDate() + 6)
                     const fmt = (d: Date) => `${String(d.getDate()).padStart(2,'0')} ${d.toLocaleDateString('en-AU',{month:'short'})}`
                     const weekLabel = `${fmt(mon)} – ${fmt(sun)} ${sun.getFullYear()}`
-                    const goWeek = (dir: number) => setTimelineDateAndClearSelection(formatDateKey(addDays(mon, dir * 7)))
+                    const goWeek = (dir: number) => setCalWeekAnchorDate(formatDateKey(addDays(mon, dir * 7)))
                     return (
                       <>
                         <button type="button" onClick={() => goWeek(-1)} style={iconButtonStyle}><ChevronLeft size={16} /></button>

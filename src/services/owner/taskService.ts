@@ -167,11 +167,11 @@ export const taskService = {
 
   // UC21 follow-through — applying a Workload Rebalancing suggestion is a company-wide,
   // algorithmically-computed reassignment, not a manual edit, so it uses peer authorization
-  // (assertCanApplyWorkloadSuggestion) instead of the strict assigner-only editTask path.
+  // (assertCanActOnTaskAsPeer) instead of the strict assigner-only editTask path.
   async applyWorkloadSuggestionReassignment(id: string, newAssigneeId: string, actingUserId?: string | null): Promise<Task> {
     if (!id) throw new Error('Task id is required')
     if (!newAssigneeId) throw new Error('assigned_user_id is required')
-    const existing = await assertCanApplyWorkloadSuggestion(id, actingUserId)
+    const existing = await assertCanActOnTaskAsPeer(id, actingUserId, 'apply this suggestion')
     if (existing.parent_task_id !== null) throw new Error('Only a top-level task can be reassigned this way')
     await validateTaskAssignment({ ...existing, assigned_user_id: newAssigneeId })
     const updated = await taskRepository.updateTask(id, { assigned_user_id: newAssigneeId }, actingUserId)
@@ -400,9 +400,12 @@ export const taskService = {
     return unarchivedTask
   },
 
-  async getArchivedTasks(company_id: string): Promise<Task[]> {
+  // assigned_by/department_ids mirror getKanbanTasks' manager-scope params — omitted for
+  // Owner/Partner (company-wide), passed for a Manager viewer so the Archive list never shows
+  // another department's (or Owner/Partner's) archived tasks.
+  async getArchivedTasks(company_id: string, assigned_by?: string | string[], department_ids?: string[]): Promise<Task[]> {
     if (!company_id) throw new Error('company_id is required')
-    return taskRepository.getArchivedTasksByCompany(company_id)
+    return taskRepository.getArchivedTasksByCompany(company_id, assigned_by, department_ids)
   },
 
   // UC28 Set Task Dependencies — reorders the sub-tasks of a parent task so each one must
@@ -449,11 +452,14 @@ export const taskService = {
     return taskRepository.updateTask(id, { status, percentage_complete })
   },
 
-  // Assigner's sign-off on a task the assignee submitted for Review — the only way a task
-  // reaches Complete. Clears any earlier rejection so the rework notice disappears.
+  // Sign-off on a task the assignee submitted for Review — the only way a task reaches Complete.
+  // Clears any earlier rejection so the rework notice disappears. Reviewing is a peer action, not
+  // assigner-only (assertCanActOnTaskAsPeer) — any Owner/Partner, or any Manager sharing a
+  // department with the original assigner, can pick up a review the assigner doesn't have time
+  // for; only editing/deleting/duplicating the task itself stays assigner-only.
   async approveTask(id: string, actingUserId?: string | null): Promise<Task> {
     if (!id) throw new Error('Task id is required')
-    const task = await assertIsTaskOwner(id, actingUserId)
+    const task = await assertCanActOnTaskAsPeer(id, actingUserId, 'approve this task')
     if (task.status !== 'Review') throw new Error('Only tasks in Review can be approved')
     const updated = await taskRepository.updateTask(id, {
       status: 'Complete',
@@ -467,12 +473,13 @@ export const taskService = {
     return updated
   },
 
-  // Assigner found problems in the submitted work — the task returns to In Progress carrying a
+  // Reviewer found problems in the submitted work — the task returns to In Progress carrying a
   // required reason, which the assignee's board surfaces as a rework notice until re-submission.
+  // Same peer-reviewer authorization as approveTask above.
   async rejectTask(id: string, reason: string, actingUserId?: string | null): Promise<Task> {
     if (!id) throw new Error('Task id is required')
     if (!reason?.trim()) throw new Error('A rejection reason is required')
-    const task = await assertIsTaskOwner(id, actingUserId)
+    const task = await assertCanActOnTaskAsPeer(id, actingUserId, 'reject this task')
     if (task.status !== 'Review') throw new Error('Only tasks in Review can be rejected')
     const updated = await taskRepository.updateTask(id, {
       status: 'In Progress',
@@ -533,9 +540,9 @@ export const taskService = {
     return { departmentIds, managerIds }
   },
 
-  async getKanbanTasks(company_id: string, assigned_by?: string | string[], department_ids?: string[], viewer_user_id?: string): Promise<KanbanGroup> {
+  async getKanbanTasks(company_id: string, assigned_by?: string | string[], department_ids?: string[], viewer_user_id?: string, assigned_user_id?: string): Promise<KanbanGroup> {
     const tasks = await attachDelayAlertReadState(
-      await taskRepository.getTasksByCompany(company_id, assigned_by, department_ids),
+      await taskRepository.getTasksByCompany(company_id, assigned_by, department_ids, assigned_user_id),
       viewer_user_id,
     )
     return {
@@ -856,21 +863,24 @@ async function attachDelayAlertReadState(tasks: Task[], viewer_user_id?: string)
 }
 
 // Owner and Partner are peer "assigner" roles over the same Manager tier (mirrors the Kanban
-// visibility scope in TasksView.tsx's fetchKanban / ownerDashboardService) — a company-wide,
-// algorithmically-suggested action like Workload Rebalancing may be applied by either peer, even
-// onto a task the OTHER one assigned. This is intentionally narrower than a full ownership bypass:
-// manual edit/delete/archive/duplicate stay assigner-only via assertIsTaskOwner above.
-async function assertCanApplyWorkloadSuggestion(taskId: string, actingUserId?: string | null): Promise<Task> {
+// visibility scope in TasksView.tsx's fetchKanban / ownerDashboardService), and likewise a
+// Manager is a peer of every other Manager sharing a department with them — a company-wide,
+// algorithmically-suggested action like Workload Rebalancing, or reviewing (approve/reject) a
+// submitted task, may be done by any such peer, even onto a task the OTHER one assigned. This is
+// intentionally narrower than a full ownership bypass: manual edit/delete/archive/duplicate stay
+// assigner-only via assertIsTaskOwner above — reviewing someone else's assigned work is a
+// collaborative team action, changing the work itself is not.
+async function assertCanActOnTaskAsPeer(taskId: string, actingUserId: string | null | undefined, actionLabel: string): Promise<Task> {
   const task = await taskRepository.getTaskById(taskId)
-  if (!actingUserId) throw new Error('Only a peer of the assigner can apply this suggestion')
+  if (!actingUserId) throw new Error(`Only a peer of the assigner can ${actionLabel}`)
   if (task.assigned_by === actingUserId) return task
-  if (!task.assigned_by) throw new Error('Only a peer of the assigner can apply this suggestion')
+  if (!task.assigned_by) throw new Error(`Only a peer of the assigner can ${actionLabel}`)
   const [actingUser, assigner] = await Promise.all([
     taskRepository.getUserById(actingUserId),
     taskRepository.getUserById(task.assigned_by),
   ])
   if (!actingUser || !assigner || actingUser.company_id !== assigner.company_id) {
-    throw new Error('Only a peer of the assigner can apply this suggestion')
+    throw new Error(`Only a peer of the assigner can ${actionLabel}`)
   }
   const ownerPartner = ['Owner', 'Partner']
   if (ownerPartner.includes(actingUser.role) && ownerPartner.includes(assigner.role)) return task
@@ -878,7 +888,7 @@ async function assertCanApplyWorkloadSuggestion(taskId: string, actingUserId?: s
     const scope = await taskService.getManagerTeamScope(task.company_id, actingUserId)
     if (scope.managerIds.includes(assigner.id)) return task
   }
-  throw new Error('Only a peer of the assigner can apply this suggestion')
+  throw new Error(`Only a peer of the assigner can ${actionLabel}`)
 }
 
 function addDays(date: string, days: number): string {

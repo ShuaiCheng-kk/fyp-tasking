@@ -13,6 +13,7 @@ import { AlertTriangle, Check, CreditCard } from 'lucide-react'
 import GuestPersonalInfoCard from '@/components/guest/GuestPersonalInfoCard'
 import { SkillsCard, CertificatesCard, ResumeCard } from '@/components/worker/WorkerProfileSections'
 import { TitledBlock } from '@/components/panel'
+import { useIsCompactViewport } from '@/hooks/useIsCompactViewport'
 
 const pageKeyframes = `
   @keyframes blockSlideUp { from { opacity: 0; transform: translateY(20px) } to { opacity: 1; transform: translateY(0) } }
@@ -124,6 +125,8 @@ function PaymentInformationCard({
 }
 
 export default function CasualProfilePage() {
+  // Single column on phone; the page itself scrolls instead of this section internally scrolling.
+  const isPhone = useIsCompactViewport(640)
   const [authId, setAuthId] = useState('')
   const [internalUserId, setInternalUserId] = useState('')
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('paynow')
@@ -184,7 +187,7 @@ export default function CasualProfilePage() {
     <>
       <style>{pageKeyframes}</style>
 
-      <main style={pageStyle}>
+      <main style={isPhone ? { ...pageStyle, height: 'auto', overflow: 'visible', padding: '12px 12px 12px' } : pageStyle}>
         <div style={{ marginBottom: 20, flexShrink: 0 }}>
           <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
             My Profile
@@ -205,7 +208,9 @@ export default function CasualProfilePage() {
             its entrance animation — mounts fresh right when the real cards are ready, instead of
             animating an already-empty shell the instant the page mounts and settling long before
             the API round-trip actually returns anything to show. */}
-        <section key={paymentLoaded ? 'ready' : 'loading'} style={{ maxWidth: 1080, margin: '0 auto', width: '100%', flex: '1 1 auto', minHeight: 0, overflowY: 'auto', display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 16, alignItems: 'start', animation: 'blockSlideUp 0.38s ease both' }}>
+        <section key={paymentLoaded ? 'ready' : 'loading'} style={isPhone
+          ? { maxWidth: 1080, margin: '0 auto', width: '100%', display: 'grid', gridTemplateColumns: '1fr', gap: 16, alignItems: 'start', animation: 'blockSlideUp 0.38s ease both' }
+          : { maxWidth: 1080, margin: '0 auto', width: '100%', flex: '1 1 auto', minHeight: 0, overflowY: 'auto', display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 16, alignItems: 'start', animation: 'blockSlideUp 0.38s ease both' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             <div style={paymentMissing ? lockedWrapperStyle : undefined}>
               {internalUserId && <GuestPersonalInfoCard userId={internalUserId} onToast={showToast} />}
@@ -237,7 +242,7 @@ export default function CasualProfilePage() {
 
       {toast && (
         <div style={{
-          position: 'fixed', bottom: 28, left: '50%', transform: 'translateX(-50%)',
+          position: 'fixed', bottom: isPhone ? 76 : 28, left: '50%', transform: 'translateX(-50%)',
           background: '#0F172A', color: '#FFFFFF', borderRadius: 999, padding: '10px 18px',
           display: 'flex', alignItems: 'center', gap: 8,
           fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', zIndex: 9999,

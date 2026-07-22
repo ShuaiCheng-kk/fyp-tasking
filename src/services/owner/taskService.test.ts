@@ -1094,8 +1094,17 @@ describe('taskService — Task (UC12-23)', () => {
 
       const result = await taskService.getArchivedTasks('company-1')
 
-      expect(taskRepository.getArchivedTasksByCompany).toHaveBeenCalledWith('company-1')
+      expect(taskRepository.getArchivedTasksByCompany).toHaveBeenCalledWith('company-1', undefined, undefined)
       expect(result).toEqual([archived])
+    })
+
+    it('passes assigner/department scope through for a Manager viewer', async () => {
+      const archived = { ...baseTask, is_archived: true }
+      vi.mocked(taskRepository.getArchivedTasksByCompany).mockResolvedValue([archived])
+
+      await taskService.getArchivedTasks('company-1', ['manager-1', 'manager-2'], ['dept-1'])
+
+      expect(taskRepository.getArchivedTasksByCompany).toHaveBeenCalledWith('company-1', ['manager-1', 'manager-2'], ['dept-1'])
     })
   })
 
@@ -1324,10 +1333,46 @@ describe('taskService — Task (UC12-23)', () => {
   describe('approveTask / rejectTask (review sign-off)', () => {
     const reviewTask: Task = { ...baseTask, status: 'Review', percentage_complete: 66 }
 
-    it('approve requires the acting user to be the assigner', async () => {
-      vi.mocked(taskRepository.getTaskById).mockResolvedValue(reviewTask)
+    it('approve rejects an unrelated user (not the assigner, not a peer)', async () => {
+      vi.mocked(taskRepository.getTaskById).mockResolvedValue(reviewTask) // assigned_by: 'owner-1'
+      vi.mocked(taskRepository.getUserById).mockImplementation(async (id: string) => {
+        if (id === 'owner-1') return { id: 'owner-1', role: 'Owner', company_id: 'company-1' } as any
+        if (id === 'someone-else') return { id: 'someone-else', role: 'Employee', company_id: 'company-1' } as any
+        return null
+      })
       await expect(taskService.approveTask('task-1', 'someone-else'))
-        .rejects.toThrow('Only the user who assigned this task can perform this action')
+        .rejects.toThrow('Only a peer of the assigner can approve this task')
+      expect(taskRepository.updateTask).not.toHaveBeenCalled()
+    })
+
+    it('lets a Manager approve a task a peer Manager (shared department) assigned', async () => {
+      const mgrReviewTask: Task = { ...reviewTask, assigned_by: 'mgr-a' }
+      vi.mocked(taskRepository.getTaskById).mockResolvedValue(mgrReviewTask)
+      vi.mocked(taskRepository.getUserById).mockImplementation(async (id: string) => {
+        if (id === 'mgr-a' || id === 'mgr-b') return { id, role: 'Manager', company_id: 'company-1' } as any
+        return null
+      })
+      vi.mocked(taskRepository.getManagerDepartmentIds).mockResolvedValue(['dept-1'])
+      vi.mocked(taskRepository.getManagersByDepartmentIds).mockResolvedValue([{ id: 'mgr-a' } as any, { id: 'mgr-b' } as any])
+      vi.mocked(taskRepository.updateTask).mockResolvedValue({ ...mgrReviewTask, status: 'Complete', percentage_complete: 100 })
+
+      await taskService.approveTask('task-1', 'mgr-b')
+
+      expect(taskRepository.updateTask).toHaveBeenCalledWith('task-1', expect.objectContaining({ status: 'Complete', reviewed_by: 'mgr-b' }))
+    })
+
+    it('rejects a Manager who does not share a department with the assigning Manager (approve)', async () => {
+      const mgrReviewTask: Task = { ...reviewTask, assigned_by: 'mgr-a' }
+      vi.mocked(taskRepository.getTaskById).mockResolvedValue(mgrReviewTask)
+      vi.mocked(taskRepository.getUserById).mockImplementation(async (id: string) => {
+        if (id === 'mgr-a' || id === 'mgr-c') return { id, role: 'Manager', company_id: 'company-1' } as any
+        return null
+      })
+      vi.mocked(taskRepository.getManagerDepartmentIds).mockResolvedValue(['dept-9'])
+      vi.mocked(taskRepository.getManagersByDepartmentIds).mockResolvedValue([{ id: 'mgr-c' } as any])
+
+      await expect(taskService.approveTask('task-1', 'mgr-c'))
+        .rejects.toThrow('Only a peer of the assigner can approve this task')
       expect(taskRepository.updateTask).not.toHaveBeenCalled()
     })
 
@@ -1371,10 +1416,31 @@ describe('taskService — Task (UC12-23)', () => {
       expect(taskRepository.updateTask).not.toHaveBeenCalled()
     })
 
-    it('reject requires the acting user to be the assigner', async () => {
-      vi.mocked(taskRepository.getTaskById).mockResolvedValue(reviewTask)
+    it('reject rejects an unrelated user (not the assigner, not a peer)', async () => {
+      vi.mocked(taskRepository.getTaskById).mockResolvedValue(reviewTask) // assigned_by: 'owner-1'
+      vi.mocked(taskRepository.getUserById).mockImplementation(async (id: string) => {
+        if (id === 'owner-1') return { id: 'owner-1', role: 'Owner', company_id: 'company-1' } as any
+        if (id === 'someone-else') return { id: 'someone-else', role: 'Employee', company_id: 'company-1' } as any
+        return null
+      })
       await expect(taskService.rejectTask('task-1', 'Numbers are off', 'someone-else'))
-        .rejects.toThrow('Only the user who assigned this task can perform this action')
+        .rejects.toThrow('Only a peer of the assigner can reject this task')
+    })
+
+    it('lets a Manager reject a task a peer Manager (shared department) assigned', async () => {
+      const mgrReviewTask: Task = { ...reviewTask, assigned_by: 'mgr-a' }
+      vi.mocked(taskRepository.getTaskById).mockResolvedValue(mgrReviewTask)
+      vi.mocked(taskRepository.getUserById).mockImplementation(async (id: string) => {
+        if (id === 'mgr-a' || id === 'mgr-b') return { id, role: 'Manager', company_id: 'company-1' } as any
+        return null
+      })
+      vi.mocked(taskRepository.getManagerDepartmentIds).mockResolvedValue(['dept-1'])
+      vi.mocked(taskRepository.getManagersByDepartmentIds).mockResolvedValue([{ id: 'mgr-a' } as any, { id: 'mgr-b' } as any])
+      vi.mocked(taskRepository.updateTask).mockResolvedValue({ ...mgrReviewTask, status: 'In Progress', percentage_complete: 33, rejection_reason: 'Numbers are off' })
+
+      await taskService.rejectTask('task-1', 'Numbers are off', 'mgr-b')
+
+      expect(taskRepository.updateTask).toHaveBeenCalledWith('task-1', expect.objectContaining({ status: 'In Progress', rejection_reason: 'Numbers are off' }))
     })
 
     it('reject only applies to tasks in Review', async () => {

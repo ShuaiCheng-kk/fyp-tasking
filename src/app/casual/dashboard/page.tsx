@@ -102,6 +102,9 @@ export default function CasualDashboardPage() {
   // The timeline column is only 300px wide, so side-by-side still fits comfortably at the
   // reference 1192px laptop viewport — stack only below ~980px.
   const isCompact = useIsCompactViewport(980)
+  // True phone width (isPhone implies isCompact, 640 < 980) — the page itself scrolls like a
+  // normal mobile page instead of being locked to one viewport with internal block scrolling.
+  const isPhone = useIsCompactViewport(640)
 
   const [authId, setAuthId] = useState('')
   const [internalUserId, setInternalUserId] = useState('')
@@ -398,7 +401,7 @@ export default function CasualDashboardPage() {
     roleLabel: string | null,
   ) => (
     <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-      <RoleAvatar role={role} size={56} photoUrl={person.profile_photo_url} />
+      <RoleAvatar role={role} size={isPhone ? 40 : 56} photoUrl={person.profile_photo_url} />
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
         <p style={{ fontWeight: 700, fontSize: '1rem', color: '#0F172A', margin: 0 }}>
           {person.full_name}
@@ -528,7 +531,7 @@ export default function CasualDashboardPage() {
             <div style={{ display: 'flex', flexDirection: isCompact ? 'column' : 'row', gap: 16, alignItems: isCompact ? 'stretch' : 'center', flexWrap: 'wrap' }}>
               {/* Job info — the title re-opens the full posting detail (pay, description,
                   requirements), same panel the worker saw when applying. */}
-              <div style={{ flex: '0 1 auto', minWidth: 160 }}>
+              <div style={{ flex: '0 1 auto', minWidth: isPhone ? 0 : 160 }}>
                 {jobInfoHeader}
               </div>
 
@@ -723,7 +726,7 @@ export default function CasualDashboardPage() {
     <>
       <style>{pageKeyframes}</style>
 
-      <main style={pageStyle}>
+      <main style={isPhone ? { ...pageStyle, height: 'auto', overflow: 'visible', padding: '12px 12px 12px' } : pageStyle}>
         <div style={{ marginBottom: 20, flexShrink: 0 }}>
           <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
             Dashboard
@@ -737,8 +740,12 @@ export default function CasualDashboardPage() {
         {loading ? null : upcomingJobs.length === 0 ? (
           <p style={{ margin: 0, color: '#6B7280', fontSize: '0.95rem' }}>No active job right now.</p>
         ) : isCompact ? (
-          // Narrow viewport: single internally-scrolling column — timeline on top, detail below.
-          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 16, animation: 'blockSlideUp 0.38s ease both' }}>
+          // Narrow viewport: single column, timeline on top, detail below — internally-scrolling
+          // on tablet (page itself is locked to the viewport); on phone the whole page scrolls
+          // instead, so this just stacks and grows with its content.
+          <div style={isPhone
+            ? { display: 'flex', flexDirection: 'column', gap: 16, animation: 'blockSlideUp 0.38s ease both' }
+            : { flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 16, animation: 'blockSlideUp 0.38s ease both' }}>
             <div style={{ maxWidth: 720 }}>{timelinePanel}</div>
             {detailColumn}
           </div>
@@ -784,7 +791,7 @@ export default function CasualDashboardPage() {
 
       {toast && (
         <div style={{
-          position: 'fixed', bottom: 28, left: '50%', transform: 'translateX(-50%)',
+          position: 'fixed', bottom: isPhone ? 76 : 28, left: '50%', transform: 'translateX(-50%)',
           background: '#0F172A', color: '#FFFFFF', borderRadius: 999, padding: '10px 18px',
           display: 'flex', alignItems: 'center', gap: 8,
           fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', zIndex: 9999,

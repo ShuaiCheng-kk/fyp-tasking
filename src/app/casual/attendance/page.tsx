@@ -234,6 +234,10 @@ function MonthPicker({ value, onChange }: { value: string | null; onChange: (v: 
 export default function CasualAttendancePage() {
   const router = useRouter()
   const isCompact = useIsCompactViewport(1300)
+  // True phone width (isPhone implies isCompact, 640 < 1300). On phone the always-both-panels
+  // split becomes a two-level list -> detail navigation instead, and the page itself scrolls.
+  const isPhone = useIsCompactViewport(640)
+  const [phoneView, setPhoneView] = useState<'list' | 'detail'>('list')
   const [history, setHistory] = useState<HistoryEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -317,7 +321,7 @@ export default function CasualAttendancePage() {
   const pageEntries = filteredHistory.slice((safePage - 1) * pageSize, safePage * pageSize)
 
   return (
-    <main style={pageStyle}>
+    <main style={isPhone ? { ...pageStyle, height: 'auto', overflow: 'visible', padding: '12px 12px 12px' } : pageStyle}>
       <style>{pageKeyframes}</style>
       <div style={{ marginBottom: 16, flexShrink: 0 }}>
         <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
@@ -332,9 +336,18 @@ export default function CasualAttendancePage() {
       ) : history.length === 0 ? (
         <p style={{ margin: 0, color: '#6B7280', fontSize: '0.95rem' }}>No attendance records yet.</p>
       ) : (
-        <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: 16 }}>
-          {/* ===== Left rail — month earnings + paginated record list ===== */}
-          <div style={{ width: 390, flexShrink: 0, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={isPhone
+          ? { display: 'flex', gap: 16 }
+          : { flex: 1, minHeight: 0, display: 'flex', gap: 16 }}
+        >
+          {/* ===== Left rail — month earnings + paginated record list. On phone this is the
+              whole screen (list view) or hidden entirely (detail view) instead of a fixed side
+              column. ===== */}
+          {(!isPhone || phoneView === 'list') && (
+          <div style={isPhone
+            ? { width: '100%', display: 'flex', flexDirection: 'column', gap: 12 }
+            : { width: 390, flexShrink: 0, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 12 }}
+          >
             <TitledBlock
               icon={<Wallet size={15} color="#F97316" />}
               title="Total Earned"
@@ -355,7 +368,9 @@ export default function CasualAttendancePage() {
             <TitledBlock
               icon={<History size={15} color="#F97316" />}
               title="Records"
-              containerStyle={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', animation: 'attendanceFadeSlideUp 0.35s ease both', animationDelay: '0.05s' }}
+              containerStyle={isPhone
+                ? { display: 'flex', flexDirection: 'column', maxHeight: 'calc(100vh - 320px)', animation: 'attendanceFadeSlideUp 0.35s ease both', animationDelay: '0.05s' }
+                : { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', animation: 'attendanceFadeSlideUp 0.35s ease both', animationDelay: '0.05s' }}
               bodyStyle={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 10 }}
             >
               <div ref={listRef} style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -372,7 +387,7 @@ export default function CasualAttendancePage() {
                 return (
                   <div
                     key={entry.id}
-                    onClick={() => setSelectedId(entry.id)}
+                    onClick={() => { setSelectedId(entry.id); if (isPhone) setPhoneView('detail') }}
                     onMouseEnter={() => setHoveredId(entry.id)}
                     onMouseLeave={() => setHoveredId(null)}
                     style={{
@@ -441,19 +456,36 @@ export default function CasualAttendancePage() {
               </div>
             </TitledBlock>
           </div>
+          )}
 
           {/* ===== Right — selected record detail, split into its own independent blocks
               (Job Detail / Supervisor / Attendance Timeline / Payment Summary) the same way the
-              Dashboard lays out separate TitledBlocks, instead of one big wrapper card. ===== */}
-          <div style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+              Dashboard lays out separate TitledBlocks, instead of one big wrapper card. On phone
+              this is a separate screen (reached by tapping a record) with a back button, rather
+              than a permanent side column. ===== */}
+          {(!isPhone || phoneView === 'detail') && (
+          <div style={isPhone
+            ? { width: '100%', display: 'flex', flexDirection: 'column' }
+            : { flex: 1, minWidth: 0, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}
+          >
+            {isPhone && (
+              <button
+                type="button"
+                onClick={() => setPhoneView('list')}
+                style={{ display: 'flex', alignItems: 'center', gap: 6, alignSelf: 'flex-start', marginBottom: 12, padding: '6px 10px 6px 6px', border: 'none', background: 'none', color: '#374151', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer' }}
+              >
+                <ChevronLeft size={16} /> Records
+              </button>
+            )}
             {selected ? (
-              <RecordDetail key={selected.id} entry={selected} isCompact={isCompact} detailJob={detailJob} />
+              <RecordDetail key={selected.id} entry={selected} isCompact={isPhone ? true : isCompact} detailJob={detailJob} />
             ) : (
               <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F8FAFC', borderRadius: 14 }}>
                 <p style={{ margin: 0, fontSize: '0.9rem', color: '#94A3B8' }}>No records for this month.</p>
               </div>
             )}
           </div>
+          )}
         </div>
       )}
     </main>

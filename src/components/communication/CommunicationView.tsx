@@ -1887,18 +1887,20 @@ export default function CommunicationView({ renderSidebar, basePath }: {
                 <label style={modalLabelStyle}>Content</label>
                 <textarea value={editContent} onChange={e => setEditContent(e.target.value)} placeholder="Write your announcement..." rows={5} className="comm-textarea" style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }} />
               </div>
-              <div>
-                <label style={modalLabelStyle}>Audience</label>
-                <DropdownField
-                  value={editAudience === 'company-wide' ? 'company-wide' : (editDeptId ?? '')}
-                  options={announcementAudienceOptions}
-                  onChange={v => {
-                    if (v === 'company-wide') { setEditAudience('company-wide'); setEditDeptId(null) }
-                    else { setEditAudience('specific-dept'); setEditDeptId(v) }
-                  }}
-                  placeholder="Select audience"
-                />
-              </div>
+              {!isManagerRole && (
+                <div>
+                  <label style={modalLabelStyle}>Audience</label>
+                  <DropdownField
+                    value={editAudience === 'company-wide' ? 'company-wide' : (editDeptId ?? '')}
+                    options={announcementAudienceOptions}
+                    onChange={v => {
+                      if (v === 'company-wide') { setEditAudience('company-wide'); setEditDeptId(null) }
+                      else { setEditAudience('specific-dept'); setEditDeptId(v) }
+                    }}
+                    placeholder="Select audience"
+                  />
+                </div>
+              )}
             </div>
             {editError && <div style={modalErrorBoxStyle}>{editError}</div>}
             <div style={{ padding: '0 24px 20px', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
@@ -1925,15 +1927,17 @@ export default function CommunicationView({ renderSidebar, basePath }: {
                 <label style={modalLabelStyle}>Content</label>
                 <textarea data-testid="announcement-content" value={annContent} onChange={e => setAnnContent(e.target.value)} placeholder="Write your announcement here..." rows={5} className="comm-textarea" style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }} />
               </div>
-              <div>
-                <label style={modalLabelStyle}>Audience</label>
-                <DropdownField
-                  value={annDeptId}
-                  options={announcementAudienceOptions}
-                  onChange={v => setAnnDeptId(v)}
-                  placeholder="Select audience"
-                />
-              </div>
+              {!isManagerRole && (
+                <div>
+                  <label style={modalLabelStyle}>Audience</label>
+                  <DropdownField
+                    value={annDeptId}
+                    options={announcementAudienceOptions}
+                    onChange={v => setAnnDeptId(v)}
+                    placeholder="Select audience"
+                  />
+                </div>
+              )}
             </div>
             <div style={{ padding: '0 24px 20px', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <button style={modalGhostButtonStyle} onClick={() => setShowNewAnnModal(false)}>Cancel</button>

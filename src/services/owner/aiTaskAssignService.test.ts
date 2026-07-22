@@ -14,7 +14,7 @@ vi.mock('@/services/company/companyService', () => ({
 }))
 
 vi.mock('@/repositories/owner/taskRepository', () => ({
-  taskRepository: { getActiveTasksByAssignees: vi.fn(), hasShiftOnDate: vi.fn() },
+  taskRepository: { getActiveTasksByAssignees: vi.fn(), hasShiftOnDate: vi.fn(), getEmployeesByDepartment: vi.fn() },
 }))
 
 import { aiTaskAssignService } from './aiTaskAssignService'
@@ -225,5 +225,64 @@ describe('aiTaskAssignService.generateAssignmentSuggestion (UC20)', () => {
 
     expect(result.recommended_manager_id).toBeNull()
     expect(result.candidates).toEqual([])
+  })
+
+  // Manager viewer (department_ids + candidate_role resolved server-side from manager_scope_id
+  // in the route) — the AI never guesses across departments and never recommends a Manager.
+  describe('Manager viewer scope (department_ids + candidate_role: Employee)', () => {
+    const employees = [
+      { id: 'emp-1', full_name: 'Grace' },
+      { id: 'emp-2', full_name: 'Ben' },
+    ]
+
+    beforeEach(() => {
+      vi.mocked(taskRepository.getEmployeesByDepartment).mockResolvedValue(employees)
+    })
+
+    it('forces the department instead of letting the AI pick one — even when the AI/keyword match would pick another', async () => {
+      // The LLM (and the keyword fallback) would normally pick Marketing (dept-2) for a
+      // promotion-flavoured title — department_ids constrains it to the manager's own dept-1.
+      const result = await aiTaskAssignService.generateAssignmentSuggestion({
+        company_id: 'company-1', title: 'Promotion Poster', description: '', priority: 'High', want_sub_tasks: false,
+        department_ids: ['dept-1'], candidate_role: 'Employee',
+      })
+
+      expect(result.department_id).toBe('dept-1')
+      expect(companyService.getManagersByDepartment).not.toHaveBeenCalled()
+      expect(taskRepository.getEmployeesByDepartment).toHaveBeenCalledWith('company-1', 'dept-1')
+    })
+
+    it('recommends the lightest-loaded Employee, not a Manager', async () => {
+      const result = await aiTaskAssignService.generateAssignmentSuggestion({
+        company_id: 'company-1', title: 'Prepare report', description: '', priority: 'High', want_sub_tasks: false,
+        department_ids: ['dept-1'], candidate_role: 'Employee',
+      })
+
+      expect(result.recommended_manager_id).toBe('emp-1')
+      expect(result.candidates.map(c => c.id)).toEqual(['emp-1', 'emp-2'])
+    })
+
+    it('drops the AI\'s department-justification text from the reason — nothing to justify when it was forced', async () => {
+      const result = await aiTaskAssignService.generateAssignmentSuggestion({
+        company_id: 'company-1', title: 'Prepare report', description: '', priority: 'High', want_sub_tasks: false,
+        department_ids: ['dept-1'], candidate_role: 'Employee',
+      })
+
+      expect(result.reason).not.toContain('promotion')
+      expect(result.reason).toContain('Grace')
+      expect(result.reason).toContain('employees')
+    })
+
+    it('reports no employees available, distinct from the Owner/Partner "no managers" case', async () => {
+      vi.mocked(taskRepository.getEmployeesByDepartment).mockResolvedValue([])
+
+      const result = await aiTaskAssignService.generateAssignmentSuggestion({
+        company_id: 'company-1', title: 'Prepare report', description: '', priority: 'High', want_sub_tasks: false,
+        department_ids: ['dept-1'], candidate_role: 'Employee',
+      })
+
+      expect(result.recommended_manager_id).toBeNull()
+      expect(result.reason).toContain('No employees available')
+    })
   })
 })

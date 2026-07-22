@@ -1,4 +1,7 @@
 {
   "regions": ["hnd1"],
-  "buildCommand": "next build"
+  "buildCommand": "next build",
+  "crons": [
+    { "path": "/api/cron/shift-reminders", "schedule": "0 1 * * *" }
+  ]
 }
