@@ -2917,6 +2917,8 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                                   ? <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#FFF7ED', color: '#C2410C', border: '1px solid #FED7AA', whiteSpace: 'nowrap', flexShrink: 0 }}>Shift Job</span>
                                   : <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#F5F3FF', color: '#7C3AED', border: '1px solid #DDD6FE', whiteSpace: 'nowrap', flexShrink: 0 }}>One-Off Job</span>
                                 }
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
                                 {/* Status only makes sense once Pending vs Rejected can both appear
                                     here — Owner/Partner's own queue never includes rejected items. */}
                                 {scopeToManagerDepartments && (
@@ -2924,7 +2926,6 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                                     ? <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 700, background: '#FEE2E2', color: '#B91C1C', border: '1px solid #FCA5A5', whiteSpace: 'nowrap', flexShrink: 0 }}>Rejected</span>
                                     : <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 700, background: '#FFF7ED', color: '#C2410C', border: '1px solid #FED7AA', whiteSpace: 'nowrap', flexShrink: 0 }}>Pending</span>
                                 )}
-                                </div>
                                 {/* Rejected = terminal unless resubmitted — the submitting Manager can
                                     give up on it entirely instead of fixing/resubmitting. Creator-only,
                                     same rule as Active Jobs delete (canManageApplicants). */}
@@ -2939,6 +2940,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                                     onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
                                   ><Trash2 size={14} /></button>
                                 )}
+                                </div>
                               </div>
                               <button
                                 type="button"

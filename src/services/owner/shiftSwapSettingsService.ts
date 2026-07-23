@@ -21,8 +21,18 @@ export const shiftSwapSettingsService = {
     }
   },
 
-  async getSettings(company_id: string, owner_id: string): Promise<ShiftSwapSettings> {
-    await this.assertOwner(owner_id, company_id)
+  // Read-only — a Manager submitting their own swap request needs to see the Owner/Partner-
+  // configured deadline (Submit Request modal subtitle), so this only checks company membership,
+  // not role. Mutating the settings still goes through assertOwner via setSettings below.
+  async assertSameCompany(user_id: string, company_id: string): Promise<void> {
+    const user = await authRepository.findByAuthIdOrInternalId(user_id)
+    if (!user || user.company_id !== company_id) {
+      throw new Error('User not found in this company')
+    }
+  },
+
+  async getSettings(company_id: string, requester_id: string): Promise<ShiftSwapSettings> {
+    await this.assertSameCompany(requester_id, company_id)
     const existing = await shiftSwapSettingsRepository.getSettings(company_id)
     if (existing) return existing
     return { company_id, updated_by: null, updated_at: '', ...DEFAULT_SETTINGS }

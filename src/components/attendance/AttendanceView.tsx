@@ -133,16 +133,17 @@ function formatDateDisplay(value: string | null | undefined, empty = '—'): str
   return `${String(date.getDate()).padStart(2, '0')} ${DATE_DISPLAY_MONTHS[date.getMonth()]} ${date.getFullYear()}`
 }
 
-// My Request status chip — shared look for both Shift Swap and Fixed Day Off outcomes.
-function myRequestStatusBadge(status: string): { bg: string; text: string; label: string } {
+// My Request status chip — shared look for both Shift Swap and Fixed Day Off outcomes. Same pill
+// shape (padding/radius/border) as Recruitment's Waiting For Review status badge.
+function myRequestStatusBadge(status: string): { bg: string; text: string; border: string; label: string } {
   switch (status) {
-    case 'approved':  return { bg: '#ECFDF5', text: '#047857', label: 'Approved' }
-    case 'modified':  return { bg: '#EFF6FF', text: '#1D4ED8', label: 'Modified' }
-    case 'rejected':  return { bg: '#FEF2F2', text: '#B91C1C', label: 'Rejected' }
-    case 'pending':   return { bg: '#FFFBEB', text: '#B45309', label: 'Pending' }
-    case 'withdrawn': return { bg: '#F3F4F6', text: '#4B5563', label: 'Withdrawn' }
-    case 'expired':   return { bg: '#F3F4F6', text: '#4B5563', label: 'Expired' }
-    default:          return { bg: '#F3F4F6', text: '#4B5563', label: status }
+    case 'approved':  return { bg: '#ECFDF5', text: '#047857', border: '#A7F3D0', label: 'Approved' }
+    case 'modified':  return { bg: '#EFF6FF', text: '#1D4ED8', border: '#BFDBFE', label: 'Modified' }
+    case 'rejected':  return { bg: '#FEE2E2', text: '#B91C1C', border: '#FCA5A5', label: 'Rejected' }
+    case 'pending':   return { bg: '#FFF7ED', text: '#C2410C', border: '#FED7AA', label: 'Pending' }
+    case 'withdrawn': return { bg: '#F3F4F6', text: '#4B5563', border: '#E5E7EB', label: 'Withdrawn' }
+    case 'expired':   return { bg: '#F3F4F6', text: '#4B5563', border: '#E5E7EB', label: 'Expired' }
+    default:          return { bg: '#F3F4F6', text: '#4B5563', border: '#E5E7EB', label: status }
   }
 }
 
@@ -272,6 +273,16 @@ function resolveActiveSubmissionWeekStart(deadlineWeekday: number, deadlineTime:
 
 function fmt(d: Date): string {
   return `${String(d.getDate()).padStart(2, '0')} ${d.toLocaleDateString('en-AU', { month: 'short' })}`
+}
+
+// "Mon, 27 Jul" — used by the Shift Swap dropdowns' shift options (paired with formatShiftHour
+// for the time range) instead of the raw ISO date.
+function formatShiftDateShort(dateStr: string): string {
+  const d = new Date(`${dateStr}T00:00:00`)
+  const weekday = d.toLocaleDateString('en-AU', { weekday: 'short' })
+  const day = String(d.getDate()).padStart(2, '0')
+  const month = d.toLocaleDateString('en-AU', { month: 'short' })
+  return `${weekday}, ${day} ${month}`
 }
 
 function formatShiftHour(time: string): string {
@@ -533,6 +544,77 @@ const inputStyle: React.CSSProperties = {
 const labelStyle: React.CSSProperties = {
   display: 'block', fontSize: '0.75rem', fontWeight: 900, color: '#6B7280', marginBottom: 6,
   textTransform: 'uppercase', letterSpacing: '0.04em',
+}
+
+// Custom dropdown for the Manager-only Submit Request modal (My Shift / Swap With / Their
+// Shift) — mirrors Recruitment's RDrop (the trigger behind Job Template's "Job Type"/"Minimum
+// Age" fields) so both modals render the same content-driven trigger height and menu styling.
+// Deliberately not the shared DropdownField component, whose fixed 40px trigger height renders
+// visibly shorter than RDrop's — kept local since this modal is the only Manager-page caller.
+function AttendanceRequestDropdown({ value, options, onChange, placeholder, disabled = false }: {
+  value: string
+  options: { value: string; label: string }[]
+  onChange: (v: string) => void
+  placeholder?: string
+  disabled?: boolean
+}) {
+  const [open, setOpen] = useState(false)
+  const [focused, setFocused] = useState(false)
+  const [pos, setPos] = useState({ top: 0, left: 0, width: 0 })
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const dropRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const h = (e: MouseEvent) => {
+      if (!triggerRef.current?.contains(e.target as Node) && !dropRef.current?.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', h)
+    return () => document.removeEventListener('mousedown', h)
+  }, [open])
+
+  const selected = options.find(o => o.value === value)
+  const canOpen = !disabled && options.length > 0
+
+  const handleOpen = () => {
+    if (!canOpen) return
+    if (!open && triggerRef.current) {
+      const r = triggerRef.current.getBoundingClientRect()
+      const DROPDOWN_H = Math.min(options.length * 37 + 8, 208)
+      const fitsBelow = r.bottom + DROPDOWN_H + 4 <= window.innerHeight
+      setPos({ top: fitsBelow ? r.bottom + 4 : r.top - DROPDOWN_H - 4, left: r.left, width: r.width })
+    }
+    setOpen(o => !o)
+  }
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <button ref={triggerRef} type="button" disabled={disabled} onClick={handleOpen}
+        onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
+        style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px', border: `1.5px solid ${open || focused ? '#F97316' : '#E5E7EB'}`, borderRadius: 8, background: disabled ? '#F9FAFB' : '#FFFFFF', cursor: canOpen ? 'pointer' : 'default', fontSize: '0.9375rem', color: selected ? '#111827' : '#9CA3AF', fontWeight: 400, outline: 'none', boxSizing: 'border-box', transition: 'border-color 0.15s', fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {selected?.label ?? placeholder ?? 'Select...'}
+        </span>
+        <ChevronDown size={13} style={{ color: '#9CA3AF', flexShrink: 0, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+      </button>
+      {open && typeof document !== 'undefined' && createPortal(
+        <div ref={dropRef} style={{ position: 'fixed', top: pos.top, left: pos.left, width: pos.width, background: '#FFFFFF', border: '1.5px solid #E5E7EB', borderRadius: 10, boxShadow: '0 8px 24px rgba(15,23,42,0.12)', zIndex: 9999, maxHeight: 208, overflowY: 'auto', padding: '4px 0' }}>
+          {options.map(opt => {
+            const isSel = opt.value === value
+            return (
+              <button key={opt.value} type="button" onClick={() => { onChange(opt.value); setOpen(false) }}
+                style={{ display: 'block', width: '100%', padding: '8px 14px', textAlign: 'left', border: 'none', background: isSel ? '#FFF7ED' : 'transparent', color: isSel ? '#EA580C' : '#374151', fontWeight: isSel ? 700 : 400, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}
+                onMouseEnter={e => { if (!isSel) e.currentTarget.style.background = '#F9FAFB' }}
+                onMouseLeave={e => { if (!isSel) e.currentTarget.style.background = 'transparent' }}>
+                {opt.label}
+              </button>
+            )
+          })}
+        </div>,
+        document.body
+      )}
+    </div>
+  )
 }
 
 // ─── CurrentShiftsBlock ───────────────────────────────────────────────────────
@@ -1192,24 +1274,49 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
     } catch {}
   }, [])
 
+  // Read-only company config for the Submit Request modal's subtitles (Swap Deadline / Submission
+  // Deadline) — a Manager only reads these (shiftSwapSettingsService.getSettings /
+  // offDaySettingsService.getDeadline now allow same-company reads, not just Owner/Partner), never
+  // writes them, so this deliberately skips the heavier Owner/Partner settings-panel loaders
+  // (loadSwapSettings/loadOffDaySettings) which also fetch quota/department data Manager doesn't need.
+  const fetchSwapDeadlineForManager = useCallback(async (cid: string, uid: string) => {
+    if (!cid || !uid) return
+    try {
+      const res = await fetch(`/api/attendance/shift-swap-settings?company_id=${cid}&owner_id=${uid}`)
+      const data = await res.json()
+      if (data.success) setSwapDeadlineHours(data.settings.deadline_hours_before_shift ?? null)
+    } catch {}
+  }, [])
+
+  const fetchOffDayDeadlineForManager = useCallback(async (cid: string, uid: string) => {
+    if (!cid || !uid) return
+    try {
+      const res = await fetch(`/api/attendance/off-day-settings?company_id=${cid}&owner_id=${uid}&resource=deadline`)
+      const data = await res.json()
+      if (data.success) {
+        setDeadlineWeekday(data.deadline?.deadline_weekday ?? 2)
+        setDeadlineTime(data.deadline?.deadline_time ?? '17:00')
+      }
+    } catch {}
+  }, [])
+
   useEffect(() => {
     if (!scopeToManagerDepartments || !companyId || !internalUserId) return
     void fetchFixedOffQuota(companyId, internalUserId)
     void fetchSwapCandidates(companyId)
     void fetchMyRequests(internalUserId)
-  }, [scopeToManagerDepartments, companyId, internalUserId, fetchFixedOffQuota, fetchSwapCandidates, fetchMyRequests])
+    void fetchSwapDeadlineForManager(companyId, internalUserId)
+    void fetchOffDayDeadlineForManager(companyId, internalUserId)
+  }, [scopeToManagerDepartments, companyId, internalUserId, fetchFixedOffQuota, fetchSwapCandidates, fetchMyRequests, fetchSwapDeadlineForManager, fetchOffDayDeadlineForManager])
 
+  // Must return the SAME week that submission validation will actually accept — previously this
+  // computed its own naive "next Monday from today" independent of the Submission Deadline, so
+  // once a week's own deadline had passed (rolling forward per resolveActiveSubmissionWeekStart,
+  // mirrored from attendanceService.ts) the picker kept offering an already-closed week and every
+  // submission into it was rejected with "Requests must be for the currently open week". Deriving
+  // the Monday from resolveActiveSubmissionWeekStart keeps the two in lockstep.
   const getUpcomingWeekDates = useCallback((): string[] => {
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
-    const day = today.getDay()
-    const daysUntilNextMonday = ((8 - day) % 7) || 7
-    const monday = new Date(today)
-    monday.setDate(today.getDate() + daysUntilNextMonday)
-    // Local date-key, not toISOString().slice(0,10) — toISOString() converts to UTC first, which
-    // shifts the date backward a day in any timezone ahead of UTC (e.g. GMT+8) and desyncs from
-    // the server's local-date weekStart() bucketing, tripping "All dates must fall within the
-    // same week" even though the picker shows 7 contiguous days.
+    const monday = new Date(`${resolveActiveSubmissionWeekStart(deadlineWeekday, deadlineTime)}T00:00:00`)
     return Array.from({ length: 7 }, (_, index) => {
       const date = new Date(monday)
       date.setDate(monday.getDate() + index)
@@ -1218,7 +1325,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
       const d = String(date.getDate()).padStart(2, '0')
       return `${year}-${month}-${d}`
     })
-  }, [])
+  }, [deadlineWeekday, deadlineTime])
 
   const toggleFixedOffDate = (date: string) => {
     setSelectedFixedOffDates(prev => {
@@ -1230,6 +1337,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
 
   const handleSubmitSwap = async () => {
     if (!swapShiftId || !swapCounterpartId || !swapCounterpartAssignmentId) { setMyReqError('Select a shift, a colleague, and their shift.'); return }
+    if (!swapReason.trim()) { setMyReqError('Reason is required.'); return }
     setSwapSubmitting(true); setMyReqError('')
     try {
       const res = await fetch('/api/attendance', {
@@ -1242,7 +1350,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
           requester_assignment_id: swapShiftId,
           counterpart_id: swapCounterpartId,
           counterpart_assignment_id: swapCounterpartAssignmentId,
-          reason: swapReason || null,
+          reason: swapReason.trim(),
         }),
       })
       const data = await res.json()
@@ -3119,13 +3227,29 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
             // into, and hasn't answered yet. The request never reaches any reviewer's queue until
             // this step is done (getShiftSwapRequests filters out counterpart_status === 'pending'),
             // so this card needs its own Accept/Decline action, not just a status readout.
-            type MyReqItem = { key: string; kind: 'swap' | 'offday'; status: string; createdAt: string; swap?: ShiftSwapRequestView; offday?: FixedOffDayRequestView; needsResponse: boolean }
+            type MyReqItem = { key: string; kind: 'swap' | 'offday'; status: string; createdAt: string; swap?: ShiftSwapRequestView; offdayGroup?: FixedOffDayRequestView[]; needsResponse: boolean }
+            // One "Request Weekly Day Off" submit writes one row per selected date, all sharing the
+            // same week_start — group them back into a single card per submission (they're always
+            // decided together as a unit, see FixedOffDayDecisionGroupInput), instead of one card
+            // per date.
+            const offdayGroupsByWeek = new Map<string, FixedOffDayRequestView[]>()
+            for (const f of myFixedOff) {
+              const list = offdayGroupsByWeek.get(f.week_start) ?? []
+              list.push(f)
+              offdayGroupsByWeek.set(f.week_start, list)
+            }
+            for (const list of offdayGroupsByWeek.values()) list.sort((a, b) => a.request_date.localeCompare(b.request_date))
             const items: MyReqItem[] = [
               ...mySwaps.map((s): MyReqItem => ({
                 key: `swap-${s.id}`, kind: 'swap', status: s.status, createdAt: s.created_at, swap: s,
                 needsResponse: s.counterpart_id === internalUserId && s.counterpart_status === 'pending' && s.status === 'pending',
               })),
-              ...myFixedOff.map((f): MyReqItem => ({ key: `offday-${f.id}`, kind: 'offday', status: f.status, createdAt: f.created_at, offday: f, needsResponse: false })),
+              ...[...offdayGroupsByWeek.entries()].map(([weekStart, group]): MyReqItem => ({
+                key: `offday-${weekStart}`, kind: 'offday',
+                status: group[0].status,
+                createdAt: group.reduce((earliest, f) => f.created_at < earliest ? f.created_at : earliest, group[0].created_at),
+                offdayGroup: group, needsResponse: false,
+              })),
             ].sort((a, b) => (Number(b.needsResponse) - Number(a.needsResponse)) || (new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()))
 
             const filteredItems = items.filter(i => {
@@ -3143,12 +3267,12 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                 const s = i.swap!
                 const iAmRequester = isMeRequester(s)
                 const otherName = iAmRequester ? s.counterpart_name : s.requester_name
-                const myShiftDate = iAmRequester ? s.requester_shift_date : s.counterpart_shift_date
-                return `${formatShortWeekdayDate(myShiftDate)} ⇄ ${otherName}`
+                return `Swap with ${otherName}`
               }
-              return `${formatShortWeekdayDate(i.offday!.request_date)} — Day Off`
+              const group = i.offdayGroup!
+              return `Week of ${fmt(new Date(`${group[0].week_start}T00:00:00`))}`
             }
-            const cardBadge = (i: MyReqItem) => i.needsResponse ? { bg: '#EFF6FF', text: '#1D4ED8', label: 'Respond' } : myRequestStatusBadge(i.status)
+            const cardBadge = (i: MyReqItem) => i.needsResponse ? { bg: '#EFF6FF', text: '#1D4ED8', border: '#BFDBFE', label: 'Respond' } : myRequestStatusBadge(i.status)
 
             const avatarInitial = (name: string) => name.trim().charAt(0).toUpperCase() || '?'
             const selectedBadge = selected ? cardBadge(selected) : null
@@ -3157,7 +3281,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
             // two block titles line up exactly when they sit side by side.
             const MYREQ_HEADER_HEIGHT = 64
 
-            const filterLabel = myReqFilter === 'swap' ? 'Shift Swap' : myReqFilter === 'offday' ? 'Off Day' : 'My Requests'
+            const filterLabel = myReqFilter === 'swap' ? 'Shift Swap Requests' : myReqFilter === 'offday' ? 'Off Day Requests' : 'My Requests'
 
             return (
               <div style={{ padding: '16px 28px 28px', flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: 'minmax(380px, 440px) minmax(0, 1fr)', gap: 16 }}>
@@ -3199,7 +3323,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                         </div>
                       )}
                     </div>
-                    <button onClick={() => { setRequestModalStep('choose'); setRequestModalOpen(true) }}
+                    <button onClick={() => { setRequestModalStep('choose'); setMyReqError(''); setRequestModalOpen(true) }}
                       style={{ marginLeft: 'auto', height: 32, padding: '0 12px', borderRadius: 8, border: '1.5px solid transparent', background: 'linear-gradient(135deg, #F97316, #EA580C)', color: '#FFFFFF', fontWeight: 700, fontSize: 12.5, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0, whiteSpace: 'nowrap' }}>
                       <Plus size={12} /> Submit
                     </button>
@@ -3213,23 +3337,27 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                       const badge = cardBadge(i)
                       const isSelected = selected?.key === i.key
                       const isUnseen = i.needsResponse || (i.status !== 'pending' && !seenMyReqKeys.has(i.key))
+                      // Same card design as Recruitment's Waiting For Review card (padding/radius/
+                      // gap, pill badges, title and "Submitted" text sizes) minus the submitter
+                      // avatar+name row — every request here is the Manager's own.
                       return (
                         <button key={i.key} type="button"
                           onClick={() => { setSelectedMyReqKey(i.key); markMyReqSeen(i.key) }}
                           style={{
-                            textAlign: 'left', padding: '10px 12px', borderRadius: 10, cursor: 'pointer',
-                            border: `1.5px solid ${isSelected ? '#F97316' : i.needsResponse ? '#93C5FD' : PANEL_BORDER}`,
-                            background: isSelected ? '#FFF7ED' : i.needsResponse ? '#EFF6FF' : '#FFFFFF',
-                            display: 'flex', flexDirection: 'column', gap: 4, position: 'relative',
+                            textAlign: 'left', padding: '16px 16px 18px', borderRadius: 10, cursor: 'pointer',
+                            border: `1px solid ${isSelected ? '#F97316' : i.needsResponse ? '#93C5FD' : '#E5E7EB'}`,
+                            background: isSelected ? '#FFF7ED' : i.needsResponse ? '#EFF6FF' : '#F9FAFB',
+                            display: 'flex', flexDirection: 'column', gap: 10, position: 'relative',
                           }}>
                           {isUnseen && <span style={{ position: 'absolute', left: -6, top: 14, width: 8, height: 8, borderRadius: '50%', background: '#EF4444', boxShadow: '0 0 0 2px #FFFFFF' }} />}
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                            {i.kind === 'swap' ? <ArrowLeftRight size={12} style={{ color: '#F97316', flexShrink: 0 }} /> : <Calendar size={12} style={{ color: '#7C3AED', flexShrink: 0 }} />}
-                            <span style={{ fontSize: 10.5, fontWeight: 800, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{i.kind === 'swap' ? 'Shift Swap' : 'Fixed Day Off'}</span>
-                            <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', height: 20, padding: '0 8px', borderRadius: 999, fontSize: 10.5, fontWeight: 700, background: badge.bg, color: badge.text, flexShrink: 0 }}>{badge.label}</span>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, whiteSpace: 'nowrap', flexShrink: 0, ...(i.kind === 'swap' ? { background: '#FFF7ED', color: '#C2410C', border: '1px solid #FED7AA' } : { background: '#F5F3FF', color: '#7C3AED', border: '1px solid #DDD6FE' }) }}>
+                              {i.kind === 'swap' ? <ArrowLeftRight size={11} /> : <Calendar size={11} />} {i.kind === 'swap' ? 'Shift Swap' : 'Off Day'}
+                            </span>
+                            <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 700, background: badge.bg, color: badge.text, border: `1px solid ${badge.border}`, whiteSpace: 'nowrap', flexShrink: 0 }}>{badge.label}</span>
                           </div>
-                          <div style={{ fontSize: 13.5, fontWeight: 700, color: '#0F172A' }}>{cardTitle(i)}</div>
-                          <div style={{ fontSize: 11.5, color: '#9CA3AF' }}>Submitted {formatRelativeTime(i.createdAt)}</div>
+                          <div style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#0F172A' }}>{cardTitle(i)}</div>
+                          <div style={{ fontSize: '0.75rem', color: '#9CA3AF', textAlign: 'right' }}>Submitted {formatRelativeTime(i.createdAt)}</div>
                         </button>
                       )
                     })}
@@ -3358,24 +3486,29 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                           </div>
                         )
                       })() : (() => {
-                        const f = selected.offday!
+                        const group = selected.offdayGroup!
+                        const first = group[0]
                         return (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 7, color: '#6B7280', fontSize: 12.5 }}>
-                              <Calendar size={13} /> Submitted {new Date(f.created_at).toLocaleString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true })}
+                              <Calendar size={13} /> Submitted {new Date(selected.createdAt).toLocaleString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true })}
                             </div>
                             <div>
-                              <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 5 }}>{f.status === 'modified' ? 'Confirmed Day' : 'Requested Day'}</label>
-                              <div style={{ padding: '12px 14px', background: '#F9FAFB', border: `1px solid ${PANEL_BORDER}`, borderRadius: 9, fontSize: 15, fontWeight: 700, color: '#0F172A' }}>{formatFixedOffRequestDay(f.request_date)}</div>
+                              <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 5 }}>{first.status === 'modified' ? (group.length === 1 ? 'Confirmed Day' : 'Confirmed Days') : (group.length === 1 ? 'Requested Day' : 'Requested Days')}</label>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                {group.map(f => (
+                                  <div key={f.id} style={{ padding: '12px 14px', background: '#F9FAFB', border: `1px solid ${PANEL_BORDER}`, borderRadius: 9, fontSize: 15, fontWeight: 700, color: '#0F172A' }}>{formatFixedOffRequestDay(f.request_date)}</div>
+                                ))}
+                              </div>
                             </div>
                             <div>
                               <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 5 }}>Week Of</label>
-                              <div style={{ fontSize: 13, color: '#374151' }}>{formatDateDisplay(f.week_start)}</div>
+                              <div style={{ fontSize: 13, color: '#374151' }}>{formatDateDisplay(first.week_start)}</div>
                             </div>
-                            {f.source === 'auto_assigned' && (
+                            {first.source === 'auto_assigned' && (
                               <div style={{ fontSize: 12, color: '#6B7280' }}>Auto assigned by the system.</div>
                             )}
-                            {f.status === 'pending' && (
+                            {first.status === 'pending' && (
                               <div style={{ padding: '12px 14px', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 10, display: 'flex', gap: 9 }}>
                                 <Clock size={15} style={{ color: '#B45309', flexShrink: 0, marginTop: 1 }} />
                                 <div>
@@ -3384,16 +3517,16 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                                 </div>
                               </div>
                             )}
-                            {f.status === 'modified' && (
+                            {first.status === 'modified' && (
                               <div style={{ padding: '12px 14px', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 10, display: 'flex', gap: 9 }}>
                                 <Pencil size={15} style={{ color: '#1D4ED8', flexShrink: 0, marginTop: 1 }} />
-                                <p style={{ margin: 0, fontSize: 12.5, color: '#1D4ED8', fontWeight: 700 }}>{f.reviewer_name ?? 'Owner/Partner'} moved your day off to the date shown above.</p>
+                                <p style={{ margin: 0, fontSize: 12.5, color: '#1D4ED8', fontWeight: 700 }}>{first.reviewer_name ?? 'Owner/Partner'} moved your day{group.length === 1 ? '' : 's'} off to the date{group.length === 1 ? '' : 's'} shown above.</p>
                               </div>
                             )}
-                            {f.status === 'approved' && (
+                            {first.status === 'approved' && (
                               <div style={{ padding: '12px 14px', background: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: 10, display: 'flex', gap: 9 }}>
                                 <Check size={15} style={{ color: '#047857', flexShrink: 0, marginTop: 1 }} />
-                                <p style={{ margin: 0, fontSize: 12.5, color: '#047857', fontWeight: 700 }}>Approved{f.reviewer_name ? ` by ${f.reviewer_name}` : ''} — enjoy your day off.</p>
+                                <p style={{ margin: 0, fontSize: 12.5, color: '#047857', fontWeight: 700 }}>Approved{first.reviewer_name ? ` by ${first.reviewer_name}` : ''} — enjoy your day{group.length === 1 ? '' : 's'} off.</p>
                               </div>
                             )}
                           </div>
@@ -4723,22 +4856,35 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
         const colleagueRows = swapCandidateRows.filter(r => r.user_id !== internalUserId && r.role === 'Manager' && (scopedDeptRef.current?.ids.has(r.department_id) ?? false))
         const selectedColleague = colleagueRows.find(r => r.user_id === swapCounterpartId)
         const colleagueShifts = (selectedColleague?.shifts ?? []).filter(s => s.shift_date > todayStr && s.assignment_id)
-        const closeRequestModal = () => { setRequestModalOpen(false); setRequestModalStep('choose') }
+        const resetRequestForms = () => {
+          setSwapShiftId(''); setSwapCounterpartId(''); setSwapCounterpartAssignmentId(''); setSwapReason('')
+          setSelectedFixedOffDates([])
+        }
+        const closeRequestModal = () => { setRequestModalOpen(false); setRequestModalStep('choose'); setMyReqError(''); resetRequestForms() }
         const modalTitle = requestModalStep === 'choose' ? 'Submit Request'
           : requestModalStep === 'swap' ? 'Submit Shift Swap Request' : 'Submit Off Day Request'
         const modalIcon = requestModalStep === 'offday' ? <Calendar size={15} color="#fff" strokeWidth={2.5} /> : <ArrowLeftRight size={15} color="#fff" strokeWidth={2.5} />
+        // Choose-step card subtitles show the Owner/Partner-configured deadline for each request
+        // type (read via fetchSwapDeadlineForManager/fetchOffDayDeadlineForManager above) instead
+        // of static copy — Manager submits against whatever the company currently has configured.
+        const swapDeadlineSubtitle = swapDeadlineHours != null
+          ? `Submit at least ${swapDeadlineHours} hour${swapDeadlineHours === 1 ? '' : 's'} before your shift.`
+          : 'No swap deadline configured.'
+        const offDayWeekdayName = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][deadlineWeekday]
+        const offDayTimeLabel = DEADLINE_TIME_OPTIONS.find(o => o.value === deadlineTime)?.label ?? deadlineTime
+        const offDaySubtitle = `Submit before every ${offDayWeekdayName} ${offDayTimeLabel}.`
         return (
-          <ModalOverlay onClose={closeRequestModal} maxWidth="440px">
+          <ModalOverlay onClose={closeRequestModal} maxWidth={requestModalStep === 'offday' ? '490px' : '440px'}>
             <ModalBox>
               <ModalHeader title={modalTitle} icon={modalIcon} onClose={closeRequestModal} />
-              <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 13, maxHeight: 'calc(90vh - 130px)', overflowY: 'auto' }}>
-                {myReqError && (
+              <div style={{ padding: requestModalStep === 'offday' ? '26px 24px 32px' : '20px 24px', display: 'flex', flexDirection: 'column', gap: 13, maxHeight: 'calc(90vh - 130px)', overflowY: 'auto' }}>
+                {myReqError && requestModalStep !== 'choose' && (
                   <div style={modalErrorBoxStyle}>{myReqError}</div>
                 )}
 
                 {/* ── Step 1: choose request type — same card style as Job Type step ── */}
                 {requestModalStep === 'choose' && (
-                  <>
+                  <div className="att-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 13 }}>
                     <button onClick={() => setRequestModalStep('swap')}
                       style={{ padding: '14px 16px', border: '1.5px solid #E5E7EB', borderRadius: 12, background: '#FFFFFF', cursor: 'pointer', textAlign: 'left' }}
                       onMouseEnter={e => { e.currentTarget.style.borderColor = '#F97316' }}
@@ -4749,7 +4895,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                         </div>
                         <div>
                           <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#374151', margin: '0 0 2px' }}>Shift Swap Request</p>
-                          <p style={{ fontSize: '0.8125rem', color: '#6B7280', margin: 0 }}>Trade a shift with a colleague in your department.</p>
+                          <p style={{ fontSize: '0.8125rem', color: '#6B7280', margin: 0 }}>{swapDeadlineSubtitle}</p>
                         </div>
                       </div>
                     </button>
@@ -4763,105 +4909,105 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                         </div>
                         <div>
                           <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#374151', margin: '0 0 2px' }}>Off Day Request</p>
-                          <p style={{ fontSize: '0.8125rem', color: '#6B7280', margin: 0 }}>Request specific days off for the upcoming week.</p>
+                          <p style={{ fontSize: '0.8125rem', color: '#6B7280', margin: 0 }}>{offDaySubtitle}</p>
                         </div>
                       </div>
                     </button>
-                  </>
+                  </div>
                 )}
 
                 {/* ── Step 2a: Shift Swap form ── */}
                 {requestModalStep === 'swap' && (
-                  <>
+                  <div className="att-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 13 }}>
                     <div>
-                      <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 5 }}>My Shift</label>
-                      <select value={swapShiftId} onChange={e => setSwapShiftId(e.target.value)} style={selectStyle}>
-                        <option value="">Select a shift to swap… (tomorrow or later)</option>
-                        {mySwappableShifts.map(s => (
-                          <option key={s.assignment.id} value={s.assignment.id}>{s.shift.title || 'Shift'} — {s.shift.shift_date} {formatShiftHour(s.shift.start_time)}–{formatShiftHour(s.shift.end_time)}</option>
-                        ))}
-                      </select>
+                      <label style={modalLabelStyle}>Your Shift</label>
+                      <AttendanceRequestDropdown
+                        value={swapShiftId}
+                        onChange={setSwapShiftId}
+                        placeholder="Select your shift"
+                        options={mySwappableShifts.map(s => ({ value: s.assignment.id, label: `${formatShiftDateShort(s.shift.shift_date)} ${formatShiftHour(s.shift.start_time)}–${formatShiftHour(s.shift.end_time)}` }))}
+                      />
                     </div>
                     <div>
-                      <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 5 }}>Swap With</label>
-                      <select value={swapCounterpartId} onChange={e => { setSwapCounterpartId(e.target.value); setSwapCounterpartAssignmentId('') }} style={selectStyle}>
-                        <option value="">Select a colleague…</option>
-                        {colleagueRows.map(r => (
-                          <option key={r.user_id} value={r.user_id ?? ''}>{r.full_name}</option>
-                        ))}
-                      </select>
+                      <label style={modalLabelStyle}>Swap With Colleague</label>
+                      <AttendanceRequestDropdown
+                        value={swapCounterpartId}
+                        onChange={v => { setSwapCounterpartId(v); setSwapCounterpartAssignmentId('') }}
+                        placeholder="Select a colleague"
+                        options={colleagueRows.map(r => ({ value: r.user_id ?? '', label: r.full_name ?? '' }))}
+                      />
                     </div>
                     <div>
-                      <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 5 }}>Their Shift</label>
-                      <select value={swapCounterpartAssignmentId} onChange={e => setSwapCounterpartAssignmentId(e.target.value)} disabled={!swapCounterpartId} style={selectStyle}>
-                        <option value="">{swapCounterpartId ? (colleagueShifts.length === 0 ? 'No upcoming shifts' : 'Select their shift…') : 'Select a colleague first'}</option>
-                        {colleagueShifts.map(s => (
-                          <option key={s.assignment_id} value={s.assignment_id ?? ''}>{s.title || 'Shift'} — {s.shift_date} {formatShiftHour(s.start_time)}–{formatShiftHour(s.end_time)}</option>
-                        ))}
-                      </select>
+                      <label style={modalLabelStyle}>Target Shift</label>
+                      <AttendanceRequestDropdown
+                        value={swapCounterpartAssignmentId}
+                        onChange={setSwapCounterpartAssignmentId}
+                        disabled={!swapCounterpartId}
+                        placeholder={swapCounterpartId && colleagueShifts.length === 0 ? 'No upcoming shifts' : "Select colleague's shift"}
+                        options={colleagueShifts.map(s => ({ value: s.assignment_id ?? '', label: `${formatShiftDateShort(s.shift_date)} ${formatShiftHour(s.start_time)}–${formatShiftHour(s.end_time)}` }))}
+                      />
                     </div>
                     <div>
-                      <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 5 }}>Reason (optional)</label>
-                      <textarea value={swapReason} onChange={e => setSwapReason(e.target.value)} rows={2} style={{ ...selectStyle, height: 'auto', padding: '8px 10px', resize: 'vertical', fontFamily: 'inherit' }} />
+                      <label style={modalLabelStyle}>Reason</label>
+                      <textarea value={swapReason} onChange={e => setSwapReason(e.target.value)} rows={2} placeholder="Enter a brief reason" style={{ ...modalInputStyle, height: 'auto', resize: 'vertical' }} />
                     </div>
-                  </>
+                  </div>
                 )}
 
                 {/* ── Step 2b: Off Day form ── */}
                 {requestModalStep === 'offday' && (
-                  <>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, color: '#6B7280', fontSize: 12.5, fontWeight: 700 }}>
-                      <span>Upcoming week</span>
-                      <span>{selectedFixedOffDates.length}/{fixedOffQuota} selected</span>
+                  <div className="att-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 13 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 8 }}>
+                      <label style={{ ...modalLabelStyle, margin: 0 }}>Upcoming Week</label>
+                      <label style={{ ...modalLabelStyle, margin: 0 }}>{selectedFixedOffDates.length}/{fixedOffQuota} selected</label>
                     </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(108px, 1fr))', gap: 8 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 7 }}>
                       {getUpcomingWeekDates().map(date => {
                         const selected = selectedFixedOffDates.includes(date)
                         const atLimit = !selected && selectedFixedOffDates.length >= fixedOffQuota
+                        const d = new Date(`${date}T00:00:00`)
                         return (
-                          <button
-                            key={date}
-                            type="button"
-                            onClick={() => toggleFixedOffDate(date)}
-                            disabled={atLimit}
-                            style={{
-                              minHeight: 58, padding: '8px 10px', borderRadius: 10,
-                              border: selected ? '1.5px solid #16A34A' : `1px solid ${PANEL_BORDER}`,
-                              background: selected ? '#DCFCE7' : '#FFFFFF',
-                              color: selected ? '#166534' : '#111827',
-                              opacity: atLimit ? 0.45 : 1, cursor: atLimit ? 'not-allowed' : 'pointer',
-                              display: 'flex', flexDirection: 'column', alignItems: 'flex-start', justifyContent: 'center', gap: 3, fontWeight: 800,
-                            }}
-                          >
-                            <span style={{ fontSize: 12 }}>{new Date(`${date}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'short' })}</span>
-                            <span style={{ fontSize: 13 }}>{formatDateDisplay(date)}</span>
-                          </button>
+                          <div key={date} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5 }}>
+                            <span style={{ fontSize: 11, fontWeight: 700, color: selected ? '#166534' : '#6B7280' }}>{d.toLocaleDateString('en-AU', { weekday: 'short' })}</span>
+                            <button
+                              type="button"
+                              onClick={() => toggleFixedOffDate(date)}
+                              disabled={atLimit}
+                              style={{
+                                width: 48, height: 48, borderRadius: '50%', padding: 0,
+                                border: selected ? '1.5px solid #16A34A' : `1px solid ${PANEL_BORDER}`,
+                                background: selected ? '#DCFCE7' : '#FFFFFF',
+                                color: selected ? '#166534' : '#111827',
+                                opacity: atLimit ? 0.45 : 1, cursor: atLimit ? 'not-allowed' : 'pointer',
+                                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 1, fontWeight: 800, lineHeight: 1.1,
+                              }}
+                            >
+                              <span style={{ fontSize: 14 }}>{String(d.getDate()).padStart(2, '0')}</span>
+                              <span style={{ fontSize: 9 }}>{d.toLocaleDateString('en-AU', { month: 'short' })}</span>
+                            </button>
+                          </div>
                         )
                       })}
                     </div>
-                  </>
+                  </div>
                 )}
               </div>
-              <div style={{ padding: '12px 24px 20px', display: 'flex', gap: 8, justifyContent: requestModalStep === 'choose' ? 'flex-end' : 'space-between', borderTop: '1px solid #F3F4F6' }}>
-                {requestModalStep === 'choose' ? (
-                  <button onClick={closeRequestModal} style={modalGhostButtonStyle}>Cancel</button>
-                ) : (
-                  <>
-                    <button onClick={() => { setRequestModalStep('choose'); setMyReqError('') }} style={{ ...modalGhostButtonStyle, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-                      <ChevronLeft size={14} /> Back
+              {requestModalStep !== 'choose' && (
+                <div style={{ padding: '12px 24px 20px', display: 'flex', gap: 8, justifyContent: 'space-between', borderTop: '1px solid #F3F4F6' }}>
+                  <button onClick={() => { setRequestModalStep('choose'); setMyReqError(''); resetRequestForms() }} style={{ ...modalGhostButtonStyle, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                    <ChevronLeft size={14} /> Back
+                  </button>
+                  {requestModalStep === 'swap' ? (
+                    <button onClick={handleSubmitSwap} disabled={swapSubmitting || !swapShiftId || !swapCounterpartId || !swapCounterpartAssignmentId || !swapReason.trim()} style={modalPrimaryButtonStyle(swapSubmitting || !swapShiftId || !swapCounterpartId || !swapCounterpartAssignmentId || !swapReason.trim())}>
+                      {swapSubmitting ? <Spinner size={13} /> : <ArrowLeftRight size={13} />} Submit Swap Request
                     </button>
-                    {requestModalStep === 'swap' ? (
-                      <button onClick={handleSubmitSwap} disabled={swapSubmitting || !swapShiftId || !swapCounterpartId || !swapCounterpartAssignmentId} style={modalPrimaryButtonStyle(swapSubmitting || !swapShiftId || !swapCounterpartId || !swapCounterpartAssignmentId)}>
-                        {swapSubmitting ? <Spinner size={13} /> : <ArrowLeftRight size={13} />} Submit Swap Request
-                      </button>
-                    ) : (
-                      <button onClick={handleSubmitFixedOff} disabled={fixedSubmitting || selectedFixedOffDates.length !== fixedOffQuota} style={modalPrimaryButtonStyle(fixedSubmitting || selectedFixedOffDates.length !== fixedOffQuota)}>
-                        {fixedSubmitting ? <Spinner size={13} /> : <Calendar size={13} />} Request Weekly Day Off
-                      </button>
-                    )}
-                  </>
-                )}
-              </div>
+                  ) : (
+                    <button onClick={handleSubmitFixedOff} disabled={fixedSubmitting || selectedFixedOffDates.length !== fixedOffQuota} style={modalPrimaryButtonStyle(fixedSubmitting || selectedFixedOffDates.length !== fixedOffQuota)}>
+                      {fixedSubmitting ? <Spinner size={13} /> : <Calendar size={13} />} Request Weekly Day Off
+                    </button>
+                  )}
+                </div>
+              )}
             </ModalBox>
           </ModalOverlay>
         )

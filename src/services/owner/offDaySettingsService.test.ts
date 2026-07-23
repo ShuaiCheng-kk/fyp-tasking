@@ -64,6 +64,35 @@ describe('offDaySettingsService', () => {
     })
   })
 
+  describe('assertSameCompany', () => {
+    it('passes for a Manager in the same company (read-only access, unlike assertOwner)', async () => {
+      vi.mocked(authRepository.findByAuthIdOrInternalId).mockResolvedValue(nonOwner as any)
+      await expect(offDaySettingsService.assertSameCompany('mgr-1', 'company-1')).resolves.toBeUndefined()
+    })
+
+    it('rejects a caller from a different company', async () => {
+      vi.mocked(authRepository.findByAuthIdOrInternalId).mockResolvedValue({ ...nonOwner, company_id: 'other-company' } as any)
+      await expect(offDaySettingsService.assertSameCompany('mgr-1', 'company-1')).rejects.toThrow('User not found in this company')
+    })
+  })
+
+  describe('getDeadline', () => {
+    it('returns the stored deadline for a Manager in the same company', async () => {
+      vi.mocked(authRepository.findByAuthIdOrInternalId).mockResolvedValue(nonOwner as any)
+      const stored = { company_id: 'company-1', deadline_weekday: 2, deadline_time: '17:00', updated_by: 'owner-1', updated_at: '2026-01-01T00:00:00Z' }
+      vi.mocked(offDaySettingsRepository.getDeadline).mockResolvedValue(stored as any)
+
+      const result = await offDaySettingsService.getDeadline('company-1', 'mgr-1')
+
+      expect(result).toEqual(stored)
+    })
+
+    it('rejects a caller from a different company', async () => {
+      vi.mocked(authRepository.findByAuthIdOrInternalId).mockResolvedValue({ ...nonOwner, company_id: 'other-company' } as any)
+      await expect(offDaySettingsService.getDeadline('company-1', 'mgr-1')).rejects.toThrow('User not found in this company')
+    })
+  })
+
   describe('setDefaultQuota', () => {
     beforeEach(() => {
       vi.mocked(authRepository.findByAuthIdOrInternalId).mockResolvedValue(owner as any)

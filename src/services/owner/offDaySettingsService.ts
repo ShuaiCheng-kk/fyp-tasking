@@ -20,6 +20,16 @@ export const offDaySettingsService = {
     }
   },
 
+  // Read-only — a Manager submitting their own Off Day request needs to see the Owner/Partner-
+  // configured Submission Deadline (Submit Request modal subtitle), so this only checks company
+  // membership, not role. Mutating the deadline still goes through assertOwner via setDeadline.
+  async assertSameCompany(user_id: string, company_id: string): Promise<void> {
+    const user = await authRepository.findByAuthIdOrInternalId(user_id)
+    if (!user || user.company_id !== company_id) {
+      throw new Error('User not found in this company')
+    }
+  },
+
   async getQuotaSettings(company_id: string, owner_id: string): Promise<Array<OffDayQuotaSetting & { manager_name: string | null }>> {
     await this.assertOwner(owner_id, company_id)
     const settings = await offDaySettingsRepository.getQuotaSettings(company_id)
@@ -73,8 +83,8 @@ export const offDaySettingsService = {
     return fallback?.max_days_per_week ?? 2
   },
 
-  async getDeadline(company_id: string, owner_id: string): Promise<OffDaySubmissionDeadline | null> {
-    await this.assertOwner(owner_id, company_id)
+  async getDeadline(company_id: string, requester_id: string): Promise<OffDaySubmissionDeadline | null> {
+    await this.assertSameCompany(requester_id, company_id)
     return offDaySettingsRepository.getDeadline(company_id)
   },
 
