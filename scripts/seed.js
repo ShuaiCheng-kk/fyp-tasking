@@ -18,7 +18,8 @@
  *      Edit & Resubmit）；3 条 Open 上的 Guest 申请覆盖 Pending / Offer Sent / Confirmed /
  *      Not Selected 四种 Guest Applications 页状态（ApplicationFlow 全分支）
  *   8. 创建 1 个 Casual Worker 账号
- *   9. 创建过去 2 天的排班 + 打卡记录（Present/Late/Absent 混合）、5 条未来班次
+ *   9. 创建过去 2 天的排班 + 打卡记录（Present/Late/Absent 混合）、7 条未来班次（含 David Lim/
+ *      Wendy Ho 的 Operations 换班用班次——特意不种 pending swap，留给 Manager 自己在 UI 上测 Submit）
  *   10. 创建 2 条 Shift Swap（Manager↔Manager 待 O/P 审批 + Employee↔Employee 验证隔离）
  *   11. 创建 4 条 Fixed Day Off（1 条已批准 + 3 条待批准，覆盖 safe/flagged+建议/flagged 无建议
  *       三种 AI Process 结果，另 1 条排班冲突供手动测试）
@@ -717,6 +718,57 @@ async function main() {
       salary_amount: 90,
       expires_at: dateKey(addDays(TODAY, 5)),
     },
+    // Manager-created (David Lim, Operations) — Open with pending applicants of its own, so
+    // manager1@test.com has a job where canManageApplicants() is true (created_by === self) to
+    // test UC44 View Applicant List / UC45 Accept-Reject / UC48 AI Candidate Recommendation with.
+    {
+      key: 'manager_open',
+      company_id: company.id,
+      department_id: depts[0].id, // Operations
+      created_by: userIdMap['manager1@test.com'].internalId,
+      title: 'Weekend Café Cover',
+      description: 'Cover the café counter for a weekend rush — orders, till, and light cleaning.',
+      requirements: 'Comfortable handling cash, friendly with customers.',
+      location: company.location,
+      employment_type: 'Part-time',
+      status: 'open',
+      form_type: 'oneoff',
+      urgency: 'normal',
+      estimated_hours: '5',
+      shift_date: dateKey(nextWeekday(TODAY, 6)), // next Saturday
+      job_start_time: '09:00',
+      openings: 2,
+      experience_required: 'Not Required',
+      minimum_age: 16,
+      uniform_required: false,
+      salary_amount: 16,
+      expires_at: applicationDeadline,
+    },
+    // Manager-created (David Lim, Operations) — clean Draft to test UC39 Duplicate Draft Job /
+    // UC40 Save Job as Draft with (drafts are creator-only, never department-shared, per confirmed
+    // 2026-07-23 decision — see getDraftPostings in recruitmentService.ts).
+    {
+      key: 'manager_draft',
+      company_id: company.id,
+      department_id: depts[0].id, // Operations
+      created_by: userIdMap['manager1@test.com'].internalId,
+      title: 'Stockroom Reorganisation — Half Day',
+      description: 'Reorganise the stockroom shelving and relabel bins ahead of next month\'s delivery.',
+      requirements: null,
+      location: company.location,
+      employment_type: 'Part-time',
+      status: 'draft',
+      form_type: 'oneoff',
+      urgency: 'normal',
+      estimated_hours: null,
+      job_start_time: null,
+      openings: 1,
+      experience_required: null,
+      minimum_age: null,
+      uniform_required: false,
+      salary_amount: null,
+      expires_at: null,
+    },
   ]
   const jobIdByKey = {}
   for (const def of jobDefs) {
@@ -749,6 +801,27 @@ async function main() {
       })
       if (appErr) console.warn(`  ⚠ 创建 job_applicant 失败 (${guestDef.full_name}): ${appErr.message}`)
       else console.log(`  ✓ Applicant: ${guestDef.full_name} → Weekend Event Crew`)
+    }
+  }
+  // manager1(David Lim)-owned job — same 3 guests re-applying to a second posting is fine,
+  // there's no uniqueness constraint on (job_id, user_id) and guest1 already spans multiple
+  // jobs elsewhere in this file (UC44/45/48 test data for the Manager role).
+  if (jobIdByKey.manager_open) {
+    for (const guestEmail of ['guest1@test.com', 'guest2@test.com', 'guest3@test.com']) {
+      const guestDef = guestApplicants.find(g => g.email === guestEmail)
+      const guestId = userIdMap[guestEmail].internalId
+      const { error: appErr } = await supabase.from('job_applicants').insert({
+        job_id: jobIdByKey.manager_open,
+        user_id: guestId,
+        resume_url: guestDef.resume_url,
+        status: 'pending',
+        relevant_experience: 'less_than_1',
+        additional_note: `Hi, I'm ${guestDef.full_name.split(' ')[0]} and I'd love to help out with this one.`,
+        skills_snapshot: guestDef.skills,
+        certificates_snapshot: guestDef.certs,
+      })
+      if (appErr) console.warn(`  ⚠ 创建 job_applicant 失败 (${guestDef.full_name}): ${appErr.message}`)
+      else console.log(`  ✓ Applicant: ${guestDef.full_name} → Weekend Café Cover (Manager)`)
     }
   }
 
@@ -897,6 +970,28 @@ async function main() {
   }
   console.log(`  ✓ ${Object.keys(pastAssignments).length} 条过去 10 天的排班（4 部门 × Manager+Employee）`)
 
+  // 每个部门的「第二位」Manager/Employee（manager5-8 / employee5-8）之前完全没有排班/打卡记录——
+  // Manager 的 Attendance Records 页是按部门查排班（不是按"我自己带的人"），所以理论上部门里
+  // 第二组人也该出现，但没有排班数据自然就查不到。这里补上：跟第一组共用同一条已建好的班次
+  // （同一天、同一部门只有一条 Regular Shift，四个人一起排在上面），全部 Present，让 Manager 的
+  // Attendance Records 页真正显示"整个部门"而不是只有一半人。
+  let secondPairCount = 0
+  for (const dayDate of PAST_DAYS) {
+    for (let i = 0; i < 4; i++) {
+      const firstManagerEmail = `manager${i + 1}@test.com`
+      const shiftId = pastAssignments[`${firstManagerEmail}|${dateKey(dayDate)}`]?.shift_id
+      if (!shiftId) continue
+      for (const email of [`manager${i + 5}@test.com`, `employee${i + 5}@test.com`]) {
+        const assignment = await assignShift(shiftId, userIdMap[email].internalId, ownerUser.id)
+        if (!assignment) continue
+        pastAssignments[`${email}|${dateKey(dayDate)}`] = assignment
+        await clockRecord(assignment, userIdMap[email].internalId, { dateStr: dateKey(dayDate) })
+        secondPairCount++
+      }
+    }
+  }
+  console.log(`  ✓ ${secondPairCount} 条第二位 Manager/Employee 的排班+打卡（共用同一班次，全部 Present）`)
+
   // Casual Worker 的一次性班次——过去 10 天里隔天一条 + 昨天固定一条（10am-2pm），给 Report 的
   // Casual Worker Pool / Cost Distribution 和 casual1@test.com 自己的 Attendance History 页面
   // 足够的历史数据；昨天单独保留是因为 Records Tab 默认这一周视图 + 下面 Step 13 的
@@ -922,20 +1017,32 @@ async function main() {
 
   // 未来班次，专门给 Shift Swap 用（UC52/53）——每人一个独立班次，方便互换。
   // submitShiftSwapRequest 强制要求双方班次同部门（否则 400 "must be in the same department"），
-  // 所以两组换班的班次都特意放在同一个部门里，即使换班对象本人所属部门不同。
+  // 所以每组换班的班次都特意放在同一个部门里，即使换班对象本人所属部门不同。
+  //
+  // David Lim (manager1) / Wendy Ho (manager5) 同属 Operations——这两条班次特意 *不* 建对应的
+  // pending swap request（见 Step 14），留成干净数据，让 Manager 自己在 UI 上测 Submit Shift
+  // Swap（提交后走 Owner/Partner 审批）。种了 pending 的话 assignment 会先被锁住
+  // （submitShiftSwapRequest 一发现某 assignment 已有 pending 请求就拒绝提交)。
   const futMgr1Shift = await createShift({ company_id: company.id, department_id: depts[0].id, shift_date: dateKey(addDays(TODAY, 3)), start_time: '09:00', end_time: '17:00', title: 'Regular Shift', created_by: ownerUser.id, publication_status: 'published' })
-  const futMgr2Shift = await createShift({ company_id: company.id, department_id: depts[0].id, shift_date: dateKey(addDays(TODAY, 4)), start_time: '09:00', end_time: '17:00', title: 'Regular Shift', created_by: ownerUser.id, publication_status: 'published' })
+  const futMgr5Shift = await createShift({ company_id: company.id, department_id: depts[0].id, shift_date: dateKey(addDays(TODAY, 4)), start_time: '09:00', end_time: '17:00', title: 'Regular Shift', created_by: ownerUser.id, publication_status: 'published' })
   const futEmp1Shift = await createShift({ company_id: company.id, department_id: depts[0].id, shift_date: dateKey(addDays(TODAY, 5)), start_time: '09:00', end_time: '17:00', title: 'Regular Shift', created_by: ownerUser.id, publication_status: 'published' })
   const futEmp2Shift = await createShift({ company_id: company.id, department_id: depts[0].id, shift_date: dateKey(addDays(TODAY, 6)), start_time: '09:00', end_time: '17:00', title: 'Regular Shift', created_by: ownerUser.id, publication_status: 'published' })
   // Elaine（Customer Support）的这个班次故意撞在她 Off Day 申请的同一天（Step 15），给 UC57 AI 一个能标记 flagged 的冲突
   const futEmp4Shift = await createShift({ company_id: company.id, department_id: depts[3].id, shift_date: dateKey(NEXT_WED), start_time: '09:00', end_time: '17:00', title: 'Regular Shift', created_by: ownerUser.id, publication_status: 'published' })
+  // Rachel Koh (manager2) / Kelvin Ang (manager6) — Marketing 的两位 Manager——顶上原本 David/Rachel
+  // 那条 pending Manager↔Manager swap request（见 Step 14），让 Owner/Partner 的审批队列（UC53）
+  // 依然有真实数据可测，同时不碰 manager1/manager5 的干净数据。
+  const futMgr2Shift = await createShift({ company_id: company.id, department_id: depts[1].id, shift_date: dateKey(addDays(TODAY, 3)), start_time: '09:00', end_time: '17:00', title: 'Regular Shift', created_by: ownerUser.id, publication_status: 'published' })
+  const futMgr6Shift = await createShift({ company_id: company.id, department_id: depts[1].id, shift_date: dateKey(addDays(TODAY, 4)), start_time: '09:00', end_time: '17:00', title: 'Regular Shift', created_by: ownerUser.id, publication_status: 'published' })
 
   const futMgr1Assign = await assignShift(futMgr1Shift?.id, userIdMap['manager1@test.com'].internalId, ownerUser.id)
-  const futMgr2Assign = await assignShift(futMgr2Shift?.id, userIdMap['manager2@test.com'].internalId, ownerUser.id)
+  const futMgr5Assign = await assignShift(futMgr5Shift?.id, userIdMap['manager5@test.com'].internalId, ownerUser.id)
   const futEmp1Assign = await assignShift(futEmp1Shift?.id, userIdMap['employee1@test.com'].internalId, ownerUser.id)
   const futEmp2Assign = await assignShift(futEmp2Shift?.id, userIdMap['employee2@test.com'].internalId, ownerUser.id)
   await assignShift(futEmp4Shift?.id, userIdMap['employee4@test.com'].internalId, ownerUser.id)
-  console.log('  ✓ 5 条未来班次（Shift Swap 用 4 条 + Off Day 冲突用 1 条）')
+  const futMgr2Assign = await assignShift(futMgr2Shift?.id, userIdMap['manager2@test.com'].internalId, ownerUser.id)
+  const futMgr6Assign = await assignShift(futMgr6Shift?.id, userIdMap['manager6@test.com'].internalId, ownerUser.id)
+  console.log('  ✓ 7 条未来班次（David/Wendy 换班用，不种 pending，留给 Manager 自测 Submit；Rachel/Kelvin 顶上 O/P 审批队列；Employee 换班 2 条 + Off Day 冲突用 1 条）')
 
   // Marcus Lee 的另外 2 个未来班次（不打卡，不建 attendance_record）——让 CW Dashboard 的
   // Upcoming Jobs 除了今天这个即时可 Clock In 的班次外，还能看到「之后」的排班，符合正常使用场景。
@@ -1102,19 +1209,23 @@ async function main() {
   if (swapSettingsErr) console.warn(`  ⚠ 创建 shift_swap_settings 失败: ${swapSettingsErr.message}`)
   else console.log('  ✓ Shift Swap Settings：月度上限 3 次/人，提前 24 小时截止（Rule Check 胶囊现在会显示）')
 
-  if (futMgr1Assign && futMgr2Assign) {
+  // David Lim (manager1) / Wendy Ho (manager5) 故意不种 pending swap request——两人是留给 Manager
+  // 自己在 UI 上测 Submit Shift Swap 用的干净数据（futMgr1Assign / futMgr5Assign 都已建好未来班次，
+  // 同部门 Operations，随时可以互选对方提交）。O/P 审批队列改用 Rachel Koh (manager2) ↔
+  // Kelvin Ang (manager6) 顶上，覆盖 UC53。
+  if (futMgr2Assign && futMgr6Assign) {
     const { error } = await supabase.from('shift_swap_requests').insert({
       company_id: company.id,
-      requester_id: userIdMap['manager1@test.com'].internalId,
-      requester_assignment_id: futMgr1Assign.id,
-      counterpart_id: userIdMap['manager2@test.com'].internalId,
-      counterpart_assignment_id: futMgr2Assign.id,
+      requester_id: userIdMap['manager2@test.com'].internalId,
+      requester_assignment_id: futMgr2Assign.id,
+      counterpart_id: userIdMap['manager6@test.com'].internalId,
+      counterpart_assignment_id: futMgr6Assign.id,
       status: 'pending',
       counterpart_status: 'approved', // 对方已同意，直接落在 Owner/Partner 的可决策队列里
-      reason: 'Need to cover a family commitment that week — Rachel already agreed to trade.',
+      reason: 'Need to cover a family commitment that week — Kelvin already agreed to trade.',
     })
     if (error) console.warn(`  ⚠ 创建 Manager↔Manager swap 失败: ${error.message}`)
-    else console.log('  ✓ Shift Swap: David Lim ↔ Rachel Koh（对方已同意，Owner/Partner 队列可直接 Approve/Reject，UC53）')
+    else console.log('  ✓ Shift Swap: Rachel Koh ↔ Kelvin Ang（对方已同意，Owner/Partner 队列可直接 Approve/Reject，UC53）')
   }
   if (futEmp1Assign && futEmp2Assign) {
     const { error } = await supabase.from('shift_swap_requests').insert({
@@ -1214,6 +1325,17 @@ async function main() {
       employment_type: 'Part-time', form_type: 'shift', department_id: depts[2].id,
       salary_amount: 13.5, salary_type: 'per hour', uniform_required: false,
       experience_required: '6+ Months', minimum_age: 18, urgency: 'normal',
+    },
+    // Manager-created (David Lim, Operations) — so manager1@test.com has a template of their own
+    // to test UC37 Edit Job Template with (Job Templates are creator-only to edit, department-only
+    // to view — Owner's two templates above are invisible to a Manager, see jobTemplateRepository).
+    {
+      company_id: company.id, created_by: userIdMap['manager1@test.com'].internalId, name: 'Weekend Café Cover',
+      title: 'Café Cover Staff', description: 'Cover the café counter for a weekend rush — orders, till, and light cleaning.',
+      requirements: 'Comfortable handling cash, friendly with customers.',
+      employment_type: 'Part-time', form_type: 'oneoff', department_id: depts[0].id,
+      salary_amount: 16, salary_type: 'flat rate', uniform_required: false,
+      experience_required: 'Not Required', minimum_age: 16, estimated_hours: '5', urgency: 'normal',
     },
   ]
   for (const def of jobTemplateDefs) {
@@ -1342,11 +1464,16 @@ async function main() {
   // fixed to use the same UTC day instead of local — see that file for why the two need to agree).
   const cwOpenShiftDate = dateKeyUTC(cwOpenStart)
 
+  // openings: 1 and the single applicant below is inserted directly as 'accepted' (i.e. already
+  // confirmed) — in the real app, respondToInvitation's auto-close (acceptedCount >= openings)
+  // would flip this to 'closed' the moment that confirmation lands. Seeding bypasses that service
+  // call, so the row must be inserted already 'closed' or it sits in Active Jobs fully filled,
+  // which is exactly the inconsistency this seed step exists to avoid.
   const { data: cwOpenJob, error: cwOpenJobErr } = await supabase.from('job_postings').insert({
     company_id: company.id, department_id: depts[0].id, created_by: ownerUser.id,
     title: 'Same-Day Café Cover Shift', description: 'Cover the café counter for a same-day gap in the roster.',
     requirements: 'Available immediately, comfortable handling cash and orders.', location: company.location,
-    employment_type: 'Part-time', status: 'open', form_type: 'oneoff', urgency: 'urgent',
+    employment_type: 'Part-time', status: 'closed', archived_at: new Date().toISOString(), form_type: 'oneoff', urgency: 'urgent',
     estimated_hours: '4', shift_date: cwOpenShiftDate, job_start_time: toHM(cwOpenStart),
     openings: 1, experience_required: 'Not Required', minimum_age: 16, uniform_required: false,
     salary_amount: 16, expires_at: dateKey(addDays(TODAY, 3)),
@@ -1689,8 +1816,10 @@ async function main() {
   console.log('    前天：4 部门 Manager+Employee 全员 Present')
   console.log('    昨天：Ben Seah Late、Chloe Yeo Absent（无记录）、其余 Present、Marcus Lee(CW) Present')
   console.log('    今天：Daniel Tay 已批准 Off Day（紫色胶囊）')
-  console.log('    Shift Swap：David Lim ↔ Rachel Koh（对方已同意，Owner/Partner 可直接 Approve/Reject，UC53）')
+  console.log('    Shift Swap：Rachel Koh ↔ Kelvin Ang（对方已同意，Owner/Partner 可直接 Approve/Reject，UC53）')
   console.log('               Ben Seah ↔ Chloe Yeo（Employee 之间，应只在 Manager 队列可见，验证隔离规则）')
+  console.log('               David Lim (manager1) / Wendy Ho (manager5) 故意不种 pending —— 两人都有未来班次，Operations 同部门，留给 Manager 自己在 UI 上测 Submit Shift Swap')
+  console.log('    Off Day 待提交：David Lim / Wendy Ho 都没有现成 pending/approved 记录，留给 Manager 自己测 Submit Fixed Day Off')
   console.log('    Off Day 待审批：Ben Seah + Grace Lim 撞同一天（Operations 2 人）—— AI Process 应判 Ben 为 safe、Grace 为 flagged 并给出替代日建议')
   console.log('                   Aaron Wong（Manager 自己的申请；Engineering 现有 manager3+manager7 两个 Manager，AI Process 应判 safe）')
   console.log('                   Elaine Chua（当天已有排班冲突，仅供手动测试，AI Process 不检查排班）')

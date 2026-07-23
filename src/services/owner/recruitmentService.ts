@@ -87,14 +87,16 @@ export const recruitmentService = {
     return buildJobPostingSummaries(postings)
   },
 
-  // UC44 view applicants. Candidate Management is Recruitment-Owner-only: a Manager who can SEE
-  // this job (department-wide Job Visibility) still can't view who applied unless they created it
-  // — enforced here, not just by the Manager UI hiding the panel, since a client-side omission
-  // alone can't stop a direct API call.
+  // UC44 view applicants. Viewing is department-wide (same as Job Visibility) for any internal
+  // viewer — deciding on them is what's Recruitment-Owner-only (see assertCanManageApplicants,
+  // used by decideApplicant/removeConfirmedWorker instead). A Manager who didn't create this job
+  // still sees who applied, just without Accept/Reject/Remove — those endpoints re-check ownership
+  // themselves, so a client-side omission of the buttons isn't the only thing stopping a direct call.
   async getApplicants(job_id: string, viewer_id: string): Promise<JobApplicant[]> {
     if (!job_id) throw new Error('job_id is required')
     if (!viewer_id) throw new Error('viewer_id is required')
-    await assertCanManageApplicants(job_id, viewer_id)
+    const job = await recruitmentRepository.getJobPostingById(job_id)
+    if (!job) throw new Error('Job posting not found')
     const applicants = await recruitmentRepository.getApplicantsByJob(job_id)
     const userIds = [...new Set(applicants.map(a => a.user_id).filter((id): id is string => Boolean(id)))]
     const cancellationCounts = await recruitmentRepository.getWorkerCancellationCounts(userIds)
@@ -183,9 +185,25 @@ export const recruitmentService = {
     return recruitmentRepository.createJobPosting(finalInput)
   },
 
-  async getDraftPostings(company_id: string): Promise<JobPostingSummary[]> {
+  // Owner/Partner's own drafts are shared only between the two of them (same as Templates).
+  // A Manager's drafts are NOT shared even within their own department, unlike Templates — a
+  // draft is a private in-progress scratchpad, not something ready to hand a peer (confirmed
+  // 2026-07-23) — so a Manager only ever sees drafts they created themselves.
+  // department_ids omitted (Owner/Partner viewer) → every draft created by Owner/Partner.
+  // Passed (Manager viewer) → only drafts BOTH department-scoped to the manager AND created by
+  // this exact viewer (viewer_id) — never a fellow Manager's.
+  async getDraftPostings(company_id: string, department_ids?: string[], viewer_id?: string): Promise<JobPostingSummary[]> {
     if (!company_id) throw new Error('company_id is required')
-    const postings = await recruitmentRepository.getDraftPostings(company_id)
+    let postings = await recruitmentRepository.getDraftPostings(company_id, department_ids)
+    if (department_ids) {
+      postings = postings.filter(p => p.created_by === viewer_id)
+    } else {
+      const roleMap = await recruitmentRepository.getUserRolesByIds([...new Set(postings.map(p => p.created_by))])
+      postings = postings.filter(p => {
+        const role = roleMap.get(p.created_by)
+        return role === 'Owner' || role === 'Partner'
+      })
+    }
     const deptIds = [...new Set(postings.map(p => p.department_id).filter((id): id is string => Boolean(id)))]
     const empIds = [...new Set(postings.flatMap(p => [p.assigned_employee_id, p.created_by]).filter((id): id is string => Boolean(id)))]
     const [departments, employees] = await Promise.all([
@@ -236,14 +254,17 @@ export const recruitmentService = {
     await recruitmentRepository.deleteJobPosting(id)
   },
 
-  async editJobPosting(id: string, input: Partial<JobPostingInput>): Promise<JobPosting> {
+  // actor_id: same rule as applicant management (assertCanManageApplicants) — a Manager may only
+  // edit a posting they created themselves; Owner/Partner postings are view-only to them. Optional
+  // so system/internal callers without a viewer context (e.g. tests) are unaffected.
+  async editJobPosting(id: string, input: Partial<JobPostingInput>, actor_id?: string): Promise<JobPosting> {
     if (!id) throw new Error('job_id is required')
     if (input.title !== undefined && !input.title.trim()) throw new Error('title is required')
     if (input.description !== undefined && !input.description.trim()) throw new Error('description is required')
     if (input.minimum_age !== undefined) validateMinimumAge(input.minimum_age)
     if (input.openings !== undefined) validateOpenings(input.openings)
 
-    const posting = await recruitmentRepository.getJobPostingById(id)
+    const posting = actor_id ? await assertCanManageApplicants(id, actor_id) : await recruitmentRepository.getJobPostingById(id)
     if (!posting) throw new Error('Job posting not found')
 
     // Published jobs are immutable: applicants must never see different terms (pay, times,
@@ -267,8 +288,9 @@ export const recruitmentService = {
   // Archiving closes the posting to applicants, so every application on it must already be
   // resolved: nothing left pending the Owner's decision, and nobody accepted who hasn't answered
   // their invitation yet. Archiving mid-decision would strand those applicants with no outcome.
-  async archiveJobPosting(id: string): Promise<JobPosting> {
+  async archiveJobPosting(id: string, actor_id?: string): Promise<JobPosting> {
     if (!id) throw new Error('job_id is required')
+    if (actor_id) await assertCanManageApplicants(id, actor_id)
     const rows = await recruitmentRepository.getApplicantCounts([id])
     const pending = rows.filter(row => row.status === 'pending').length
     const awaiting = awaitingConfirmationCount(rows)
@@ -301,8 +323,9 @@ export const recruitmentService = {
   // shifts are cancelled and they're emailed first — otherwise deleting the posting would strand
   // them with a live shift for work that no longer exists (the posting row is gone but the shift
   // survives via source_job_posting_id ON DELETE SET NULL).
-  async deleteJobPosting(id: string): Promise<void> {
+  async deleteJobPosting(id: string, actor_id?: string): Promise<void> {
     if (!id) throw new Error('job_id is required')
+    if (actor_id) await assertCanManageApplicants(id, actor_id)
 
     const job = await recruitmentRepository.getJobPostingById(id)
     const confirmedWorkers = job ? await recruitmentRepository.getConfirmedWorkersByJob(id) : []
@@ -439,9 +462,9 @@ export const recruitmentService = {
     return updated
   },
 
-  async getPendingApprovalPostings(company_id: string): Promise<JobPostingPendingApproval[]> {
+  async getPendingApprovalPostings(company_id: string, include_rejected = false, department_ids?: string[]): Promise<JobPostingPendingApproval[]> {
     if (!company_id) throw new Error('company_id is required')
-    return recruitmentRepository.getPendingApprovalPostings(company_id)
+    return recruitmentRepository.getPendingApprovalPostings(company_id, include_rejected, department_ids)
   },
 
   async approveJobPosting(id: string): Promise<JobPosting> {
@@ -458,9 +481,11 @@ export const recruitmentService = {
 
   // The verified worker pool — people who already showed up and finished a shift here. These are
   // the regulars an Owner can hand a new job to directly instead of posting it publicly.
-  async getPoolWorkers(company_id: string): Promise<PoolWorker[]> {
+  // department_ids: a Manager only sees workers verified in their own department(s); undefined
+  // (Owner/Partner) sees the whole company pool.
+  async getPoolWorkers(company_id: string, department_ids?: string[]): Promise<PoolWorker[]> {
     if (!company_id) throw new Error('company_id is required')
-    return recruitmentRepository.getVerifiedPoolWorkers(company_id)
+    return recruitmentRepository.getVerifiedPoolWorkers(company_id, department_ids)
   },
 
   // Hand a posting straight to hand-picked pool workers. Each worker still has to clear every hard

@@ -74,6 +74,27 @@ export const attendanceRepository = {
     return (data as AttendanceRecord | null) ?? null
   },
 
+  // UC56 (Manager edit scope): who this record belongs to and which department/company it's
+  // under — a Manager may only modify their own department's Employee/Casual Worker records.
+  async getAttendanceRecordContext(id: string): Promise<{ assignee_user_id: string; department_id: string | null; company_id: string | null } | null> {
+    const { data, error } = await supabase
+      .from('attendance_records')
+      .select('casual_worker_id, shift_assignments(user_id, shifts(department_id, company_id))')
+      .eq('id', id)
+      .maybeSingle()
+    if (error) throw new Error(error.message)
+    if (!data) return null
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const row = data as any
+    const assignment = Array.isArray(row.shift_assignments) ? row.shift_assignments[0] : row.shift_assignments
+    const shift = assignment ? (Array.isArray(assignment.shifts) ? assignment.shifts[0] : assignment.shifts) : null
+    return {
+      assignee_user_id: assignment?.user_id ?? row.casual_worker_id,
+      department_id: shift?.department_id ?? null,
+      company_id: shift?.company_id ?? null,
+    }
+  },
+
   async updateAttendanceRecord(id: string, fields: AttendanceRecordUpdate): Promise<AttendanceRecord> {
     const { data, error } = await supabase
       .from('attendance_records')

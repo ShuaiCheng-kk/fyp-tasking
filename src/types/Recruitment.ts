@@ -146,6 +146,9 @@ export interface JobPostingPendingApproval extends JobPosting {
   submitter_name: string | null
   submitter_photo_url: string | null
   assigned_employee_name: string | null
+  // Only resolved when this list was fetched with include_rejected — a Manager's "Waiting For
+  // Review" merges in their own rejected submissions to show the reason next to it.
+  rejected_by_name: string | null
 }
 
 export interface CasualWorkerStatus {

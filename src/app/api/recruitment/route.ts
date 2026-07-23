@@ -3,6 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { recruitmentService } from '@/services/owner/recruitmentService'
+import { taskService } from '@/services/owner/taskService'
 import { JobPostingInput } from '@/types/Recruitment'
 
 function parseNullableInt(value: unknown): number | null {
@@ -44,17 +45,31 @@ export async function GET(req: NextRequest) {
     }
     if (resource === 'pool_workers') {
       if (!company_id) return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
-      const poolWorkers = await recruitmentService.getPoolWorkers(company_id)
+      // Manager scope: only workers verified in their own department(s) — same manager_scope_id
+      // resolution as drafts/templates above.
+      const manager_scope_id = searchParams.get('manager_scope_id') ?? undefined
+      const managerScope = manager_scope_id ? await taskService.getManagerTeamScope(company_id, manager_scope_id) : null
+      const poolWorkers = await recruitmentService.getPoolWorkers(company_id, managerScope?.departmentIds)
       return NextResponse.json({ success: true, poolWorkers })
     }
     if (resource === 'pending_approval') {
       if (!company_id) return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
-      const pendingPostings = await recruitmentService.getPendingApprovalPostings(company_id)
+      const include_rejected = searchParams.get('include_rejected') === 'true'
+      // Manager scope: same manager_scope_id resolution as drafts/templates/pool_workers above.
+      const manager_scope_id = searchParams.get('manager_scope_id') ?? undefined
+      const managerScope = manager_scope_id ? await taskService.getManagerTeamScope(company_id, manager_scope_id) : null
+      const pendingPostings = await recruitmentService.getPendingApprovalPostings(company_id, include_rejected, managerScope?.departmentIds)
       return NextResponse.json({ success: true, pendingPostings })
     }
     if (resource === 'drafts') {
       if (!company_id) return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
-      const drafts = await recruitmentService.getDraftPostings(company_id)
+      // Manager Recruitment page scope: same manager_scope_id resolution as /api/task-template —
+      // Owner/Partner drafts excluded. Unlike Templates, a Draft is never shared even within the
+      // same department — it's a private in-progress scratchpad, so this Manager only ever sees
+      // their own (see getDraftPostings' viewer_id filter).
+      const manager_scope_id = searchParams.get('manager_scope_id') ?? undefined
+      const managerScope = manager_scope_id ? await taskService.getManagerTeamScope(company_id, manager_scope_id) : null
+      const drafts = await recruitmentService.getDraftPostings(company_id, managerScope?.departmentIds, manager_scope_id)
       return NextResponse.json({ success: true, drafts })
     }
     if (!company_id) return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
@@ -169,12 +184,12 @@ export async function PATCH(req: NextRequest) {
       if ('uniform_type' in data) patch.uniform_type = nullableString(data.uniform_type)
       if ('uniform_details' in data) patch.uniform_details = nullableString(data.uniform_details)
 
-      const posting = await recruitmentService.editJobPosting(String(data.job_id ?? ''), patch)
+      const posting = await recruitmentService.editJobPosting(String(data.job_id ?? ''), patch, typeof data.created_by === 'string' ? data.created_by : undefined)
       return NextResponse.json({ success: true, posting })
     }
 
     if (action === 'archive_posting') {
-      const posting = await recruitmentService.archiveJobPosting(String(data.job_id ?? ''))
+      const posting = await recruitmentService.archiveJobPosting(String(data.job_id ?? ''), typeof data.created_by === 'string' ? data.created_by : undefined)
       return NextResponse.json({ success: true, posting })
     }
 
@@ -223,7 +238,7 @@ export async function PATCH(req: NextRequest) {
     }
 
     if (action === 'delete_posting') {
-      await recruitmentService.deleteJobPosting(String(data.job_id ?? ''))
+      await recruitmentService.deleteJobPosting(String(data.job_id ?? ''), typeof data.created_by === 'string' ? data.created_by : undefined)
       return NextResponse.json({ success: true })
     }
 

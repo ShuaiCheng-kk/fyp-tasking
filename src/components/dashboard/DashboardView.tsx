@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
 import {
@@ -36,6 +36,44 @@ function EmptyRow({ text }: { text: string }) {
       {text}
     </div>
   )
+}
+
+// ─── My Shift Today (UC49/UC57 break) — Manager's own clock in/out + break in/out ────────────
+// Same shape and API (/api/employee/attendance) as AttendanceView's personal-clock strip; break
+// in/out is new here since that strip never wired those buttons up (backend already supported
+// them — see employeeAttendanceService.breakIn/breakOut).
+type MyShiftRecord = { id: string; clock_in_time: string | null; clock_out_time: string | null; break_in_time: string | null; break_out_time: string | null }
+type MyShift = {
+  assignment: { id: string; user_id: string }
+  shift: { id: string; title: string | null; shift_date: string; start_time: string; end_time: string; is_open_ended: boolean }
+  record: MyShiftRecord | null
+}
+
+const CLOCK_IN_WINDOW_MINUTES_BEFORE = 30
+
+function canClockIn(shift: MyShift['shift']): boolean {
+  const shiftStart = new Date(`${shift.shift_date}T${shift.start_time}Z`)
+  return Date.now() >= shiftStart.getTime() - CLOCK_IN_WINDOW_MINUTES_BEFORE * 60000
+}
+
+function isLateForShift(shift: MyShift['shift']): boolean {
+  return Date.now() > new Date(`${shift.shift_date}T${shift.start_time}Z`).getTime()
+}
+
+function canClockOut(shift: MyShift['shift']): boolean {
+  if (shift.is_open_ended) return true
+  return Date.now() >= new Date(`${shift.shift_date}T${shift.end_time}Z`).getTime()
+}
+
+function fmtShiftTime(hhmmss: string): string {
+  const [h, m] = hhmmss.split(':').map(Number)
+  const h12 = h % 12 === 0 ? 12 : h % 12
+  return `${h12}:${String(m).padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'}`
+}
+
+function fmtClockStamp(iso: string | null): string {
+  if (!iso) return '--'
+  return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'UTC' })
 }
 
 function CountChip({ value }: { value: string | number }) {
@@ -641,6 +679,61 @@ export default function DashboardView({ sidebar, basePath, viewerRole }: {
   const [attendanceSearch, setAttendanceSearch] = useState('')
   const [taskSearch, setTaskSearch] = useState('')
 
+  // ── My Shift Today (Manager's own clock in/out + break in/out, UC49/UC56) ──
+  const [myShifts, setMyShifts] = useState<MyShift[]>([])
+  const [clockBusyId, setClockBusyId] = useState('')
+  const [clockMessage, setClockMessage] = useState('')
+  const [lateReasonFor, setLateReasonFor] = useState<string | null>(null)
+  const [lateReason, setLateReason] = useState('')
+
+  const fetchMyShift = useCallback(async (uid: string) => {
+    if (!uid) return
+    try {
+      const res = await fetch(`/api/employee/attendance?user_id=${uid}&resource=my_shift`)
+      const data = await res.json()
+      if (data.success) setMyShifts(data.myShift?.shifts ?? [])
+    } catch {}
+  }, [])
+
+  useEffect(() => {
+    if (viewerRole === 'Manager' && internalUserId) void fetchMyShift(internalUserId)
+  }, [viewerRole, internalUserId, fetchMyShift])
+
+  const myTodayShifts = useMemo(() => {
+    const now = new Date()
+    const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+    return myShifts.filter(s => s.shift.shift_date === todayKey)
+  }, [myShifts])
+
+  const runClockAction = async (shift: MyShift, action: 'clock_in' | 'clock_out' | 'break_in' | 'break_out', extra?: { late_reason?: string }) => {
+    setClockBusyId(`${shift.assignment.id}:${action}`)
+    setClockMessage('')
+    try {
+      const body: Record<string, unknown> = { action, user_id: internalUserId, shift_assignment_id: shift.assignment.id }
+      if (extra?.late_reason) body.late_reason = extra.late_reason
+      const res = await fetch('/api/employee/attendance', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message || 'Attendance action failed')
+      setLateReasonFor(null)
+      setLateReason('')
+      await fetchMyShift(internalUserId)
+      setClockMessage(
+        action === 'clock_in' ? 'Clocked in successfully.'
+          : action === 'clock_out' ? 'Clocked out successfully.'
+          : action === 'break_in' ? 'Break started.'
+          : 'Break ended.'
+      )
+    } catch (err) {
+      setClockMessage(err instanceof Error ? err.message : 'Attendance action failed')
+    } finally {
+      setClockBusyId('')
+    }
+  }
+
   useEffect(() => {
     let cancelled = false
     const run = async () => {
@@ -734,6 +827,117 @@ export default function DashboardView({ sidebar, basePath, viewerRole }: {
             {companyId && <OwnerPlanBadge plan={currentPlan} currentCompanyId={companyId} />}
           </div>
         </div>
+
+        {/* ── My Shift Today — Manager's own clock in/out + break in/out (UC49/UC56) ──────── */}
+        {viewerRole === 'Manager' && myTodayShifts.length > 0 && (
+          <div style={{ padding: '0 28px 14px', flexShrink: 0 }}>
+            <div style={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 14, padding: '12px 18px', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <Clock size={15} style={{ color: '#F97316' }} />
+                </div>
+                <span style={{ fontSize: 15, fontWeight: 700, color: '#0F172A', whiteSpace: 'nowrap' }}>My Shift Today</span>
+              </div>
+              {myTodayShifts.map(shift => {
+                const clockedIn = !!shift.record?.clock_in_time
+                const clockedOut = !!shift.record?.clock_out_time
+                const onBreak = !!shift.record?.break_in_time && !shift.record?.break_out_time
+                const breakDone = !!shift.record?.break_in_time && !!shift.record?.break_out_time
+                const busyIn = clockBusyId === `${shift.assignment.id}:clock_in`
+                const busyOut = clockBusyId === `${shift.assignment.id}:clock_out`
+                const busyBreakIn = clockBusyId === `${shift.assignment.id}:break_in`
+                const busyBreakOut = clockBusyId === `${shift.assignment.id}:break_out`
+                const late = !clockedIn && isLateForShift(shift.shift)
+                const askingLate = lateReasonFor === shift.assignment.id
+                return (
+                  <div key={shift.assignment.id} style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', minWidth: 0 }}>
+                    <span style={{ fontSize: 13.5, fontWeight: 600, color: '#334155', whiteSpace: 'nowrap' }}>
+                      {shift.shift.title || 'Shift'} · {fmtShiftTime(shift.shift.start_time)} – {shift.shift.is_open_ended ? 'Open' : fmtShiftTime(shift.shift.end_time)}
+                      {clockedIn && <span style={{ color: '#059669' }}> · In {fmtClockStamp(shift.record!.clock_in_time)}</span>}
+                      {shift.record?.break_in_time && <span style={{ color: '#B45309' }}> · Break {fmtClockStamp(shift.record.break_in_time)}{shift.record.break_out_time ? `–${fmtClockStamp(shift.record.break_out_time)}` : ''}</span>}
+                      {clockedOut && <span style={{ color: '#64748B' }}> · Out {fmtClockStamp(shift.record!.clock_out_time)}</span>}
+                    </span>
+                    {!clockedIn && canClockIn(shift.shift) && !askingLate && (
+                      <button
+                        onClick={() => { if (late) { setLateReasonFor(shift.assignment.id); setLateReason('') } else void runClockAction(shift, 'clock_in') }}
+                        disabled={!!clockBusyId}
+                        style={{ height: 32, padding: '0 16px', border: 'none', borderRadius: 9, background: '#059669', color: '#FFFFFF', fontSize: 13, fontWeight: 700, cursor: clockBusyId ? 'default' : 'pointer', opacity: busyIn ? 0.6 : 1, transition: 'transform 0.12s ease, box-shadow 0.12s ease' }}
+                        onMouseEnter={e => { if (!clockBusyId) { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = '0 4px 10px rgba(5,150,105,0.3)' } }}
+                        onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none' }}
+                      >
+                        {busyIn ? 'Working…' : 'Clock In'}
+                      </button>
+                    )}
+                    {askingLate && (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                        <input
+                          value={lateReason}
+                          onChange={e => setLateReason(e.target.value)}
+                          placeholder="Reason for being late"
+                          style={{ height: 32, width: 220, borderRadius: 9, border: '1px solid #E5E7EB', background: '#F9FAFB', padding: '0 12px', fontSize: 13, color: '#111827', outline: 'none' }}
+                          onFocus={e => { e.currentTarget.style.borderColor = '#F97316'; e.currentTarget.style.background = '#FFFFFF' }}
+                          onBlur={e => { e.currentTarget.style.borderColor = '#E5E7EB'; e.currentTarget.style.background = '#F9FAFB' }}
+                        />
+                        <button
+                          onClick={() => { if (lateReason.trim()) void runClockAction(shift, 'clock_in', { late_reason: lateReason.trim() }) }}
+                          disabled={!!clockBusyId || !lateReason.trim()}
+                          style={{ height: 32, padding: '0 14px', border: 'none', borderRadius: 9, background: !lateReason.trim() ? '#A7F3D0' : '#059669', color: '#FFFFFF', fontSize: 13, fontWeight: 700, cursor: clockBusyId || !lateReason.trim() ? 'default' : 'pointer', opacity: busyIn ? 0.6 : 1 }}
+                        >
+                          {busyIn ? 'Working…' : 'Submit & Clock In'}
+                        </button>
+                        <button
+                          onClick={() => { setLateReasonFor(null); setLateReason('') }}
+                          style={{ height: 32, padding: '0 10px', border: '1px solid #E5E7EB', borderRadius: 9, background: '#FFFFFF', color: '#64748B', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
+                        >
+                          Cancel
+                        </button>
+                      </span>
+                    )}
+                    {/* Break — one per shift, only while clocked in and not yet clocked out. */}
+                    {clockedIn && !clockedOut && !onBreak && !breakDone && (
+                      <button
+                        onClick={() => void runClockAction(shift, 'break_in')}
+                        disabled={!!clockBusyId}
+                        style={{ height: 32, padding: '0 16px', border: '1.5px solid #FDBA74', borderRadius: 9, background: '#FFF7ED', color: '#C2410C', fontSize: 13, fontWeight: 700, cursor: clockBusyId ? 'default' : 'pointer', opacity: busyBreakIn ? 0.6 : 1 }}
+                      >
+                        {busyBreakIn ? 'Working…' : 'Break In'}
+                      </button>
+                    )}
+                    {clockedIn && !clockedOut && onBreak && (
+                      <button
+                        onClick={() => void runClockAction(shift, 'break_out')}
+                        disabled={!!clockBusyId}
+                        style={{ height: 32, padding: '0 16px', border: 'none', borderRadius: 9, background: '#EA580C', color: '#FFFFFF', fontSize: 13, fontWeight: 700, cursor: clockBusyId ? 'default' : 'pointer', opacity: busyBreakOut ? 0.6 : 1 }}
+                      >
+                        {busyBreakOut ? 'Working…' : 'Break Out'}
+                      </button>
+                    )}
+                    {clockedIn && !clockedOut && canClockOut(shift.shift) && (
+                      <button
+                        onClick={() => void runClockAction(shift, 'clock_out')}
+                        disabled={!!clockBusyId}
+                        style={{ height: 32, padding: '0 16px', border: 'none', borderRadius: 9, background: '#DC2626', color: '#FFFFFF', fontSize: 13, fontWeight: 700, cursor: clockBusyId ? 'default' : 'pointer', opacity: busyOut ? 0.6 : 1, transition: 'transform 0.12s ease, box-shadow 0.12s ease' }}
+                        onMouseEnter={e => { if (!clockBusyId) { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = '0 4px 10px rgba(220,38,38,0.3)' } }}
+                        onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none' }}
+                      >
+                        {busyOut ? 'Working…' : 'Clock Out'}
+                      </button>
+                    )}
+                    {clockedIn && !clockedOut && !canClockOut(shift.shift) && (
+                      <span style={{ fontSize: 12.5, fontWeight: 700, color: '#059669', background: '#F0FDF4', border: '1px solid #D1FAE5', borderRadius: 999, padding: '4px 12px', whiteSpace: 'nowrap' }}>On shift</span>
+                    )}
+                    {clockedOut && (
+                      <span style={{ fontSize: 12.5, fontWeight: 700, color: '#64748B', background: '#F1F5F9', borderRadius: 999, padding: '4px 12px', whiteSpace: 'nowrap' }}>Done for today</span>
+                    )}
+                  </div>
+                )
+              })}
+              {clockMessage && (
+                <span style={{ marginLeft: 'auto', fontSize: 12.5, fontWeight: 600, color: clockMessage.includes('success') || clockMessage.includes('Break') ? '#059669' : '#DC2626', whiteSpace: 'nowrap' }}>{clockMessage}</span>
+              )}
+            </div>
+          </div>
+        )}
 
         {error && (
           <div style={{ margin: '0 28px 12px', padding: '12px 16px', background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', borderRadius: 10, fontSize: '0.875rem', fontWeight: 600, flexShrink: 0 }}>

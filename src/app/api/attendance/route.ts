@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { attendanceService } from '@/services/owner/attendanceService'
 import { timesheetAutoApprovalService } from '@/services/owner/timesheetAutoApprovalService'
 import { availabilityService } from '@/services/user/availabilityService'
-import { AttendanceOwnerStatus, AttendanceRequestStatus } from '@/types/Attendance'
+import { AttendanceOwnerStatus, FixedOffDayDecision } from '@/types/Attendance'
 
 // CHANGE TYPE: Code only
 
@@ -119,10 +119,14 @@ export async function PATCH(req: NextRequest) {
       if (typeof b.id !== 'string' || typeof b.reviewer_id !== 'string' || typeof b.decision !== 'string') {
         return NextResponse.json({ success: false, message: 'id, reviewer_id and decision are required' }, { status: 400 })
       }
+      if (b.decision === 'rejected' && (typeof b.reason !== 'string' || !b.reason.trim())) {
+        return NextResponse.json({ success: false, message: 'A reason is required to reject a shift swap request' }, { status: 400 })
+      }
       const request = await attendanceService.decideShiftSwapRequest({
         id: b.id,
         reviewer_id: b.reviewer_id,
         decision: b.decision as 'approved' | 'rejected',
+        reason: typeof b.reason === 'string' ? b.reason.trim() : null,
       })
       return NextResponse.json({ success: true, request })
     }
@@ -176,7 +180,7 @@ export async function PATCH(req: NextRequest) {
         const requests = await attendanceService.decideFixedOffDayRequestGroup({
           ids: b.ids,
           reviewer_id: b.reviewer_id,
-          decision: b.decision as AttendanceRequestStatus,
+          decision: b.decision as FixedOffDayDecision,
           new_dates: b.new_dates as string[] | undefined,
         })
         return NextResponse.json({ success: true, requests })
@@ -190,7 +194,7 @@ export async function PATCH(req: NextRequest) {
       const request = await attendanceService.decideFixedOffDayRequest({
         id: b.id,
         reviewer_id: b.reviewer_id,
-        decision: b.decision as AttendanceRequestStatus,
+        decision: b.decision as FixedOffDayDecision,
         new_date: b.new_date as string | undefined,
       })
       return NextResponse.json({ success: true, request })

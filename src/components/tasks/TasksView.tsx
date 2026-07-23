@@ -1276,7 +1276,12 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
       return pruned
     })
   }, [myTasksKanban, myTasksSeenKey])
-  const hasNewMyTasks = !!myTasksKanban && COLUMNS.flatMap(col => myTasksKanban[col] ?? []).some(t => !seenMyTaskSigs.has(myTaskSignature(t)))
+  // Only the Assigned column can carry the dot: once a task has moved past Assigned (dragged into
+  // In Progress, sent to Review, ...) the Manager has necessarily already acted on it, so there's
+  // nothing left to flag "unseen." Rework returns (rejected back to In Progress) are a separate,
+  // always-visible "Rework" badge on the card itself (see needsRework) — not this dot — so no
+  // signal is lost by excluding non-Assigned columns here.
+  const hasNewMyTasks = !!myTasksKanban && (myTasksKanban['Assigned'] ?? []).some(t => !seenMyTaskSigs.has(myTaskSignature(t)))
   // My Tasks drag-to-advance (mirrors CasualTaskBoard.tsx) — separate from any drag state
   // elsewhere on this board, since no other tab here supports dragging.
   const [draggingMyTaskId, setDraggingMyTaskId] = useState<string | null>(null)
@@ -3332,7 +3337,10 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                       ) : (
                         topLevelTasks.map(task => {
                           const draggable = canDragMyTask(task)
-                          const isNew = !seenMyTaskSigs.has(myTaskSignature(task))
+                          // See hasNewMyTasks above: the dot is Assigned-only, since anything past
+                          // that column has already been acted on (rework returns get their own
+                          // persistent "Rework" badge instead, further down).
+                          const isNew = col === 'Assigned' && !seenMyTaskSigs.has(myTaskSignature(task))
                           return (
                             <div
                               key={task.id}
@@ -3341,8 +3349,11 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                               onDragEnd={() => { setDraggingMyTaskId(null); setDragOverMyTaskCol(null) }}
                               style={{ position: 'relative', opacity: draggingMyTaskId === task.id ? 0.5 : 1, cursor: draggable ? 'grab' : undefined }}
                             >
+                              {/* zIndex 3: above the card's own white box (zIndex 2, see TaskCard),
+                                  so it sits visibly on the card's white surface instead of getting
+                                  covered by it. */}
                               {isNew && (
-                                <span title={task.rejection_reason ? 'Sent back for rework' : 'New task'} style={{ position: 'absolute', top: -3, right: -3, width: 10, height: 10, borderRadius: '50%', background: '#EF4444', border: '2px solid #FFFFFF', zIndex: 1 }} />
+                                <span title="New task" style={{ position: 'absolute', top: 10, right: 10, width: 8, height: 8, borderRadius: '50%', background: '#EF4444', zIndex: 3 }} />
                               )}
                               <TaskCard
                                 task={task}
@@ -4704,13 +4715,18 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                   }
                 </div>
 
-                {/* Assigned By */}
+                {/* Assigned By — skipped for a Manager viewing a task assigned to them (My Tasks,
+                    or a peer Manager's shared-department task): the card that opened this panel
+                    already carries a "Posted by" badge for the same info (see postedByName on
+                    TaskCard), so repeating it here would be redundant. */}
+                {!(scopeToManagerDepartments && !isOwner) && (
                 <div>
                   <label style={modalLabelStyle}>Assigned By</label>
                   <div style={viewFieldValue}>
                     {selectedTask.assigned_by_name ?? members.find(m => m.id === selectedTask.assigned_by)?.full_name ?? 'Unknown'}
                   </div>
                 </div>
+                )}
 
                 {/* Assigned Time */}
                 <div>
