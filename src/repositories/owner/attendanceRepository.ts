@@ -344,6 +344,29 @@ export const attendanceRepository = {
     return data as FixedOffDayRequest
   },
 
+  // Reassigns request_date across several rows of the same weekly submission in one DB
+  // transaction (Postgres function call) — required because the (user_id, request_date) unique
+  // constraint is deferrable-at-commit, so a batch that shuffles dates among rows the user
+  // already holds (e.g. swapping which weekday is the day off) doesn't collide with a sibling
+  // row that hasn't been updated yet. See migration 20260724000000.
+  async decideFixedOffDayRequestGroupAtomic(input: {
+    ids: string[]
+    statuses: string[]
+    request_dates: (string | null)[]
+    reviewer_id: string
+    reviewed_at: string
+  }): Promise<FixedOffDayRequest[]> {
+    const { data, error } = await supabase.rpc('decide_fixed_off_day_request_group', {
+      p_ids: input.ids,
+      p_statuses: input.statuses,
+      p_request_dates: input.request_dates,
+      p_reviewer_id: input.reviewer_id,
+      p_reviewed_at: input.reviewed_at,
+    })
+    if (error) throw new Error(error.message)
+    return (data ?? []) as FixedOffDayRequest[]
+  },
+
   async createShiftSwapRequest(input: {
     company_id: string
     requester_id: string

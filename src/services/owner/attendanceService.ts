@@ -964,18 +964,27 @@ export const attendanceService = {
     // Owner picks each replacement date freely (any week) — a row whose "replacement" comes back
     // identical to what it already had is really just being approved as requested, not modified.
     // This lets one batch decision mix "approve the safe dates" with "swap only the flagged ones."
+    // Applied atomically (one DB transaction) — a batch can shuffle dates among rows the same
+    // user already holds, which would transiently violate the unique constraint if each row were
+    // updated by its own separate call. See decideFixedOffDayRequestGroupAtomic.
     const reviewedAt = new Date().toISOString()
-    return Promise.all(input.ids.map((id, i) => {
+    const statuses: string[] = []
+    const requestDates: (string | null)[] = []
+    input.ids.forEach((_, i) => {
       const row = rows[i]!
       const newDate = input.decision === 'modified' ? input.new_dates![i] : undefined
       const unchanged = newDate !== undefined && newDate === row.request_date
-      return attendanceRepository.updateFixedOffDayRequest(id, {
-        status: unchanged ? 'approved' : input.decision,
-        reviewed_by: input.reviewer_id,
-        reviewed_at: reviewedAt,
-        ...(newDate !== undefined && !unchanged ? { request_date: newDate } : {}),
-      })
-    }))
+      statuses.push(unchanged ? 'approved' : input.decision)
+      requestDates.push(newDate !== undefined && !unchanged ? newDate : null)
+    })
+
+    return attendanceRepository.decideFixedOffDayRequestGroupAtomic({
+      ids: input.ids,
+      statuses,
+      request_dates: requestDates,
+      reviewer_id: input.reviewer_id,
+      reviewed_at: reviewedAt,
+    })
   },
 
   // UC52 — Submit Shift Swap Request (M or E initiates)
