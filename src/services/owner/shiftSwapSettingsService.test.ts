@@ -62,6 +62,18 @@ describe('shiftSwapSettingsService', () => {
     })
   })
 
+  describe('assertSameCompany', () => {
+    it('passes for a Manager in the same company (read-only access, unlike assertOwner)', async () => {
+      vi.mocked(authRepository.findByAuthIdOrInternalId).mockResolvedValue(nonOwner as any)
+      await expect(shiftSwapSettingsService.assertSameCompany('mgr-1', 'company-1')).resolves.toBeUndefined()
+    })
+
+    it('rejects a caller from a different company', async () => {
+      vi.mocked(authRepository.findByAuthIdOrInternalId).mockResolvedValue({ ...nonOwner, company_id: 'other-company' } as any)
+      await expect(shiftSwapSettingsService.assertSameCompany('mgr-1', 'company-1')).rejects.toThrow('User not found in this company')
+    })
+  })
+
   describe('getSettings', () => {
     beforeEach(() => {
       vi.mocked(authRepository.findByAuthIdOrInternalId).mockResolvedValue(owner as any)
@@ -72,6 +84,16 @@ describe('shiftSwapSettingsService', () => {
       vi.mocked(shiftSwapSettingsRepository.getSettings).mockResolvedValue(stored)
 
       const result = await shiftSwapSettingsService.getSettings('company-1', 'owner-1')
+
+      expect(result).toEqual(stored)
+    })
+
+    it('returns the stored row for a Manager caller (read-only, unlike setSettings)', async () => {
+      vi.mocked(authRepository.findByAuthIdOrInternalId).mockResolvedValue(nonOwner as any)
+      const stored = { company_id: 'company-1', auto_approval_enabled: true, monthly_swap_limit: 3, deadline_hours_before_shift: 12, require_review_on_limit_exceeded: true, require_review_on_deadline_exceeded: true, updated_by: 'owner-1', updated_at: '2026-01-01T00:00:00Z' }
+      vi.mocked(shiftSwapSettingsRepository.getSettings).mockResolvedValue(stored)
+
+      const result = await shiftSwapSettingsService.getSettings('company-1', 'mgr-1')
 
       expect(result).toEqual(stored)
     })
