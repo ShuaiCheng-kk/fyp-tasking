@@ -5,6 +5,7 @@ import { authRepository } from '@/repositories/auth/authRepository'
 import { attendanceRepository } from '@/repositories/owner/attendanceRepository'
 import { offDaySettingsRepository } from '@/repositories/owner/offDaySettingsRepository'
 import { shiftSwapSettingsRepository } from '@/repositories/owner/shiftSwapSettingsRepository'
+import { shiftSwapDepartmentSettingsRepository } from '@/repositories/owner/shiftSwapDepartmentSettingsRepository'
 import { ownerTeamRepository } from '@/repositories/owner/ownerTeamRepository'
 import { taskRepository } from '@/repositories/owner/taskRepository'
 import { MIN_MANAGERS_PER_DAY, MIN_EMPLOYEES_PER_DAY, weekStart as computeWeekStart } from '@/lib/schedulingConstants'
@@ -14,6 +15,7 @@ import {
   AttendanceDashboardRecord,
   AttendanceExceptionType,
   AttendanceManagerReviewInput,
+  AttendanceModifiedTimeField,
   AttendanceReviewInput,
   FixedOffDayDecisionGroupInput,
   FixedOffDayDecisionInput,
@@ -24,7 +26,7 @@ import {
   ShiftSwapRequest,
   ShiftSwapRequestCreateInput,
   ShiftSwapRequestView,
-  ShiftSwapSettings,
+  ShiftSwapRuleConfig,
   ShiftSwapWithdrawInput,
   TimeOffRequestView,
 } from '@/types/Attendance'
@@ -175,6 +177,110 @@ function indexById<T extends { id: string }>(rows: T[]): Map<string, T> {
 
 // UC56: Owner/Partner-modified clock/break times must stay internally consistent — enforced here
 // (not just by the modal disabling Save) since a direct PATCH could otherwise skip the UI check.
+// UC56 (expanded 2026-07-23): Owner/Partner may modify any company record. A Manager may only
+// modify records belonging to Employees/Casual Workers in their own department(s) — never a
+// peer Manager's, and never outside their department scope.
+// UC56 (rank confirmed 2026-07-23): Owner and Partner outrank Manager and are equal to each other
+// for this purpose — once either of them modifies a record, a Manager can no longer modify it
+// further even within their own department (existing.owner_reviewed_by check below). The reverse
+// isn't true: Owner/Partner may always modify a record a Manager already corrected.
+async function assertCanModifyClockTimes(
+  existing: { id: string; owner_status: string; owner_reviewed_by: string | null },
+  actor_id: string,
+): Promise<void> {
+  const [actor] = await attendanceRepository.getUsersByIds([actor_id])
+  if (!actor) throw new Error('Reviewer not found')
+  if (actor.role === 'Owner' || actor.role === 'Partner') return
+  if (actor.role !== 'Manager') throw new Error('Not authorized to modify attendance records')
+
+  const context = await attendanceRepository.getAttendanceRecordContext(existing.id)
+  if (!context) throw new Error('Attendance record not found')
+
+  const idsToFetch = [context.assignee_user_id]
+  if (existing.owner_status === 'modified' && existing.owner_reviewed_by) idsToFetch.push(existing.owner_reviewed_by)
+  const users = await attendanceRepository.getUsersByIds([...new Set(idsToFetch)])
+
+  const assignee = users.find(u => u.id === context.assignee_user_id)
+  if (assignee?.role !== 'Employee' && assignee?.role !== 'Casual Worker') {
+    throw new Error('A Manager may only modify an Employee or Casual Worker\'s attendance record')
+  }
+  if (!context.department_id || !context.company_id) {
+    throw new Error('Not authorized to modify this attendance record')
+  }
+  const managedDepts = await ownerTeamRepository.findManagerDepartments(actor_id, context.company_id)
+  if (!managedDepts.some(d => d.department_id === context.department_id)) {
+    throw new Error('Not authorized to modify attendance records outside your department')
+  }
+
+  if (existing.owner_status === 'modified' && existing.owner_reviewed_by) {
+    const reviewer = users.find(u => u.id === existing.owner_reviewed_by)
+    if (reviewer?.role === 'Owner' || reviewer?.role === 'Partner') {
+      throw new Error('This record was last modified by Owner/Partner and can no longer be modified by a Manager')
+    }
+  }
+}
+
+// Truncates to minute precision ('YYYY-MM-DDTHH:MM') before comparing — the review modal only
+// lets a user edit to the minute (AM/PM picker), but re-submitting an untouched field still
+// round-trips through toISO() and drops the original's seconds/ms, which would otherwise make
+// every field look "changed" on every save even when the user only touched one of them.
+function fieldChangedToMinute(prev: string | null, next: string | null): boolean {
+  const truncate = (iso: string | null) => iso?.slice(0, 16) ?? null
+  return truncate(prev) !== truncate(next)
+}
+
+type OwnerModificationExisting = {
+  clock_in_time: string | null
+  clock_out_time: string | null
+  break_in_time: string | null
+  break_out_time: string | null
+  owner_modified_original_values?: Partial<Record<AttendanceModifiedTimeField, string | null>> | null
+}
+
+// The value a field held the very FIRST time it was ever corrected — never the previous edit's
+// value. clock_in_time/clock_out_time are immutable raw punches (finalReviewAttendance only ever
+// writes owner_adjusted_clock_in/out_time, never these columns), so they're already the true
+// original forever. break_in_time/break_out_time ARE overwritten directly on each edit, so once a
+// break field has a stored original (from an earlier edit) that value is reused; only the very
+// first edit falls back to the current column, which at that point still holds the true original.
+function resolveTrueOriginal(field: AttendanceModifiedTimeField, existing: OwnerModificationExisting): string | null {
+  if (field === 'clock_in_time') return existing.clock_in_time
+  if (field === 'clock_out_time') return existing.clock_out_time
+  const stored = existing.owner_modified_original_values ?? {}
+  return field in stored ? stored[field]! : existing[field]
+}
+
+// Which of the four time fields differ from their TRUE original (not the previous edit) at
+// minute precision, and what that true original is — stored as owner_modified_fields/
+// owner_modified_original_values so the Owner/Partner page can show exactly what changed and
+// from what (UC56 "M" badge + per-field original value). A field that's been edited back to
+// exactly its true original is correctly excluded — see finalReviewAttendance for what that means
+// for the record's overall status.
+function computeOwnerModification(
+  existing: OwnerModificationExisting,
+  input: { clock_in_time?: string | null; clock_out_time?: string | null; break_in_time?: string | null; break_out_time?: string | null },
+): { changedFields: AttendanceModifiedTimeField[]; originalValues: Partial<Record<AttendanceModifiedTimeField, string | null>> } {
+  const newValues: Record<AttendanceModifiedTimeField, string | null> = {
+    clock_in_time: input.clock_in_time ?? existing.clock_in_time,
+    clock_out_time: input.clock_out_time ?? existing.clock_out_time,
+    break_in_time: input.break_in_time ?? existing.break_in_time,
+    break_out_time: input.break_out_time ?? existing.break_out_time,
+  }
+
+  const changedFields: AttendanceModifiedTimeField[] = []
+  const originalValues: Partial<Record<AttendanceModifiedTimeField, string | null>> = {}
+
+  ;(['clock_in_time', 'clock_out_time', 'break_in_time', 'break_out_time'] as const).forEach(field => {
+    const trueOriginal = resolveTrueOriginal(field, existing)
+    if (fieldChangedToMinute(trueOriginal, newValues[field])) {
+      changedFields.push(field)
+      originalValues[field] = trueOriginal
+    }
+  })
+
+  return { changedFields, originalValues }
+}
+
 function validateModifiedAttendanceTimes(times: {
   clock_in_time: string | null
   clock_out_time: string | null
@@ -271,7 +377,7 @@ type ShiftSwapRuleVerdict =
 // setting picks what a breach does: true = escalate to the Owner (with the reason recorded),
 // false = auto-reject the request outright.
 async function evaluateShiftSwapRules(
-  settings: ShiftSwapSettings | null,
+  settings: ShiftSwapRuleConfig | null,
   request: ShiftSwapRequest,
   shifts: Shift[],
 ): Promise<ShiftSwapRuleVerdict> {
@@ -293,6 +399,20 @@ async function evaluateShiftSwapRules(
   }
 
   return { outcome: 'pass' }
+}
+
+// Which settings row governs a given swap: Manager<->Manager swaps use the Owner/Partner's
+// company-wide config; Employee<->Employee swaps use their department's Manager-owned config.
+// (submitShiftSwapRequest already enforces both parties share a role and a department, so the
+// requester's role + either shift's department_id fully determines the scope.)
+async function resolveSwapRuleSettings(
+  company_id: string,
+  requesterRole: string,
+  department_id: string | null,
+): Promise<ShiftSwapRuleConfig | null> {
+  if (requesterRole === 'Manager') return shiftSwapSettingsRepository.getSettings(company_id)
+  if (!department_id) return null
+  return shiftSwapDepartmentSettingsRepository.getSettings(company_id, department_id)
 }
 
 async function resolveDepartmentIdsByUser(
@@ -449,6 +569,7 @@ async function buildDashboardRecords(
     userIds.add(record.casual_worker_id)
     userIds.add(record.confirmed_by_employee_id)
     userIds.add(record.submitted_by_employee_id)
+    if (record.owner_reviewed_by) userIds.add(record.owner_reviewed_by)
   })
 
   const [users, departments] = await Promise.all([
@@ -475,6 +596,8 @@ async function buildDashboardRecords(
         supervisor_name: assignment.supervisor_employee_id ? usersById.get(assignment.supervisor_employee_id)?.full_name ?? null : null,
         department_name: shift.department_id ? departmentsById.get(shift.department_id)?.name ?? null : null,
         record,
+        modifier_name: record?.owner_reviewed_by ? usersById.get(record.owner_reviewed_by)?.full_name ?? null : null,
+        modifier_role: record?.owner_reviewed_by ? usersById.get(record.owner_reviewed_by)?.role ?? null : null,
         exceptions: getAttendanceExceptions({
           shift_date: shift.shift_date,
           start_time: shift.start_time,
@@ -543,6 +666,18 @@ export const attendanceService = {
       throw new Error('Invalid attendance decision')
     }
 
+    // UC56 (expanded 2026-07-23): Owner/Partner may modify any record; a Manager may only modify
+    // their own department's Employee/Casual Worker records, never a peer Manager's, and never a
+    // record Owner/Partner already modified (they outrank Manager for this).
+    await assertCanModifyClockTimes(existing, input.owner_id)
+
+    let modification: { changedFields: AttendanceModifiedTimeField[]; originalValues: Partial<Record<AttendanceModifiedTimeField, string | null>> } | null = null
+    // The decision actually persisted — starts as what was requested, but a 'modified' submission
+    // that nets out identical to the true original (e.g. edited to 9:10 then edited back to 9:00)
+    // downgrades to 'approved': nothing differs from what was originally recorded, so it isn't a
+    // correction at all, and per UC56 it must not keep showing the "M" badge / reason from before.
+    let resolvedDecision = input.decision
+
     if (input.decision === 'modified') {
       validateModifiedAttendanceTimes({
         clock_in_time: input.clock_in_time ?? existing.clock_in_time,
@@ -550,11 +685,21 @@ export const attendanceService = {
         break_in_time: input.break_in_time ?? existing.break_in_time,
         break_out_time: input.break_out_time ?? existing.break_out_time,
       })
+      modification = computeOwnerModification(existing, input)
+      if (modification.changedFields.length === 0) {
+        resolvedDecision = 'approved'
+      } else if (!input.owner_notes?.trim()) {
+        // Enforced here too (not just the modal disabling Save) since a direct PATCH could
+        // otherwise skip the UI check — a reason is mandatory whenever a time is actually
+        // corrected, so anyone reviewing the record later knows why. Not required when nothing
+        // ends up different from the true original (handled above).
+        throw new Error('A reason is required when modifying attendance times')
+      }
     }
 
     return attendanceRepository.updateAttendanceRecord(input.id, {
-      owner_status: input.decision,
-      owner_notes: input.owner_notes ?? null,
+      owner_status: resolvedDecision,
+      owner_notes: resolvedDecision === 'modified' ? input.owner_notes ?? null : (input.decision === 'modified' ? null : input.owner_notes ?? null),
       owner_reviewed_by: input.owner_id,
       owner_reviewed_at: new Date().toISOString(),
       owner_adjusted_clock_in_time: input.decision === 'modified' ? input.clock_in_time ?? existing.clock_in_time : existing.owner_adjusted_clock_in_time,
@@ -563,7 +708,9 @@ export const attendanceService = {
       // (UC56: Owner/Partner modify clock times directly, breaks included).
       break_in_time: input.decision === 'modified' ? input.break_in_time ?? existing.break_in_time : existing.break_in_time,
       break_out_time: input.decision === 'modified' ? input.break_out_time ?? existing.break_out_time : existing.break_out_time,
-      status: input.decision === 'approved' ? 'owner_approved' : input.decision === 'rejected' ? 'owner_rejected' : 'owner_modified',
+      owner_modified_fields: modification ? modification.changedFields : existing.owner_modified_fields,
+      owner_modified_original_values: modification ? modification.originalValues : existing.owner_modified_original_values,
+      status: resolvedDecision === 'approved' ? 'owner_approved' : resolvedDecision === 'rejected' ? 'owner_rejected' : 'owner_modified',
     })
   },
 
@@ -642,17 +789,37 @@ export const attendanceService = {
     const deptsById = new Map(depts.map(d => [d.id, d.name]))
 
     // Live rule check for the reviewer, per pending request — evaluated NOW rather than reusing
-    // the accept-time verdict, because the Owner may have configured (or changed) the settings
-    // after these requests arrived. Also computes each party's remaining monthly quota so the
-    // reviewer can see e.g. "David 2/3 left, Rachel 0/3 left" while deciding.
-    const settings = await shiftSwapSettingsRepository.getSettings(company_id)
+    // the accept-time verdict, because the settings may have changed after these requests arrived.
+    // Also computes each party's remaining monthly quota so the reviewer can see e.g. "David 2/3
+    // left, Rachel 0/3 left" while deciding. This queue is always homogeneous in requester role
+    // (Manager queue = Manager-Manager swaps only, Employee queue = Employee-Employee swaps only —
+    // see the role filter above), but an Employee queue can still span several of the Manager's
+    // departments, each with its own settings row, so that branch resolves settings per department.
+    let companySettings: ShiftSwapRuleConfig | null = null
+    let deptSettingsById = new Map<string, ShiftSwapRuleConfig | null>()
+    if (options?.managerId) {
+      const reqDeptIds = [...new Set(requests.map(r => assignmentsById.get(r.requester_assignment_id)?.shifts?.department_id).filter(Boolean) as string[])]
+      const deptSettings = await shiftSwapDepartmentSettingsRepository.getSettingsForDepartments(company_id, reqDeptIds)
+      deptSettingsById = new Map(deptSettings.map(s => [s.department_id, s]))
+    } else {
+      companySettings = await shiftSwapSettingsRepository.getSettings(company_id)
+    }
+    const settingsForRequest = (req: ShiftSwapRequest): ShiftSwapRuleConfig | null => {
+      if (!options?.managerId) return companySettings
+      const deptId = assignmentsById.get(req.requester_assignment_id)?.shifts?.department_id
+      return deptId ? deptSettingsById.get(deptId) ?? null : null
+    }
+
     const swapsLeftByUser = new Map<string, number>()
-    if (settings?.monthly_swap_limit != null) {
-      const pendingUserIds = [...new Set(requests.filter(r => r.status === 'pending').flatMap(r => [r.requester_id, r.counterpart_id]))]
+    {
       const { start, end } = currentCalendarMonthRange()
+      const pendingWithLimit = requests.filter(r => r.status === 'pending' && settingsForRequest(r)?.monthly_swap_limit != null)
+      const pendingUserIds = [...new Set(pendingWithLimit.flatMap(r => [r.requester_id, r.counterpart_id]))]
       await Promise.all(pendingUserIds.map(async userId => {
+        const req = pendingWithLimit.find(r => r.requester_id === userId || r.counterpart_id === userId)!
+        const limit = settingsForRequest(req)!.monthly_swap_limit!
         const used = await attendanceRepository.countApprovedShiftSwapsForUser(company_id, userId, start, end)
-        swapsLeftByUser.set(userId, Math.max(0, settings.monthly_swap_limit! - used))
+        swapsLeftByUser.set(userId, Math.max(0, limit - used))
       }))
     }
 
@@ -663,6 +830,7 @@ export const attendanceService = {
       const counterpart = usersById.get(req.counterpart_id)
       const deptName = deptsById.get(reqAss?.shifts?.department_id ?? '') ?? null
       const isPending = req.status === 'pending'
+      const settings = settingsForRequest(req)
       const requesterSwapsLeft = isPending && settings?.monthly_swap_limit != null ? swapsLeftByUser.get(req.requester_id) ?? null : null
       const counterpartSwapsLeft = isPending && settings?.monthly_swap_limit != null ? swapsLeftByUser.get(req.counterpart_id) ?? null : null
       const ruleShifts = [reqAss?.shifts, ctrAss?.shifts].filter(Boolean) as Shift[]
@@ -718,6 +886,7 @@ export const attendanceService = {
       status: input.decision,
       reviewed_by: input.reviewer_id,
       reviewed_at: new Date().toISOString(),
+      owner_review_reason: input.reason ?? null,
     })
   },
 
@@ -878,7 +1047,9 @@ export const attendanceService = {
       attendanceRepository.getShiftAssignmentById(request.counterpart_assignment_id),
     ])
     const shifts = [reqAss?.shifts, ctrAss?.shifts].filter(Boolean) as Shift[]
-    const settings = await shiftSwapSettingsRepository.getSettings(request.company_id)
+    const requester = (await attendanceRepository.getUsersByIds([request.requester_id]))[0]
+    const departmentId = reqAss?.shifts?.department_id ?? ctrAss?.shifts?.department_id ?? null
+    const settings = await resolveSwapRuleSettings(request.company_id, requester?.role ?? '', departmentId)
     const verdict = await evaluateShiftSwapRules(settings, request, shifts)
 
     if (verdict.outcome === 'reject') {
@@ -1023,11 +1194,35 @@ export const attendanceService = {
       const depts = await attendanceRepository.getDepartmentsByIds(deptIds)
       const deptsById = new Map(depts.map(d => [d.id, d.name]))
 
-      swapsView = swaps.map(req => {
+      swapsView = await Promise.all(swaps.map(async req => {
         const reqAss = assignmentsById.get(req.requester_assignment_id)
         const ctrAss = assignmentsById.get(req.counterpart_assignment_id)
         const requester = usersById.get(req.requester_id)
         const counterpart = usersById.get(req.counterpart_id)
+
+        // Same live rule check the reviewer's queue shows (getShiftSwapRequests) — surfaced here
+        // too so the requester can see, before Owner/Partner even decide, whether they're over
+        // their monthly quota or past the submission deadline for this shift.
+        let monthly_swap_limit: number | null = null
+        let requester_swaps_left: number | null = null
+        let limit_exceeded: boolean | null = null
+        let deadline_exceeded: boolean | null = null
+        if (req.status === 'pending') {
+          const departmentId = reqAss?.shifts?.department_id ?? ctrAss?.shifts?.department_id ?? null
+          const settings = await resolveSwapRuleSettings(req.company_id, requester?.role ?? '', departmentId)
+          if (settings?.monthly_swap_limit != null) {
+            monthly_swap_limit = settings.monthly_swap_limit
+            const { start, end } = currentCalendarMonthRange()
+            const used = await attendanceRepository.countApprovedShiftSwapsForUser(req.company_id, req.requester_id, start, end)
+            requester_swaps_left = Math.max(0, settings.monthly_swap_limit - used)
+            limit_exceeded = requester_swaps_left <= 0
+          }
+          const ruleShifts = [reqAss?.shifts, ctrAss?.shifts].filter(Boolean) as Shift[]
+          if (settings?.deadline_hours_before_shift != null && ruleShifts.length > 0) {
+            deadline_exceeded = isPastSwapDeadline(settings.deadline_hours_before_shift, ruleShifts)
+          }
+        }
+
         return {
           ...req,
           requester_name: requester?.full_name ?? 'Unknown',
@@ -1050,8 +1245,13 @@ export const attendanceService = {
           counterpart_task_count: taskCountById.get(req.counterpart_assignment_id) ?? 0,
           requester_movable_tasks: movableTasksById.get(req.requester_assignment_id) ?? [],
           counterpart_movable_tasks: movableTasksById.get(req.counterpart_assignment_id) ?? [],
+          monthly_swap_limit,
+          requester_swaps_left,
+          counterpart_swaps_left: null,
+          limit_exceeded,
+          deadline_exceeded,
         }
-      })
+      }))
     }
 
     const foUserIds = [...new Set([user_id, ...fixed_off.map(req => req.reviewed_by).filter(Boolean) as string[]])]

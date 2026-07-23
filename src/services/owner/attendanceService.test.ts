@@ -19,6 +19,7 @@ vi.mock('@/repositories/owner/attendanceRepository', () => ({
     getAssignmentsByCompanyAndDateRange: vi.fn(),
     getAttendanceRecordsByAssignmentIds: vi.fn(),
     getAttendanceRecordById: vi.fn(),
+    getAttendanceRecordContext: vi.fn(),
     updateAttendanceRecord: vi.fn(),
     getUsersByIds: vi.fn(),
     getDepartmentsByIds: vi.fn(),
@@ -65,6 +66,13 @@ vi.mock('@/repositories/owner/shiftSwapSettingsRepository', () => ({
   },
 }))
 
+vi.mock('@/repositories/owner/shiftSwapDepartmentSettingsRepository', () => ({
+  shiftSwapDepartmentSettingsRepository: {
+    getSettings: vi.fn(),
+    getSettingsForDepartments: vi.fn().mockResolvedValue([]),
+  },
+}))
+
 vi.mock('@/repositories/auth/authRepository', () => ({
   authRepository: {
     findByAuthIdOrInternalId: vi.fn(),
@@ -87,6 +95,7 @@ import { attendanceService } from './attendanceService'
 import { attendanceRepository } from '@/repositories/owner/attendanceRepository'
 import { offDaySettingsRepository } from '@/repositories/owner/offDaySettingsRepository'
 import { shiftSwapSettingsRepository } from '@/repositories/owner/shiftSwapSettingsRepository'
+import { shiftSwapDepartmentSettingsRepository } from '@/repositories/owner/shiftSwapDepartmentSettingsRepository'
 import { taskRepository } from '@/repositories/owner/taskRepository'
 import { ownerTeamRepository } from '@/repositories/owner/ownerTeamRepository'
 import { authRepository } from '@/repositories/auth/authRepository'
@@ -102,6 +111,10 @@ describe('attendanceService', () => {
   })
 
   describe('finalReviewAttendance (UC50: Review Attendance Record)', () => {
+    beforeEach(() => {
+      vi.mocked(attendanceRepository.getUsersByIds).mockResolvedValue([{ id: 'owner-1', role: 'Owner' } as any])
+    })
+
     it('approves a record and stamps the reviewer/timestamp', async () => {
       vi.mocked(attendanceRepository.getAttendanceRecordById).mockResolvedValue({
         id: 'rec-1', clock_in_time: '09:00', clock_out_time: '17:00',
@@ -127,7 +140,7 @@ describe('attendanceService', () => {
       vi.mocked(attendanceRepository.updateAttendanceRecord).mockResolvedValue({ id: 'rec-1' } as any)
 
       await attendanceService.finalReviewAttendance({
-        id: 'rec-1', owner_id: 'owner-1', decision: 'modified',
+        id: 'rec-1', owner_id: 'owner-1', decision: 'modified', owner_notes: 'Forgot to clock out on time',
         clock_in_time: '2026-07-01T09:05:00Z', clock_out_time: '2026-07-01T17:10:00Z',
         break_in_time: '2026-07-01T12:15:00Z', break_out_time: '2026-07-01T12:45:00Z',
       })
@@ -149,7 +162,7 @@ describe('attendanceService', () => {
       } as any)
       vi.mocked(attendanceRepository.updateAttendanceRecord).mockResolvedValue({ id: 'rec-1' } as any)
 
-      await attendanceService.finalReviewAttendance({ id: 'rec-1', owner_id: 'owner-1', decision: 'modified' })
+      await attendanceService.finalReviewAttendance({ id: 'rec-1', owner_id: 'owner-1', decision: 'modified', owner_notes: 'No change needed, re-confirming' })
 
       expect(attendanceRepository.updateAttendanceRecord).toHaveBeenCalledWith('rec-1', expect.objectContaining({
         break_in_time: '2026-07-01T12:00:00Z',
@@ -163,6 +176,114 @@ describe('attendanceService', () => {
         break_out_time: '2026-07-01T12:30:00Z',
         owner_status: 'approved',
       }))
+    })
+
+    it('records only the time fields that actually changed, at minute precision (M badge)', async () => {
+      vi.mocked(attendanceRepository.getAttendanceRecordById).mockResolvedValue({
+        id: 'rec-1', clock_in_time: '2026-07-01T09:00:23.512Z', clock_out_time: '2026-07-01T17:00:00Z',
+        break_in_time: '2026-07-01T12:00:00Z', break_out_time: '2026-07-01T12:30:00Z',
+        owner_adjusted_clock_in_time: null, owner_adjusted_clock_out_time: null,
+      } as any)
+      vi.mocked(attendanceRepository.updateAttendanceRecord).mockResolvedValue({ id: 'rec-1' } as any)
+
+      // clock_in_time round-trips through the modal's AM/PM picker unchanged in substance
+      // (only loses sub-minute precision); break_out_time is a genuine 15-min change.
+      await attendanceService.finalReviewAttendance({
+        id: 'rec-1', owner_id: 'mgr-1', decision: 'modified', owner_notes: 'Extended lunch break approved',
+        clock_in_time: '2026-07-01T09:00:00Z', clock_out_time: '2026-07-01T17:00:00Z',
+        break_in_time: '2026-07-01T12:00:00Z', break_out_time: '2026-07-01T12:45:00Z',
+      })
+
+      expect(attendanceRepository.updateAttendanceRecord).toHaveBeenCalledWith('rec-1', expect.objectContaining({
+        owner_modified_fields: ['break_out_time'],
+        owner_modified_original_values: { break_out_time: '2026-07-01T12:30:00Z' },
+      }))
+    })
+
+    it('does not overwrite owner_modified_fields/owner_modified_original_values on approve/reject (keeps the last modification on record)', async () => {
+      vi.mocked(attendanceRepository.getAttendanceRecordById).mockResolvedValue({
+        id: 'rec-1', clock_in_time: '2026-07-01T09:00:00Z', clock_out_time: '2026-07-01T17:00:00Z',
+        break_in_time: null, break_out_time: null,
+        owner_adjusted_clock_in_time: null, owner_adjusted_clock_out_time: null,
+        owner_modified_fields: ['clock_in_time'],
+        owner_modified_original_values: { clock_in_time: '2026-07-01T08:55:00Z' },
+      } as any)
+      vi.mocked(attendanceRepository.updateAttendanceRecord).mockResolvedValue({ id: 'rec-1' } as any)
+
+      await attendanceService.finalReviewAttendance({ id: 'rec-1', owner_id: 'owner-1', decision: 'approved' })
+
+      expect(attendanceRepository.updateAttendanceRecord).toHaveBeenCalledWith('rec-1', expect.objectContaining({
+        owner_modified_fields: ['clock_in_time'],
+        owner_modified_original_values: { clock_in_time: '2026-07-01T08:55:00Z' },
+      }))
+    })
+
+    it('keeps showing the TRUE original (not the previous edit) across a second modification of the same field', async () => {
+      // First edit already happened: break_out went from 12:30 -> 12:45, recorded as the original.
+      vi.mocked(attendanceRepository.getAttendanceRecordById).mockResolvedValue({
+        id: 'rec-1', clock_in_time: '2026-07-01T09:00:00Z', clock_out_time: '2026-07-01T17:00:00Z',
+        break_in_time: '2026-07-01T12:00:00Z', break_out_time: '2026-07-01T12:45:00Z',
+        owner_adjusted_clock_in_time: null, owner_adjusted_clock_out_time: null,
+        owner_modified_fields: ['break_out_time'],
+        owner_modified_original_values: { break_out_time: '2026-07-01T12:30:00Z' },
+      } as any)
+      vi.mocked(attendanceRepository.updateAttendanceRecord).mockResolvedValue({ id: 'rec-1' } as any)
+
+      // Second edit: break_out changed again, to 13:00 this time.
+      await attendanceService.finalReviewAttendance({
+        id: 'rec-1', owner_id: 'owner-1', decision: 'modified', owner_notes: 'Adjusting again after further review',
+        break_out_time: '2026-07-01T13:00:00Z',
+      })
+
+      // The stored "original" must still be 12:30 (the very first value), never 12:45 (the prior edit).
+      expect(attendanceRepository.updateAttendanceRecord).toHaveBeenCalledWith('rec-1', expect.objectContaining({
+        owner_modified_fields: ['break_out_time'],
+        owner_modified_original_values: { break_out_time: '2026-07-01T12:30:00Z' },
+      }))
+    })
+
+    it('downgrades to approved (no reason needed, M badge cleared) when edited back to the true original', async () => {
+      // Clock In was previously modified from the true original 09:00 to 09:10.
+      vi.mocked(attendanceRepository.getAttendanceRecordById).mockResolvedValue({
+        id: 'rec-1', clock_in_time: '2026-07-01T09:00:00Z', clock_out_time: '2026-07-01T17:00:00Z',
+        break_in_time: null, break_out_time: null,
+        owner_adjusted_clock_in_time: '2026-07-01T09:10:00Z', owner_adjusted_clock_out_time: null,
+        owner_modified_fields: ['clock_in_time'],
+        owner_modified_original_values: { clock_in_time: '2026-07-01T09:00:00Z' },
+      } as any)
+      vi.mocked(attendanceRepository.updateAttendanceRecord).mockResolvedValue({ id: 'rec-1' } as any)
+
+      // Edited back to 09:00 — exactly the true original — with no reason supplied.
+      await attendanceService.finalReviewAttendance({
+        id: 'rec-1', owner_id: 'owner-1', decision: 'modified',
+        clock_in_time: '2026-07-01T09:00:00Z',
+      })
+
+      expect(attendanceRepository.updateAttendanceRecord).toHaveBeenCalledWith('rec-1', expect.objectContaining({
+        owner_status: 'approved',
+        owner_notes: null,
+        owner_modified_fields: [],
+        owner_modified_original_values: {},
+        status: 'owner_approved',
+      }))
+    })
+
+    it('stays modified (reason still required) when only some fields revert to their true original', async () => {
+      // Both clock_in and break_out were previously modified.
+      vi.mocked(attendanceRepository.getAttendanceRecordById).mockResolvedValue({
+        id: 'rec-1', clock_in_time: '2026-07-01T09:00:00Z', clock_out_time: '2026-07-01T17:00:00Z',
+        break_in_time: '2026-07-01T12:00:00Z', break_out_time: '2026-07-01T12:45:00Z',
+        owner_adjusted_clock_in_time: '2026-07-01T09:10:00Z', owner_adjusted_clock_out_time: null,
+        owner_modified_fields: ['clock_in_time', 'break_out_time'],
+        owner_modified_original_values: { clock_in_time: '2026-07-01T09:00:00Z', break_out_time: '2026-07-01T12:30:00Z' },
+      } as any)
+
+      // Clock In reverts to 09:00 (true original), but break_out stays changed — no reason given.
+      await expect(attendanceService.finalReviewAttendance({
+        id: 'rec-1', owner_id: 'owner-1', decision: 'modified',
+        clock_in_time: '2026-07-01T09:00:00Z', break_out_time: '2026-07-01T13:00:00Z',
+      })).rejects.toThrow('A reason is required when modifying attendance times')
+      expect(attendanceRepository.updateAttendanceRecord).not.toHaveBeenCalled()
     })
 
     it('rejects an invalid decision value before touching the repository', async () => {
@@ -191,7 +312,7 @@ describe('attendanceService', () => {
         vi.mocked(attendanceRepository.getAttendanceRecordById).mockResolvedValue(baseExisting as any)
 
         await expect(attendanceService.finalReviewAttendance({
-          id: 'rec-1', owner_id: 'owner-1', decision: 'modified',
+          id: 'rec-1', owner_id: 'owner-1', decision: 'modified', owner_notes: 'Testing an invalid range',
           clock_in_time: '2026-07-01T17:30:00Z', clock_out_time: '2026-07-01T17:00:00Z',
         })).rejects.toThrow('Clock In cannot be later than Clock Out')
         expect(attendanceRepository.updateAttendanceRecord).not.toHaveBeenCalled()
@@ -201,7 +322,7 @@ describe('attendanceService', () => {
         vi.mocked(attendanceRepository.getAttendanceRecordById).mockResolvedValue(baseExisting as any)
 
         await expect(attendanceService.finalReviewAttendance({
-          id: 'rec-1', owner_id: 'owner-1', decision: 'modified',
+          id: 'rec-1', owner_id: 'owner-1', decision: 'modified', owner_notes: 'Testing an invalid range',
           break_in_time: '2026-07-01T12:30:00Z', break_out_time: '2026-07-01T12:00:00Z',
         })).rejects.toThrow('Break In cannot be later than Break Out')
         expect(attendanceRepository.updateAttendanceRecord).not.toHaveBeenCalled()
@@ -211,7 +332,7 @@ describe('attendanceService', () => {
         vi.mocked(attendanceRepository.getAttendanceRecordById).mockResolvedValue(baseExisting as any)
 
         await expect(attendanceService.finalReviewAttendance({
-          id: 'rec-1', owner_id: 'owner-1', decision: 'modified',
+          id: 'rec-1', owner_id: 'owner-1', decision: 'modified', owner_notes: 'Testing an invalid range',
           break_in_time: '2026-07-01T08:00:00Z', break_out_time: '2026-07-01T08:30:00Z',
         })).rejects.toThrow('Break In must be between Clock In and Clock Out')
         expect(attendanceRepository.updateAttendanceRecord).not.toHaveBeenCalled()
@@ -221,7 +342,7 @@ describe('attendanceService', () => {
         vi.mocked(attendanceRepository.getAttendanceRecordById).mockResolvedValue(baseExisting as any)
 
         await expect(attendanceService.finalReviewAttendance({
-          id: 'rec-1', owner_id: 'owner-1', decision: 'modified',
+          id: 'rec-1', owner_id: 'owner-1', decision: 'modified', owner_notes: 'Testing an invalid range',
           break_in_time: '2026-07-01T12:00:00Z', break_out_time: '2026-07-01T18:00:00Z',
         })).rejects.toThrow('Break Out must be between Clock In and Clock Out')
         expect(attendanceRepository.updateAttendanceRecord).not.toHaveBeenCalled()
@@ -234,7 +355,7 @@ describe('attendanceService', () => {
         } as any)
 
         await expect(attendanceService.finalReviewAttendance({
-          id: 'rec-1', owner_id: 'owner-1', decision: 'modified',
+          id: 'rec-1', owner_id: 'owner-1', decision: 'modified', owner_notes: 'Testing fallback to existing record',
           break_in_time: '2026-07-01T12:00:00Z', break_out_time: '2026-07-01T12:30:00Z',
         })).rejects.toThrow('Clock In cannot be later than Clock Out')
       })
@@ -244,7 +365,7 @@ describe('attendanceService', () => {
         vi.mocked(attendanceRepository.updateAttendanceRecord).mockResolvedValue({ id: 'rec-1' } as any)
 
         await attendanceService.finalReviewAttendance({
-          id: 'rec-1', owner_id: 'owner-1', decision: 'modified',
+          id: 'rec-1', owner_id: 'owner-1', decision: 'modified', owner_notes: 'Corrected after reviewing timesheet',
           clock_in_time: '2026-07-01T09:05:00Z', clock_out_time: '2026-07-01T17:05:00Z',
           break_in_time: '2026-07-01T12:00:00Z', break_out_time: '2026-07-01T12:30:00Z',
         })
@@ -260,6 +381,121 @@ describe('attendanceService', () => {
 
         await expect(attendanceService.finalReviewAttendance({ id: 'rec-1', owner_id: 'owner-1', decision: 'approved' }))
           .resolves.toBeDefined()
+      })
+    })
+
+    describe('UC56: reason required on a modified decision', () => {
+      it('rejects a modified decision with no reason', async () => {
+        vi.mocked(attendanceRepository.getAttendanceRecordById).mockResolvedValue({
+          id: 'rec-1', clock_in_time: '2026-07-01T09:00:00Z', clock_out_time: '2026-07-01T17:00:00Z',
+          break_in_time: null, break_out_time: null,
+          owner_adjusted_clock_in_time: null, owner_adjusted_clock_out_time: null,
+        } as any)
+
+        await expect(attendanceService.finalReviewAttendance({
+          id: 'rec-1', owner_id: 'owner-1', decision: 'modified',
+          clock_in_time: '2026-07-01T07:00:00Z',
+        })).rejects.toThrow('A reason is required when modifying attendance times')
+        expect(attendanceRepository.updateAttendanceRecord).not.toHaveBeenCalled()
+      })
+
+      it('rejects a modified decision with a blank/whitespace-only reason', async () => {
+        vi.mocked(attendanceRepository.getAttendanceRecordById).mockResolvedValue({
+          id: 'rec-1', clock_in_time: '2026-07-01T09:00:00Z', clock_out_time: '2026-07-01T17:00:00Z',
+          break_in_time: null, break_out_time: null,
+          owner_adjusted_clock_in_time: null, owner_adjusted_clock_out_time: null,
+        } as any)
+
+        await expect(attendanceService.finalReviewAttendance({
+          id: 'rec-1', owner_id: 'owner-1', decision: 'modified', owner_notes: '   ',
+          clock_in_time: '2026-07-01T07:00:00Z',
+        })).rejects.toThrow('A reason is required when modifying attendance times')
+        expect(attendanceRepository.updateAttendanceRecord).not.toHaveBeenCalled()
+      })
+
+      it('does not require a reason for approve/reject decisions', async () => {
+        vi.mocked(attendanceRepository.getAttendanceRecordById).mockResolvedValue({
+          id: 'rec-1', clock_in_time: '2026-07-01T09:00:00Z', clock_out_time: '2026-07-01T17:00:00Z',
+          owner_adjusted_clock_in_time: null, owner_adjusted_clock_out_time: null,
+        } as any)
+        vi.mocked(attendanceRepository.updateAttendanceRecord).mockResolvedValue({ id: 'rec-1' } as any)
+
+        await expect(attendanceService.finalReviewAttendance({ id: 'rec-1', owner_id: 'owner-1', decision: 'approved' }))
+          .resolves.toBeDefined()
+      })
+    })
+
+    describe('UC56: Owner/Partner outrank Manager for modifying a record', () => {
+      it('blocks a Manager from modifying a record Owner/Partner already modified', async () => {
+        vi.mocked(attendanceRepository.getAttendanceRecordById).mockResolvedValue({
+          id: 'rec-1', clock_in_time: '2026-07-01T09:00:00Z', clock_out_time: '2026-07-01T17:00:00Z',
+          break_in_time: null, break_out_time: null,
+          owner_adjusted_clock_in_time: '2026-07-01T07:35:00Z', owner_adjusted_clock_out_time: null,
+          owner_status: 'modified', owner_reviewed_by: 'owner-1',
+        } as any)
+        vi.mocked(attendanceRepository.getUsersByIds).mockImplementation(async (ids: string[]) => {
+          const all = [
+            { id: 'mgr-1', role: 'Manager' },
+            { id: 'owner-1', role: 'Owner' },
+            { id: 'emp-1', role: 'Employee' },
+          ]
+          return all.filter(u => ids.includes(u.id)) as any
+        })
+        vi.mocked(attendanceRepository.getAttendanceRecordContext).mockResolvedValue({
+          assignee_user_id: 'emp-1', department_id: 'dept-ops', company_id: 'company-1',
+        })
+        vi.mocked(ownerTeamRepository.findManagerDepartments).mockResolvedValue([{ department_id: 'dept-ops', department_name: 'Ops' }])
+
+        await expect(attendanceService.finalReviewAttendance({
+          id: 'rec-1', owner_id: 'mgr-1', decision: 'modified', owner_notes: 'Trying to correct it again',
+          clock_in_time: '2026-07-01T08:00:00Z',
+        })).rejects.toThrow('This record was last modified by Owner/Partner and can no longer be modified by a Manager')
+        expect(attendanceRepository.updateAttendanceRecord).not.toHaveBeenCalled()
+      })
+
+      it('still allows Owner/Partner to modify a record a Manager already modified', async () => {
+        vi.mocked(attendanceRepository.getAttendanceRecordById).mockResolvedValue({
+          id: 'rec-1', clock_in_time: '2026-07-01T09:00:00Z', clock_out_time: '2026-07-01T17:00:00Z',
+          break_in_time: null, break_out_time: null,
+          owner_adjusted_clock_in_time: '2026-07-01T07:35:00Z', owner_adjusted_clock_out_time: null,
+          owner_status: 'modified', owner_reviewed_by: 'mgr-1',
+        } as any)
+        vi.mocked(attendanceRepository.getUsersByIds).mockResolvedValue([{ id: 'owner-1', role: 'Owner' } as any])
+        vi.mocked(attendanceRepository.updateAttendanceRecord).mockResolvedValue({ id: 'rec-1' } as any)
+
+        await attendanceService.finalReviewAttendance({
+          id: 'rec-1', owner_id: 'owner-1', decision: 'modified', owner_notes: 'Owner overriding the manager\'s edit',
+          clock_in_time: '2026-07-01T07:00:00Z',
+        })
+
+        expect(attendanceRepository.updateAttendanceRecord).toHaveBeenCalled()
+        // Owner/Partner short-circuit before any department/context lookup is needed.
+        expect(attendanceRepository.getAttendanceRecordContext).not.toHaveBeenCalled()
+      })
+
+      it('allows a Manager to modify a record never touched by Owner/Partner', async () => {
+        vi.mocked(attendanceRepository.getAttendanceRecordById).mockResolvedValue({
+          id: 'rec-1', clock_in_time: '2026-07-01T09:00:00Z', clock_out_time: '2026-07-01T17:00:00Z',
+          break_in_time: null, break_out_time: null,
+          owner_adjusted_clock_in_time: null, owner_adjusted_clock_out_time: null,
+          owner_status: 'pending', owner_reviewed_by: null,
+        } as any)
+        vi.mocked(attendanceRepository.getUsersByIds).mockImplementation(async (ids: string[]) => {
+          const all = [{ id: 'mgr-1', role: 'Manager' }, { id: 'emp-1', role: 'Employee' }]
+          return all.filter(u => ids.includes(u.id)) as any
+        })
+        vi.mocked(attendanceRepository.getAttendanceRecordContext).mockResolvedValue({
+          assignee_user_id: 'emp-1', department_id: 'dept-ops', company_id: 'company-1',
+        })
+        vi.mocked(ownerTeamRepository.findManagerDepartments).mockResolvedValue([{ department_id: 'dept-ops', department_name: 'Ops' }])
+        vi.mocked(attendanceRepository.updateAttendanceRecord).mockResolvedValue({ id: 'rec-1' } as any)
+
+        await attendanceService.finalReviewAttendance({
+          id: 'rec-1', owner_id: 'mgr-1', decision: 'modified', owner_notes: 'Employee forgot to clock in on time',
+          clock_in_time: '2026-07-01T09:10:00Z',
+        })
+
+        expect(attendanceRepository.updateAttendanceRecord).toHaveBeenCalled()
       })
     })
   })
@@ -320,6 +556,28 @@ describe('attendanceService', () => {
       const dashboard = await attendanceService.getAttendanceDashboard('company-1')
 
       expect(dashboard.records[0].exceptions).toContain('late')
+    })
+
+    it('surfaces who last reviewed/modified a record, so the UI can tell a Manager correction apart from an Owner one', async () => {
+      vi.mocked(attendanceRepository.getAssignmentsByCompany).mockResolvedValue([
+        {
+          id: 'asn-1', user_id: 'user-1', supervisor_employee_id: null,
+          shifts: { id: 'shift-1', department_id: null, shift_date: '2026-01-01', start_time: '09:00', end_time: '17:00', title: 'Shift' },
+        },
+      ] as any)
+      vi.mocked(attendanceRepository.getAttendanceRecordsByAssignmentIds).mockResolvedValue([
+        { id: 'rec-1', shift_assignment_id: 'asn-1', casual_worker_id: 'user-1', confirmed_by_employee_id: 'user-1', submitted_by_employee_id: 'user-1', clock_in_time: '2026-01-01T09:00:00Z', clock_out_time: '2026-01-01T17:00:00Z', owner_status: 'modified', owner_reviewed_by: 'mgr-1' },
+      ] as any)
+      vi.mocked(attendanceRepository.getUsersByIds).mockResolvedValue([
+        { id: 'user-1', full_name: 'Alice', role: 'Employee' },
+        { id: 'mgr-1', full_name: 'David Lim', role: 'Manager' },
+      ] as any)
+      vi.mocked(attendanceRepository.getDepartmentsByIds).mockResolvedValue([])
+
+      const dashboard = await attendanceService.getAttendanceDashboard('company-1')
+
+      expect(dashboard.records[0].modifier_name).toBe('David Lim')
+      expect(dashboard.records[0].modifier_role).toBe('Manager')
     })
   })
 
@@ -616,6 +874,9 @@ describe('attendanceService', () => {
       vi.mocked(attendanceRepository.countApprovedShiftSwapsForUser).mockResolvedValue(0)
       vi.mocked(attendanceRepository.updateShiftAssignmentUser).mockResolvedValue({} as any)
       vi.mocked(taskRepository.reassignTasksForShiftSwap).mockResolvedValue(undefined)
+      // Default requester is a Manager, so these tests exercise the company-wide (Owner/Partner)
+      // settings path unless a test overrides this to 'Employee' for the department-scoped path.
+      vi.mocked(attendanceRepository.getUsersByIds).mockResolvedValue([{ id: 'user-1', full_name: 'Alice', role: 'Manager' }] as any)
     })
 
     const accept = () => attendanceService.respondShiftSwapRequest({ id: 'swap-1', counterpart_id: 'user-2', decision: 'approved' })
@@ -743,6 +1004,30 @@ describe('attendanceService', () => {
       await accept()
 
       expect(attendanceRepository.updateShiftAssignmentUser).toHaveBeenCalled()
+    })
+
+    describe('settings scope by requester role (confirmed 2026-07-23)', () => {
+      it('uses the company-wide Owner/Partner settings when the requester is a Manager', async () => {
+        vi.mocked(attendanceRepository.getShiftSwapRequestById).mockResolvedValue(pendingRequest() as any)
+        vi.mocked(attendanceRepository.getUsersByIds).mockResolvedValue([{ id: 'user-1', full_name: 'Alice', role: 'Manager' }] as any)
+        vi.mocked(shiftSwapSettingsRepository.getSettings).mockResolvedValue(baseSettings)
+
+        await accept()
+
+        expect(shiftSwapSettingsRepository.getSettings).toHaveBeenCalledWith('company-1')
+        expect(shiftSwapDepartmentSettingsRepository.getSettings).not.toHaveBeenCalled()
+      })
+
+      it('uses that department\'s own settings when the requester is an Employee — never the company-wide row', async () => {
+        vi.mocked(attendanceRepository.getShiftSwapRequestById).mockResolvedValue(pendingRequest() as any)
+        vi.mocked(attendanceRepository.getUsersByIds).mockResolvedValue([{ id: 'user-1', full_name: 'Alice', role: 'Employee' }] as any)
+        vi.mocked(shiftSwapDepartmentSettingsRepository.getSettings).mockResolvedValue({ ...baseSettings, department_id: 'dept-1' } as any)
+
+        await accept()
+
+        expect(shiftSwapDepartmentSettingsRepository.getSettings).toHaveBeenCalledWith('company-1', 'dept-1')
+        expect(shiftSwapSettingsRepository.getSettings).not.toHaveBeenCalled()
+      })
     })
   })
 
@@ -874,6 +1159,28 @@ describe('attendanceService', () => {
       expect(requests[0].limit_exceeded).toBeNull()
       expect(requests[0].deadline_exceeded).toBeNull()
       expect(attendanceRepository.countApprovedShiftSwapsForUser).not.toHaveBeenCalled()
+    })
+
+    it('Owner queue reads the company-wide settings row, never a department row', async () => {
+      await attendanceService.getShiftSwapRequests('company-1')
+
+      expect(shiftSwapSettingsRepository.getSettings).toHaveBeenCalledWith('company-1')
+      expect(shiftSwapDepartmentSettingsRepository.getSettingsForDepartments).not.toHaveBeenCalled()
+    })
+
+    it('Manager queue reads that department\'s own settings row, never the company-wide row', async () => {
+      vi.mocked(ownerTeamRepository.findManagerDepartments).mockResolvedValue([{ department_id: 'dept-ops', department_name: 'Ops' }])
+      vi.mocked(shiftSwapDepartmentSettingsRepository.getSettingsForDepartments).mockResolvedValue([
+        { company_id: 'company-1', department_id: 'dept-ops', auto_approval_enabled: false, monthly_swap_limit: 2, deadline_hours_before_shift: null, require_review_on_limit_exceeded: true, require_review_on_deadline_exceeded: true, updated_by: 'mgr-1', updated_at: '2026-01-01T00:00:00Z' },
+      ] as any)
+      vi.mocked(attendanceRepository.countApprovedShiftSwapsForUser).mockResolvedValue(1)
+
+      const requests = await attendanceService.getShiftSwapRequests('company-1', { managerId: 'mgr-1' })
+
+      expect(shiftSwapDepartmentSettingsRepository.getSettingsForDepartments).toHaveBeenCalledWith('company-1', ['dept-ops'])
+      expect(shiftSwapSettingsRepository.getSettings).not.toHaveBeenCalled()
+      expect(requests[0].monthly_swap_limit).toBe(2)
+      expect(requests[0].requester_swaps_left).toBe(1)
     })
   })
 

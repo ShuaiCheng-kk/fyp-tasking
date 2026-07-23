@@ -13,9 +13,13 @@ export const jobTemplateService = {
     return jobTemplateRepository.createTemplate(input)
   },
 
-  async listTemplates(company_id: string): Promise<JobTemplate[]> {
+  // department_ids omitted → Owner/Partner see every template in the company (their own
+  // Owner/Partner-only templates plus every Manager's). Passed (Manager, resolved server-side
+  // from manager_scope_id) → only templates tagged to their own department — never another
+  // department's, and never an Owner/Partner template (those carry no department at all).
+  async listTemplates(company_id: string, department_ids?: string[]): Promise<JobTemplate[]> {
     if (!company_id) throw new Error('company_id is required')
-    return jobTemplateRepository.getTemplatesByCompany(company_id)
+    return jobTemplateRepository.getTemplatesByCompany(company_id, department_ids)
   },
 
   async deleteTemplate(id: string): Promise<void> {

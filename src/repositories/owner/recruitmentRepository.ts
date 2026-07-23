@@ -38,24 +38,48 @@ export const recruitmentRepository = {
     return (data ?? []) as JobPosting[]
   },
 
-  async getDraftPostings(company_id: string): Promise<JobPosting[]> {
-    const { data, error } = await supabase
+  // department_ids omitted (Owner/Partner viewer) → every draft in the company. Passed (Manager
+  // viewer) → only drafts tagged to a department the manager is in — the service layer then
+  // further narrows this to fellow-Manager-created drafts only (see getDraftPostings there).
+  async getDraftPostings(company_id: string, department_ids?: string[]): Promise<JobPosting[]> {
+    let query = supabase
       .from('job_postings')
       .select('*')
       .eq('company_id', company_id)
       .eq('status', 'draft')
-      .order('created_at', { ascending: false })
+    if (department_ids) {
+      if (department_ids.length === 0) return []
+      query = query.in('department_id', department_ids)
+    }
+    const { data, error } = await query.order('created_at', { ascending: false })
     if (error) throw new Error(error.message)
     return (data ?? []) as JobPosting[]
   },
 
-  async getPendingApprovalPostings(company_id: string): Promise<JobPostingPendingApproval[]> {
-    const { data, error } = await supabase
+  async getUserRolesByIds(ids: string[]): Promise<Map<string, string>> {
+    if (ids.length === 0) return new Map()
+    const { data, error } = await supabase.from('users').select('id, role').in('id', ids)
+    if (error) throw new Error(error.message)
+    return new Map((data ?? []).map(u => [u.id as string, u.role as string]))
+  },
+
+  // include_rejected: a Manager's "Waiting For Review" merges in their own rejected submissions
+  // (so they can see the reason and Edit & Resubmit from the same list) — Owner/Partner's queue
+  // never sets this, since a rejected posting needs no further decision from them.
+  // department_ids: a Manager's queue is scoped to their own department(s) — see
+  // getDraftPostings/getVerifiedPoolWorkers for the same convention. Omitted (Owner/Partner) =
+  // every department's queue.
+  async getPendingApprovalPostings(company_id: string, include_rejected = false, department_ids?: string[]): Promise<JobPostingPendingApproval[]> {
+    if (department_ids && department_ids.length === 0) return []
+    const statuses = include_rejected ? ['pending_approval', 'rejected'] : ['pending_approval']
+    let query = supabase
       .from('job_postings')
       .select('*')
       .eq('company_id', company_id)
-      .eq('status', 'pending_approval')
+      .in('status', statuses)
       .order('created_at', { ascending: false })
+    if (department_ids) query = query.in('department_id', department_ids)
+    const { data, error } = await query
     if (error) throw new Error(error.message)
     const postings = (data ?? []) as JobPosting[]
 
@@ -69,6 +93,7 @@ export const recruitmentRepository = {
     const allUserIds = [...new Set([
       ...postings.map(p => p.created_by),
       ...postings.map(p => p.assigned_employee_id).filter((id): id is string => Boolean(id)),
+      ...postings.map(p => p.rejected_by).filter((id): id is string => Boolean(id)),
     ].filter(Boolean))]
     let userMap = new Map<string, { full_name: string; profile_photo_url: string | null }>()
     if (allUserIds.length > 0) {
@@ -82,6 +107,7 @@ export const recruitmentRepository = {
       submitter_name: userMap.get(p.created_by)?.full_name ?? null,
       submitter_photo_url: userMap.get(p.created_by)?.profile_photo_url ?? null,
       assigned_employee_name: p.assigned_employee_id ? userMap.get(p.assigned_employee_id)?.full_name ?? null : null,
+      rejected_by_name: p.rejected_by ? userMap.get(p.rejected_by)?.full_name ?? null : null,
     }))
   },
 
@@ -191,19 +217,39 @@ export const recruitmentRepository = {
 
   // Lazily run on-read (there is no cron/job-runner in this app — same pattern as
   // autoExpireSwapRequestIfNeeded in attendanceService) — flips any 'open' posting whose deadline
-  // has passed to 'archived', the same terminal state the manual Archive action already produces.
+  // has passed to 'closed', the same terminal state a fully-confirmed posting auto-closes to
+  // (confirmed 2026-07-23: a deadline passing and a posting filling up are both just "no longer
+  // accepting applicants" — one shared bucket, visible in Closed Jobs to Owner/Partner/Manager
+  // alike, not the separate Owner/Partner-only Archived bucket manual Archive produces).
   // Scoping to company_id keeps the owner/manager dashboard sweep cheap; omit it to sweep globally
   // (used by the public job board, which has no company context).
   async sweepExpiredJobPostings(company_id?: string): Promise<void> {
-    let query = supabase
+    let selectQuery = supabase
       .from('job_postings')
-      .update({ status: 'archived', archived_at: new Date().toISOString() })
+      .select('id')
       .eq('status', 'open')
       .not('expires_at', 'is', null)
       .lt('expires_at', new Date().toISOString())
-    if (company_id) query = query.eq('company_id', company_id)
-    const { error } = await query
+    if (company_id) selectQuery = selectQuery.eq('company_id', company_id)
+    const { data: expired, error: selectError } = await selectQuery
+    if (selectError) throw new Error(selectError.message)
+    const ids = (expired ?? []).map(row => row.id)
+    if (ids.length === 0) return
+
+    const { error } = await supabase
+      .from('job_postings')
+      .update({ status: 'closed', archived_at: new Date().toISOString() })
+      .in('id', ids)
     if (error) throw new Error(error.message)
+
+    // Same resolution the fill-path already gives pending applicants (markPendingApplicantsJobClosed)
+    // — a deadline passing must not leave them waiting on a job no longer accepting anyone.
+    const { error: pendingError } = await supabase
+      .from('job_applicants')
+      .update({ status: 'job_closed', decided_at: new Date().toISOString() })
+      .in('job_id', ids)
+      .eq('status', 'pending')
+    if (pendingError) throw new Error(pendingError.message)
   },
 
   // Workers whose two-way confirmation is complete (invitation accepted) — the people an
@@ -587,13 +633,22 @@ export const recruitmentRepository = {
   // The company's verified worker pool: Casual Workers who have actually completed a shift here
   // (verified_at) and are not banned (blocked_at). Enriched with how many shifts they've finished
   // so the Owner can pick the regulars they trust.
-  async getVerifiedPoolWorkers(company_id: string): Promise<PoolWorker[]> {
-    const { data: cwdRows, error: cwdErr } = await supabase
+  // department_ids: a Manager's pool is scoped to workers verified in THEIR department(s) only —
+  // casualworker_departments is a per-department row (a worker can be verified in several), so
+  // this filters on that row directly rather than trusting the one "earliest" department picked
+  // for display below. Omitted (Owner/Partner) = company-wide, unscoped.
+  async getVerifiedPoolWorkers(company_id: string, department_ids?: string[]): Promise<PoolWorker[]> {
+    // A Manager scoped to zero departments has no pool to show — short-circuit rather than let
+    // an empty .in() reach Postgres (undefined behavior to rely on).
+    if (department_ids && department_ids.length === 0) return []
+    let query = supabase
       .from('casualworker_departments')
       .select('casual_worker_id, department_id, verified_at, departments(name)')
       .eq('company_id', company_id)
       .not('verified_at', 'is', null)
       .is('blocked_at', null)
+    if (department_ids) query = query.in('department_id', department_ids)
+    const { data: cwdRows, error: cwdErr } = await query
     if (cwdErr) throw new Error(cwdErr.message)
     if (!cwdRows || cwdRows.length === 0) return []
 

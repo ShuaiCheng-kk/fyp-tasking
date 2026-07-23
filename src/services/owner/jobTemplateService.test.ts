@@ -96,13 +96,21 @@ describe('jobTemplateService — Job Template', () => {
   })
 
   describe('listTemplates', () => {
-    it('returns templates shared company-wide, regardless of creator', async () => {
+    it('returns every company template when no department scope is given (Owner/Partner)', async () => {
       vi.mocked(jobTemplateRepository.getTemplatesByCompany).mockResolvedValue([baseTemplate])
 
       const result = await jobTemplateService.listTemplates('company-1')
 
-      expect(jobTemplateRepository.getTemplatesByCompany).toHaveBeenCalledWith('company-1')
+      expect(jobTemplateRepository.getTemplatesByCompany).toHaveBeenCalledWith('company-1', undefined)
       expect(result).toEqual([baseTemplate])
+    })
+
+    it('passes department scope through for a Manager viewer', async () => {
+      vi.mocked(jobTemplateRepository.getTemplatesByCompany).mockResolvedValue([baseTemplate])
+
+      await jobTemplateService.listTemplates('company-1', ['dept-1'])
+
+      expect(jobTemplateRepository.getTemplatesByCompany).toHaveBeenCalledWith('company-1', ['dept-1'])
     })
 
     it('throws when company_id is missing', async () => {

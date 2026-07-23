@@ -214,10 +214,22 @@ export default function OwnerSidebar({
           .then(data => { if (data.success) setMsgCount(data.unread_messages ?? 0) })
           .catch(() => {})
 
-        fetch(`/api/recruitment?company_id=${cid}&resource=pending_approval`)
-          .then(r => r.json())
-          .then(data => { if (data.success) setReviewCount((data.pendingPostings as unknown[]).length ?? 0) })
-          .catch(() => {})
+        // A Manager's own submissions are department-scoped and only a Rejection is theirs to act
+        // on — a peer's still-pending (not yet decided) submission isn't, same distinction the
+        // in-page "Waiting For Review" tab dot already makes. Owner/Partner review every
+        // department's queue, so any pending item counts for them.
+        const fetchReviewCount = () => {
+          const scopeParam = role === 'manager' ? `&manager_scope_id=${internalId}&include_rejected=true` : ''
+          fetch(`/api/recruitment?company_id=${cid}&resource=pending_approval${scopeParam}`)
+            .then(r => r.json())
+            .then(data => {
+              if (!data.success) return
+              const postings = data.pendingPostings as { status: string }[]
+              setReviewCount(role === 'manager' ? postings.filter(p => p.status === 'rejected').length : postings.length)
+            })
+            .catch(() => {})
+        }
+        fetchReviewCount()
 
         fetch(`/api/attendance?resource=pending_requests_count&company_id=${cid}`)
           .then(r => r.json())
@@ -270,17 +282,10 @@ export default function OwnerSidebar({
             () => { setMsgCount(c => c + 1) })
           .subscribe()
 
-        const refreshReviewCount = () => {
-          fetch(`/api/recruitment?company_id=${cid}&resource=pending_approval`)
-            .then(r => r.json())
-            .then(data => { if (data.success) setReviewCount((data.pendingPostings as unknown[]).length ?? 0) })
-            .catch(() => {})
-        }
-
         const reviewChannel = supabase
           .channel('owner-sidebar-review')
           .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'job_postings', filter: `company_id=eq.${cid}` },
-            refreshReviewCount)
+            fetchReviewCount)
           .subscribe()
 
         const refreshAnnCount = () => {

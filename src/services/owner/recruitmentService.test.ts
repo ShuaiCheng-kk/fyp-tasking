@@ -26,6 +26,7 @@ vi.mock('@/repositories/owner/recruitmentRepository', () => ({
     getApplicantsByJob: vi.fn(),
     createJobPosting: vi.fn(),
     getDraftPostings: vi.fn(),
+    getUserRolesByIds: vi.fn(),
     updateJobPosting: vi.fn(),
     deleteJobPosting: vi.fn(),
     getJobPostingById: vi.fn(),
@@ -654,18 +655,72 @@ describe('recruitmentService — Recruitment', () => {
     })
   })
 
-  describe('Candidate Management is Recruitment-Owner-only (Manager Recruitment rules)', () => {
-    // basePosting.created_by = 'owner-1'. A Manager viewing/managing a job they didn't create —
-    // whether it belongs to the Owner, a Partner, or another Manager in the same department —
-    // must be blocked from every applicant-facing action, even though Job Visibility already lets
-    // them see the job itself.
-    it('blocks a Manager from viewing applicants on a job they did not create', async () => {
-      vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue(basePosting)
-      vi.mocked(recruitmentRepository.getUserRole).mockResolvedValue('Manager')
+  describe('getPendingApprovalPostings — Waiting For Review (Manager Recruitment rules)', () => {
+    it('defaults to pending_approval only (Owner/Partner queue)', async () => {
+      vi.mocked(recruitmentRepository.getPendingApprovalPostings).mockResolvedValue([])
 
-      await expect(recruitmentService.getApplicants('job-1', 'mgr-2'))
-        .rejects.toThrow('Only the recruitment owner can manage applicants for this job')
-      expect(recruitmentRepository.getApplicantsByJob).not.toHaveBeenCalled()
+      await recruitmentService.getPendingApprovalPostings('company-1')
+
+      expect(recruitmentRepository.getPendingApprovalPostings).toHaveBeenCalledWith('company-1', false)
+    })
+
+    it('passes include_rejected through for a Manager viewer (merges in their own rejected submissions)', async () => {
+      vi.mocked(recruitmentRepository.getPendingApprovalPostings).mockResolvedValue([])
+
+      await recruitmentService.getPendingApprovalPostings('company-1', true)
+
+      expect(recruitmentRepository.getPendingApprovalPostings).toHaveBeenCalledWith('company-1', true)
+    })
+
+    it('throws when company_id is missing', async () => {
+      await expect(recruitmentService.getPendingApprovalPostings('')).rejects.toThrow('company_id is required')
+    })
+  })
+
+  describe('getDraftPostings — Drafts sharing (Manager Recruitment rules)', () => {
+    const draftByOwner = { ...basePosting, id: 'draft-owner', status: 'draft' as const, created_by: 'owner-1' }
+    const draftByManager = { ...basePosting, id: 'draft-mgr', status: 'draft' as const, created_by: 'mgr-1' }
+    const draftByPeerManager = { ...basePosting, id: 'draft-mgr-2', status: 'draft' as const, created_by: 'mgr-2' }
+
+    beforeEach(() => {
+      vi.mocked(recruitmentRepository.getDepartmentsByIds).mockResolvedValue([])
+      vi.mocked(recruitmentRepository.getUsersByIds).mockResolvedValue([])
+    })
+
+    it('returns only Owner/Partner-created drafts when no department scope is given (Owner/Partner viewer)', async () => {
+      vi.mocked(recruitmentRepository.getDraftPostings).mockResolvedValue([draftByOwner, draftByManager])
+      vi.mocked(recruitmentRepository.getUserRolesByIds).mockResolvedValue(new Map([['owner-1', 'Owner'], ['mgr-1', 'Manager']]))
+
+      const result = await recruitmentService.getDraftPostings('company-1')
+
+      expect(recruitmentRepository.getDraftPostings).toHaveBeenCalledWith('company-1', undefined)
+      expect(result.map(d => d.id)).toEqual(['draft-owner'])
+    })
+
+    // Unlike Templates, Drafts are never shared even within the same department — a Manager only
+    // ever sees drafts they created themselves, not a fellow Manager's, even department-scoped.
+    it('keeps only the viewing Manager\'s own drafts, dropping both Owner/Partner and a peer Manager\'s', async () => {
+      vi.mocked(recruitmentRepository.getDraftPostings).mockResolvedValue([draftByOwner, draftByManager, draftByPeerManager])
+
+      const result = await recruitmentService.getDraftPostings('company-1', ['dept-1'], 'mgr-1')
+
+      expect(recruitmentRepository.getDraftPostings).toHaveBeenCalledWith('company-1', ['dept-1'])
+      expect(recruitmentRepository.getUserRolesByIds).not.toHaveBeenCalled()
+      expect(result.map(d => d.id)).toEqual(['draft-mgr'])
+    })
+  })
+
+  describe('Candidate Management is Recruitment-Owner-only (Manager Recruitment rules)', () => {
+    // basePosting.created_by = 'owner-1'. Viewing applicants is department-wide, same as Job
+    // Visibility — a Manager who didn't create the job still sees who applied. It's DECIDING on
+    // them (accept/reject/remove/edit/archive/delete) that's Recruitment-Owner-only.
+    it('allows a Manager to view applicants on a job they did not create', async () => {
+      vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue(basePosting)
+      vi.mocked(recruitmentRepository.getApplicantsByJob).mockResolvedValue([baseApplicant])
+
+      const result = await recruitmentService.getApplicants('job-1', 'mgr-2')
+
+      expect(result).toHaveLength(1)
     })
 
     it('allows a Manager to view applicants on their own job', async () => {
@@ -717,6 +772,42 @@ describe('recruitmentService — Recruitment', () => {
         job_id: 'job-1', user_ids: ['cw-1'], sent_by: 'mgr-2',
       })).rejects.toThrow('Only the recruitment owner can manage applicants for this job')
       expect(recruitmentRepository.createDirectApplicant).not.toHaveBeenCalled()
+    })
+
+    it('blocks a Manager from editing a job they did not create when an actor_id is given', async () => {
+      vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue({ ...basePosting, status: 'draft' })
+      vi.mocked(recruitmentRepository.getUserRole).mockResolvedValue('Manager')
+
+      await expect(recruitmentService.editJobPosting('job-1', { title: 'New Title' }, 'mgr-2'))
+        .rejects.toThrow('Only the recruitment owner can manage applicants for this job')
+      expect(recruitmentRepository.updateJobPosting).not.toHaveBeenCalled()
+    })
+
+    it('blocks a Manager from archiving a job they did not create when an actor_id is given', async () => {
+      vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue(basePosting)
+      vi.mocked(recruitmentRepository.getApplicantCounts).mockResolvedValue([])
+      vi.mocked(recruitmentRepository.getUserRole).mockResolvedValue('Manager')
+
+      await expect(recruitmentService.archiveJobPosting('job-1', 'mgr-2'))
+        .rejects.toThrow('Only the recruitment owner can manage applicants for this job')
+      expect(recruitmentRepository.updateJobPosting).not.toHaveBeenCalled()
+    })
+
+    it('blocks a Manager from deleting a job they did not create when an actor_id is given', async () => {
+      vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue(basePosting)
+      vi.mocked(recruitmentRepository.getUserRole).mockResolvedValue('Manager')
+
+      await expect(recruitmentService.deleteJobPosting('job-1', 'mgr-2'))
+        .rejects.toThrow('Only the recruitment owner can manage applicants for this job')
+      expect(recruitmentRepository.deleteJobPosting).not.toHaveBeenCalled()
+    })
+
+    it('allows editJobPosting/archiveJobPosting/deleteJobPosting when no actor_id is given (internal/system callers)', async () => {
+      vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue({ ...basePosting, status: 'draft' })
+      vi.mocked(recruitmentRepository.updateJobPosting).mockResolvedValue({ ...basePosting, status: 'draft' })
+
+      await expect(recruitmentService.editJobPosting('job-1', { title: 'New Title' })).resolves.toBeDefined()
+      expect(recruitmentRepository.getUserRole).not.toHaveBeenCalled()
     })
   })
 

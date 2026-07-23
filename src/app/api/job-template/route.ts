@@ -3,17 +3,22 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { jobTemplateService } from '@/services/owner/jobTemplateService'
+import { taskService } from '@/services/owner/taskService'
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const company_id = searchParams.get('company_id')
+  // Manager Recruitment page scope: same manager_scope_id resolution as /api/task-template —
+  // company-wide (Owner/Partner) templates excluded, only this manager's own department's shown.
+  const manager_scope_id = searchParams.get('manager_scope_id') ?? undefined
 
   if (!company_id) {
     return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
   }
 
   try {
-    const templates = await jobTemplateService.listTemplates(company_id)
+    const managerScope = manager_scope_id ? await taskService.getManagerTeamScope(company_id, manager_scope_id) : null
+    const templates = await jobTemplateService.listTemplates(company_id, managerScope?.departmentIds)
     return NextResponse.json({ success: true, templates })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to fetch job templates'

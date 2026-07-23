@@ -1688,6 +1688,12 @@ export default function CommunicationView({ renderSidebar, basePath }: {
                         style={{ flex: 1, minWidth: 0, border: 'none', background: 'transparent', outline: 'none', fontSize: 13, color: '#0F172A', fontWeight: 500 }}
                       />
                     </div>
+                    {/* Manager is already scoped server-side to company-wide + their own single
+                        department (see fetchAnnouncements' department_id param) — a filter that
+                        lists every department in the company would just be dead options that
+                        always return empty, so it's Owner/Partner only (they get every department
+                        at once and actually need to narrow it down). */}
+                    {!isManagerRole && (
                     <div ref={othersDeptFilterRef} style={{ position: 'relative', flexShrink: 0 }}>
                       <button
                         type="button"
@@ -1715,6 +1721,7 @@ export default function CommunicationView({ renderSidebar, basePath }: {
                         </div>
                       )}
                     </div>
+                    )}
                   </div>
                   <div style={{ overflowY: 'auto', flex: 1, minHeight: 0, padding: '10px 10px 10px' }}>
                     {othersAnnouncements.length === 0 ? (

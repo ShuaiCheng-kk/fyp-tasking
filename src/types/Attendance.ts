@@ -6,6 +6,8 @@ export type AttendanceExceptionType = 'pending' | 'late' | 'absent' | 'overtime'
 export type AttendanceRequestStatus = 'pending' | 'approved' | 'rejected' | 'modified'
 export type TimeOffRequestType = 'break_waiver'
 
+export type AttendanceModifiedTimeField = 'clock_in_time' | 'clock_out_time' | 'break_in_time' | 'break_out_time'
+
 export interface AttendanceRecord {
   id: string
   shift_assignment_id: string
@@ -28,6 +30,13 @@ export interface AttendanceRecord {
   owner_reviewed_at: string | null
   owner_adjusted_clock_in_time: string | null
   owner_adjusted_clock_out_time: string | null
+  // Which of clock_in_time/clock_out_time/break_in_time/break_out_time the most recent 'modified'
+  // decision actually changed — lets the Owner/Partner page show what a Manager's correction
+  // touched (paired with owner_reviewed_by/owner_reviewed_at for who/when).
+  owner_modified_fields: AttendanceModifiedTimeField[] | null
+  // The value each field in owner_modified_fields held immediately before that same decision
+  // overwrote it — lets the UI show "Original: <value>" next to a corrected field.
+  owner_modified_original_values: Partial<Record<AttendanceModifiedTimeField, string | null>> | null
   // Open-ended (one-off) jobs have no scheduled end time, so the supervising Employee must
   // review the work and release the Casual Worker before Clock Out is allowed. Unused for
   // fixed-end shifts, which keep the time-based gate instead.
@@ -53,6 +62,8 @@ export interface AttendanceRecordUpdate {
   owner_reviewed_at?: string | null
   owner_adjusted_clock_in_time?: string | null
   owner_adjusted_clock_out_time?: string | null
+  owner_modified_fields?: AttendanceModifiedTimeField[] | null
+  owner_modified_original_values?: Partial<Record<AttendanceModifiedTimeField, string | null>> | null
   employee_notes?: string | null
   manager_notes?: string | null
   status?: string
@@ -123,6 +134,10 @@ export interface AttendanceDashboardRecord {
   department_name: string | null
   record: AttendanceRecord | null
   exceptions: AttendanceExceptionType[]
+  // Who last decided record.owner_status (any decision, not just 'modified') — the Owner/Partner
+  // page uses this + record.owner_status === 'modified' to flag a Manager's correction.
+  modifier_name: string | null
+  modifier_role: string | null
 }
 
 export interface AttendanceDashboard {
@@ -180,6 +195,9 @@ export interface ShiftSwapOwnerDecisionInput {
   id: string
   reviewer_id: string
   decision: 'approved' | 'rejected'
+  // Required by the UI when decision is 'rejected' — recorded as owner_review_reason so the
+  // requester (and the Completed Requests list) can see why the Owner/Partner rejected it.
+  reason?: string | null
 }
 
 export interface ShiftSwapWithdrawInput {
@@ -232,34 +250,56 @@ export interface ShiftSwapMovableTask {
   created_at: string
 }
 
-// Company-wide config for Shift Swap auto-approval. A single row per company — no per-role/
-// per-user overrides (unlike Off Day quotas), since the Owner's spec is one shared limit/deadline
-// for everyone. null monthly_swap_limit / deadline_hours_before_shift means "nothing to enforce".
-// require_review_on_* pick the action when that rule is breached: true = escalate to the Owner,
-// false = auto-reject the request. Rules are evaluated when the counterpart accepts, not at
-// submission (the monthly count / deadline may change while the request waits).
-export interface ShiftSwapSettings {
-  company_id: string
+// Shared rule shape evaluated at counterpart-accept time — same fields whether the row being
+// enforced is the company-wide Owner/Partner config or a department-scoped Manager config below.
+// null monthly_swap_limit / deadline_hours_before_shift means "nothing to enforce".
+// require_review_on_* pick the action when that rule is breached: true = escalate (to Owner for
+// a Manager-Manager swap, to the department's Manager for an Employee-Employee swap), false =
+// auto-reject the request. Rules are evaluated when the counterpart accepts, not at submission
+// (the monthly count / deadline may change while the request waits).
+export interface ShiftSwapRuleConfig {
   auto_approval_enabled: boolean
   monthly_swap_limit: number | null
   deadline_hours_before_shift: number | null
   require_review_on_limit_exceeded: boolean
   require_review_on_deadline_exceeded: boolean
+}
+
+// Company-wide config, Owner/Partner-only. Governs Manager<->Manager swaps only — Employee<->
+// Employee swaps use ShiftSwapDepartmentSettings instead (confirmed 2026-07-23: Owner/Partner
+// only ever review a Manager's own swap, so their settings scope stops there too).
+export interface ShiftSwapSettings extends ShiftSwapRuleConfig {
+  company_id: string
   updated_by: string | null
   updated_at: string
 }
 
-export interface ShiftSwapSettingsUpsertInput {
+export interface ShiftSwapSettingsUpsertInput extends ShiftSwapRuleConfig {
   company_id: string
-  auto_approval_enabled: boolean
-  monthly_swap_limit: number | null
-  deadline_hours_before_shift: number | null
-  require_review_on_limit_exceeded: boolean
-  require_review_on_deadline_exceeded: boolean
+  updated_by: string
+}
+
+// Per-department config, owned by that department's Manager(s). Governs Employee<->Employee
+// swaps within that one department only — never other departments', and never Manager swaps.
+export interface ShiftSwapDepartmentSettings extends ShiftSwapRuleConfig {
+  company_id: string
+  department_id: string
+  updated_by: string | null
+  updated_at: string
+}
+
+export interface ShiftSwapDepartmentSettingsUpsertInput extends ShiftSwapRuleConfig {
+  company_id: string
+  department_id: string
   updated_by: string
 }
 
 export type FixedOffDaySource = 'submitted' | 'auto_assigned'
+
+// A day-off/rest entitlement must be granted somewhere — Owner/Partner can relocate it to a
+// different date but can never deny the request outright, so 'rejected' is not a valid decision
+// here (it stays in AttendanceRequestStatus only as a historical status on old rows).
+export type FixedOffDayDecision = 'approved' | 'modified'
 
 export interface FixedOffDayRequest {
   id: string
@@ -277,20 +317,18 @@ export interface FixedOffDayRequest {
 export interface FixedOffDayDecisionInput {
   id: string
   reviewer_id: string
-  decision: AttendanceRequestStatus
+  decision: FixedOffDayDecision
   // Required when decision is 'modified' — the replacement date for this single row.
   new_date?: string
 }
 
 // One weekly submission (a Manager/Employee's set of requested off-days for one week) is stored
 // as one row per date, but is decided on as a single unit — approving/modifying applies to every
-// row in the group at once. Owner's only two live decisions are 'approved' (as requested) and
-// 'modified' (reassigned to different dates in the same week, e.g. after a staffing conflict) —
-// 'rejected' remains a valid historical status but is no longer offered as a new decision.
+// row in the group at once.
 export interface FixedOffDayDecisionGroupInput {
   ids: string[]
   reviewer_id: string
-  decision: AttendanceRequestStatus
+  decision: FixedOffDayDecision
   // Required when decision is 'modified' — replacement dates paired 1:1 with ids by array index.
   new_dates?: string[]
 }

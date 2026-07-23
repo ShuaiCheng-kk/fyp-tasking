@@ -35,14 +35,39 @@ export const jobTemplateRepository = {
     return data as JobTemplate
   },
 
-  async getTemplatesByCompany(company_id: string): Promise<JobTemplate[]> {
-    const { data, error } = await supabase
+  // Two completely separate sharing pools, never crossing — this is Job Templates' correctness
+  // boundary (confirmed 2026-07-23, deliberately stricter than Task Templates' pure department_id
+  // sharing): Owner/Partner's own templates are shared only between the two of them, and a
+  // Manager's are shared only with fellow Managers in the same department. Neither pool sees the
+  // other, even when a department tag happens to overlap.
+  // department_ids omitted (Owner/Partner viewer) → every template created by Owner/Partner.
+  // Passed (Manager viewer) → only templates BOTH tagged to a department the manager is in AND
+  // created by a fellow Manager.
+  async getTemplatesByCompany(company_id: string, department_ids?: string[]): Promise<JobTemplate[]> {
+    let query = supabase
       .from('job_templates')
       .select('*')
       .eq('company_id', company_id)
-      .order('updated_at', { ascending: false })
+    if (department_ids) {
+      if (department_ids.length === 0) return []
+      query = query.in('department_id', department_ids)
+    }
+    const { data, error } = await query.order('updated_at', { ascending: false })
     if (error) throw new Error(error.message)
-    return (data ?? []) as JobTemplate[]
+    const templates = (data ?? []) as JobTemplate[]
+
+    const creatorIds = [...new Set(templates.map(t => t.created_by))]
+    if (creatorIds.length === 0) return templates
+    const { data: creators, error: creatorErr } = await supabase
+      .from('users')
+      .select('id, role')
+      .in('id', creatorIds)
+    if (creatorErr) throw new Error(creatorErr.message)
+    const roleMap = new Map((creators ?? []).map(u => [u.id as string, u.role as string]))
+    return templates.filter(t => {
+      const role = roleMap.get(t.created_by)
+      return department_ids ? role === 'Manager' : (role === 'Owner' || role === 'Partner')
+    })
   },
 
   async getTemplateById(id: string): Promise<JobTemplate | null> {

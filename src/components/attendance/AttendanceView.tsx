@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
 import {
-  AlertTriangle, Calendar, CalendarDays, Check, CheckCheck, ChevronDown, ChevronLeft, ChevronRight,
+  AlertTriangle, ArrowLeftRight, Calendar, CalendarDays, Check, CheckCheck, ChevronDown, ChevronLeft, ChevronRight,
   ClipboardList, Clock, Download, Eye, FileText, Inbox, Pencil, Plus, RefreshCw, Search, Settings, Sparkles, ThumbsDown, ThumbsUp, Trash2, UserCog, UserRound, UserX, X,
 } from 'lucide-react'
 import RoleAvatar from '@/components/RoleAvatar'
@@ -17,13 +17,14 @@ import { useIsCompactViewport } from '@/hooks/useIsCompactViewport'
 import { useIsCompactContainer } from '@/hooks/useIsCompactContainer'
 import {
   AttendanceDashboardRecord,
+  AttendanceModifiedTimeField,
   AttendanceRequestStatus,
   FixedOffDaySource,
   FixedOffDayRequestView,
   ShiftSwapMovableTask,
   ShiftSwapRequestView,
 } from '@/types/Attendance'
-import { ModalOverlay, ModalBox, ModalHeader, modalErrorBoxStyle, modalPrimaryButtonStyle, modalGhostButtonStyle, modalInputStyle, modalLabelStyle } from '@/components/modal'
+import { ModalOverlay, ModalBox, ModalHeader, modalErrorBoxStyle, modalPrimaryButtonStyle, modalDestructiveButtonStyle, modalGhostButtonStyle, modalInputStyle, modalLabelStyle } from '@/components/modal'
 import DatePickerField from '@/components/DatePickerField'
 import DropdownField from '@/components/DropdownField'
 import Toast from '@/components/Toast'
@@ -132,6 +133,46 @@ function formatDateDisplay(value: string | null | undefined, empty = '—'): str
   return `${String(date.getDate()).padStart(2, '0')} ${DATE_DISPLAY_MONTHS[date.getMonth()]} ${date.getFullYear()}`
 }
 
+// My Request status chip — shared look for both Shift Swap and Fixed Day Off outcomes.
+function myRequestStatusBadge(status: string): { bg: string; text: string; label: string } {
+  switch (status) {
+    case 'approved':  return { bg: '#ECFDF5', text: '#047857', label: 'Approved' }
+    case 'modified':  return { bg: '#EFF6FF', text: '#1D4ED8', label: 'Modified' }
+    case 'rejected':  return { bg: '#FEF2F2', text: '#B91C1C', label: 'Rejected' }
+    case 'pending':   return { bg: '#FFFBEB', text: '#B45309', label: 'Pending' }
+    case 'withdrawn': return { bg: '#F3F4F6', text: '#4B5563', label: 'Withdrawn' }
+    case 'expired':   return { bg: '#F3F4F6', text: '#4B5563', label: 'Expired' }
+    default:          return { bg: '#F3F4F6', text: '#4B5563', label: status }
+  }
+}
+
+// "2 hours ago" / "3 days ago" / falls back to the plain date once it's over a week old.
+function formatRelativeTime(value: string | null | undefined): string {
+  if (!value) return '—'
+  const then = new Date(value).getTime()
+  if (Number.isNaN(then)) return '—'
+  const diffMs = Date.now() - then
+  const minutes = Math.floor(diffMs / 60000)
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'} ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`
+  const days = Math.floor(hours / 24)
+  if (days < 7) return `${days} day${days === 1 ? '' : 's'} ago`
+  const weeks = Math.floor(days / 7)
+  if (weeks < 5) return `${weeks} week${weeks === 1 ? '' : 's'} ago`
+  return formatDateDisplay(value.slice(0, 10))
+}
+
+// "Sat 26 Jul" — short weekday + date, for My Request card titles.
+function formatShortWeekdayDate(value: string | null | undefined): string {
+  if (!value) return '—'
+  const date = new Date(`${value}T00:00:00`)
+  if (Number.isNaN(date.getTime())) return '—'
+  const weekday = date.toLocaleDateString('en-GB', { weekday: 'short' })
+  return `${weekday} ${String(date.getDate()).padStart(2, '0')} ${DATE_DISPLAY_MONTHS[date.getMonth()]}`
+}
+
 // "Tuesday [07 Jul]" — full weekday name + bracketed date, for a Fixed Off Day request's day list.
 function formatFixedOffRequestDay(value: string): string {
   const date = new Date(`${value}T00:00:00`)
@@ -151,6 +192,39 @@ function formatOwnerDecisionTime(value: string | null | undefined): string {
   const hour12 = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours
   const time = minutes === 0 ? `${hour12}${suffix}` : `${hour12}:${String(minutes).padStart(2, '0')}${suffix}`
   return `${weekday}, ${dayMonth}, ${time}`
+}
+
+// Compact submitted-on timestamp matching Recruitment's Active Jobs card, e.g. "23 Jul, 09:26PM"
+function formatCompactAt(iso: string): string {
+  const d = new Date(iso)
+  const day = String(d.getDate()).padStart(2, '0')
+  const month = d.toLocaleDateString([], { month: 'short' })
+  const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }).replace(/\s/g, '')
+  return `${day} ${month}, ${time}`
+}
+
+// Labels for AttendanceRecord.owner_modified_fields — shown in the "Modified by <Manager>" banner
+// on the Owner/Partner review modal, and as the title of the pill's "M" badge.
+const OWNER_MODIFIED_FIELD_LABELS: Record<string, string> = {
+  clock_in_time: 'Clock In',
+  clock_out_time: 'Clock Out',
+  break_in_time: 'Break In',
+  break_out_time: 'Break Out',
+}
+function formatModifiedFieldsLabel(fields: string[] | null | undefined): string {
+  if (!fields || fields.length === 0) return 'time'
+  return fields.map(f => OWNER_MODIFIED_FIELD_LABELS[f] ?? f).join(', ')
+}
+
+// Day only (no time-of-day) — the "Modified" field in the review modal only needs the date,
+// not the exact minute, per the user's request.
+function formatModifiedDateOnly(value: string | null | undefined): string {
+  if (!value) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '—'
+  const weekday = date.toLocaleDateString('en-GB', { weekday: 'short' })
+  const dayMonth = date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+  return `${weekday}, ${dayMonth}`
 }
 
 function statusColor(status: string): { bg: string; text: string } {
@@ -872,12 +946,14 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
   const [companyId, setCompanyId] = useState('')
   const [currentPlan, setCurrentPlan] = useState('Free')
 
-  // top-level tab; ?tab=swaps|fixedoff deep-links from the dashboard's Waiting On You cards
+  // top-level tab; ?tab=swaps|fixedoff deep-links from the dashboard's Waiting On You cards.
+  // Manager has no 'fixedoff' tab at all (see mainTabs below) — ignore that deep link for them
+  // rather than landing on a tab with nothing to render.
   const [mainTab, setMainTab] = useState<'records' | 'swaps' | 'fixedoff'>('records')
   useEffect(() => {
     const tab = new URLSearchParams(window.location.search).get('tab')
-    if (tab === 'swaps' || tab === 'fixedoff') setMainTab(tab)
-  }, [])
+    if (tab === 'swaps' || (tab === 'fixedoff' && !scopeToManagerDepartments)) setMainTab(tab)
+  }, [scopeToManagerDepartments])
   const isCompactReqLayout = useIsCompactViewport(1300)
   // Current Task Assignment / Task Assignment After Swap sit side by side in the middle column
   // of the (up to) 3-column Requests grid above — that column's real width is a fraction of the
@@ -901,6 +977,11 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
   const [reviewClockOut, setReviewClockOut] = useState('')
   const [reviewBreakIn, setReviewBreakIn] = useState('')
   const [reviewBreakOut, setReviewBreakOut] = useState('')
+  // What the four pickers were pre-filled with when the modal opened — compared against their
+  // current value so the Reason field (and Save's "modify" behavior) only appears once the user
+  // has actually touched a time, not just for opening the record to look at it.
+  const [reviewInitialTimes, setReviewInitialTimes] = useState({ clockIn: '', clockOut: '', breakIn: '', breakOut: '' })
+  const [reviewReason, setReviewReason] = useState('')
   const [reviewActionLoading, setReviewActionLoading] = useState(false)
   const [reviewError, setReviewError] = useState('')
   const [cwWorkerStatus, setCwWorkerStatus] = useState<string | null>(null)
@@ -951,6 +1032,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
   const [deadlineTime, setDeadlineTime] = useState('17:00')
 
   // ── Shift Swap Settings block state ──────────────────────────────────────
+  // Owner/Partner-only, company-wide — governs Manager<->Manager swaps only.
   const [swapSettingsLoading, setSwapSettingsLoading] = useState(false)
   const [swapSettingsError, setSwapSettingsError] = useState('')
   const [swapSettingsSaving, setSwapSettingsSaving] = useState(false)
@@ -959,6 +1041,22 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
   const [swapDeadlineHours, setSwapDeadlineHours] = useState<number | null>(null)
   const [swapReviewOnLimitExceeded, setSwapReviewOnLimitExceeded] = useState(true)
   const [swapReviewOnDeadlineExceeded, setSwapReviewOnDeadlineExceeded] = useState(true)
+
+  // ── Manager's own Shift Swap Settings block state ────────────────────────
+  // Manager-only, department-scoped — governs Employee<->Employee swaps within one of their own
+  // managed departments only (confirmed 2026-07-23: Owner/Partner's settings above stop at
+  // Manager-level swaps, so Employee-level swaps need their own Manager-owned settings row).
+  const [managerSwapSettingsOpen, setManagerSwapSettingsOpen] = useState(false)
+  const [managerSwapDepartments, setManagerSwapDepartments] = useState<{ department_id: string; department_name: string }[]>([])
+  const [managerSwapDeptId, setManagerSwapDeptId] = useState<string | null>(null)
+  const [managerSwapSettingsLoading, setManagerSwapSettingsLoading] = useState(false)
+  const [managerSwapSettingsError, setManagerSwapSettingsError] = useState('')
+  const [managerSwapSettingsSaving, setManagerSwapSettingsSaving] = useState(false)
+  const [managerSwapAutoApprovalEnabled, setManagerSwapAutoApprovalEnabled] = useState(false)
+  const [managerSwapMonthlyLimit, setManagerSwapMonthlyLimit] = useState<number | null>(null)
+  const [managerSwapDeadlineHours, setManagerSwapDeadlineHours] = useState<number | null>(null)
+  const [managerSwapReviewOnLimitExceeded, setManagerSwapReviewOnLimitExceeded] = useState(true)
+  const [managerSwapReviewOnDeadlineExceeded, setManagerSwapReviewOnDeadlineExceeded] = useState(true)
 
   // ── Requests tab state ───────────────────────────────────────────────────
   // Shift Swap and Off Day are now two top-level capsule tabs; reqTab is derived from mainTab
@@ -970,6 +1068,10 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
   const [actionIndex, setActionIndex] = useState(0)
   const [swapSettingsOpen, setSwapSettingsOpen] = useState(false)
   const [fixedOffActionIndex, setFixedOffActionIndex] = useState(0)
+  // Owner/Partner must write a reason before a Shift Swap rejection goes through.
+  const [rejectSwapTarget, setRejectSwapTarget] = useState<{ id: string; requesterName: string } | null>(null)
+  const [rejectSwapReason, setRejectSwapReason] = useState('')
+  const [rejectSwapError, setRejectSwapError] = useState('')
   // Clicking a Requests card focuses the calendar on that submission: its days show the requester's
   // name and the rest of the requesting week's counts hide. Clicking anywhere else cancels it.
   const [offDayHighlightEnabled, setOffDayHighlightEnabled] = useState(false)
@@ -998,6 +1100,205 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
   }, [processedDeptDropdownOpen])
   const [reqActionLoading, setReqActionLoading] = useState(false)
   const [reqError, setReqError] = useState('')
+
+  // ── My Request (Manager submits their own Shift Swap / Fixed Day Off via the Submit Request
+  // modal on the Records tab — see requestModalOpen below; results show in the My Request block
+  // below the Records table). ──
+  const [myReqError, setMyReqError] = useState('')
+  const [myReqLoading, setMyReqLoading] = useState(false)
+  const [mySwaps, setMySwaps] = useState<ShiftSwapRequestView[]>([])
+  const [myFixedOff, setMyFixedOff] = useState<FixedOffDayRequestView[]>([])
+  const [myReqFilter, setMyReqFilter] = useState<'all' | 'swap' | 'offday'>('all')
+  const [myReqDropdownOpen, setMyReqDropdownOpen] = useState(false)
+  const myReqDropdownRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!myReqDropdownOpen) return
+    const handler = (e: MouseEvent) => {
+      if (!myReqDropdownRef.current?.contains(e.target as Node)) setMyReqDropdownOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [myReqDropdownOpen])
+  const [selectedMyReqKey, setSelectedMyReqKey] = useState<string | null>(null)
+  // "NEW" = a decided (non-pending) request the Manager hasn't opened since it changed — same
+  // localStorage-seen-ids pattern used elsewhere in this app (e.g. Recruitment's approved-job dot).
+  const [seenMyReqKeys, setSeenMyReqKeys] = useState<Set<string>>(new Set())
+  const myReqSeenKey = companyId && internalUserId ? `manager_myreq_seen_${companyId}_${internalUserId}` : ''
+  useEffect(() => {
+    if (!myReqSeenKey) return
+    try {
+      const raw = localStorage.getItem(myReqSeenKey)
+      if (raw) setSeenMyReqKeys(new Set(JSON.parse(raw)))
+    } catch {}
+  }, [myReqSeenKey])
+  const markMyReqSeen = useCallback((key: string) => {
+    setSeenMyReqKeys(prev => {
+      if (prev.has(key)) return prev
+      const next = new Set(prev); next.add(key)
+      if (myReqSeenKey) { try { localStorage.setItem(myReqSeenKey, JSON.stringify([...next])) } catch {} }
+      return next
+    })
+  }, [myReqSeenKey])
+
+  const fetchMyRequests = useCallback(async (uid: string) => {
+    if (!uid) return
+    setMyReqLoading(true); setMyReqError('')
+    try {
+      const res = await fetch(`/api/attendance?resource=my_requests&user_id=${uid}`)
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message)
+      setMySwaps(data.swaps ?? [])
+      setMyFixedOff(data.fixed_off ?? [])
+    } catch (err) {
+      setMyReqError(err instanceof Error ? err.message : 'Failed to load requests')
+    } finally { setMyReqLoading(false) }
+  }, [])
+
+  const [swapCandidateRows, setSwapCandidateRows] = useState<TimelineRow[]>([])
+  const [fixedOffQuota, setFixedOffQuota] = useState(1)
+
+  // Single "Submit Request" modal — same choose-then-fill pattern as the AI Job Builder wizard's
+  // "Choose Job Type" step (two option cards), re-themed to this page's plain orange accent.
+  const [requestModalOpen, setRequestModalOpen] = useState(false)
+  const [requestModalStep, setRequestModalStep] = useState<'choose' | 'swap' | 'offday'>('choose')
+  const [swapShiftId, setSwapShiftId] = useState('')
+  const [swapCounterpartId, setSwapCounterpartId] = useState('')
+  const [swapCounterpartAssignmentId, setSwapCounterpartAssignmentId] = useState('')
+  const [swapReason, setSwapReason] = useState('')
+  const [swapSubmitting, setSwapSubmitting] = useState(false)
+
+  const [selectedFixedOffDates, setSelectedFixedOffDates] = useState<string[]>([])
+  const [fixedSubmitting, setFixedSubmitting] = useState(false)
+
+  const fetchFixedOffQuota = useCallback(async (cid: string, uid: string) => {
+    if (!cid || !uid) return
+    try {
+      const res = await fetch(`/api/attendance/off-day-settings?company_id=${cid}&user_id=${uid}&resource=my_quota`)
+      const data = await res.json()
+      if (data.success && typeof data.max_days_per_week === 'number') setFixedOffQuota(data.max_days_per_week)
+    } catch {}
+  }, [])
+
+  // Swap counterparts must be same-department, same-role (Manager) colleagues with an upcoming
+  // (tomorrow+) shift — reuses the timeline endpoint rather than a new API just for this picker.
+  const fetchSwapCandidates = useCallback(async (cid: string) => {
+    if (!cid) return
+    try {
+      const from = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+      const to = new Date(Date.now() + 31 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+      const res = await fetch(`/api/shift?company_id=${cid}&date_from=${from}&date_to=${to}&viewer_role=Manager`)
+      const data = await res.json()
+      if (data.success) setSwapCandidateRows(data.rows ?? [])
+    } catch {}
+  }, [])
+
+  useEffect(() => {
+    if (!scopeToManagerDepartments || !companyId || !internalUserId) return
+    void fetchFixedOffQuota(companyId, internalUserId)
+    void fetchSwapCandidates(companyId)
+    void fetchMyRequests(internalUserId)
+  }, [scopeToManagerDepartments, companyId, internalUserId, fetchFixedOffQuota, fetchSwapCandidates, fetchMyRequests])
+
+  const getUpcomingWeekDates = useCallback((): string[] => {
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    const day = today.getDay()
+    const daysUntilNextMonday = ((8 - day) % 7) || 7
+    const monday = new Date(today)
+    monday.setDate(today.getDate() + daysUntilNextMonday)
+    // Local date-key, not toISOString().slice(0,10) — toISOString() converts to UTC first, which
+    // shifts the date backward a day in any timezone ahead of UTC (e.g. GMT+8) and desyncs from
+    // the server's local-date weekStart() bucketing, tripping "All dates must fall within the
+    // same week" even though the picker shows 7 contiguous days.
+    return Array.from({ length: 7 }, (_, index) => {
+      const date = new Date(monday)
+      date.setDate(monday.getDate() + index)
+      const year = date.getFullYear()
+      const month = String(date.getMonth() + 1).padStart(2, '0')
+      const d = String(date.getDate()).padStart(2, '0')
+      return `${year}-${month}-${d}`
+    })
+  }, [])
+
+  const toggleFixedOffDate = (date: string) => {
+    setSelectedFixedOffDates(prev => {
+      if (prev.includes(date)) return prev.filter(d => d !== date)
+      if (prev.length >= fixedOffQuota) { setMyReqError(`You must select exactly ${fixedOffQuota} day(s).`); return prev }
+      return [...prev, date]
+    })
+  }
+
+  const handleSubmitSwap = async () => {
+    if (!swapShiftId || !swapCounterpartId || !swapCounterpartAssignmentId) { setMyReqError('Select a shift, a colleague, and their shift.'); return }
+    setSwapSubmitting(true); setMyReqError('')
+    try {
+      const res = await fetch('/api/attendance', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'submit_shift_swap',
+          company_id: companyId,
+          requester_id: internalUserId,
+          requester_assignment_id: swapShiftId,
+          counterpart_id: swapCounterpartId,
+          counterpart_assignment_id: swapCounterpartAssignmentId,
+          reason: swapReason || null,
+        }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message)
+      showSuccessToast('Shift swap request submitted.')
+      setRequestModalOpen(false); setRequestModalStep('choose')
+      setSwapShiftId(''); setSwapCounterpartId(''); setSwapCounterpartAssignmentId(''); setSwapReason('')
+      void fetchMyRequests(internalUserId)
+    } catch (err) {
+      setMyReqError(err instanceof Error ? err.message : 'Failed to submit')
+    } finally { setSwapSubmitting(false) }
+  }
+
+  // Counterpart accepting/declining a swap someone else invited them into — the request only
+  // reaches any reviewer's queue once this step is done (see getShiftSwapRequests filtering out
+  // counterpart_status === 'pending'), so without this the swap is stuck forever.
+  const [respondingSwapId, setRespondingSwapId] = useState<string | null>(null)
+  const handleRespondSwap = async (id: string, decision: 'approved' | 'rejected') => {
+    if (!internalUserId) return
+    setRespondingSwapId(id)
+    try {
+      const res = await fetch('/api/attendance', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'respond_shift_swap', id, counterpart_id: internalUserId, decision }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message)
+      showSuccessToast(decision === 'approved' ? 'Swap accepted — sent for review.' : 'Swap declined.')
+      void fetchMyRequests(internalUserId)
+    } catch (err) {
+      showErrorToast(err instanceof Error ? err.message : 'Failed to respond')
+    } finally {
+      setRespondingSwapId(null)
+    }
+  }
+
+  const handleSubmitFixedOff = async () => {
+    if (selectedFixedOffDates.length !== fixedOffQuota) { setMyReqError(`Select exactly ${fixedOffQuota} day(s).`); return }
+    setFixedSubmitting(true); setMyReqError('')
+    try {
+      const res = await fetch('/api/attendance', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'submit_fixed_off_day', user_id: internalUserId, company_id: companyId, dates: selectedFixedOffDates }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message)
+      showSuccessToast('Weekly day off request submitted.')
+      setRequestModalOpen(false); setRequestModalStep('choose')
+      setSelectedFixedOffDates([])
+      void fetchMyRequests(internalUserId)
+    } catch (err) {
+      setMyReqError(err instanceof Error ? err.message : 'Failed to submit')
+    } finally { setFixedSubmitting(false) }
+  }
   const [currentShiftsRows, setCurrentShiftsRows] = useState<TimelineRow[]>([])
   const [currentShiftsLoading, setCurrentShiftsLoading] = useState(false)
   const [currentShiftsDept, setCurrentShiftsDept] = useState<string | null>(null)
@@ -1122,8 +1423,13 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
     setReqLoading(true)
     setReqError('')
     try {
+      // Manager queue: pass manager_id so getShiftSwapRequests returns Employee<->Employee swaps
+      // within their department, not the Owner/Partner-style "everyone whose requester isn't an
+      // Employee" queue — without this a Manager's OWN Manager<->Manager swap (which goes to
+      // Owner/Partner, never to their own review queue) was incorrectly showing up here.
+      const managerParam = scopeToManagerDepartments && internalUserId ? `&manager_id=${internalUserId}` : ''
       const [swapRes, fixedRes] = await Promise.all([
-        fetch(`/api/attendance?company_id=${cid}&resource=shift_swaps`),
+        fetch(`/api/attendance?company_id=${cid}&resource=shift_swaps${managerParam}`),
         fetch(`/api/attendance?company_id=${cid}&resource=fixed_off_days`),
       ])
       const swapData = await swapRes.json()
@@ -1133,7 +1439,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
     } catch (err) {
       setReqError(err instanceof Error ? err.message : 'Failed to fetch requests')
     } finally { setReqLoading(false) }
-  }, [scopeByDept])
+  }, [scopeByDept, scopeToManagerDepartments, internalUserId])
 
   // Resolve the manager's departments, then re-run the scoped fetches through the filter.
   useEffect(() => {
@@ -1326,7 +1632,10 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
   }, [companyId, internalUserId])
 
   useEffect(() => {
-    if (mainTab === 'fixedoff') void loadOffDaySettings()
+    // Owner/Partner-only data (quota/deadline config for the settings gear on the approval
+    // queue) — Manager's Off Day tab is now "My Request" and never renders that queue/gear, so
+    // this pre-existing fetch (which 500s for a non-O/P caller) is skipped entirely for them.
+    if (mainTab === 'fixedoff' && !scopeToManagerDepartments) void loadOffDaySettings()
   }, [mainTab, loadOffDaySettings])
 
   const saveIndividualQuotaOverride = async (userId: string, value: number) => {
@@ -1502,8 +1811,10 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
   }, [companyId, internalUserId])
 
   useEffect(() => {
-    if (mainTab === 'swaps') void loadSwapSettings()
-  }, [mainTab, loadSwapSettings])
+    // Owner/Partner only — a Manager never reads/writes this company-wide row, so skip the
+    // fetch entirely for them instead of hitting an endpoint that will just reject the call.
+    if (mainTab === 'swaps' && !scopeToManagerDepartments) void loadSwapSettings()
+  }, [mainTab, scopeToManagerDepartments, loadSwapSettings])
 
   const saveSwapSettings = async () => {
     if (!companyId || !internalUserId) return
@@ -1534,21 +1845,92 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
     }
   }
 
+  // ── Manager's own Shift Swap Settings (Employee<->Employee swaps, department-scoped) ────────
+  const loadManagerSwapDepartments = useCallback(async () => {
+    if (!companyId || !internalUserId) return
+    try {
+      const res = await fetch(`/api/manager/departments?manager_id=${internalUserId}&company_id=${companyId}`)
+      const data = await res.json()
+      if (!data.success) return
+      const rows = (data.departments ?? []) as { department_id: string; department_name: string }[]
+      setManagerSwapDepartments(rows)
+      setManagerSwapDeptId(prev => (prev && rows.some(r => r.department_id === prev) ? prev : rows[0]?.department_id ?? null))
+    } catch { /* modal shows its own load error once a department is picked */ }
+  }, [companyId, internalUserId])
+
+  const loadManagerSwapSettings = useCallback(async (deptId: string) => {
+    if (!companyId || !internalUserId || !deptId) return
+    setManagerSwapSettingsLoading(true)
+    setManagerSwapSettingsError('')
+    try {
+      const res = await fetch(`/api/attendance/shift-swap-department-settings?company_id=${companyId}&department_id=${deptId}&manager_id=${internalUserId}`)
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message || 'Failed to load shift swap settings')
+      setManagerSwapAutoApprovalEnabled(!!data.settings.auto_approval_enabled)
+      setManagerSwapMonthlyLimit(data.settings.monthly_swap_limit ?? null)
+      setManagerSwapDeadlineHours(data.settings.deadline_hours_before_shift ?? null)
+      setManagerSwapReviewOnLimitExceeded(data.settings.require_review_on_limit_exceeded ?? true)
+      setManagerSwapReviewOnDeadlineExceeded(data.settings.require_review_on_deadline_exceeded ?? true)
+    } catch (err) {
+      setManagerSwapSettingsError(err instanceof Error ? err.message : 'Failed to load shift swap settings')
+    } finally {
+      setManagerSwapSettingsLoading(false)
+    }
+  }, [companyId, internalUserId])
+
+  useEffect(() => {
+    if (managerSwapSettingsOpen) void loadManagerSwapDepartments()
+  }, [managerSwapSettingsOpen, loadManagerSwapDepartments])
+
+  useEffect(() => {
+    if (managerSwapSettingsOpen && managerSwapDeptId) void loadManagerSwapSettings(managerSwapDeptId)
+  }, [managerSwapSettingsOpen, managerSwapDeptId, loadManagerSwapSettings])
+
+  const saveManagerSwapSettings = async () => {
+    if (!companyId || !internalUserId || !managerSwapDeptId) return
+    setManagerSwapSettingsSaving(true)
+    setManagerSwapSettingsError('')
+    try {
+      const res = await fetch('/api/attendance/shift-swap-department-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'set_settings', company_id: companyId, department_id: managerSwapDeptId, manager_id: internalUserId,
+          auto_approval_enabled: managerSwapAutoApprovalEnabled,
+          monthly_swap_limit: managerSwapMonthlyLimit,
+          deadline_hours_before_shift: managerSwapDeadlineHours,
+          require_review_on_limit_exceeded: managerSwapReviewOnLimitExceeded,
+          require_review_on_deadline_exceeded: managerSwapReviewOnDeadlineExceeded,
+        }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message || 'Failed to save shift swap settings')
+      showSuccessToast('Settings saved successfully.')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to save shift swap settings'
+      setManagerSwapSettingsError(message)
+      showErrorToast(message)
+    } finally {
+      setManagerSwapSettingsSaving(false)
+    }
+  }
+
   // ── Decide request ────────────────────────────────────────────────────────
   const decideRequest = async (
     kind: 'decide_shift_swap',
     id: string,
     decision: 'approved' | 'rejected',
     targetName?: string,
-  ) => {
-    if (!internalUserId || !companyId) return
+    reason?: string,
+  ): Promise<boolean> => {
+    if (!internalUserId || !companyId) return false
     setReqActionLoading(true)
     setReqError('')
     try {
       const res = await fetch('/api/attendance', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: kind, id, reviewer_id: internalUserId, decision }),
+        body: JSON.stringify({ action: kind, id, reviewer_id: internalUserId, decision, reason }),
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'Failed to update request')
@@ -1562,11 +1944,27 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
       setActionIndex(0)
       await fetchRequestData(companyId)
       showSuccessToast(decision === 'approved' ? 'Shift swap approved.' : 'Shift swap rejected.')
+      return true
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to update request'
       setReqError(message)
       showErrorToast(message)
+      return false
     } finally { setReqActionLoading(false) }
+  }
+
+  // Confirms rejection from the "Reject Shift Swap" modal — the reason is mandatory, so this
+  // only calls decideRequest once the reviewer has actually typed one.
+  const confirmRejectSwap = async () => {
+    if (!rejectSwapTarget) return
+    const reason = rejectSwapReason.trim()
+    if (!reason) { setRejectSwapError('A reason is required to reject this request.'); return }
+    setRejectSwapError('')
+    const ok = await decideRequest('decide_shift_swap', rejectSwapTarget.id, 'rejected', rejectSwapTarget.requesterName, reason)
+    if (ok) {
+      setRejectSwapTarget(null)
+      setRejectSwapReason('')
+    }
   }
 
   // A weekly Fixed Day Off submission is stored as one row per date but decided as a single
@@ -1703,10 +2101,19 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
 
   const openReview = (row: AttendanceDashboardRecord) => {
     setReviewRecord(row)
-    setReviewClockIn(isoToAmPm(row.record?.owner_adjusted_clock_in_time ?? row.record?.clock_in_time))
-    setReviewClockOut(isoToAmPm(row.record?.owner_adjusted_clock_out_time ?? row.record?.clock_out_time))
-    setReviewBreakIn(isoToAmPm(row.record?.break_in_time))
-    setReviewBreakOut(isoToAmPm(row.record?.break_out_time))
+    const initialClockIn = isoToAmPm(row.record?.owner_adjusted_clock_in_time ?? row.record?.clock_in_time)
+    const initialClockOut = isoToAmPm(row.record?.owner_adjusted_clock_out_time ?? row.record?.clock_out_time)
+    const initialBreakIn = isoToAmPm(row.record?.break_in_time)
+    const initialBreakOut = isoToAmPm(row.record?.break_out_time)
+    setReviewClockIn(initialClockIn)
+    setReviewClockOut(initialClockOut)
+    setReviewBreakIn(initialBreakIn)
+    setReviewBreakOut(initialBreakOut)
+    setReviewInitialTimes({ clockIn: initialClockIn, clockOut: initialClockOut, breakIn: initialBreakIn, breakOut: initialBreakOut })
+    // An existing reason is shown read-only (see showReadOnlyReason below) — this state is only
+    // for a NEW reason, so it always starts blank; nobody, including the original author, edits
+    // the old text directly, they write a fresh one the moment they touch a time again.
+    setReviewReason('')
     setCwWorkerStatus(row.assignee_worker_status ?? 'active')
     setReviewError('')
     setReviewOpen(true)
@@ -1758,6 +2165,10 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
     if (breakOutIso && clockInIso && clockOutIso && (new Date(breakOutIso).getTime() < new Date(clockInIso).getTime() || new Date(breakOutIso).getTime() > new Date(clockOutIso).getTime())) {
       setReviewError('Break Out must be between Clock In and Clock Out'); return
     }
+    // Whether a reason is actually required depends on the TRUE original (per-field, persisted
+    // server-side) — e.g. editing a time back to exactly what it originally was needs no reason
+    // at all. That comparison isn't duplicated here; the server (finalReviewAttendance) is the
+    // sole authority and its error surfaces below if a reason turns out to be required.
 
     setReviewActionLoading(true)
     try {
@@ -1769,6 +2180,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
           id: reviewRecord.record.id,
           owner_id: internalUserId,
           decision: 'modified',
+          owner_notes: reviewReason.trim(),
           clock_in_time: clockInIso,
           clock_out_time: clockOutIso,
           break_in_time: breakInIso,
@@ -1840,12 +2252,28 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
     return [...groups.values()].sort((a, b) => a.deptName.localeCompare(b.deptName))
   }, [peopleMap])
 
+  // allGroups: Managers + Employees + Casual Workers together, grouped by department — the
+  // Manager page shows its whole department in one table instead of splitting Internal Staff
+  // and Casual Workers into two separately-clicked panels (Owner/Partner keep that split).
+  const allGroups = useMemo(() => {
+    const groups = new Map<string, { deptId: string; deptName: string; people: typeof peopleMap }>()
+
+    peopleMap.forEach((person, userId) => {
+      const key = person.deptName || 'No Department'
+      if (!groups.has(key)) groups.set(key, { deptId: key, deptName: key, people: new Map() })
+      groups.get(key)!.people.set(userId, person)
+    })
+
+    return [...groups.values()].sort((a, b) => a.deptName.localeCompare(b.deptName))
+  }, [peopleMap])
+
   // Apply filters — dept panel, casual job type, keyword + role
   const filteredDeptGroups = useMemo(() => {
     const kw = recordsKeyword.toLowerCase().trim()
 
-    // When a Casual Worker filter is active, render cwGroups; otherwise render deptGroups
-    const source = recordsRole === 'Casual Worker' ? cwGroups : deptGroups
+    // Manager page: always the merged whole-department list (no Internal Staff/Casual Worker
+    // panel toggle to drive `source` off). Owner/Partner keep the existing panel-driven split.
+    const source = scopeToManagerDepartments ? allGroups : (recordsRole === 'Casual Worker' ? cwGroups : deptGroups)
 
     return source
       .filter(g => !selectedDeptId || g.deptId === selectedDeptId)
@@ -1870,7 +2298,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
         })
         return { ...group, people: filtered }
       }).filter(g => g.people.size > 0)
-  }, [deptGroups, cwGroups, recordsKeyword, recordsRole, selectedDeptId, casualJobType])
+  }, [deptGroups, cwGroups, allGroups, scopeToManagerDepartments, recordsKeyword, recordsRole, selectedDeptId, casualJobType])
 
   // ── Export (CSV or PDF) — fetches the full date range from API, not just the 7-day window ──
   const doExport = useCallback(async (fromDate: string, toDate: string, format: 'csv' | 'pdf') => {
@@ -1950,7 +2378,9 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
           if (casualJobType === 'shift' && rec.shift.is_open_ended) return false
           if (casualJobType === 'one-off' && !rec.shift.is_open_ended) return false
         } else {
-          if (role === 'Casual Worker') return false
+          // Manager's table merges Casual Workers into the same list as internal staff (see
+          // allGroups) — Export must match what's on screen instead of silently dropping them.
+          if (!scopeToManagerDepartments && role === 'Casual Worker') return false
           if (selectedDeptId && rec.department_name !== selectedDeptId) return false
         }
         return true
@@ -2088,7 +2518,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
     } finally {
       setExportLoading(false)
     }
-  }, [companyId, recordsRole, selectedDeptId, casualJobType, showSuccessToast, showErrorToast])
+  }, [companyId, recordsRole, selectedDeptId, casualJobType, scopeToManagerDepartments, showSuccessToast, showErrorToast])
 
   // ── Absence reason lookups ────────────────────────────────────────────────
   // approved fixed off: userId+request_date (YYYY-MM-DD) → true
@@ -2104,10 +2534,14 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
   const pendingSwapCount = swapRequests.filter(r => r.status === 'pending').length
   const pendingFixedOffCount = fixedOffDayRequests.filter(r => r.status === 'pending').length
 
+  // Manager has no "Off Day"/"My Request" tab at all — they never review anyone's Fixed Day Off
+  // (UC55 is O/P-only) and submitting is now the header button on Records (see requestModalOpen).
   const mainTabs = [
     { key: 'records' as const, label: 'Records' },
     { key: 'swaps' as const, label: 'Shift Swap', dot: !reqLoading && pendingSwapCount > 0 },
-    { key: 'fixedoff' as const, label: 'Off Day', dot: !reqLoading && pendingFixedOffCount > 0 },
+    ...(scopeToManagerDepartments ? [] : [
+      { key: 'fixedoff' as const, label: 'Off Day', dot: !reqLoading && pendingFixedOffCount > 0 },
+    ]),
   ]
 
   // ── Today's date key for AR status reference ──────────────────────────────
@@ -2267,10 +2701,18 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
         ══════════════════════════════════════════════════════════════════ */}
         {mainTab === 'records' && (() => {
           return (
+          <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
           <>
-<div style={{ padding: '0 28px 28px', display: 'grid', gridTemplateColumns: 'minmax(300px, 326px) minmax(0, 1fr)', gap: 16, flex: 1, minHeight: 0, overflow: 'hidden' }}>
+{/* Manager: flex '0 1 auto' + maxHeight '50%' — hug the table when there are few rows (no
+    dead space below), but never grow past half the tab, so a long roster scrolls inside
+    the Timeline body div instead (same shrink-to-content idiom as the Requests queue card
+    at ~line 3307). Owner/Partner keep the original always-fills-the-tab flex: 1. */}
+<div style={{ padding: scopeToManagerDepartments ? '0 28px' : '0 28px 28px', display: 'grid', gridTemplateColumns: scopeToManagerDepartments ? '1fr' : 'minmax(300px, 326px) minmax(0, 1fr)', gap: 16, flex: scopeToManagerDepartments ? '0 1 auto' : 1, maxHeight: scopeToManagerDepartments ? '50%' : undefined, minHeight: 0, overflow: 'hidden' }}>
 
-            {/* ── LEFT: Department + Casual Worker panels ── */}
+            {/* ── LEFT: Department + Casual Worker panels — Owner/Partner only. Manager's page
+                 shows the whole department merged into the main table instead (see allGroups),
+                 so there's nothing for these panels to filter into for that role. ── */}
+            {!scopeToManagerDepartments && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minHeight: 0, overflowY: 'auto' }}>
             <section style={{ background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, overflow: 'hidden' }}>
               <div style={{ padding: '14px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -2376,7 +2818,8 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                 })}
               </div>
             </section>
-            </div>{/* /left column */}
+            </div>
+            )}{/* /left column */}
 
             {/* ── RIGHT: AR Timeline — exact Shift page structure ── */}
             <section style={{ background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
@@ -2407,12 +2850,14 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                             <span style={{ fontSize: 13, fontWeight: 600, color: '#374151' }}>{item.label}</span>
                           </div>
                         ))}
-                        {recordsRole !== 'Casual Worker' && (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                            <Calendar size={13} color="#7C3AED" />
-                            <span style={{ fontSize: 13, fontWeight: 600, color: '#374151' }}>Off Day</span>
-                          </div>
-                        )}
+                        {/* Matches the "M" badge shown on a pill whose clock/break time was
+                            corrected via the 'modified' decision (see wasModified below) — shown
+                            on every role's Records table, Manager included, so a Manager sees when
+                            Owner/Partner corrected their own or their team's records too. */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                          <span style={{ width: 16, height: 16, borderRadius: '50%', background: '#F97316', color: '#fff', fontSize: 9, fontWeight: 800, lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>M</span>
+                          <span style={{ fontSize: 13, fontWeight: 600, color: '#374151' }}>Modified</span>
+                        </div>
                       </div>
                     </div>
                     {/* Right: Export + search + date range */}
@@ -2421,12 +2866,14 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                         style={{ height: 34, padding: '0 12px', borderRadius: 8, border: `1px solid ${PANEL_BORDER}`, background: '#FFFFFF', color: '#374151', fontWeight: 700, fontSize: 12.5, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}>
                         <Download size={12} /> Export
                       </button>
-                      <input
-                        value={recordsKeyword}
-                        onChange={e => setRecordsKeyword(e.target.value)}
-                        placeholder="Search name..."
-                        style={{ height: 34, padding: '0 12px', border: `1px solid ${PANEL_BORDER}`, borderRadius: 8, fontSize: 13, color: TEXT_DARK, background: '#FFFFFF', outline: 'none', width: 148, fontFamily: 'inherit' }}
-                      />
+                      {!scopeToManagerDepartments && (
+                        <input
+                          value={recordsKeyword}
+                          onChange={e => setRecordsKeyword(e.target.value)}
+                          placeholder="Search name..."
+                          style={{ height: 34, padding: '0 12px', border: `1px solid ${PANEL_BORDER}`, borderRadius: 8, fontSize: 13, color: TEXT_DARK, background: '#FFFFFF', outline: 'none', width: 148, fontFamily: 'inherit' }}
+                        />
+                      )}
                       <button
                         type="button"
                         onClick={() => setArWindowOffset(o => o - 7)}
@@ -2459,7 +2906,11 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
 
                   {/* Column header row */}
                   <div style={{ display: 'grid', gridTemplateColumns: '180px repeat(7, 1fr)', background: 'linear-gradient(135deg,#0F172A 0%,#1E293B 100%)', height: 54 }}>
-                    <div style={{ padding: '10px 14px', borderRight: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center' }} />
+                    <div style={{ padding: '10px 14px 10px 20px', borderRight: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center' }}>
+                      {scopeToManagerDepartments && (
+                        <span style={{ fontSize: 14, fontWeight: 700, color: 'rgba(255,255,255,0.85)', letterSpacing: '0.01em' }}>Internal Members</span>
+                      )}
+                    </div>
                     {weekDates.map(date => {
                       const d = new Date(date + 'T00:00:00')
                       const dayNum = String(d.getDate()).padStart(2, '0')
@@ -2503,12 +2954,33 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                       <div style={{ borderLeft: EDGE, borderRight: EDGE, borderBottom: EDGE }}>
                         {deptRows.map(({ deptId, people }, deptIdx) => {
                           const isCWGroup = people[0]?.[1]?.role === 'Casual Worker'
-                          const barColor = isCWGroup ? 'transparent' : deptColor(deptId)
-                          return people.map(([userId, person], rowIdx) => {
+                          // Manager page drops the department color bar entirely — every row is
+                          // already their own department, so the color adds nothing to look at.
+                          const barColor = (isCWGroup || scopeToManagerDepartments) ? 'transparent' : deptColor(deptId)
+                          return people.flatMap(([userId, person], rowIdx) => {
                             const isDeptBoundary = !isCWGroup && deptIdx > 0 && rowIdx === 0
                             const borderTop = isDeptBoundary ? EDGE : `1px solid ${PANEL_BORDER}`
                             const isManager = person.role === 'Manager'
-                            return (
+                            // Manager page merges internal staff and Casual Workers into one table
+                            // (see allGroups) — a labelled section break marks where internal staff
+                            // ends and Casual Worker rows begin, so the two are still easy to tell
+                            // apart at a glance even though they now share a table.
+                            const showCwSectionHeader = scopeToManagerDepartments && person.role === 'Casual Worker'
+                              && (rowIdx === 0 || people[rowIdx - 1][1].role !== 'Casual Worker')
+                            const rows: React.ReactNode[] = []
+                            if (showCwSectionHeader) {
+                              rows.push(
+                                // Same styling as the column header row above (gradient, height, text
+                                // treatment) so the two read as one consistent header language.
+                                <div key={`${deptId}-cw-section`} style={{ display: 'grid', gridTemplateColumns: '180px repeat(7, 1fr)', height: 54, background: 'linear-gradient(135deg,#0F172A 0%,#1E293B 100%)' }}>
+                                  <div style={{ padding: '10px 14px 10px 20px', borderRight: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center' }}>
+                                    <span style={{ fontSize: 14, fontWeight: 700, color: 'rgba(255,255,255,0.85)', letterSpacing: '0.01em' }}>Casual Workers</span>
+                                  </div>
+                                  {weekDates.map(date => <div key={date} style={{ borderRight: '1px solid rgba(255,255,255,0.08)' }} />)}
+                                </div>
+                              )
+                            }
+                            rows.push(
                               <div
                                 key={userId}
                                 className="ar-row-hover"
@@ -2566,6 +3038,11 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                                           st === 'absent' ? '1.5px solid #EF4444' :
                                           st === 'late'   ? '1.5px solid #F59E0B' :
                                                             '1.5px solid #10B981'
+                                        // This record's clock/break time was corrected via the 'modified' decision —
+                                        // by a Manager, the Owner, or the Partner (any of the three). Shown on every
+                                        // role's Records table, Manager included — a Manager needs to see when
+                                        // Owner/Partner corrected their own or their team's records.
+                                        const wasModified = rec.record?.owner_status === 'modified'
                                         return (
                                           <button
                                             key={ri}
@@ -2595,7 +3072,24 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                                                   : `${formatShiftHour(rec.shift.start_time)} – ${formatShiftHour(rec.shift.end_time)}`
                                               })()}
                                             </span>
-                                            <span />
+                                            {/* Mirrors the left-hand status icon's 20x20 slot, so a modified pill
+                                                reads as symmetric: status icon on the left, "M" badge on the right. */}
+                                            <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                              {wasModified && (
+                                                <span
+                                                  title={`Modified by ${rec.modifier_name ?? 'Unknown'} — changed ${formatModifiedFieldsLabel(rec.record?.owner_modified_fields)}`}
+                                                  style={{
+                                                    width: 16, height: 16, borderRadius: '50%',
+                                                    background: '#F97316', color: '#fff',
+                                                    fontSize: 9, fontWeight: 800, lineHeight: 1,
+                                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                    flexShrink: 0,
+                                                  }}
+                                                >
+                                                  M
+                                                </span>
+                                              )}
+                                            </span>
                                           </button>
                                         )
                                       }) : null}
@@ -2604,6 +3098,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                                 })}
                               </div>
                             )
+                            return rows
                           })
                         })}
                       </div>
@@ -2615,13 +3110,311 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
             </section>{/* /AR right section */}
           </div>{/* /two-col grid */}
           </>
+
+          {/* ── My Request — Manager only, bottom half of the Records tab. Everything they've
+               submitted via the Submit Request modal above, with the outcome once Owner/Partner
+               decide. ── */}
+          {scopeToManagerDepartments && (() => {
+            // needsResponse — this viewer is the COUNTERPART of a swap someone else invited them
+            // into, and hasn't answered yet. The request never reaches any reviewer's queue until
+            // this step is done (getShiftSwapRequests filters out counterpart_status === 'pending'),
+            // so this card needs its own Accept/Decline action, not just a status readout.
+            type MyReqItem = { key: string; kind: 'swap' | 'offday'; status: string; createdAt: string; swap?: ShiftSwapRequestView; offday?: FixedOffDayRequestView; needsResponse: boolean }
+            const items: MyReqItem[] = [
+              ...mySwaps.map((s): MyReqItem => ({
+                key: `swap-${s.id}`, kind: 'swap', status: s.status, createdAt: s.created_at, swap: s,
+                needsResponse: s.counterpart_id === internalUserId && s.counterpart_status === 'pending' && s.status === 'pending',
+              })),
+              ...myFixedOff.map((f): MyReqItem => ({ key: `offday-${f.id}`, kind: 'offday', status: f.status, createdAt: f.created_at, offday: f, needsResponse: false })),
+            ].sort((a, b) => (Number(b.needsResponse) - Number(a.needsResponse)) || (new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()))
+
+            const filteredItems = items.filter(i => {
+              if (myReqFilter === 'swap') return i.kind === 'swap'
+              if (myReqFilter === 'offday') return i.kind === 'offday'
+              return true
+            })
+            const selected = items.find(i => i.key === selectedMyReqKey) ?? filteredItems[0] ?? null
+
+            // Every label below is viewer-relative — a swap looks different depending on whether
+            // the current user is the one who requested it or the one invited into it.
+            const isMeRequester = (s: ShiftSwapRequestView) => s.requester_id === internalUserId
+            const cardTitle = (i: MyReqItem): string => {
+              if (i.kind === 'swap') {
+                const s = i.swap!
+                const iAmRequester = isMeRequester(s)
+                const otherName = iAmRequester ? s.counterpart_name : s.requester_name
+                const myShiftDate = iAmRequester ? s.requester_shift_date : s.counterpart_shift_date
+                return `${formatShortWeekdayDate(myShiftDate)} ⇄ ${otherName}`
+              }
+              return `${formatShortWeekdayDate(i.offday!.request_date)} — Day Off`
+            }
+            const cardBadge = (i: MyReqItem) => i.needsResponse ? { bg: '#EFF6FF', text: '#1D4ED8', label: 'Respond' } : myRequestStatusBadge(i.status)
+
+            const avatarInitial = (name: string) => name.trim().charAt(0).toUpperCase() || '?'
+            const selectedBadge = selected ? cardBadge(selected) : null
+            // Fixed-height, single-line headers — identical padding/icon/title treatment on both
+            // cards (and matching the Recruitment page's Job Postings / Detail panel pair) so the
+            // two block titles line up exactly when they sit side by side.
+            const MYREQ_HEADER_HEIGHT = 64
+
+            const filterLabel = myReqFilter === 'swap' ? 'Shift Swap' : myReqFilter === 'offday' ? 'Off Day' : 'My Requests'
+
+            return (
+              <div style={{ padding: '16px 28px 28px', flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: 'minmax(380px, 440px) minmax(0, 1fr)', gap: 16 }}>
+                {/* LEFT: My Requests — its own card, filter now lives in a dropdown off the title
+                    itself (no more filter pills row), scrollable list. */}
+                <section style={{ minHeight: 0, background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                  <div style={{ height: MYREQ_HEADER_HEIGHT, padding: '0 18px', boxSizing: 'border-box', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                    <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <FileText size={15} style={{ color: '#F97316' }} />
+                    </div>
+                    {/* Title doubles as the filter dropdown trigger — click it (or the chevron)
+                        to switch between All / Shift Swap / Fixed Day Off; the label updates to
+                        show what's currently selected, so no separate filter pills are needed. */}
+                    <div ref={myReqDropdownRef} style={{ position: 'relative', minWidth: 0 }}>
+                      <button type="button" onClick={() => setMyReqDropdownOpen(o => !o)}
+                        style={{ display: 'flex', alignItems: 'center', gap: 6, border: 'none', background: 'transparent', padding: 0, cursor: 'pointer' }}>
+                        <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2, whiteSpace: 'nowrap' }}>{filterLabel}</span>
+                        <ChevronDown size={15} style={{ color: '#9CA3AF', flexShrink: 0, transform: myReqDropdownOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+                      </button>
+                      {myReqDropdownOpen && (
+                        <div style={{ position: 'absolute', top: 'calc(100% + 8px)', left: 0, minWidth: 140, background: '#FFFFFF', border: '1.5px solid #E5E7EB', borderRadius: 10, boxShadow: '0 8px 24px rgba(15,23,42,0.12)', zIndex: 50, padding: '4px 0', overflow: 'hidden' }}>
+                          {([
+                            { key: 'all' as const, label: 'All Requests' },
+                            { key: 'swap' as const, label: 'Shift Swap' },
+                            { key: 'offday' as const, label: 'Off Day' },
+                          ]).map(f => {
+                            const active = myReqFilter === f.key
+                            return (
+                              <button key={f.key} type="button"
+                                onClick={() => { setMyReqFilter(f.key); setMyReqDropdownOpen(false) }}
+                                style={{ display: 'block', width: '100%', padding: '8px 14px', textAlign: 'left', border: 'none', background: active ? '#FFF7ED' : 'transparent', color: active ? '#EA580C' : '#374151', fontWeight: active ? 700 : 500, fontSize: 13, cursor: 'pointer' }}
+                                onMouseEnter={e => { if (!active) e.currentTarget.style.background = '#F9FAFB' }}
+                                onMouseLeave={e => { if (!active) e.currentTarget.style.background = 'transparent' }}
+                              >
+                                {f.label}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </div>
+                    <button onClick={() => { setRequestModalStep('choose'); setRequestModalOpen(true) }}
+                      style={{ marginLeft: 'auto', height: 32, padding: '0 12px', borderRadius: 8, border: '1.5px solid transparent', background: 'linear-gradient(135deg, #F97316, #EA580C)', color: '#FFFFFF', fontWeight: 700, fontSize: 12.5, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0, whiteSpace: 'nowrap' }}>
+                      <Plus size={12} /> Submit
+                    </button>
+                  </div>
+                  <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {myReqLoading ? (
+                      <div style={{ padding: '24px 0', textAlign: 'center', color: '#9CA3AF', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}><Spinner size={13} dark /> Loading…</div>
+                    ) : filteredItems.length === 0 ? (
+                      <div style={{ padding: '24px 12px', textAlign: 'center', color: '#9CA3AF', fontSize: 13 }}>No requests yet.</div>
+                    ) : filteredItems.map(i => {
+                      const badge = cardBadge(i)
+                      const isSelected = selected?.key === i.key
+                      const isUnseen = i.needsResponse || (i.status !== 'pending' && !seenMyReqKeys.has(i.key))
+                      return (
+                        <button key={i.key} type="button"
+                          onClick={() => { setSelectedMyReqKey(i.key); markMyReqSeen(i.key) }}
+                          style={{
+                            textAlign: 'left', padding: '10px 12px', borderRadius: 10, cursor: 'pointer',
+                            border: `1.5px solid ${isSelected ? '#F97316' : i.needsResponse ? '#93C5FD' : PANEL_BORDER}`,
+                            background: isSelected ? '#FFF7ED' : i.needsResponse ? '#EFF6FF' : '#FFFFFF',
+                            display: 'flex', flexDirection: 'column', gap: 4, position: 'relative',
+                          }}>
+                          {isUnseen && <span style={{ position: 'absolute', left: -6, top: 14, width: 8, height: 8, borderRadius: '50%', background: '#EF4444', boxShadow: '0 0 0 2px #FFFFFF' }} />}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            {i.kind === 'swap' ? <ArrowLeftRight size={12} style={{ color: '#F97316', flexShrink: 0 }} /> : <Calendar size={12} style={{ color: '#7C3AED', flexShrink: 0 }} />}
+                            <span style={{ fontSize: 10.5, fontWeight: 800, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{i.kind === 'swap' ? 'Shift Swap' : 'Fixed Day Off'}</span>
+                            <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', height: 20, padding: '0 8px', borderRadius: 999, fontSize: 10.5, fontWeight: 700, background: badge.bg, color: badge.text, flexShrink: 0 }}>{badge.label}</span>
+                          </div>
+                          <div style={{ fontSize: 13.5, fontWeight: 700, color: '#0F172A' }}>{cardTitle(i)}</div>
+                          <div style={{ fontSize: 11.5, color: '#9CA3AF' }}>Submitted {formatRelativeTime(i.createdAt)}</div>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </section>
+
+                {/* RIGHT: Detail — its own card, header mirrors the left card's exactly (same
+                    height/padding/icon/title styling), plus the status badge pinned to the right
+                    the way Recruitment's Detail header pins its meta pills. */}
+                <section style={{ minHeight: 0, background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                  <div style={{ height: MYREQ_HEADER_HEIGHT, padding: '0 18px', boxSizing: 'border-box', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexShrink: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                      <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                        {!selected ? <FileText size={15} style={{ color: '#F97316' }} /> : selected.kind === 'swap' ? <ArrowLeftRight size={15} style={{ color: '#F97316' }} /> : <Calendar size={15} style={{ color: '#F97316' }} />}
+                      </div>
+                      <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {!selected ? 'Request Detail' : selected.kind === 'swap' ? 'Shift Swap Request Detail' : 'Off Day Request Detail'}
+                      </span>
+                    </div>
+                    {selectedBadge && (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', height: 24, padding: '0 10px', borderRadius: 999, fontSize: 12, fontWeight: 700, background: selectedBadge.bg, color: selectedBadge.text, flexShrink: 0 }}>{selectedBadge.label}</span>
+                    )}
+                  </div>
+                  <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '20px 22px' }}>
+                    {!selected ? (
+                      <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, color: '#9CA3AF' }}>
+                        <FileText size={22} strokeWidth={1.5} />
+                        <span style={{ fontSize: 13, fontWeight: 600 }}>Select a request to see details</span>
+                      </div>
+                    ) : selected.kind === 'swap' ? (() => {
+                        const s = selected.swap!
+                        const iAmRequester = isMeRequester(s)
+                        const leftLabel = iAmRequester ? 'You' : s.requester_name
+                        const rightLabel = iAmRequester ? s.counterpart_name : 'You'
+                        const needsMyResponse = selected.needsResponse
+                        const responding = respondingSwapId === s.id
+                        return (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 7, color: '#6B7280', fontSize: 12.5 }}>
+                              <ArrowLeftRight size={13} /> Submitted {new Date(s.created_at).toLocaleString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true })}
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                              <div style={{ flex: 1, minWidth: 0, textAlign: 'center' }}>
+                                <div style={{ width: 44, height: 44, borderRadius: 999, background: '#F97316', color: '#fff', fontWeight: 800, fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 6px' }}>{leftLabel === 'You' ? 'Y' : avatarInitial(leftLabel)}</div>
+                                <div style={{ fontWeight: 700, fontSize: 13.5, color: '#0F172A' }}>{leftLabel}</div>
+                                <div style={{ fontSize: 12, color: '#6B7280' }}>{formatShortWeekdayDate(s.requester_shift_date)}</div>
+                                <div style={{ fontSize: 11.5, color: '#9CA3AF' }}>{formatTime(s.requester_start_time)} – {formatTime(s.requester_end_time)}</div>
+                              </div>
+                              <ArrowLeftRight size={16} style={{ color: '#CBD5E1', flexShrink: 0 }} />
+                              <div style={{ flex: 1, minWidth: 0, textAlign: 'center' }}>
+                                <div style={{ width: 44, height: 44, borderRadius: 999, background: '#3B82F6', color: '#fff', fontWeight: 800, fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 6px' }}>{rightLabel === 'You' ? 'Y' : avatarInitial(rightLabel)}</div>
+                                <div style={{ fontWeight: 700, fontSize: 13.5, color: '#0F172A' }}>{rightLabel}</div>
+                                <div style={{ fontSize: 12, color: '#6B7280' }}>{formatShortWeekdayDate(s.counterpart_shift_date)}</div>
+                                <div style={{ fontSize: 11.5, color: '#9CA3AF' }}>{formatTime(s.counterpart_start_time)} – {formatTime(s.counterpart_end_time)}</div>
+                              </div>
+                            </div>
+                            {s.reason && (
+                              <div>
+                                <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 5 }}>Reason</label>
+                                <div style={{ padding: '10px 12px', background: '#F9FAFB', border: `1px solid ${PANEL_BORDER}`, borderRadius: 9, fontSize: 13, color: '#374151' }}>{s.reason}</div>
+                              </div>
+                            )}
+                            {(s.monthly_swap_limit != null || s.deadline_exceeded != null) && (
+                              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                {s.monthly_swap_limit != null && (
+                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11.5, fontWeight: 700, padding: '5px 10px', borderRadius: 999, background: s.limit_exceeded ? '#FEF2F2' : '#ECFDF5', color: s.limit_exceeded ? '#B91C1C' : '#047857' }}>
+                                    {s.limit_exceeded ? <X size={11} /> : <Check size={11} />} {s.limit_exceeded ? 'Exceeded monthly limit' : `Within monthly limit (${s.requester_swaps_left}/${s.monthly_swap_limit} left)`}
+                                  </span>
+                                )}
+                                {s.deadline_exceeded != null && (
+                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11.5, fontWeight: 700, padding: '5px 10px', borderRadius: 999, background: s.deadline_exceeded ? '#FEF2F2' : '#ECFDF5', color: s.deadline_exceeded ? '#B91C1C' : '#047857' }}>
+                                    {s.deadline_exceeded ? <X size={11} /> : <Check size={11} />} {s.deadline_exceeded ? 'Past deadline' : 'Before deadline'}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                            {needsMyResponse ? (
+                              <div style={{ padding: '12px 14px', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 10, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                                <div style={{ display: 'flex', gap: 9 }}>
+                                  <ArrowLeftRight size={15} style={{ color: '#1D4ED8', flexShrink: 0, marginTop: 1 }} />
+                                  <p style={{ margin: 0, fontSize: 12.5, fontWeight: 700, color: '#1D4ED8' }}>{s.requester_name} wants to swap shifts with you — accept or decline.</p>
+                                </div>
+                                <div style={{ display: 'flex', gap: 8 }}>
+                                  <button type="button" disabled={responding} onClick={() => handleRespondSwap(s.id, 'approved')}
+                                    style={{ flex: 1, height: 34, border: 'none', borderRadius: 8, background: '#059669', color: '#FFFFFF', fontWeight: 700, fontSize: 13, cursor: responding ? 'default' : 'pointer', opacity: responding ? 0.6 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                                    <Check size={13} /> Accept
+                                  </button>
+                                  <button type="button" disabled={responding} onClick={() => handleRespondSwap(s.id, 'rejected')}
+                                    style={{ flex: 1, height: 34, border: 'none', borderRadius: 8, background: '#DC2626', color: '#FFFFFF', fontWeight: 700, fontSize: 13, cursor: responding ? 'default' : 'pointer', opacity: responding ? 0.6 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                                    <X size={13} /> Decline
+                                  </button>
+                                </div>
+                              </div>
+                            ) : s.status === 'pending' && s.counterpart_status === 'pending' ? (
+                              <div style={{ padding: '12px 14px', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 10, display: 'flex', gap: 9 }}>
+                                <Clock size={15} style={{ color: '#B45309', flexShrink: 0, marginTop: 1 }} />
+                                <p style={{ margin: 0, fontSize: 12.5, fontWeight: 700, color: '#B45309' }}>Awaiting {s.counterpart_name}&apos;s response.</p>
+                              </div>
+                            ) : s.status === 'pending' && (
+                              <div style={{ padding: '12px 14px', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 10, display: 'flex', gap: 9 }}>
+                                <Clock size={15} style={{ color: '#B45309', flexShrink: 0, marginTop: 1 }} />
+                                <div>
+                                  <p style={{ margin: 0, fontSize: 12.5, fontWeight: 700, color: '#B45309' }}>Awaiting Owner/Partner review</p>
+                                  <p style={{ margin: '3px 0 0', fontSize: 12, color: '#92400E', lineHeight: 1.5 }}>Both sides agreed — a Manager swap is decided by Owner/Partner.</p>
+                                </div>
+                              </div>
+                            )}
+                            {s.status === 'rejected' && s.owner_review_reason && (
+                              <div style={{ padding: '12px 14px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 10 }}>
+                                <p style={{ margin: 0, fontSize: 12.5, fontWeight: 700, color: '#B91C1C' }}>Reason</p>
+                                <p style={{ margin: '3px 0 0', fontSize: 12.5, color: '#7F1D1D', lineHeight: 1.5 }}>{s.owner_review_reason}</p>
+                              </div>
+                            )}
+                            {s.status === 'rejected' && !s.owner_review_reason && s.counterpart_status === 'rejected' && (
+                              <div style={{ padding: '12px 14px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 10, display: 'flex', gap: 9 }}>
+                                <X size={15} style={{ color: '#B91C1C', flexShrink: 0, marginTop: 1 }} />
+                                <p style={{ margin: 0, fontSize: 12.5, color: '#B91C1C', fontWeight: 700 }}>{iAmRequester ? `${s.counterpart_name} declined the swap.` : 'You declined this swap.'}</p>
+                              </div>
+                            )}
+                            {s.status === 'approved' && (
+                              <div style={{ padding: '12px 14px', background: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: 10, display: 'flex', gap: 9 }}>
+                                <Check size={15} style={{ color: '#047857', flexShrink: 0, marginTop: 1 }} />
+                                <p style={{ margin: 0, fontSize: 12.5, color: '#047857', fontWeight: 700 }}>Approved{s.reviewer_name ? ` by ${s.reviewer_name}` : ''} — the swap is now confirmed.</p>
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })() : (() => {
+                        const f = selected.offday!
+                        return (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 7, color: '#6B7280', fontSize: 12.5 }}>
+                              <Calendar size={13} /> Submitted {new Date(f.created_at).toLocaleString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true })}
+                            </div>
+                            <div>
+                              <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 5 }}>{f.status === 'modified' ? 'Confirmed Day' : 'Requested Day'}</label>
+                              <div style={{ padding: '12px 14px', background: '#F9FAFB', border: `1px solid ${PANEL_BORDER}`, borderRadius: 9, fontSize: 15, fontWeight: 700, color: '#0F172A' }}>{formatFixedOffRequestDay(f.request_date)}</div>
+                            </div>
+                            <div>
+                              <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 5 }}>Week Of</label>
+                              <div style={{ fontSize: 13, color: '#374151' }}>{formatDateDisplay(f.week_start)}</div>
+                            </div>
+                            {f.source === 'auto_assigned' && (
+                              <div style={{ fontSize: 12, color: '#6B7280' }}>Auto assigned by the system.</div>
+                            )}
+                            {f.status === 'pending' && (
+                              <div style={{ padding: '12px 14px', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 10, display: 'flex', gap: 9 }}>
+                                <Clock size={15} style={{ color: '#B45309', flexShrink: 0, marginTop: 1 }} />
+                                <div>
+                                  <p style={{ margin: 0, fontSize: 12.5, fontWeight: 700, color: '#B45309' }}>Awaiting Owner/Partner review</p>
+                                  <p style={{ margin: '3px 0 0', fontSize: 12, color: '#92400E', lineHeight: 1.5 }}>Fixed Day Off is always decided by Owner/Partner, for every role.</p>
+                                </div>
+                              </div>
+                            )}
+                            {f.status === 'modified' && (
+                              <div style={{ padding: '12px 14px', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 10, display: 'flex', gap: 9 }}>
+                                <Pencil size={15} style={{ color: '#1D4ED8', flexShrink: 0, marginTop: 1 }} />
+                                <p style={{ margin: 0, fontSize: 12.5, color: '#1D4ED8', fontWeight: 700 }}>{f.reviewer_name ?? 'Owner/Partner'} moved your day off to the date shown above.</p>
+                              </div>
+                            )}
+                            {f.status === 'approved' && (
+                              <div style={{ padding: '12px 14px', background: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: 10, display: 'flex', gap: 9 }}>
+                                <Check size={15} style={{ color: '#047857', flexShrink: 0, marginTop: 1 }} />
+                                <p style={{ margin: 0, fontSize: 12.5, color: '#047857', fontWeight: 700 }}>Approved{f.reviewer_name ? ` by ${f.reviewer_name}` : ''} — enjoy your day off.</p>
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })()}
+                  </div>
+                </section>
+              </div>
+            )
+          })()}
+          </div>
           )
         })()}
 
         {/* ══════════════════════════════════════════════════════════════════
             REQUESTS TAB
         ══════════════════════════════════════════════════════════════════ */}
-        {(mainTab === 'swaps' || mainTab === 'fixedoff') && (
+        {/* Manager's Off Day tab is repurposed entirely (see myRequestTab below) — they never
+            review anyone's Fixed Day Off (UC55 is O/P-only), so the approval-queue UI this block
+            renders is meaningless for them and is skipped in favor of the "My Request" tab. */}
+        {(mainTab === 'swaps' || (mainTab === 'fixedoff' && !scopeToManagerDepartments)) && (
           <div style={{ padding: '0 28px 28px', display: 'grid', gridTemplateColumns: isCompactReqLayout ? '1fr' : reqTab === 'fixedoff' && offDayQueueEmpty ? 'minmax(400px, 1fr) minmax(380px, 620px)' : 'minmax(260px, 326px) minmax(400px, 1fr) minmax(380px, 620px)', gridTemplateRows: isCompactReqLayout ? 'auto' : 'auto minmax(0, 1fr)', gap: 16, alignItems: 'start', flex: 1, minHeight: 0, overflow: isCompactReqLayout ? 'auto' : 'hidden' }}>
             <div style={{ display: 'contents' }}>
 
@@ -2692,6 +3485,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                                   <span style={{ maxWidth: '100%', fontSize: '0.82rem', fontWeight: 700, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{req.counterpart_name}</span>
                                 </div>
                               </div>
+                              <span style={{ alignSelf: 'flex-end', fontSize: '0.75rem', color: '#9CA3AF' }}>Submitted on {formatCompactAt(req.created_at)}</span>
                             </button>
                           )
                         })}
@@ -2803,6 +3597,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                                   {departmentName ?? 'Unassigned'}
                                 </span>
                                 <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={group.requester_name}>{group.requester_name}</span>
+                                <span style={{ fontSize: '0.75rem', color: '#9CA3AF' }}>Submitted on {formatCompactAt(group.created_at)}</span>
                               </div>
                               {verdict === 'safe' && (
                                 <span title="Safe to approve as requested" style={{ width: 32, height: 32, marginRight: 10, borderRadius: '50%', background: '#DCFCE7', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -2917,9 +3712,14 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                             <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#B91C1C', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 999, padding: '3px 10px', whiteSpace: 'nowrap', flexShrink: 0 }}>{req.owner_review_reason}</span>
                           )}
                           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, minWidth: 0, flexWrap: 'wrap', rowGap: 6 }}>
-                            <span style={{ fontSize: '0.76rem', fontWeight: 800, color: '#64748B', whiteSpace: 'nowrap' }}>
-                              {isPending ? formatOwnerDecisionTime(req.created_at) : formatOwnerDecisionTime(req.reviewed_at)}
-                            </span>
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+                              <span style={{ fontSize: '0.76rem', fontWeight: 800, color: '#64748B', whiteSpace: 'nowrap' }}>
+                                {isPending ? formatOwnerDecisionTime(req.created_at) : formatOwnerDecisionTime(req.reviewed_at)}
+                              </span>
+                              {!isPending && req.reviewer_name && (
+                                <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#94A3B8', whiteSpace: 'nowrap' }}>by {req.reviewer_name}</span>
+                              )}
+                            </div>
                             {isPending ? (
                               <div onClick={e => e.stopPropagation()} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                                 {req.counterpart_status === 'approved' && (
@@ -2937,9 +3737,6 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                               <>
                                 {approved && req.reviewed_by === null && (
                                   <span title="Approved automatically by the Shift Swap auto-approval rules" style={{ fontSize: '0.62rem', fontWeight: 800, color: '#7C3AED', background: '#F5F3FF', borderRadius: 999, padding: '3px 8px', whiteSpace: 'nowrap' }}>Auto-Approved</span>
-                                )}
-                                {req.reviewer_name && (
-                                  <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#94A3B8', whiteSpace: 'nowrap' }}>by {req.reviewer_name}</span>
                                 )}
                                 <span title={req.status === 'approved' ? 'Approved' : 'Rejected'} style={{ width: 30, height: 30, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: statusTone.bg, color: statusTone.text, border: `1.5px solid ${statusTone.border}`, borderRadius: 999, flexShrink: 0 }}>
                                   <StatusIcon size={12} strokeWidth={3} />
@@ -2992,15 +3789,22 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                   )
                   return (
                     <div className="att-request-card" style={{ width: '100%', boxSizing: 'border-box', background: '#FFFFFF', border: `1.5px solid ${PANEL_BORDER}`, borderRadius: 16, padding: '18px 22px 22px', display: 'flex', flexDirection: 'column', gap: 14 }}>
-                      {/* Department badge — top-left corner of the card, above everything else */}
-                      {req.department_name && (() => {
-                        const dc = deptColor(req.department_name)
-                        return (
-                          <div style={{ display: 'flex', alignItems: 'center' }}>
-                            <span style={{ fontSize: '0.72rem', fontWeight: 800, color: dc, background: `${dc}1a`, borderRadius: 999, padding: '4px 10px', whiteSpace: 'nowrap' }}>{req.department_name}</span>
-                          </div>
-                        )
-                      })()}
+                      {/* Department badge — top-left corner of the card, above everything else.
+                          The requester's swap reason (Shift Swap only, Off Day has none) sits
+                          right next to it as a small label. */}
+                      {(req.department_name || req.reason) && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                          {req.department_name && (() => {
+                            const dc = deptColor(req.department_name)
+                            return <span style={{ fontSize: '0.72rem', fontWeight: 800, color: dc, background: `${dc}1a`, borderRadius: 999, padding: '4px 10px', whiteSpace: 'nowrap' }}>{req.department_name}</span>
+                          })()}
+                          {req.reason && (
+                            <span style={{ fontSize: '0.72rem', fontWeight: 600, color: '#57534E', background: '#F5F5F4', border: '1px solid #E7E5E4', borderRadius: 999, padding: '4px 10px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 480 }}>
+                              <strong style={{ fontWeight: 800 }}>Reason:</strong> {req.reason}
+                            </span>
+                          )}
+                        </div>
+                      )}
                       <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', rowGap: 12, gap: 20 }}>
                         {personBlock(req.requester_name, req.requester_role, req.requester_photo_url, req.requester_swaps_left, false)}
                         <svg className="swap-arrow-duo" width="26" height="14" viewBox="0 0 24 14" fill="none" style={{ flexShrink: 0, color: '#94A3B8' }}>
@@ -3041,7 +3845,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                               <Check size={13} /> Approve
                             </button>
                             <button
-                              onClick={() => decideRequest('decide_shift_swap', req.id, 'rejected', req.requester_name)}
+                              onClick={() => { setRejectSwapTarget({ id: req.id, requesterName: req.requester_name }); setRejectSwapReason(''); setRejectSwapError('') }}
                               disabled={reqActionLoading}
                               style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: '0.78rem', fontWeight: 700, color: '#B91C1C', background: '#FEF2F2', border: '1.5px solid #FECACA', borderRadius: 999, padding: '6px 16px', cursor: reqActionLoading ? 'default' : 'pointer', opacity: reqActionLoading ? 0.6 : 1, transition: 'background 0.15s, border-color 0.15s' }}
                             >
@@ -3076,7 +3880,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                               <ClipboardList size={15} style={{ color: '#F97316' }} />
                             </div>
                             <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2, flex: 1 }}>Review Request</span>
-                            <button onClick={() => setSwapSettingsOpen(true)} title="Settings" style={{ width: 36, height: 30, borderRadius: 10, border: '1.5px solid #E5E7EB', background: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}>
+                            <button onClick={() => (scopeToManagerDepartments ? setManagerSwapSettingsOpen(true) : setSwapSettingsOpen(true))} title="Settings" style={{ width: 36, height: 30, borderRadius: 10, border: '1.5px solid #E5E7EB', background: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}>
                               <Settings size={16} style={{ color: '#6B7280' }} />
                             </button>
                           </div>
@@ -3136,7 +3940,10 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                                 <CheckCheck size={15} style={{ color: '#F97316' }} />
                               </div>
                               <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2, flex: 1 }}>Completed Requests</span>
-                              {/* Department filter dropdown */}
+                              {/* Department filter dropdown — Owner/Partner only; a Manager's
+                                  queue is already scoped to their own single department, so the
+                                  filter has nothing to filter. */}
+                              {!scopeToManagerDepartments && (
                               <div ref={processedDeptDropdownRef} style={{ position: 'relative' }}>
                                 <button
                                   type="button"
@@ -3164,6 +3971,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                                   </div>
                                 )}
                               </div>
+                              )}
                             </div>
                             <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 8, flex: 1, minHeight: 0, overflowY: 'auto' }}>
                               {filteredProcessed.length === 0
@@ -3804,6 +4612,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                                         </button>
                                       )}
                                     </div>
+                                    <span style={{ fontSize: '0.75rem', color: '#9CA3AF' }}>Submitted on {formatCompactAt(req.created_at)}</span>
                                   </div>
                                 </div>
                                 {/* Decision time + status circle top-right of the card, verdict mark
@@ -3812,12 +4621,16 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                                 {(isDecided || verdict) && (
                                   <div style={{ position: 'absolute', top: 18, right: 16, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
                                     {isDecided && (
-                                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, flexShrink: 0 }}>
-                                        {req.reviewed_at && (
-                                          <span style={{ fontSize: '0.76rem', fontWeight: 800, color: '#64748B', whiteSpace: 'nowrap' }}>{formatOwnerDecisionTime(req.reviewed_at)}</span>
-                                        )}
-                                        {req.reviewer_name && (
-                                          <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#94A3B8', whiteSpace: 'nowrap' }}>by {req.reviewer_name}</span>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                                        {(req.reviewed_at || req.reviewer_name) && (
+                                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+                                            {req.reviewed_at && (
+                                              <span style={{ fontSize: '0.76rem', fontWeight: 800, color: '#64748B', whiteSpace: 'nowrap' }}>{formatOwnerDecisionTime(req.reviewed_at)}</span>
+                                            )}
+                                            {req.reviewer_name && (
+                                              <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#94A3B8', whiteSpace: 'nowrap' }}>by {req.reviewer_name}</span>
+                                            )}
+                                          </div>
                                         )}
                                         <span title="Approved" style={{ width: 30, height: 30, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: '#ECFDF5', color: '#047857', border: '1.5px solid #86EFAC', borderRadius: 999, flexShrink: 0 }}>
                                           <Check size={12} strokeWidth={3} />
@@ -3901,6 +4714,159 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
 
       </main>
 
+      {/* ── Submit Request modal — Manager only, opened from the Records header. Choose-then-fill
+           pattern mirroring the Recruitment AI Job Builder's "Choose Job Type" step (two option
+           cards up front, form after), re-themed to this page's plain orange accent. ── */}
+      {requestModalOpen && (() => {
+        const todayStr = new Date().toISOString().slice(0, 10)
+        const mySwappableShifts = myShifts.filter(s => s.shift.shift_date > todayStr)
+        const colleagueRows = swapCandidateRows.filter(r => r.user_id !== internalUserId && r.role === 'Manager' && (scopedDeptRef.current?.ids.has(r.department_id) ?? false))
+        const selectedColleague = colleagueRows.find(r => r.user_id === swapCounterpartId)
+        const colleagueShifts = (selectedColleague?.shifts ?? []).filter(s => s.shift_date > todayStr && s.assignment_id)
+        const closeRequestModal = () => { setRequestModalOpen(false); setRequestModalStep('choose') }
+        const modalTitle = requestModalStep === 'choose' ? 'Submit Request'
+          : requestModalStep === 'swap' ? 'Submit Shift Swap Request' : 'Submit Off Day Request'
+        const modalIcon = requestModalStep === 'offday' ? <Calendar size={15} color="#fff" strokeWidth={2.5} /> : <ArrowLeftRight size={15} color="#fff" strokeWidth={2.5} />
+        return (
+          <ModalOverlay onClose={closeRequestModal} maxWidth="440px">
+            <ModalBox>
+              <ModalHeader title={modalTitle} icon={modalIcon} onClose={closeRequestModal} />
+              <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 13, maxHeight: 'calc(90vh - 130px)', overflowY: 'auto' }}>
+                {myReqError && (
+                  <div style={modalErrorBoxStyle}>{myReqError}</div>
+                )}
+
+                {/* ── Step 1: choose request type — same card style as Job Type step ── */}
+                {requestModalStep === 'choose' && (
+                  <>
+                    <button onClick={() => setRequestModalStep('swap')}
+                      style={{ padding: '14px 16px', border: '1.5px solid #E5E7EB', borderRadius: 12, background: '#FFFFFF', cursor: 'pointer', textAlign: 'left' }}
+                      onMouseEnter={e => { e.currentTarget.style.borderColor = '#F97316' }}
+                      onMouseLeave={e => { e.currentTarget.style.borderColor = '#E5E7EB' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                        <div style={{ width: 36, height: 36, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                          <ArrowLeftRight size={17} color="#F97316" />
+                        </div>
+                        <div>
+                          <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#374151', margin: '0 0 2px' }}>Shift Swap Request</p>
+                          <p style={{ fontSize: '0.8125rem', color: '#6B7280', margin: 0 }}>Trade a shift with a colleague in your department.</p>
+                        </div>
+                      </div>
+                    </button>
+                    <button onClick={() => setRequestModalStep('offday')}
+                      style={{ padding: '14px 16px', border: '1.5px solid #E5E7EB', borderRadius: 12, background: '#FFFFFF', cursor: 'pointer', textAlign: 'left' }}
+                      onMouseEnter={e => { e.currentTarget.style.borderColor = '#F97316' }}
+                      onMouseLeave={e => { e.currentTarget.style.borderColor = '#E5E7EB' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                        <div style={{ width: 36, height: 36, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                          <Calendar size={17} color="#F97316" />
+                        </div>
+                        <div>
+                          <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#374151', margin: '0 0 2px' }}>Off Day Request</p>
+                          <p style={{ fontSize: '0.8125rem', color: '#6B7280', margin: 0 }}>Request specific days off for the upcoming week.</p>
+                        </div>
+                      </div>
+                    </button>
+                  </>
+                )}
+
+                {/* ── Step 2a: Shift Swap form ── */}
+                {requestModalStep === 'swap' && (
+                  <>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 5 }}>My Shift</label>
+                      <select value={swapShiftId} onChange={e => setSwapShiftId(e.target.value)} style={selectStyle}>
+                        <option value="">Select a shift to swap… (tomorrow or later)</option>
+                        {mySwappableShifts.map(s => (
+                          <option key={s.assignment.id} value={s.assignment.id}>{s.shift.title || 'Shift'} — {s.shift.shift_date} {formatShiftHour(s.shift.start_time)}–{formatShiftHour(s.shift.end_time)}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 5 }}>Swap With</label>
+                      <select value={swapCounterpartId} onChange={e => { setSwapCounterpartId(e.target.value); setSwapCounterpartAssignmentId('') }} style={selectStyle}>
+                        <option value="">Select a colleague…</option>
+                        {colleagueRows.map(r => (
+                          <option key={r.user_id} value={r.user_id ?? ''}>{r.full_name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 5 }}>Their Shift</label>
+                      <select value={swapCounterpartAssignmentId} onChange={e => setSwapCounterpartAssignmentId(e.target.value)} disabled={!swapCounterpartId} style={selectStyle}>
+                        <option value="">{swapCounterpartId ? (colleagueShifts.length === 0 ? 'No upcoming shifts' : 'Select their shift…') : 'Select a colleague first'}</option>
+                        {colleagueShifts.map(s => (
+                          <option key={s.assignment_id} value={s.assignment_id ?? ''}>{s.title || 'Shift'} — {s.shift_date} {formatShiftHour(s.start_time)}–{formatShiftHour(s.end_time)}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 5 }}>Reason (optional)</label>
+                      <textarea value={swapReason} onChange={e => setSwapReason(e.target.value)} rows={2} style={{ ...selectStyle, height: 'auto', padding: '8px 10px', resize: 'vertical', fontFamily: 'inherit' }} />
+                    </div>
+                  </>
+                )}
+
+                {/* ── Step 2b: Off Day form ── */}
+                {requestModalStep === 'offday' && (
+                  <>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, color: '#6B7280', fontSize: 12.5, fontWeight: 700 }}>
+                      <span>Upcoming week</span>
+                      <span>{selectedFixedOffDates.length}/{fixedOffQuota} selected</span>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(108px, 1fr))', gap: 8 }}>
+                      {getUpcomingWeekDates().map(date => {
+                        const selected = selectedFixedOffDates.includes(date)
+                        const atLimit = !selected && selectedFixedOffDates.length >= fixedOffQuota
+                        return (
+                          <button
+                            key={date}
+                            type="button"
+                            onClick={() => toggleFixedOffDate(date)}
+                            disabled={atLimit}
+                            style={{
+                              minHeight: 58, padding: '8px 10px', borderRadius: 10,
+                              border: selected ? '1.5px solid #16A34A' : `1px solid ${PANEL_BORDER}`,
+                              background: selected ? '#DCFCE7' : '#FFFFFF',
+                              color: selected ? '#166534' : '#111827',
+                              opacity: atLimit ? 0.45 : 1, cursor: atLimit ? 'not-allowed' : 'pointer',
+                              display: 'flex', flexDirection: 'column', alignItems: 'flex-start', justifyContent: 'center', gap: 3, fontWeight: 800,
+                            }}
+                          >
+                            <span style={{ fontSize: 12 }}>{new Date(`${date}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'short' })}</span>
+                            <span style={{ fontSize: 13 }}>{formatDateDisplay(date)}</span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </>
+                )}
+              </div>
+              <div style={{ padding: '12px 24px 20px', display: 'flex', gap: 8, justifyContent: requestModalStep === 'choose' ? 'flex-end' : 'space-between', borderTop: '1px solid #F3F4F6' }}>
+                {requestModalStep === 'choose' ? (
+                  <button onClick={closeRequestModal} style={modalGhostButtonStyle}>Cancel</button>
+                ) : (
+                  <>
+                    <button onClick={() => { setRequestModalStep('choose'); setMyReqError('') }} style={{ ...modalGhostButtonStyle, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                      <ChevronLeft size={14} /> Back
+                    </button>
+                    {requestModalStep === 'swap' ? (
+                      <button onClick={handleSubmitSwap} disabled={swapSubmitting || !swapShiftId || !swapCounterpartId || !swapCounterpartAssignmentId} style={modalPrimaryButtonStyle(swapSubmitting || !swapShiftId || !swapCounterpartId || !swapCounterpartAssignmentId)}>
+                        {swapSubmitting ? <Spinner size={13} /> : <ArrowLeftRight size={13} />} Submit Swap Request
+                      </button>
+                    ) : (
+                      <button onClick={handleSubmitFixedOff} disabled={fixedSubmitting || selectedFixedOffDates.length !== fixedOffQuota} style={modalPrimaryButtonStyle(fixedSubmitting || selectedFixedOffDates.length !== fixedOffQuota)}>
+                        {fixedSubmitting ? <Spinner size={13} /> : <Calendar size={13} />} Request Weekly Day Off
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+            </ModalBox>
+          </ModalOverlay>
+        )
+      })()}
+
       {/* ── Export modal ─────────────────────────────────────────────────── */}
       {exportOpen && (
         <ModalOverlay onClose={() => setExportOpen(false)} maxWidth="420px">
@@ -3972,7 +4938,80 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
       )}
 
       {/* ── Attendance Record modal ───────────────────────────────────────── */}
-      {reviewOpen && reviewRecord && (
+      {reviewOpen && reviewRecord && (() => {
+        // UC56 (rank confirmed 2026-07-23): Owner/Partner outrank Manager — once either of them
+        // modifies a record, a Manager loses edit rights on it entirely (server enforces this too,
+        // see assertCanModifyClockTimes), so the dropdowns must not even render as editable.
+        const lockedByOwnerOrPartner = scopeToManagerDepartments
+          && reviewRecord.record?.owner_status === 'modified'
+          && (reviewRecord.modifier_role === 'Owner' || reviewRecord.modifier_role === 'Partner')
+        // UC56 (expanded 2026-07-23): a Manager's edit right stops at their own department's
+        // Employee/Casual Worker records — a peer Manager's record is view-only even though
+        // canModifyClockTimes is true for the page as a whole.
+        const canEditReviewRecord = canModifyClockTimes && !lockedByOwnerOrPartner && (!scopeToManagerDepartments || reviewRecord.assignee_role !== 'Manager')
+        // True only once the user has actually changed one of the four pickers from what the
+        // modal opened with — the Reason field (and an actual "modify" submission) should only
+        // appear/apply once there's something to explain, not just for opening the record to look.
+        const hasTimeChanges = reviewClockIn !== reviewInitialTimes.clockIn
+          || reviewClockOut !== reviewInitialTimes.clockOut
+          || reviewBreakIn !== reviewInitialTimes.breakIn
+          || reviewBreakOut !== reviewInitialTimes.breakOut
+        // Predicts whether saving now will actually register as a modification — i.e. differs from
+        // the field's TRUE original — mirroring resolveTrueOriginal/computeOwnerModification on the
+        // server. clock_in_time/clock_out_time are immutable raw punches, so the record's own copy
+        // IS the true original; break_in_time/break_out_time get overwritten directly, so a stored
+        // owner_modified_original_values entry (from an earlier edit) is reused when present.
+        const shiftDateForCompare = reviewRecord.shift.shift_date
+        const toISOForCompare = (ampm: string): string | null => ampm ? new Date(`${shiftDateForCompare}T${amPmToHHMM(ampm)}:00Z`).toISOString() : null
+        const truncateToMinute = (iso: string | null) => iso?.slice(0, 16) ?? null
+        const resolveTrueOriginalClient = (field: AttendanceModifiedTimeField): string | null => {
+          const record = reviewRecord.record
+          if (!record) return null
+          if (field === 'clock_in_time') return record.clock_in_time
+          if (field === 'clock_out_time') return record.clock_out_time
+          const stored = record.owner_modified_original_values ?? {}
+          return field in stored ? stored[field] ?? null : record[field]
+        }
+        const currentPickerValues: Record<AttendanceModifiedTimeField, string | null> = {
+          clock_in_time: toISOForCompare(reviewClockIn),
+          clock_out_time: toISOForCompare(reviewClockOut),
+          break_in_time: toISOForCompare(reviewBreakIn),
+          break_out_time: toISOForCompare(reviewBreakOut),
+        }
+        const willBeModified = (['clock_in_time', 'clock_out_time', 'break_in_time', 'break_out_time'] as const)
+          .some(field => truncateToMinute(resolveTrueOriginalClient(field)) !== truncateToMinute(currentPickerValues[field]))
+        // Surfaces who modified this record (Manager, Owner, or Partner — any of the three) and
+        // which fields, so the review modal can show a "Modified" summary row plus a per-field "M"
+        // badge + original value. Shown for every role, Manager included — a Manager needs to see
+        // when Owner/Partner corrected their own or their team's records.
+        const showModifiedInfo = reviewRecord.record?.owner_status === 'modified'
+        const modifiedFieldsSet = new Set(reviewRecord.record?.owner_modified_fields ?? [])
+        const fieldLabelWithBadge = (text: string, fieldKey: AttendanceModifiedTimeField) => (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+            {text}
+            {showModifiedInfo && modifiedFieldsSet.has(fieldKey) && (
+              <span title="Modified" style={{ width: 14, height: 14, borderRadius: '50%', background: '#F97316', color: '#fff', fontSize: 8, fontWeight: 800, lineHeight: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>M</span>
+            )}
+          </span>
+        )
+        const originalValueNote = (fieldKey: AttendanceModifiedTimeField) => {
+          if (!showModifiedInfo || !modifiedFieldsSet.has(fieldKey)) return null
+          const original = reviewRecord.record?.owner_modified_original_values?.[fieldKey] ?? null
+          return (
+            <p style={{ margin: '4px 0 0', fontSize: 11, fontWeight: 700, color: '#EA580C' }}>
+              Original: {original ? fmtClockStamp(original) : '—'}
+            </p>
+          )
+        }
+        // The existing reason, shown read-only and un-editable — until the user actually touches
+        // a time again, at which point it hands off to the editable box below (always starting
+        // blank, even for the original author) and this read-only view disappears.
+        const showReadOnlyReason = showModifiedInfo && !hasTimeChanges
+        // A NEW reason is required only when the edit actually nets out different from the true
+        // original — reverting a time exactly back to what it originally was needs no reason at
+        // all (see willBeModified above), so the box doesn't appear for that case either.
+        const showEditableReason = hasTimeChanges && willBeModified
+        return (
         <ModalOverlay onClose={() => setReviewOpen(false)} maxWidth="420px">
           <ModalBox>
             <ModalHeader title="Attendance Record" icon={<Check size={15} color="#fff" strokeWidth={2.5} />} onClose={() => setReviewOpen(false)} />
@@ -4024,6 +5063,10 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                   ? [{ label: 'Start Time', value: formatShiftHour(reviewRecord.shift.start_time) }]
                   : [{ label: 'Shift Time', value: `${formatShiftHour(reviewRecord.shift.start_time)} – ${formatShiftHour(reviewRecord.shift.end_time)}` }]
                 ),
+                ...(showModifiedInfo
+                  ? [{ label: 'Modified By', value: `${reviewRecord.modifier_name ?? 'Unknown'} on ${formatModifiedDateOnly(reviewRecord.record?.owner_reviewed_at)}` }]
+                  : []
+                ),
               ] as { label: string; value: string; onClick?: () => void }[]).map(field => (
                 <div key={field.label} style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6' }}>
                   <label style={{ ...modalLabelStyle, marginBottom: 4 }}>{field.label}</label>
@@ -4045,10 +5088,10 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
               {/* Editable clock times — only meaningful if a clock-in/out record actually exists.
                   A genuine no-show (absent, never clocked in) has no attendance_records row at
                   all, so there is nothing here to edit or save. */}
-              {canModifyClockTimes && reviewRecord.record && (
+              {canEditReviewRecord && reviewRecord.record && (
                 <div style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                   <div>
-                    <label style={{ ...modalLabelStyle, marginBottom: 6 }}>Clock In</label>
+                    <label style={{ ...modalLabelStyle, marginBottom: 6 }}>{fieldLabelWithBadge('Clock In', 'clock_in_time')}</label>
                     <div style={{ position: 'relative' }}>
                       <select value={reviewClockIn} onChange={e => setReviewClockIn(e.target.value)} style={selectStyle}>
                         <option value="">-- select --</option>
@@ -4056,9 +5099,10 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                       </select>
                       <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: '#6B7280', fontSize: 12 }}>▾</span>
                     </div>
+                    {originalValueNote('clock_in_time')}
                   </div>
                   <div>
-                    <label style={{ ...modalLabelStyle, marginBottom: 6 }}>Clock Out</label>
+                    <label style={{ ...modalLabelStyle, marginBottom: 6 }}>{fieldLabelWithBadge('Clock Out', 'clock_out_time')}</label>
                     <div style={{ position: 'relative' }}>
                       <select value={reviewClockOut} onChange={e => setReviewClockOut(e.target.value)} style={selectStyle}>
                         <option value="">-- select --</option>
@@ -4066,29 +5110,34 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                       </select>
                       <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: '#6B7280', fontSize: 12 }}>▾</span>
                     </div>
+                    {originalValueNote('clock_out_time')}
                   </div>
                 </div>
               )}
 
-              {/* Read-only clock times for roles that can view but not modify (UC50: M/E/CW). */}
-              {!canModifyClockTimes && reviewRecord.record && (
+              {/* Read-only clock times for viewers who can't modify this record (UC50: Employee/
+                  Casual Worker viewing their own; also a Manager viewing their own or a peer
+                  Manager's — still gets the "M" badge + Original note like the editable view. */}
+              {!canEditReviewRecord && reviewRecord.record && (
                 <div style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                   <div>
-                    <label style={{ ...modalLabelStyle, marginBottom: 4 }}>Clock In</label>
-                    <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>{fmtClockStamp(reviewRecord.record.clock_in_time)}</p>
+                    <label style={{ ...modalLabelStyle, marginBottom: 4 }}>{fieldLabelWithBadge('Clock In', 'clock_in_time')}</label>
+                    <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>{fmtClockStamp(reviewRecord.record.owner_adjusted_clock_in_time ?? reviewRecord.record.clock_in_time)}</p>
+                    {originalValueNote('clock_in_time')}
                   </div>
                   <div>
-                    <label style={{ ...modalLabelStyle, marginBottom: 4 }}>Clock Out</label>
-                    <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>{fmtClockStamp(reviewRecord.record.clock_out_time)}</p>
+                    <label style={{ ...modalLabelStyle, marginBottom: 4 }}>{fieldLabelWithBadge('Clock Out', 'clock_out_time')}</label>
+                    <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>{fmtClockStamp(reviewRecord.record.owner_adjusted_clock_out_time ?? reviewRecord.record.clock_out_time)}</p>
+                    {originalValueNote('clock_out_time')}
                   </div>
                 </div>
               )}
 
               {/* Editable break pair — same picker UI as Clock In/Out (UC56 direct modification). */}
-              {canModifyClockTimes && reviewRecord.record && (
+              {canEditReviewRecord && reviewRecord.record && (
                 <div style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                   <div>
-                    <label style={{ ...modalLabelStyle, marginBottom: 6 }}>Break In</label>
+                    <label style={{ ...modalLabelStyle, marginBottom: 6 }}>{fieldLabelWithBadge('Break In', 'break_in_time')}</label>
                     <div style={{ position: 'relative' }}>
                       <select value={reviewBreakIn} onChange={e => setReviewBreakIn(e.target.value)} style={selectStyle}>
                         <option value="">-- select --</option>
@@ -4096,9 +5145,10 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                       </select>
                       <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: '#6B7280', fontSize: 12 }}>▾</span>
                     </div>
+                    {originalValueNote('break_in_time')}
                   </div>
                   <div>
-                    <label style={{ ...modalLabelStyle, marginBottom: 6 }}>Break Out</label>
+                    <label style={{ ...modalLabelStyle, marginBottom: 6 }}>{fieldLabelWithBadge('Break Out', 'break_out_time')}</label>
                     <div style={{ position: 'relative' }}>
                       <select value={reviewBreakOut} onChange={e => setReviewBreakOut(e.target.value)} style={selectStyle}>
                         <option value="">-- select --</option>
@@ -4106,21 +5156,56 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                       </select>
                       <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: '#6B7280', fontSize: 12 }}>▾</span>
                     </div>
+                    {originalValueNote('break_out_time')}
                   </div>
                 </div>
               )}
 
-              {/* Read-only break pair, only if a break was actually recorded. */}
-              {!canModifyClockTimes && reviewRecord.record && reviewRecord.record.break_in_time && (
+              {/* Read-only break pair for viewers who can't modify this record — still gets the
+                  "M" badge + Original note like the editable view. Only if a break exists to show. */}
+              {!canEditReviewRecord && reviewRecord.record && reviewRecord.record.break_in_time && (
                 <div style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                   <div>
-                    <label style={{ ...modalLabelStyle, marginBottom: 4 }}>Break In</label>
+                    <label style={{ ...modalLabelStyle, marginBottom: 4 }}>{fieldLabelWithBadge('Break In', 'break_in_time')}</label>
                     <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>{fmtClockStamp(reviewRecord.record.break_in_time)}</p>
+                    {originalValueNote('break_in_time')}
                   </div>
                   <div>
-                    <label style={{ ...modalLabelStyle, marginBottom: 4 }}>Break Out</label>
+                    <label style={{ ...modalLabelStyle, marginBottom: 4 }}>{fieldLabelWithBadge('Break Out', 'break_out_time')}</label>
                     <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>{fmtClockStamp(reviewRecord.record.break_out_time)}</p>
+                    {originalValueNote('break_out_time')}
                   </div>
+                </div>
+              )}
+
+              {/* The reason behind the record's current modification — read-only until the user
+                  touches a time again, at which point it hands off to the editable box below.
+                  Shown to any viewer (not just whoever can edit) so e.g. a Manager can see why
+                  Owner/Partner corrected their own record, even though they can't edit it further. */}
+              {reviewRecord.record && showReadOnlyReason && (
+                <div style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6' }}>
+                  <label style={{ ...modalLabelStyle, marginBottom: 4 }}>Reason</label>
+                  <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif", whiteSpace: 'pre-wrap' }}>
+                    {reviewRecord.record.owner_notes || '—'}
+                  </p>
+                </div>
+              )}
+
+              {/* Only appears once a time change actually nets out different from the true
+                  original — reason is mandatory whenever a time is genuinely corrected (server
+                  also enforces this), so anyone reviewing the record later (Owner/Partner
+                  "Modified By" field) knows why. A revert back to the true original needs no
+                  reason at all, so this doesn't appear for that case (see willBeModified above). */}
+              {canEditReviewRecord && reviewRecord.record && showEditableReason && (
+                <div style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6' }}>
+                  <label style={{ ...modalLabelStyle, marginBottom: 6 }}>Reason</label>
+                  <textarea
+                    value={reviewReason}
+                    onChange={e => setReviewReason(e.target.value)}
+                    placeholder="Why is this time being changed?"
+                    rows={2}
+                    style={{ ...selectStyle, height: 'auto', padding: '8px 10px', resize: 'vertical', fontFamily: 'inherit' }}
+                  />
                 </div>
               )}
             </div>
@@ -4146,9 +5231,9 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                     : <><Check size={13} strokeWidth={2.5} /> Active</>}
                 </button>
               )}
-              {canModifyClockTimes && reviewRecord.record && (
+              {canEditReviewRecord && reviewRecord.record && (
                 <div style={{ marginLeft: 'auto' }}>
-                  <button onClick={submitReview} disabled={reviewActionLoading} style={modalPrimaryButtonStyle(reviewActionLoading)}>
+                  <button onClick={submitReview} disabled={reviewActionLoading || !hasTimeChanges} style={modalPrimaryButtonStyle(reviewActionLoading || !hasTimeChanges)}>
                     {reviewActionLoading ? <Spinner size={13} /> : <Check size={13} />} Save
                   </button>
                 </div>
@@ -4156,7 +5241,8 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
             </div>
           </ModalBox>
         </ModalOverlay>
-      )}
+        )
+      })()}
 
       {/* ── Task Change detail modal — opened from a task card in Current Task / After Change ── */}
       {taskChangeDetail && (() => {
@@ -4363,6 +5449,105 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                 <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                   <button onClick={() => void saveSwapSettings()} disabled={swapSettingsSaving || swapSettingsLoading} style={modalPrimaryButtonStyle(swapSettingsSaving || swapSettingsLoading)}>
                     {swapSettingsSaving ? <Spinner size={13} /> : <Check size={14} />}
+                    Save
+                  </button>
+                </div>
+              </div>
+            </div>
+          </ModalBox>
+        </ModalOverlay>
+      )}
+
+      {managerSwapSettingsOpen && (
+        <ModalOverlay onClose={() => setManagerSwapSettingsOpen(false)} maxWidth="480px">
+          <ModalBox>
+            <ModalHeader title="Shift Swap Settings" icon={<Settings size={15} color="#fff" strokeWidth={2.5} />} onClose={() => setManagerSwapSettingsOpen(false)} />
+            <div style={{ padding: '20px 24px 24px', maxHeight: '70vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 24 }}>
+              {managerSwapSettingsError && (
+                <div style={{ padding: '10px 12px', borderRadius: 10, background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', fontSize: 12, fontWeight: 700 }}>{managerSwapSettingsError}</div>
+              )}
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                {/* Only shown when the Manager manages more than one department — each department
+                    gets its own independent settings row, never shared across departments. */}
+                {managerSwapDepartments.length > 1 && (
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#374151', margin: '0 0 6px' }}>Department</label>
+                    <DropdownField
+                      value={managerSwapDeptId ?? ''}
+                      onChange={v => setManagerSwapDeptId(v)}
+                      options={managerSwapDepartments.map(d => ({ value: d.department_id, label: d.department_name }))}
+                    />
+                  </div>
+                )}
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#374151', margin: '0 0 6px' }}>Monthly Swap Limit / Person</label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, border: '1.5px solid #E5E7EB', borderRadius: 8, minHeight: 40, padding: '10px 12px', background: '#FFFFFF', boxSizing: 'border-box', cursor: 'text' }}>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={managerSwapMonthlyLimit ?? ''}
+                      placeholder="No limit"
+                      onChange={e => {
+                        const digits = e.target.value.replace(/\D/g, '')
+                        setManagerSwapMonthlyLimit(digits === '' ? null : Math.max(1, Number(digits)))
+                      }}
+                      style={{ width: `${String(managerSwapMonthlyLimit ?? 'No limit').length}ch`, minWidth: 10, border: 'none', outline: 'none', padding: 0, fontSize: '0.9375rem', color: '#111827', background: 'transparent' }}
+                    />
+                    <span style={{ fontSize: '0.9375rem', color: '#111827' }}>swap</span>
+                  </label>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#374151', margin: '0 0 6px' }}>Swap Deadline</label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, border: '1.5px solid #E5E7EB', borderRadius: 8, minHeight: 40, padding: '10px 12px', background: '#FFFFFF', boxSizing: 'border-box', cursor: 'text' }}>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={managerSwapDeadlineHours ?? ''}
+                      placeholder="No deadline"
+                      onChange={e => {
+                        const digits = e.target.value.replace(/\D/g, '')
+                        setManagerSwapDeadlineHours(digits === '' ? null : Math.max(1, Number(digits)))
+                      }}
+                      style={{ width: `${String(managerSwapDeadlineHours ?? 'No deadline').length}ch`, minWidth: 10, border: 'none', outline: 'none', padding: 0, fontSize: '0.9375rem', color: '#111827', background: 'transparent' }}
+                    />
+                    <span style={{ fontSize: '0.9375rem', color: '#111827' }}>hours before shift</span>
+                  </label>
+                </div>
+
+                <div style={{ borderTop: '1px solid #E5E7EB', paddingTop: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={managerSwapAutoApprovalEnabled}
+                      onChange={e => setManagerSwapAutoApprovalEnabled(e.target.checked)}
+                      style={{ width: 16, height: 16, accentColor: '#F97316', cursor: 'pointer' }}
+                    />
+                    <span style={{ fontSize: '0.875rem', fontWeight: 600, color: '#111827' }}>Auto Approval</span>
+                  </label>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#374151', margin: '0 0 6px' }}>Monthly Limit Exceeded</label>
+                    <DropdownField
+                      value={managerSwapReviewOnLimitExceeded ? 'review' : 'reject'}
+                      onChange={v => setManagerSwapReviewOnLimitExceeded(v === 'review')}
+                      options={[{ value: 'review', label: 'Send to Manager' }, { value: 'reject', label: 'Auto Reject' }]}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#374151', margin: '0 0 6px' }}>Submitted After Deadline</label>
+                    <DropdownField
+                      value={managerSwapReviewOnDeadlineExceeded ? 'review' : 'reject'}
+                      onChange={v => setManagerSwapReviewOnDeadlineExceeded(v === 'review')}
+                      options={[{ value: 'review', label: 'Send to Manager' }, { value: 'reject', label: 'Auto Reject' }]}
+                    />
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <button onClick={() => void saveManagerSwapSettings()} disabled={managerSwapSettingsSaving || managerSwapSettingsLoading || !managerSwapDeptId} style={modalPrimaryButtonStyle(managerSwapSettingsSaving || managerSwapSettingsLoading || !managerSwapDeptId)}>
+                    {managerSwapSettingsSaving ? <Spinner size={13} /> : <Check size={14} />}
                     Save
                   </button>
                 </div>
@@ -4601,6 +5786,38 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
           </ModalOverlay>
         )
       })()}
+
+      {/* Reject Shift Swap — Owner/Partner must record why, so it's stored as owner_review_reason
+          and shown to the requester / Completed Requests list. */}
+      {rejectSwapTarget && (
+        <ModalOverlay onClose={() => { setRejectSwapTarget(null); setRejectSwapReason(''); setRejectSwapError('') }} maxWidth="420px">
+          <ModalBox>
+            <ModalHeader
+              title="Reject Shift Swap"
+              icon={<X size={15} color="#fff" strokeWidth={2.5} />}
+              onClose={() => { setRejectSwapTarget(null); setRejectSwapReason(''); setRejectSwapError('') }}
+            />
+            <div style={{ padding: '20px 24px 20px' }}>
+              <label style={{ ...modalLabelStyle, marginBottom: 10 }}>Reason for {rejectSwapTarget.requesterName}</label>
+              <textarea
+                autoFocus
+                value={rejectSwapReason}
+                onChange={e => { setRejectSwapReason(e.target.value); if (rejectSwapError) setRejectSwapError('') }}
+                placeholder="Explain why this swap is being rejected..."
+                rows={4}
+                style={{ ...modalInputStyle, resize: 'vertical', fontFamily: 'inherit' }}
+              />
+            </div>
+            {rejectSwapError && <div style={modalErrorBoxStyle}>{rejectSwapError}</div>}
+            <div style={{ padding: '12px 24px 20px', display: 'flex', justifyContent: 'flex-end', gap: 8, borderTop: '1px solid #F3F4F6' }}>
+              <button type="button" onClick={() => { setRejectSwapTarget(null); setRejectSwapReason(''); setRejectSwapError('') }} disabled={reqActionLoading} style={modalGhostButtonStyle}>Cancel</button>
+              <button type="button" onClick={() => void confirmRejectSwap()} disabled={reqActionLoading || !rejectSwapReason.trim()} style={modalDestructiveButtonStyle(reqActionLoading || !rejectSwapReason.trim())}>
+                {reqActionLoading ? <Spinner size={13} /> : <X size={13} />} Reject
+              </button>
+            </div>
+          </ModalBox>
+        </ModalOverlay>
+      )}
 
       <Toast message={successToast} />
       <Toast message={errorToast} variant="error" />
