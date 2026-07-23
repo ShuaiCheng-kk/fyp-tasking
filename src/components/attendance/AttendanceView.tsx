@@ -1190,6 +1190,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
   const [myReqLoading, setMyReqLoading] = useState(false)
   const [mySwaps, setMySwaps] = useState<ShiftSwapRequestView[]>([])
   const [myFixedOff, setMyFixedOff] = useState<FixedOffDayRequestView[]>([])
+  const hasPendingMyFixedOffRequest = useMemo(() => myFixedOff.some(req => req.status === 'pending'), [myFixedOff])
   const [myReqFilter, setMyReqFilter] = useState<'all' | 'swap' | 'offday'>('all')
   const [myReqDropdownOpen, setMyReqDropdownOpen] = useState(false)
   const myReqDropdownRef = useRef<HTMLDivElement>(null)
@@ -1389,6 +1390,10 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
   }
 
   const handleSubmitFixedOff = async () => {
+    if (hasPendingMyFixedOffRequest) {
+      setMyReqError('You already have a pending Off Day request. Wait for it to be reviewed before submitting another.')
+      return
+    }
     if (selectedFixedOffDates.length !== fixedOffQuota) { setMyReqError(`Select exactly ${fixedOffQuota} day(s).`); return }
     setFixedSubmitting(true); setMyReqError('')
     try {
@@ -2809,13 +2814,11 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
         ══════════════════════════════════════════════════════════════════ */}
         {mainTab === 'records' && (() => {
           return (
-          <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+          <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', ...(scopeToManagerDepartments ? { padding: '0 28px 28px', boxSizing: 'border-box', gap: 16 } : {}) }}>
           <>
-{/* Manager: flex '0 1 auto' + maxHeight '50%' — hug the table when there are few rows (no
-    dead space below), but never grow past half the tab, so a long roster scrolls inside
-    the Timeline body div instead (same shrink-to-content idiom as the Requests queue card
-    at ~line 3307). Owner/Partner keep the original always-fills-the-tab flex: 1. */}
-<div style={{ padding: scopeToManagerDepartments ? '0 28px' : '0 28px 28px', display: 'grid', gridTemplateColumns: scopeToManagerDepartments ? '1fr' : 'minmax(300px, 326px) minmax(0, 1fr)', gap: 16, flex: scopeToManagerDepartments ? '0 1 auto' : 1, maxHeight: scopeToManagerDepartments ? '50%' : undefined, minHeight: 0, overflow: 'hidden' }}>
+{/* Manager: split Records tab vertically into two equal-height zones: Attendance Records on
+    top, My Requests + Detail below. Each block keeps its own internal scroll. */}
+<div style={{ padding: scopeToManagerDepartments ? 0 : '0 28px 28px', boxSizing: 'border-box', display: 'grid', gridTemplateColumns: scopeToManagerDepartments ? '1fr' : 'minmax(300px, 326px) minmax(0, 1fr)', gap: 16, flex: scopeToManagerDepartments ? '1 1 0' : 1, minHeight: 0, overflow: 'hidden' }}>
 
             {/* ── LEFT: Department + Casual Worker panels — Owner/Partner only. Manager's page
                  shows the whole department merged into the main table instead (see allGroups),
@@ -3284,10 +3287,10 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
             const filterLabel = myReqFilter === 'swap' ? 'Shift Swap Requests' : myReqFilter === 'offday' ? 'Off Day Requests' : 'My Requests'
 
             return (
-              <div style={{ padding: '16px 28px 28px', flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: 'minmax(380px, 440px) minmax(0, 1fr)', gap: 16 }}>
+              <div style={{ padding: 0, boxSizing: 'border-box', flex: '1 1 0', minHeight: 0, overflow: 'hidden', display: 'grid', gridTemplateColumns: 'minmax(340px, 390px) minmax(0, 1fr)', gap: 16 }}>
                 {/* LEFT: My Requests — its own card, filter now lives in a dropdown off the title
                     itself (no more filter pills row), scrollable list. */}
-                <section style={{ minHeight: 0, background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                <section style={{ height: '100%', minHeight: 0, background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
                   <div style={{ height: MYREQ_HEADER_HEIGHT, padding: '0 18px', boxSizing: 'border-box', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
                     <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                       <FileText size={15} style={{ color: '#F97316' }} />
@@ -3367,7 +3370,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                 {/* RIGHT: Detail — its own card, header mirrors the left card's exactly (same
                     height/padding/icon/title styling), plus the status badge pinned to the right
                     the way Recruitment's Detail header pins its meta pills. */}
-                <section style={{ minHeight: 0, background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                <section style={{ height: '100%', minHeight: 0, background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
                   <div style={{ height: MYREQ_HEADER_HEIGHT, padding: '0 18px', boxSizing: 'border-box', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexShrink: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
                       <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -3376,10 +3379,10 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                       <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {!selected ? 'Request Detail' : selected.kind === 'swap' ? 'Shift Swap Request Detail' : 'Off Day Request Detail'}
                       </span>
+                      {selectedBadge && (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', height: 24, padding: '0 10px', borderRadius: 999, fontSize: 12, fontWeight: 700, background: selectedBadge.bg, color: selectedBadge.text, flexShrink: 0 }}>{selectedBadge.label}</span>
+                      )}
                     </div>
-                    {selectedBadge && (
-                      <span style={{ display: 'inline-flex', alignItems: 'center', height: 24, padding: '0 10px', borderRadius: 999, fontSize: 12, fontWeight: 700, background: selectedBadge.bg, color: selectedBadge.text, flexShrink: 0 }}>{selectedBadge.label}</span>
-                    )}
                   </div>
                   <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '20px 22px' }}>
                     {!selected ? (
@@ -3488,34 +3491,36 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                       })() : (() => {
                         const group = selected.offdayGroup!
                         const first = group[0]
+                        const requestedDates = group.map(f => f.request_date)
                         return (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 7, color: '#6B7280', fontSize: 12.5 }}>
-                              <Calendar size={13} /> Submitted {new Date(selected.createdAt).toLocaleString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true })}
-                            </div>
                             <div>
                               <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 5 }}>{first.status === 'modified' ? (group.length === 1 ? 'Confirmed Day' : 'Confirmed Days') : (group.length === 1 ? 'Requested Day' : 'Requested Days')}</label>
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                                {group.map(f => (
-                                  <div key={f.id} style={{ padding: '12px 14px', background: '#F9FAFB', border: `1px solid ${PANEL_BORDER}`, borderRadius: 9, fontSize: 15, fontWeight: 700, color: '#0F172A' }}>{formatFixedOffRequestDay(f.request_date)}</div>
-                                ))}
+                              <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.max(requestedDates.length, 1)}, 64px)`, gap: 12, alignItems: 'start' }}>
+                                {requestedDates.map(date => {
+                                  const d = new Date(`${date}T00:00:00`)
+                                  return (
+                                    <div key={date} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5 }}>
+                                      <span style={{ fontSize: 11, fontWeight: 700, color: '#166534' }}>{d.toLocaleDateString('en-AU', { weekday: 'short' })}</span>
+                                      <div
+                                        style={{
+                                          width: 48, height: 48, borderRadius: '50%', padding: 0,
+                                          border: '1.5px solid #16A34A',
+                                          background: '#DCFCE7',
+                                          color: '#166534',
+                                          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 1, fontWeight: 800, lineHeight: 1.1,
+                                        }}
+                                      >
+                                        <span style={{ fontSize: 14 }}>{String(d.getDate()).padStart(2, '0')}</span>
+                                        <span style={{ fontSize: 9 }}>{d.toLocaleDateString('en-AU', { month: 'short' })}</span>
+                                      </div>
+                                    </div>
+                                  )
+                                })}
                               </div>
-                            </div>
-                            <div>
-                              <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 5 }}>Week Of</label>
-                              <div style={{ fontSize: 13, color: '#374151' }}>{formatDateDisplay(first.week_start)}</div>
                             </div>
                             {first.source === 'auto_assigned' && (
                               <div style={{ fontSize: 12, color: '#6B7280' }}>Auto assigned by the system.</div>
-                            )}
-                            {first.status === 'pending' && (
-                              <div style={{ padding: '12px 14px', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 10, display: 'flex', gap: 9 }}>
-                                <Clock size={15} style={{ color: '#B45309', flexShrink: 0, marginTop: 1 }} />
-                                <div>
-                                  <p style={{ margin: 0, fontSize: 12.5, fontWeight: 700, color: '#B45309' }}>Awaiting Owner/Partner review</p>
-                                  <p style={{ margin: '3px 0 0', fontSize: 12, color: '#92400E', lineHeight: 1.5 }}>Fixed Day Off is always decided by Owner/Partner, for every role.</p>
-                                </div>
-                              </div>
                             )}
                             {first.status === 'modified' && (
                               <div style={{ padding: '12px 14px', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 10, display: 'flex', gap: 9 }}>
@@ -4872,7 +4877,9 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
           : 'No swap deadline configured.'
         const offDayWeekdayName = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][deadlineWeekday]
         const offDayTimeLabel = DEADLINE_TIME_OPTIONS.find(o => o.value === deadlineTime)?.label ?? deadlineTime
-        const offDaySubtitle = `Submit before every ${offDayWeekdayName} ${offDayTimeLabel}.`
+        const offDaySubtitle = hasPendingMyFixedOffRequest
+          ? 'Pending Off Day request already submitted.'
+          : `Submit before every ${offDayWeekdayName} ${offDayTimeLabel}.`
         return (
           <ModalOverlay onClose={closeRequestModal} maxWidth={requestModalStep === 'offday' ? '490px' : '440px'}>
             <ModalBox>
@@ -4899,17 +4906,19 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                         </div>
                       </div>
                     </button>
-                    <button onClick={() => setRequestModalStep('offday')}
-                      style={{ padding: '14px 16px', border: '1.5px solid #E5E7EB', borderRadius: 12, background: '#FFFFFF', cursor: 'pointer', textAlign: 'left' }}
-                      onMouseEnter={e => { e.currentTarget.style.borderColor = '#F97316' }}
-                      onMouseLeave={e => { e.currentTarget.style.borderColor = '#E5E7EB' }}>
+                    <button
+                      onClick={() => { if (!hasPendingMyFixedOffRequest) setRequestModalStep('offday') }}
+                      disabled={hasPendingMyFixedOffRequest}
+                      style={{ padding: '14px 16px', border: '1.5px solid #E5E7EB', borderRadius: 12, background: hasPendingMyFixedOffRequest ? '#F9FAFB' : '#FFFFFF', cursor: hasPendingMyFixedOffRequest ? 'not-allowed' : 'pointer', textAlign: 'left', opacity: hasPendingMyFixedOffRequest ? 0.72 : 1 }}
+                      onMouseEnter={e => { if (!hasPendingMyFixedOffRequest) e.currentTarget.style.borderColor = '#F97316' }}
+                      onMouseLeave={e => { if (!hasPendingMyFixedOffRequest) e.currentTarget.style.borderColor = '#E5E7EB' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                        <div style={{ width: 36, height: 36, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                          <Calendar size={17} color="#F97316" />
+                        <div style={{ width: 36, height: 36, borderRadius: 9, background: hasPendingMyFixedOffRequest ? '#F3F4F6' : '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                          <Calendar size={17} color={hasPendingMyFixedOffRequest ? '#9CA3AF' : '#F97316'} />
                         </div>
                         <div>
                           <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#374151', margin: '0 0 2px' }}>Off Day Request</p>
-                          <p style={{ fontSize: '0.8125rem', color: '#6B7280', margin: 0 }}>{offDaySubtitle}</p>
+                          <p style={{ fontSize: '0.8125rem', color: hasPendingMyFixedOffRequest ? '#B45309' : '#6B7280', margin: 0 }}>{offDaySubtitle}</p>
                         </div>
                       </div>
                     </button>
@@ -5002,7 +5011,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                       {swapSubmitting ? <Spinner size={13} /> : <ArrowLeftRight size={13} />} Submit Swap Request
                     </button>
                   ) : (
-                    <button onClick={handleSubmitFixedOff} disabled={fixedSubmitting || selectedFixedOffDates.length !== fixedOffQuota} style={modalPrimaryButtonStyle(fixedSubmitting || selectedFixedOffDates.length !== fixedOffQuota)}>
+                    <button onClick={handleSubmitFixedOff} disabled={fixedSubmitting || hasPendingMyFixedOffRequest || selectedFixedOffDates.length !== fixedOffQuota} style={modalPrimaryButtonStyle(fixedSubmitting || hasPendingMyFixedOffRequest || selectedFixedOffDates.length !== fixedOffQuota)}>
                       {fixedSubmitting ? <Spinner size={13} /> : <Calendar size={13} />} Request Weekly Day Off
                     </button>
                   )}
