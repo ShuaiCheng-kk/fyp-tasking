@@ -210,6 +210,63 @@ test.describe('Fixed Day Off — submission, routing, quota, deadline', () => {
     expect(afterRows.every((r: { status: string }) => r.status === 'approved')).toBe(true)
   })
 
+  test('Owner batch-modifies a weekly submission, reassigning dates that cycle among its own rows', async ({ request }) => {
+    // Regression: a real Manager submission (Mon/Tue/Thu/Fri/Sun off) reviewed with replacement
+    // picks that reuse dates already held by sibling rows in the same batch (e.g. Owner keeps
+    // Mon/Tue/Thu/Fri and drops Sun) used to fail with "duplicate key value violates unique
+    // constraint employee_off_day_requests_user_id_request_date_key" because each row was
+    // updated one at a time instead of atomically. See migration 20260724000000.
+    const cycleManagerId = await createUser('cycle', seeded.companyId, 'Manager')
+    const { error: mgrDeptErr } = await admin.from('manager_departments').insert({
+      manager_id: cycleManagerId, department_id: departmentId, company_id: seeded.companyId, assigned_by: seeded.ownerId,
+    })
+    expect(mgrDeptErr).toBeNull()
+
+    const override = await request.post('/api/attendance/off-day-settings', {
+      data: { action: 'set_user_quota_override', company_id: seeded.companyId, owner_id: seeded.ownerId, user_id: cycleManagerId, max_days_per_week: 5 },
+    })
+    expect(override.status()).toBe(200)
+
+    const mon = addDaysLocal(upcomingMonday, 0)
+    const tue = addDaysLocal(upcomingMonday, 1)
+    const wed = addDaysLocal(upcomingMonday, 2)
+    const thu = addDaysLocal(upcomingMonday, 3)
+    const fri = addDaysLocal(upcomingMonday, 4)
+    const sun = addDaysLocal(upcomingMonday, 6)
+
+    const submit = await request.post('/api/attendance', {
+      data: { action: 'submit_fixed_off_day', user_id: cycleManagerId, company_id: seeded.companyId, dates: [mon, tue, thu, fri, sun] },
+    })
+    expect(submit.status()).toBe(200)
+    const submitBody = await submit.json()
+    const rowByDate = new Map(submitBody.request.map((r: { id: string; request_date: string }) => [r.request_date, r.id]))
+
+    // Owner keeps Mon/Tue/Thu/Fri (each row "modified" to the date it already has) and moves the
+    // Sun row to Wed — the request set as a whole reassigns among dates the same user already holds.
+    const ids = [mon, tue, thu, fri, sun].map(d => rowByDate.get(d))
+    const new_dates = [mon, tue, thu, fri, wed]
+
+    const decide = await request.patch('/api/attendance', {
+      data: { action: 'decide_fixed_off_day', ids, reviewer_id: seeded.ownerId, decision: 'modified', new_dates },
+    })
+    expect(decide.status()).toBe(200)
+    const decideBody = await decide.json()
+    expect(decideBody.success).toBe(true)
+    expect(decideBody.requests).toHaveLength(5)
+
+    const after = await request.get(`/api/attendance?company_id=${seeded.companyId}&resource=fixed_off_days`)
+    const afterBody = await after.json()
+    const afterRows = afterBody.requests.filter((r: { user_id: string }) => r.user_id === cycleManagerId)
+    const afterDates = afterRows.map((r: { request_date: string }) => r.request_date).sort()
+    expect(afterDates).toEqual([mon, tue, wed, thu, fri].sort())
+
+    await admin.from('employee_off_day_requests').delete().eq('user_id', cycleManagerId)
+    await admin.from('manager_departments').delete().eq('manager_id', cycleManagerId)
+    const { data: u } = await admin.from('users').select('supabase_auth_id').eq('id', cycleManagerId).single()
+    await admin.from('users').delete().eq('id', cycleManagerId)
+    if (u?.supabase_auth_id) await admin.auth.admin.deleteUser(u.supabase_auth_id).catch(() => undefined)
+  })
+
   test('Owner modifies a weekly submission to different dates in the same week', async ({ request }) => {
     const setQuota = await request.post('/api/attendance/off-day-settings', {
       data: { action: 'set_default_quota', company_id: seeded.companyId, owner_id: seeded.ownerId, role: 'Employee', max_days_per_week: 1 },

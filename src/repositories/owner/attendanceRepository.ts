@@ -344,6 +344,29 @@ export const attendanceRepository = {
     return data as FixedOffDayRequest
   },
 
+  // Reassigns request_date across several rows of the same weekly submission in one DB
+  // transaction (Postgres function call) — required because the (user_id, request_date) unique
+  // constraint is deferrable-at-commit, so a batch that shuffles dates among rows the user
+  // already holds (e.g. swapping which weekday is the day off) doesn't collide with a sibling
+  // row that hasn't been updated yet. See migration 20260724000000.
+  async decideFixedOffDayRequestGroupAtomic(input: {
+    ids: string[]
+    statuses: string[]
+    request_dates: (string | null)[]
+    reviewer_id: string
+    reviewed_at: string
+  }): Promise<FixedOffDayRequest[]> {
+    const { data, error } = await supabase.rpc('decide_fixed_off_day_request_group', {
+      p_ids: input.ids,
+      p_statuses: input.statuses,
+      p_request_dates: input.request_dates,
+      p_reviewer_id: input.reviewer_id,
+      p_reviewed_at: input.reviewed_at,
+    })
+    if (error) throw new Error(error.message)
+    return (data ?? []) as FixedOffDayRequest[]
+  },
+
   async createShiftSwapRequest(input: {
     company_id: string
     requester_id: string
@@ -539,32 +562,4 @@ export const attendanceRepository = {
     }))
   },
 
-  async getScheduledHeadcountForDeptDate(company_id: string, department_id: string, date: string): Promise<{ managers: number; employees: number }> {
-    const { data: shifts, error: shiftError } = await supabase
-      .from('shifts')
-      .select('id')
-      .eq('company_id', company_id)
-      .eq('department_id', department_id)
-      .eq('shift_date', date)
-    if (shiftError) throw new Error(shiftError.message)
-    const shiftIds = (shifts ?? []).map((s: { id: string }) => s.id)
-    if (shiftIds.length === 0) return { managers: 0, employees: 0 }
-
-    const { data: assignments, error: assignError } = await supabase
-      .from('shift_assignments')
-      .select('user_id')
-      .in('shift_id', shiftIds)
-    if (assignError) throw new Error(assignError.message)
-    const userIds = [...new Set((assignments ?? []).map((a: { user_id: string }) => a.user_id))]
-    if (userIds.length === 0) return { managers: 0, employees: 0 }
-
-    const { data: users, error: userError } = await supabase
-      .from('users')
-      .select('id, role')
-      .in('id', userIds)
-    if (userError) throw new Error(userError.message)
-    const managers = (users ?? []).filter((u: { role: string }) => u.role === 'Manager').length
-    const employees = (users ?? []).filter((u: { role: string }) => u.role === 'Employee').length
-    return { managers, employees }
-  },
 }

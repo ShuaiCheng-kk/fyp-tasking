@@ -7,6 +7,7 @@ import { attendanceRepository } from '@/repositories/owner/attendanceRepository'
 import { offDaySettingsService } from '@/services/owner/offDaySettingsService'
 import { taskService } from '@/services/owner/taskService'
 import { recruitmentService } from '@/services/owner/recruitmentService'
+import { userService } from '@/services/auth/userService'
 import { Task } from '@/types/Task'
 import {
   AttendanceDepartmentGroup,
@@ -15,8 +16,10 @@ import {
   AttendanceRoleGroup,
   OwnerDashboardSummary,
   RecruitmentOverview,
+  TaskNotificationItem,
   TaskOverviewGroup,
   TaskOverviewRow,
+  TeamOverview,
   WaitingOnYouItem,
 } from '@/types/OwnerDashboard'
 
@@ -57,10 +60,16 @@ function formatWeekLabel(weekStartKey: string): string {
   const fmt = (d: Date) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
   return `${fmt(start)}–${fmt(end)}`
 }
+function formatDeadlineLabel(deadline: { deadline_weekday: number; deadline_time: string }): string {
+  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+  const [hour, minute] = deadline.deadline_time.split(':').map(Number)
+  const h12 = hour % 12 || 12
+  return `${days[deadline.deadline_weekday] ?? 'Deadline'} ${h12}:${String(minute).padStart(2, '0')} ${hour >= 12 ? 'PM' : 'AM'}`
+}
 
 async function buildWaitingOnYou(company_id: string, owner_id: string, scope: DeptScope, assignerScope: string | string[]): Promise<WaitingOnYouItem[]> {
   const [swaps, deadline, kanban, postings, pendingApprovalPostings] = await Promise.all([
-    attendanceService.getShiftSwapRequests(company_id),
+    attendanceService.getShiftSwapRequests(company_id, scope ? { managerId: owner_id } : undefined),
     offDaySettingsService.getDeadline(company_id, owner_id).catch(() => null),
     taskService.getKanbanTasks(company_id, assignerScope),
     recruitmentService.getJobPostings(company_id),
@@ -83,16 +92,24 @@ async function buildWaitingOnYou(company_id: string, owner_id: string, scope: De
   let offDayDetail: string | null = null
   let offDayOldest: string | null = null
   if (deadline) {
+    offDayDetail = formatDeadlineLabel(deadline)
     const todayKey = formatDateKey(new Date())
     const activeWeekStart = resolveActiveSubmissionWeekStart(todayKey, deadline)
-    const closedWeekStart = addDaysToKey(activeWeekStart, -7)
-    const closedRequests = await attendanceRepository.getOffDayRequestsByCompanyAndWeek(company_id, closedWeekStart)
-    const pendingClosed = closedRequests.filter(r => r.status === 'pending')
-    if (pendingClosed.length > 0) {
-      offDayCount = pendingClosed.length
-      offDayDetail = `for ${formatWeekLabel(closedWeekStart)}`
-      const deadlineMoment = new Date(`${resolveDeadlineDateForWeek(closedWeekStart, deadline.deadline_weekday)}T${deadline.deadline_time}:00`)
-      offDayOldest = deadlineMoment.toISOString()
+    if (scope) {
+      const activeRows = await attendanceRepository.getFixedOffDayRequestsByUserAndWeek(owner_id, company_id, activeWeekStart)
+      const hasSubmitted = activeRows.some(r => r.source === 'submitted' && r.status !== 'rejected')
+      offDayCount = hasSubmitted ? 0 : 1
+      const deadlineMoment = new Date(`${resolveDeadlineDateForWeek(addDaysToKey(activeWeekStart, -7), deadline.deadline_weekday)}T${deadline.deadline_time}:00`)
+      offDayOldest = hasSubmitted ? null : deadlineMoment.toISOString()
+    } else {
+      const closedWeekStart = addDaysToKey(activeWeekStart, -7)
+      const closedRequests = await attendanceRepository.getOffDayRequestsByCompanyAndWeek(company_id, closedWeekStart)
+      const pendingClosed = closedRequests.filter(r => r.status === 'pending')
+      if (pendingClosed.length > 0) {
+        offDayCount = pendingClosed.length
+        const deadlineMoment = new Date(`${resolveDeadlineDateForWeek(closedWeekStart, deadline.deadline_weekday)}T${deadline.deadline_time}:00`)
+        offDayOldest = deadlineMoment.toISOString()
+      }
     }
   }
 
@@ -111,10 +128,15 @@ async function buildWaitingOnYou(company_id: string, owner_id: string, scope: De
   const managePostings = scope ? scopedPostings.filter(p => p.created_by === owner_id) : scopedPostings
   const postingsWithPending = managePostings.filter(p => p.pending_count > 0)
   const applicantLists = await Promise.all(postingsWithPending.map(p => recruitmentService.getApplicants(p.id, owner_id)))
-  const pendingApplicants = applicantLists.flat().filter(a => a.status === 'pending')
+  const pendingApplicantsByPosting = applicantLists.map((list, index) => ({
+    posting: postingsWithPending[index],
+    applicants: list.filter(a => a.status === 'pending'),
+  }))
+  const pendingApplicants = pendingApplicantsByPosting.flatMap(row => row.applicants)
   const applicantOldest = pendingApplicants.length > 0
     ? pendingApplicants.reduce((oldest, a) => a.applied_at < oldest ? a.applied_at : oldest, pendingApplicants[0].applied_at)
     : null
+  const firstApplicantJobId = pendingApplicantsByPosting.find(row => row.applicants.length > 0)?.posting.id ?? null
 
   // 5. Approve Job Postings
   const approvalOldest = pendingApprovalPostings.length > 0
@@ -122,12 +144,12 @@ async function buildWaitingOnYou(company_id: string, owner_id: string, scope: De
     : null
 
   const items: WaitingOnYouItem[] = [
-    { id: 'shift_swap', label: 'Handle Shift Swaps', count: pendingSwaps.length, oldest_at: swapOldest, detail: null },
-    { id: 'off_day_deadline', label: 'Schedule Next Week', count: offDayCount, oldest_at: offDayOldest, detail: offDayDetail },
+    { id: 'off_day_deadline', label: scope ? 'Off Day Submission Reminder' : 'Schedule Next Week', count: offDayCount, oldest_at: offDayOldest, detail: offDayDetail },
+    { id: 'shift_swap', label: scope ? 'Handle Shift Swap Requests' : 'Handle Shift Swaps', count: pendingSwaps.length, oldest_at: swapOldest, detail: null },
     // Approving job postings is O/P-only (UC42) — a Manager viewer never gets that card.
     ...(scope ? [] : [{ id: 'job_posting_approval', label: 'Review Job Postings', count: pendingApprovalPostings.length, oldest_at: approvalOldest, detail: null } as WaitingOnYouItem]),
-    { id: 'applicant_accept', label: 'Review Applicants', count: pendingApplicants.length, oldest_at: applicantOldest, detail: null },
-    { id: 'task_review', label: 'Manage Tasks', count: reviewTasks.length, oldest_at: reviewOldest, detail: null },
+    { id: 'applicant_accept', label: scope ? 'Review Job Applicants' : 'Review Applicants', count: pendingApplicants.length, oldest_at: applicantOldest, detail: firstApplicantJobId },
+    { id: 'task_review', label: scope ? 'Review Employee Tasks' : 'Manage Tasks', count: reviewTasks.length, oldest_at: reviewOldest, detail: null },
   ]
 
   // Priority-among-pending: keep the fixed 5-slot priority order for anything still pending,
@@ -137,7 +159,7 @@ async function buildWaitingOnYou(company_id: string, owner_id: string, scope: De
   return [...pending, ...cleared]
 }
 
-async function buildTaskOverview(company_id: string, assignerScope: string | string[], viewer_id: string): Promise<TaskOverviewGroup[]> {
+async function buildTaskOverview(company_id: string, assignerScope: string | string[], viewer_id: string, managerMode = false): Promise<TaskOverviewGroup[]> {
   const [kanban, delayAlerts] = await Promise.all([
     taskService.getKanbanTasks(company_id, assignerScope),
     taskService.getTaskDelayAlerts(company_id, undefined, assignerScope, undefined, viewer_id),
@@ -149,6 +171,7 @@ async function buildTaskOverview(company_id: string, assignerScope: string | str
   const openTasks = [...topLevel(kanban.Assigned), ...topLevel(kanban['In Progress'])]
   const now = Date.now()
   const todayKey = formatDateKey(new Date())
+  const weekEndKey = addDaysToKey(todayKey, 6)
 
   // Longest-overdue first — the task that has been waiting the longest needs attention first.
   const overdue = openTasks
@@ -159,10 +182,20 @@ async function buildTaskOverview(company_id: string, assignerScope: string | str
     const stamp = t.completed_at ?? t.updated_at
     return stamp ? formatDateKey(new Date(stamp)) === todayKey : false
   })
+  const dueToday = openTasks
+    .filter(t => t.due_at && formatDateKey(new Date(t.due_at)) === todayKey && new Date(t.due_at).getTime() >= now)
+    .sort((a, b) => new Date(a.due_at!).getTime() - new Date(b.due_at!).getTime())
+  const dueThisWeek = openTasks
+    .filter(t => {
+      if (!t.due_at) return false
+      const key = formatDateKey(new Date(t.due_at))
+      return key > todayKey && key <= weekEndKey
+    })
+    .sort((a, b) => new Date(a.due_at!).getTime() - new Date(b.due_at!).getTime())
 
   const delayedById = new Map(openTasks.map(t => [t.id, t]))
   const delayedTasks = delayAlerts.map(a => delayedById.get(a.task_id)).filter((t): t is Task => !!t)
-  const rowedTasks = [...overdue, ...completedToday, ...delayedTasks]
+  const rowedTasks = managerMode ? [...overdue, ...dueToday, ...dueThisWeek] : [...overdue, ...completedToday, ...delayedTasks]
 
   const nameLookupIds = new Set<string>()
   const deptLookupIds = new Set<string>()
@@ -180,6 +213,7 @@ async function buildTaskOverview(company_id: string, assignerScope: string | str
   const toRow = (t: Task): TaskOverviewRow => ({
     id: t.id,
     title: t.title,
+    priority: t.priority ?? null,
     assignee_name: t.assigned_user_id ? userById.get(t.assigned_user_id)?.full_name ?? 'Unassigned' : 'Unassigned',
     assignee_photo_url: t.assigned_user_id ? userById.get(t.assigned_user_id)?.profile_photo_url ?? null : null,
     department_id: t.department_id ?? null,
@@ -195,6 +229,14 @@ async function buildTaskOverview(company_id: string, assignerScope: string | str
     .filter(alert => !overdueIds.has(alert.task_id) && delayedById.has(alert.task_id))
     .map(alert => toRow(delayedById.get(alert.task_id)!))
 
+  if (managerMode) {
+    return [
+      { key: 'overdue', label: 'Overdue', count: overdue.length, tasks: overdue.map(toRow) },
+      { key: 'due_today', label: 'Due Today', count: dueToday.length, tasks: dueToday.map(toRow) },
+      { key: 'due_this_week', label: 'Due This Week', count: dueThisWeek.length, tasks: dueThisWeek.map(toRow) },
+    ]
+  }
+
   return [
     { key: 'overdue', label: 'Overdue', count: overdue.length, tasks: overdue.map(toRow) },
     { key: 'delay_alert', label: 'Delay Alert', count: delayRows.length, tasks: delayRows },
@@ -205,6 +247,44 @@ async function buildTaskOverview(company_id: string, assignerScope: string | str
 // Shared by both Attendance Overview halves — groups today's assignments by department and
 // classifies each person into Late / Not Started / Absent (checked-in-on-time people only count
 // toward the progress numbers), reusing the same exceptions the Attendance page computes.
+async function buildTaskNotifications(company_id: string, owner_id: string, scope: DeptScope): Promise<TaskNotificationItem[]> {
+  if (!scope) return []
+
+  const team = await userService.getTeamByCompany(company_id)
+  const ownerPartnerIds = team.filter(m => m.role === 'Owner' || m.role === 'Partner').map(m => m.id)
+  const managerTasks = await taskService.getKanbanTasks(
+    company_id,
+    ownerPartnerIds.length > 0 ? ownerPartnerIds : undefined,
+    [...scope.ids],
+    owner_id,
+    owner_id,
+  )
+  const assigned = [...managerTasks.Assigned, ...managerTasks['In Progress']]
+    .filter(t => !t.parent_task_id && !t.rejection_reason)
+  const rejected = [...managerTasks.Assigned, ...managerTasks['In Progress']]
+    .filter(t => !t.parent_task_id && !!t.rejection_reason)
+
+  const oldest = <T,>(rows: T[], getStamp: (row: T) => string | null | undefined): string | null => {
+    const stamps = rows.map(getStamp).filter((stamp): stamp is string => !!stamp).sort()
+    return stamps[0] ?? null
+  }
+
+  return [
+    { id: 'new_assigned_task', label: 'New Assigned Task', count: assigned.length, oldest_at: oldest(assigned, t => t.created_at), detail: 'Assigned by Owner or Partner' },
+    { id: 'task_rejected', label: 'Task Rejected by Owner', count: rejected.length, oldest_at: oldest(rejected, t => t.rejected_at ?? t.updated_at), detail: 'Needs rework' },
+  ]
+}
+
+async function buildTeamOverview(company_id: string, scope: DeptScope): Promise<TeamOverview> {
+  const members = await userService.getTeamByCompany(company_id)
+  const scoped = scope ? members.filter(m => m.department_id != null && scope.ids.has(m.department_id)) : members
+  return {
+    managers: scoped.filter(m => m.role === 'Manager').length,
+    employees: scoped.filter(m => m.role === 'Employee').length,
+    casual_worker_pool: scoped.filter(m => m.role === 'Casual Worker' && !!m.casual_worker_verified_at && !m.casual_worker_blocked_at).length,
+  }
+}
+
 function classifyAttendance(
   records: Awaited<ReturnType<typeof attendanceService.getAttendanceByDateRange>>,
   roles: string[],
@@ -322,18 +402,23 @@ export const ownerDashboardService = {
       assignerScope = peerIds.length > 0 ? peerIds : owner_id
     }
 
-    const [waitingOnYou, taskOverview, attendanceOverview, recruitmentOverview] = await Promise.all([
+    const [taskNotifications, waitingOnYou, taskOverview, attendanceOverview, recruitmentOverview, teamOverview] = await Promise.all([
+      buildTaskNotifications(company_id, owner_id, scope),
       buildWaitingOnYou(company_id, owner_id, scope, assignerScope),
-      buildTaskOverview(company_id, assignerScope, owner_id),
+      buildTaskOverview(company_id, assignerScope, owner_id, viewer_role === 'Manager'),
       buildAttendanceOverview(company_id, scope),
       buildRecruitmentOverview(company_id, scope),
+      buildTeamOverview(company_id, scope),
     ])
 
     return {
+      task_notifications: taskNotifications,
       waiting_on_you: waitingOnYou,
       task_overview: taskOverview,
       attendance_overview: attendanceOverview,
       recruitment_overview: recruitmentOverview,
+      team_overview: teamOverview,
     }
   },
 }
+

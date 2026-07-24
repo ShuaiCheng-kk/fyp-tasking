@@ -103,10 +103,12 @@ const THEME_MANAGER = {
 export default function OwnerSidebar({
   unreadMessages,
   unreadAnnouncements,
+  attendanceAlertCount,
   role = 'owner',
 }: {
   unreadMessages?: number
   unreadAnnouncements?: number
+  attendanceAlertCount?: number
   role?: SidebarRole
 }) {
   const NAV_ITEMS = navItemsFor(role)
@@ -231,22 +233,81 @@ export default function OwnerSidebar({
         }
         fetchReviewCount()
 
-        fetch(`/api/attendance?resource=pending_requests_count&company_id=${cid}`)
-          .then(r => r.json())
-          .then(data => { if (data.success) setAttendanceCount(data.count ?? 0) })
-          .catch(() => {})
+        const fetchAttendanceBadgeCount = () => {
+          if (role === 'manager') {
+            Promise.all([
+              fetch(`/api/attendance?resource=my_requests&user_id=${internalId}`).then(r => r.json()).catch(() => ({ success: false })),
+              fetch(`/api/attendance?company_id=${cid}&resource=shift_swaps&manager_id=${internalId}`).then(r => r.json()).catch(() => ({ success: false })),
+            ])
+              .then(([data, queueData]) => {
+                const seenKey = `manager_myreq_seen_${cid}_${internalId}`
+                let seen = new Set<string>()
+                try {
+                  const raw = localStorage.getItem(seenKey)
+                  if (raw) seen = new Set(JSON.parse(raw))
+                } catch {}
+                const swaps = (data.success ? data.swaps ?? [] : []) as Array<{ id: string; requester_id: string; counterpart_id: string; counterpart_status: string; status: string }>
+                const fixedOff = (data.success ? data.fixed_off ?? [] : []) as Array<{ week_start: string; source: string; status: string; reviewed_at?: string | null; created_at?: string | null }>
+                const swapResponseCount = swaps.filter(s => s.counterpart_id === internalId && s.counterpart_status === 'pending' && s.status === 'pending').length
+                const swapUpdateCount = swaps.filter(s => s.requester_id === internalId && s.counterpart_status !== 'pending' && !seen.has(`swap-${s.id}`)).length
+                const fixedOffGroupsByWeek = new Map<string, typeof fixedOff>()
+                fixedOff.forEach(req => {
+                  if (req.source !== 'submitted' || req.status === 'pending') return
+                  const group = fixedOffGroupsByWeek.get(req.week_start) ?? []
+                  group.push(req)
+                  fixedOffGroupsByWeek.set(req.week_start, group)
+                })
+                const fixedOffUpdateKeys = new Set<string>()
+                fixedOffGroupsByWeek.forEach((group, weekStart) => {
+                  const latestDecisionAt = group
+                    .map(req => req.reviewed_at ?? req.created_at ?? '')
+                    .filter(Boolean)
+                    .sort()
+                    .at(-1)
+                  const key = latestDecisionAt ? `offday-${weekStart}-${latestDecisionAt}` : `offday-${weekStart}`
+                  if (!seen.has(key)) fixedOffUpdateKeys.add(key)
+                })
+                const reviewQueue = (queueData.success ? queueData.requests ?? [] : []) as Array<{ status: string }>
+                const swapReviewCount = reviewQueue.filter(req => req.status === 'pending').length
+                setAttendanceCount(swapResponseCount + swapUpdateCount + fixedOffUpdateKeys.size + swapReviewCount)
+              })
+              .catch(() => {})
+            return
+          }
+          fetch(`/api/attendance?resource=pending_requests_count&company_id=${cid}`)
+            .then(r => r.json())
+            .then(data => { if (data.success) setAttendanceCount(data.count ?? 0) })
+            .catch(() => {})
+        }
+        fetchAttendanceBadgeCount()
 
         const fetchTaskAlerts = () => {
-          // A Manager's alert scope is their whole department team (every peer manager's tasks),
-          // not just tasks they personally assigned — resolved server-side via manager_scope_id.
+          // A Manager's Tasks sidebar dot includes both team-task alerts and unseen My Tasks.
           const scopeParam = role === 'manager' ? `manager_scope_id=${internalId}` : `assigned_by=${internalId}`
+          const myTasksSeenKey = `manager_mytasks_seen_${cid}_${internalId}`
+          const myTaskSignature = (task: { id: string; rejected_at?: string | null }) => `${task.id}::${task.rejected_at ?? ''}`
           Promise.all([
             fetch(`/api/task?company_id=${cid}&suggestion=workload&${scopeParam}`).then(r => r.json()).catch(() => ({ success: false })),
             fetch(`/api/task?company_id=${cid}&suggestion=delay&${scopeParam}&viewer_id=${internalId}`).then(r => r.json()).catch(() => ({ success: false })),
-          ]).then(([workloadData, delayData]) => {
+            role === 'manager'
+              ? fetch(`/api/task?company_id=${cid}&kanban=true&assigned_user_id=${encodeURIComponent(internalId)}&viewer_id=${encodeURIComponent(internalId)}`).then(r => r.json()).catch(() => ({ success: false }))
+              : Promise.resolve({ success: true, groups: { Assigned: [] } }),
+          ]).then(([workloadData, delayData, myTasksData]) => {
             const workloadCount = workloadData.success ? (workloadData.suggestions ?? []).filter((s: { type: string }) => s.type === 'rebalance').length : 0
             const delayCount = delayData.success ? (delayData.alerts ?? []).length : 0
-            setTaskAlertCount(workloadCount + delayCount)
+            let seenMyTasks = new Set<string>()
+            try {
+              const raw = localStorage.getItem(myTasksSeenKey)
+              if (raw) seenMyTasks = new Set(JSON.parse(raw))
+            } catch {}
+            const newMyTaskCount = role === 'manager' && myTasksData.success
+              ? [
+                  ...(((myTasksData.groups?.Assigned ?? []) as Array<{ id: string; rejected_at?: string | null; parent_task_id?: string | null }>)),
+                  ...(((myTasksData.groups?.['In Progress'] ?? []) as Array<{ id: string; rejected_at?: string | null; rejection_reason?: string | null; parent_task_id?: string | null }>))
+                    .filter(task => !!task.rejection_reason && !!task.rejected_at),
+                ].filter(task => !task.parent_task_id && !seenMyTasks.has(myTaskSignature(task))).length
+              : 0
+            setTaskAlertCount(workloadCount + delayCount + newMyTaskCount)
           }).catch(() => {})
         }
         fetchTaskAlertsRef.current = fetchTaskAlerts
@@ -308,12 +369,7 @@ export default function OwnerSidebar({
             refreshAnnCount)
           .subscribe()
 
-        const refreshAttendanceCount = () => {
-          fetch(`/api/attendance?resource=pending_requests_count&company_id=${cid}`)
-            .then(r => r.json())
-            .then(data => { if (data.success) setAttendanceCount(data.count ?? 0) })
-            .catch(() => {})
-        }
+        const refreshAttendanceCount = fetchAttendanceBadgeCount
 
         const swapChannel = supabase
           .channel('owner-sidebar-swaps')
@@ -327,12 +383,19 @@ export default function OwnerSidebar({
             refreshAttendanceCount)
           .subscribe()
 
+        const taskChannel = supabase
+          .channel('owner-sidebar-tasks')
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks', filter: `company_id=eq.${cid}` },
+            fetchTaskAlerts)
+          .subscribe()
+
         return () => {
           supabase.removeChannel(msgChannel)
           supabase.removeChannel(annChannel)
           supabase.removeChannel(reviewChannel)
           supabase.removeChannel(swapChannel)
           supabase.removeChannel(offDayChannel)
+          supabase.removeChannel(taskChannel)
         }
       })
       .catch(() => {})
@@ -430,7 +493,7 @@ export default function OwnerSidebar({
         {orderedItems.map(({ label, Icon, href, dot }, idx) => {
           const active = pathname === href
           // Communication covers both tabs — unread chat messages OR unread announcements light it up.
-          const showDot = dot === 'messages' ? msgCount > 0 || annCount > 0 : dot === 'announcements' ? annCount > 0 : dot === 'review' ? reviewCount > 0 : dot === 'attendance' ? attendanceCount > 0 : dot === 'tasks' ? taskAlertCount > 0 : false
+          const showDot = dot === 'messages' ? msgCount > 0 || annCount > 0 : dot === 'announcements' ? annCount > 0 : dot === 'review' ? reviewCount > 0 : dot === 'attendance' ? (role === 'manager' && attendanceAlertCount != null ? attendanceAlertCount > 0 : attendanceCount + (attendanceAlertCount ?? 0) > 0) : dot === 'tasks' ? taskAlertCount > 0 : false
           const isDragging = draggingLabel === label
           const isDragOver = dragOverLabel === label
 

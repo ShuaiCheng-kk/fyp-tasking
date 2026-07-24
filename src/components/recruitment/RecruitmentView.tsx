@@ -398,19 +398,20 @@ const pageKeyframes = `
   @keyframes blockSlideUp  { from { opacity: 0; transform: translateY(20px) } to { opacity: 1; transform: translateY(0) } }
   @keyframes tabContentIn  { from { opacity: 0; transform: translateY(8px) scale(0.99) } to { opacity: 1; transform: translateY(0) scale(1) } }
   @keyframes deptCardIn    { from { opacity: 0; transform: translateY(8px) } to { opacity: 1; transform: translateY(0) } }
-  .recruitment-panel { border: 1px solid ${PANEL_BORDER}; }
-  .recruitment-grid { display: grid; grid-template-columns: 440px minmax(0, 1fr); gap: 16px; align-items: start; }
+  .recruitment-panel { border: 1px solid ${PANEL_BORDER}; min-height: 0; }
+  .recruitment-grid { display: grid; grid-template-columns: 440px minmax(0, 1fr); gap: 16px; align-items: stretch; min-height: 0; height: 100%; overflow: hidden; }
+  .recruitment-scroll-region { scrollbar-gutter: stable; overscroll-behavior: contain; }
   @media (max-width: 1100px) {
-    .recruitment-grid { grid-template-columns: minmax(0, 1fr); }
+    .recruitment-grid { grid-template-columns: minmax(0, 1fr); align-items: start; overflow-y: auto; padding-right: 4px; }
   }
   /* Active/Closed detail + applicants: left detail, an orange flow arrow, then applicants —
      mirroring the template Edit → Preview layout. Detail is the narrower column so it doesn't
      leave a wide band of whitespace beside its left-aligned content. */
   /* Detail | arrow | Applicants | arrow | Confirmed. Applicants and Confirmed share the same
      column width; Detail is a touch narrower so both arrows fit. */
-  .jobs-detail-grid { display: grid; grid-template-columns: minmax(0, 0.9fr) 64px minmax(0, 0.85fr) 64px minmax(0, 0.85fr); align-items: start; row-gap: 16px; }
+  .jobs-detail-grid { display: grid; grid-template-columns: minmax(0, 0.9fr) 64px minmax(0, 0.85fr) 64px minmax(0, 0.85fr); align-items: stretch; row-gap: 16px; min-height: 0; height: 100%; overflow: hidden; }
   @media (max-width: 1400px) {
-    .jobs-detail-grid { grid-template-columns: minmax(0, 1fr); }
+    .jobs-detail-grid { grid-template-columns: minmax(0, 1fr); align-items: start; overflow-y: auto; padding-right: 4px; }
     .jobs-flow-arrow { display: none; }
   }
   .template-edit-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.95fr); gap: 64px; align-items: start; max-width: 1800px; margin: 0 auto; width: 100%; }
@@ -1168,11 +1169,17 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
   }, [router, fetchAll])
 
   useEffect(() => {
-    const jobId = deepLinkJobIdRef.current
+    const currentJobId = new URLSearchParams(window.location.search).get('job')
+    const jobId = deepLinkJobIdRef.current ?? currentJobId
     if (!jobId || livePostings.length === 0) return
     const posting = livePostings.find(p => p.id === jobId)
     if (!posting) return
     deepLinkJobIdRef.current = null
+    setSelectedTemplateId('')
+    setSelectedPendingId('')
+    setSelectedArchivedId('')
+    setPostView('none')
+    setOpenSource('none')
     if (posting.status === 'archived') {
       setActiveTab('post')
       setSelectedArchivedId(jobId)
@@ -2153,7 +2160,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
     <div style={{ display: 'flex', height: '100vh', background: '#F1F5F9' }}>
       <style>{pageKeyframes}</style>
       {sidebar}
-      <main style={{ marginLeft: '64px', flex: 1, height: '100vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', scrollbarGutter: 'stable', animation: 'blockSlideUp 0.38s ease both 0.04s' }}>
+      <main style={{ marginLeft: '64px', flex: 1, height: '100vh', minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', animation: 'blockSlideUp 0.38s ease both 0.04s' }}>
 
         {/* ── Page header ── */}
         <div style={{ padding: '20px 28px 16px', flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 }}>
@@ -2221,7 +2228,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
         </div>
 
         {/* ── Tab content ── */}
-        <div style={{ padding: 0, flex: 1, minHeight: 0, overflowY: 'auto', animation: 'tabContentIn 0.22s ease-out both' }}>
+        <div className="recruitment-scroll-region" style={{ padding: 0, flex: 1, minHeight: 0, overflow: 'hidden', animation: 'tabContentIn 0.22s ease-out both' }}>
           {error && (
             <div style={{ marginBottom: 12, padding: '11px 14px', background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', borderRadius: 10, fontSize: '0.84rem', fontWeight: 600 }}>{error}</div>
           )}
@@ -2926,20 +2933,6 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                                     ? <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 700, background: '#FEE2E2', color: '#B91C1C', border: '1px solid #FCA5A5', whiteSpace: 'nowrap', flexShrink: 0 }}>Rejected</span>
                                     : <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 700, background: '#FFF7ED', color: '#C2410C', border: '1px solid #FED7AA', whiteSpace: 'nowrap', flexShrink: 0 }}>Pending</span>
                                 )}
-                                {/* Rejected = terminal unless resubmitted — the submitting Manager can
-                                    give up on it entirely instead of fixing/resubmitting. Creator-only,
-                                    same rule as Active Jobs delete (canManageApplicants). */}
-                                {isRejected && p.created_by === internalUserId && (
-                                  <button
-                                    type="button"
-                                    onClick={e => { e.stopPropagation(); setDeleteConfirm({ id: p.id, title: p.title, isDraft: false }) }}
-                                    disabled={actionLoading}
-                                    title="Delete rejected posting"
-                                    style={{ border: 'none', background: 'transparent', color: '#DC2626', cursor: actionLoading ? 'default' : 'pointer', display: 'flex', padding: 6, borderRadius: 6, opacity: actionLoading ? 0.5 : 1, flexShrink: 0 }}
-                                    onMouseEnter={e => { if (!actionLoading) e.currentTarget.style.background = '#FEE2E2' }}
-                                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
-                                  ><Trash2 size={14} /></button>
-                                )}
                                 </div>
                               </div>
                               <button
@@ -3200,6 +3193,24 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                         </span>
                       )
                     })()}
+                    {selectedPending.status === 'rejected' && canManageApplicants(selectedPending) && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => void openRejectedInWizard(selectedPending)}
+                          style={{ height: 28, padding: '0 11px', border: 'none', borderRadius: 8, background: 'linear-gradient(135deg, #F97316, #EA580C)', color: '#FFFFFF', display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, fontWeight: 800, cursor: 'pointer', flexShrink: 0 }}
+                        >
+                          <Pencil size={12} /> Edit &amp; Resubmit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDeleteConfirm({ id: selectedPending.id, title: selectedPending.title, isDraft: false })}
+                          style={{ height: 28, padding: '0 11px', border: '1px solid #FECACA', borderRadius: 8, background: '#FEF2F2', color: '#DC2626', display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, fontWeight: 800, cursor: 'pointer', flexShrink: 0 }}
+                        >
+                          <Trash2 size={12} /> Delete
+                        </button>
+                      </>
+                    )}
                   </div>
                   {/* Approve/Reject only make sense on a posting still awaiting a decision — an
                       already-rejected one needs the Manager to fix and resubmit first (see the
@@ -3225,25 +3236,6 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                     </div>
                     {selectedPending.rejection_reason && (
                       <p style={{ margin: 0, fontSize: '0.8125rem', color: '#7F1D1D', lineHeight: 1.5 }}>{selectedPending.rejection_reason}</p>
-                    )}
-                    {canManageApplicants(selectedPending) && (
-                      <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-                        <button
-                          type="button"
-                          onClick={() => void openRejectedInWizard(selectedPending)}
-                          style={{ alignSelf: 'flex-start', display: 'inline-flex', alignItems: 'center', gap: 6, border: 'none', borderRadius: 9, background: 'linear-gradient(135deg, #F97316, #EA580C)', color: '#FFFFFF', height: 32, padding: '0 14px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}
-                        >
-                          <Pencil size={13} /> Edit &amp; Resubmit for Approval
-                        </button>
-                        {/* Give up on it entirely instead of fixing/resubmitting. */}
-                        <button
-                          type="button"
-                          onClick={() => setDeleteConfirm({ id: selectedPending.id, title: selectedPending.title, isDraft: false })}
-                          style={{ alignSelf: 'flex-start', display: 'inline-flex', alignItems: 'center', gap: 6, border: '1px solid #FECACA', borderRadius: 9, background: '#FFFFFF', color: '#DC2626', height: 32, padding: '0 14px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}
-                        >
-                          <Trash2 size={13} /> Delete
-                        </button>
-                      </div>
                     )}
                   </div>
                 )}

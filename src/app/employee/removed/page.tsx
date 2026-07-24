@@ -1,11 +1,17 @@
 'use client'
 import { useRouter } from 'next/navigation'
+import { createBrowserClient } from '@supabase/ssr'
 
 export default function EmployeeRemovedPage() {
   const router = useRouter()
 
-  const handleExit = () => {
+  const handleExit = async () => {
+    const supabase = createBrowserClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    )
     localStorage.clear()
+    await supabase.auth.signOut()
     router.push('/')
   }
 

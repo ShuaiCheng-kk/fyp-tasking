@@ -447,8 +447,15 @@ function shortDate(dateKey: string): string {
   })
 }
 
+function normalizeToFiveMinuteTime(hours: number, minutes: number): { h: number; m: number } {
+  const roundedTotal = Math.round((hours * 60 + minutes) / 5) * 5
+  const normalizedTotal = ((roundedTotal % (24 * 60)) + (24 * 60)) % (24 * 60)
+  return { h: Math.floor(normalizedTotal / 60), m: normalizedTotal % 60 }
+}
+
 function formatShiftHour(time: string): string {
-  const [h, m] = time.split(':').map(Number)
+  const [rawH, rawM] = time.split(':').map(Number)
+  const { h, m } = normalizeToFiveMinuteTime(rawH, rawM)
   const ampm = h < 12 ? 'am' : 'pm'
   const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h
   return m === 0 ? `${h12}${ampm}` : `${h12}:${String(m).padStart(2, '0')}${ampm}`
@@ -1288,11 +1295,15 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
     void fetchCalWeek(companyId, calWeekAnchorDate)
   }, [companyId, shiftViewMode, calWeekAnchorDate, fetchCalWeek, scopeToManagerDepartments])
 
-  // approved fixed off: `${user_id}|${YYYY-MM-DD}` → true (same keying as the Attendance page)
+  // Confirmed fixed off: `${user_id}|${YYYY-MM-DD}` → true (same keying as the Attendance page).
+  // 'modified' counts too — that's the status once Owner/Partner moves a request's date instead of
+  // approving it as-is (Fixed Day Off never has a plain "reject", see decideFixedOffDayRequestGroup);
+  // the confirmed date is just as final as 'approved' and must show the same purple Off Day pill,
+  // not fall through to the generic empty-slot placeholder every other unscheduled day gets.
   const fixedOffByUserDate = useMemo(() => {
     const map = new Map<string, boolean>()
     fixedOffDayRequests.forEach(r => {
-      if (r.status === 'approved') map.set(`${r.user_id}|${r.request_date}`, true)
+      if (r.status === 'approved' || r.status === 'modified') map.set(`${r.user_id}|${r.request_date}`, true)
     })
     return map
   }, [fixedOffDayRequests])
@@ -3314,7 +3325,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
 
   if (!initialReady) {
     return (
-      <div style={{ display: 'flex', minHeight: '100vh', background: APP_BG }}>
+      <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: APP_BG }}>
         {sidebar}
         <main style={{ flex: 1, display: 'grid', placeItems: 'center', color: TEXT_DARK, fontWeight: 600 }}>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}><Spinner dark /> Loading shifts</span>
@@ -3324,7 +3335,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
   }
 
   return (
-    <div style={{ display: 'flex', minHeight: '100vh', background: APP_BG }}>
+    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: APP_BG }}>
       <style>{pageKeyframes}</style>
       {sidebar}
       <main style={{ marginLeft: 64, height: '100vh', overflow: 'hidden', display: 'flex', flexDirection: 'column', flex: 1, gap: 0, animation: 'blockSlideUp 0.38s ease both 0.04s' }}>
@@ -4455,8 +4466,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                                         const cellDropKey = `${row.key}_${date}`
                                         const availability = aiStaffAvailability.get(row.key)
                                         const isFixedOff = availability?.fixedOffDates.has(date) ?? false
-                                        const isOnLeave = availability?.approvedLeaveDates.has(date) ?? false
-                                        const isUnavailable = isFixedOff || isOnLeave
+                                        const isUnavailable = isFixedOff
                                         const missingForRole = missingRoleByCell.get(`${row.deptId}_${date}`)
                                         const needsCoverage = !isUnavailable && (row.role === 'Manager' ? missingForRole?.missingManager : missingForRole?.missingEmployee)
                                         const isDragOver = aiDragOverCell === cellDropKey && aiDraggingSlot
@@ -4487,10 +4497,10 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                                           >
                                             {cells.length === 0 ? (
                                               isUnavailable ? (
-                                                <div title={isOnLeave ? 'Approved Leave' : 'Off Day'} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, borderRadius: 999, background: isOnLeave ? '#FEE2E2' : '#F3F4F6', height: 24, padding: '0 6px' }}>
-                                                  {isOnLeave ? <CalendarDays size={11} color="#DC2626" /> : <AlertTriangle size={11} color="#9CA3AF" />}
-                                                  <span style={{ fontSize: 9.5, fontWeight: 700, color: isOnLeave ? '#DC2626' : '#6B7280', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                                    {isOnLeave ? 'Approved Leave' : 'Off Day'}
+                                                <div title="Off Day" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, borderRadius: 999, background: '#F5F3FF', border: '1.5px solid #C4B5FD', height: 24, padding: '0 6px' }}>
+                                                  <CalendarDays size={11} color="#7C3AED" />
+                                                  <span style={{ fontSize: 9.5, fontWeight: 700, color: '#7C3AED', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                                    Off Day
                                                   </span>
                                                 </div>
                                               ) : needsCoverage ? (

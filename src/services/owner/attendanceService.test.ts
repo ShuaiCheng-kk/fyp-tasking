@@ -39,6 +39,7 @@ vi.mock('@/repositories/owner/attendanceRepository', () => ({
     getFixedOffDayRequestById: vi.fn(),
     getFixedOffDayRequestsByIds: vi.fn(),
     updateFixedOffDayRequest: vi.fn(),
+    decideFixedOffDayRequestGroupAtomic: vi.fn(),
     createFixedOffDayRequests: vi.fn(),
     deleteFixedOffDayRequestsByUserAndWeek: vi.fn(),
     getFixedOffDayRequestsByUser: vi.fn(),
@@ -47,7 +48,6 @@ vi.mock('@/repositories/owner/attendanceRepository', () => ({
     getEmployeeIdsByDepartments: vi.fn(),
     getEmployeesByCompany: vi.fn(),
     getManagersByCompany: vi.fn(),
-    getScheduledHeadcountForDeptDate: vi.fn(),
     countApprovedShiftSwapsForUser: vi.fn(),
   },
 }))
@@ -1281,13 +1281,17 @@ describe('attendanceService', () => {
     it('approves every id in the group with the same reviewer and timestamp', async () => {
       vi.mocked(attendanceRepository.getFixedOffDayRequestsByIds).mockResolvedValue(
         [rowFor('fod-1', '2026-07-06'), rowFor('fod-2', '2026-07-08')] as any)
-      vi.mocked(attendanceRepository.updateFixedOffDayRequest).mockResolvedValue({} as any)
+      vi.mocked(attendanceRepository.decideFixedOffDayRequestGroupAtomic).mockResolvedValue([] as any)
 
       await attendanceService.decideFixedOffDayRequestGroup({ ids: ['fod-1', 'fod-2'], reviewer_id: 'mgr-1', decision: 'approved' })
 
-      expect(attendanceRepository.updateFixedOffDayRequest).toHaveBeenCalledTimes(2)
-      expect(attendanceRepository.updateFixedOffDayRequest).toHaveBeenCalledWith('fod-1', expect.objectContaining({ status: 'approved', reviewed_by: 'mgr-1' }))
-      expect(attendanceRepository.updateFixedOffDayRequest).toHaveBeenCalledWith('fod-2', expect.objectContaining({ status: 'approved', reviewed_by: 'mgr-1' }))
+      expect(attendanceRepository.decideFixedOffDayRequestGroupAtomic).toHaveBeenCalledTimes(1)
+      expect(attendanceRepository.decideFixedOffDayRequestGroupAtomic).toHaveBeenCalledWith(expect.objectContaining({
+        ids: ['fod-1', 'fod-2'],
+        statuses: ['approved', 'approved'],
+        request_dates: [null, null],
+        reviewer_id: 'mgr-1',
+      }))
     })
 
     it('rejects an invalid decision value before touching the repository', async () => {
@@ -1307,7 +1311,7 @@ describe('attendanceService', () => {
 
       await expect(attendanceService.decideFixedOffDayRequestGroup({ ids: ['fod-1', 'missing'], reviewer_id: 'mgr-1', decision: 'approved' }))
         .rejects.toThrow('Weekly day off request not found')
-      expect(attendanceRepository.updateFixedOffDayRequest).not.toHaveBeenCalled()
+      expect(attendanceRepository.decideFixedOffDayRequestGroupAtomic).not.toHaveBeenCalled()
     })
 
     it('throws if any row in the group is already an approved auto-assigned row', async () => {
@@ -1318,20 +1322,25 @@ describe('attendanceService', () => {
 
       await expect(attendanceService.decideFixedOffDayRequestGroup({ ids: ['fod-auto', 'fod-2'], reviewer_id: 'mgr-1', decision: 'approved' }))
         .rejects.toThrow('auto-assigned')
-      expect(attendanceRepository.updateFixedOffDayRequest).not.toHaveBeenCalled()
+      expect(attendanceRepository.decideFixedOffDayRequestGroupAtomic).not.toHaveBeenCalled()
     })
 
-    it('modifies each row to its paired replacement date (1:1 by array index)', async () => {
+    it('modifies each row to its paired replacement date (1:1 by array index), in a single atomic call', async () => {
       vi.mocked(attendanceRepository.getFixedOffDayRequestsByIds).mockResolvedValue(
         [rowFor('fod-1', '2026-07-06'), rowFor('fod-2', '2026-07-08')] as any)
-      vi.mocked(attendanceRepository.updateFixedOffDayRequest).mockResolvedValue({} as any)
+      vi.mocked(attendanceRepository.decideFixedOffDayRequestGroupAtomic).mockResolvedValue([] as any)
 
       await attendanceService.decideFixedOffDayRequestGroup({
         ids: ['fod-1', 'fod-2'], reviewer_id: 'owner-1', decision: 'modified', new_dates: ['2026-07-11', '2026-07-12'],
       })
 
-      expect(attendanceRepository.updateFixedOffDayRequest).toHaveBeenCalledWith('fod-1', expect.objectContaining({ status: 'modified', request_date: '2026-07-11' }))
-      expect(attendanceRepository.updateFixedOffDayRequest).toHaveBeenCalledWith('fod-2', expect.objectContaining({ status: 'modified', request_date: '2026-07-12' }))
+      expect(attendanceRepository.decideFixedOffDayRequestGroupAtomic).toHaveBeenCalledTimes(1)
+      expect(attendanceRepository.decideFixedOffDayRequestGroupAtomic).toHaveBeenCalledWith(expect.objectContaining({
+        ids: ['fod-1', 'fod-2'],
+        statuses: ['modified', 'modified'],
+        request_dates: ['2026-07-11', '2026-07-12'],
+        reviewer_id: 'owner-1',
+      }))
     })
 
     it('rejects modify when new_dates length does not match ids', async () => {
@@ -1355,39 +1364,71 @@ describe('attendanceService', () => {
     it('allows a replacement date many weeks out — Owner picks freely, no week cap', async () => {
       vi.mocked(attendanceRepository.getFixedOffDayRequestsByIds).mockResolvedValue(
         [rowFor('fod-1', '2026-07-06'), rowFor('fod-2', '2026-07-08')] as any)
-      vi.mocked(attendanceRepository.updateFixedOffDayRequest).mockResolvedValue({} as any)
+      vi.mocked(attendanceRepository.decideFixedOffDayRequestGroupAtomic).mockResolvedValue([] as any)
 
       await attendanceService.decideFixedOffDayRequestGroup({
         ids: ['fod-1', 'fod-2'], reviewer_id: 'owner-1', decision: 'modified', new_dates: ['2026-07-11', '2026-08-20'],
       })
 
-      expect(attendanceRepository.updateFixedOffDayRequest).toHaveBeenCalledWith('fod-2', expect.objectContaining({ status: 'modified', request_date: '2026-08-20' }))
+      expect(attendanceRepository.decideFixedOffDayRequestGroupAtomic).toHaveBeenCalledWith(expect.objectContaining({
+        request_dates: ['2026-07-11', '2026-08-20'],
+      }))
     })
 
     it('allows a replacement date in the following week as a bonus day (keeps the row on this week\'s week_start)', async () => {
       vi.mocked(attendanceRepository.getFixedOffDayRequestsByIds).mockResolvedValue(
         [rowFor('fod-1', '2026-07-06'), rowFor('fod-2', '2026-07-08')] as any)
-      vi.mocked(attendanceRepository.updateFixedOffDayRequest).mockResolvedValue({} as any)
+      vi.mocked(attendanceRepository.decideFixedOffDayRequestGroupAtomic).mockResolvedValue([] as any)
 
       await attendanceService.decideFixedOffDayRequestGroup({
         ids: ['fod-1', 'fod-2'], reviewer_id: 'owner-1', decision: 'modified', new_dates: ['2026-07-11', '2026-07-14'],
       })
 
-      expect(attendanceRepository.updateFixedOffDayRequest).toHaveBeenCalledWith('fod-2', expect.objectContaining({ status: 'modified', request_date: '2026-07-14' }))
+      expect(attendanceRepository.decideFixedOffDayRequestGroupAtomic).toHaveBeenCalledWith(expect.objectContaining({
+        request_dates: ['2026-07-11', '2026-07-14'],
+      }))
     })
 
     it('keeps a row approved (not modified) when its "replacement" is the same date it already had — lets one batch mix approve-safe with replace-only-flagged', async () => {
       vi.mocked(attendanceRepository.getFixedOffDayRequestsByIds).mockResolvedValue(
         [rowFor('fod-1', '2026-07-06'), rowFor('fod-2', '2026-07-08')] as any)
-      vi.mocked(attendanceRepository.updateFixedOffDayRequest).mockResolvedValue({} as any)
+      vi.mocked(attendanceRepository.decideFixedOffDayRequestGroupAtomic).mockResolvedValue([] as any)
 
       await attendanceService.decideFixedOffDayRequestGroup({
         // fod-1 is safe and comes back unchanged; only fod-2 is actually being swapped to a new date.
         ids: ['fod-1', 'fod-2'], reviewer_id: 'owner-1', decision: 'modified', new_dates: ['2026-07-06', '2026-07-14'],
       })
 
-      expect(attendanceRepository.updateFixedOffDayRequest).toHaveBeenCalledWith('fod-1', expect.objectContaining({ status: 'approved' }))
-      expect(attendanceRepository.updateFixedOffDayRequest).toHaveBeenCalledWith('fod-2', expect.objectContaining({ status: 'modified', request_date: '2026-07-14' }))
+      expect(attendanceRepository.decideFixedOffDayRequestGroupAtomic).toHaveBeenCalledWith(expect.objectContaining({
+        statuses: ['approved', 'modified'],
+        request_dates: [null, '2026-07-14'],
+      }))
+    })
+
+    it('reassigns dates that cycle among rows the user already holds without a spurious unique-constraint error', async () => {
+      // Regression for the real-world bug: David Lim's replacement picks reused dates (Mon/Tue/
+      // Thu/Fri) that already belong to other rows in this same weekly batch. Any implementation
+      // that updates rows one at a time (not atomically) can transiently collide here even though
+      // the final set of dates is conflict-free.
+      vi.mocked(attendanceRepository.getFixedOffDayRequestsByIds).mockResolvedValue([
+        rowFor('fod-1', '2026-08-03'), // Mon
+        rowFor('fod-2', '2026-08-04'), // Tue
+        rowFor('fod-3', '2026-08-06'), // Thu
+      ] as any)
+      vi.mocked(attendanceRepository.decideFixedOffDayRequestGroupAtomic).mockResolvedValue([] as any)
+
+      await attendanceService.decideFixedOffDayRequestGroup({
+        ids: ['fod-1', 'fod-2', 'fod-3'],
+        reviewer_id: 'owner-1',
+        decision: 'modified',
+        // fod-1 takes what fod-2 had, fod-2 takes what fod-3 had, fod-3 takes what fod-1 had.
+        new_dates: ['2026-08-04', '2026-08-06', '2026-08-03'],
+      })
+
+      expect(attendanceRepository.decideFixedOffDayRequestGroupAtomic).toHaveBeenCalledTimes(1)
+      expect(attendanceRepository.decideFixedOffDayRequestGroupAtomic).toHaveBeenCalledWith(expect.objectContaining({
+        request_dates: ['2026-08-04', '2026-08-06', '2026-08-03'],
+      }))
     })
   })
 
@@ -1449,12 +1490,10 @@ describe('attendanceService', () => {
       vi.mocked(attendanceRepository.getOffDayRequestsByCompanyAndWeek).mockResolvedValue([
         { id: 'fod-1', user_id: 'emp-1', company_id: 'company-1', request_date: reservedDate, week_start: upcomingWeekStart, status: 'pending', source: 'submitted', reviewed_by: null, reviewed_at: null, created_at: '2026-01-01' },
       ] as any)
-      // dept-ops is normally scheduled with exactly 2 employees every day of the upcoming week —
-      // with emp-1 already reserved off on reservedDate, only 1 remains there (meets the MIN_EMPLOYEES_PER_DAY=1
-      // floor only if nobody else also takes that day off), so emp-2 must NOT also land on reservedDate.
-      // A fresh object per call matters here: the sweep caches+mutates this per (department, date) key,
-      // so a shared mockResolvedValue object would let one date's reservation bleed into every other date.
-      vi.mocked(attendanceRepository.getScheduledHeadcountForDeptDate).mockImplementation(async () => ({ managers: 0, employees: 2 }))
+      // dept-ops's roster is exactly these 2 employees (both department_id: 'dept-ops' above) — with
+      // emp-1 already reserved off on reservedDate, only 1 remains there (meets the
+      // MIN_EMPLOYEES_PER_DAY=1 floor only if nobody else also takes that day off), so emp-2 must
+      // NOT also land on reservedDate.
 
       await attendanceService.getFixedOffDayRequests('company-1')
 
@@ -1477,7 +1516,7 @@ describe('attendanceService', () => {
 
       await attendanceService.getFixedOffDayRequests('company-1')
 
-      expect(attendanceRepository.getScheduledHeadcountForDeptDate).not.toHaveBeenCalled()
+      expect(ownerTeamRepository.findManagerDepartments).not.toHaveBeenCalled()
       expect(attendanceRepository.createFixedOffDayRequests).not.toHaveBeenCalled()
     })
   })

@@ -5,8 +5,8 @@ import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
 import {
   ListChecks, CheckSquare, ClipboardList, UserPlus,
-  ArrowRightLeft, Calendar, Eye, Users, Check, ArrowRight, ArrowDown, CheckCircle2,
-  Clock, Hourglass, ChevronDown, ChevronUp, AlertCircle, Search,
+  ArrowRightLeft, Calendar, Eye, Users, Check, ArrowRight, CheckCircle2,
+  Clock, Coffee, Hourglass, ChevronDown, ChevronUp, AlertCircle, Bell, UserCog, UserCheck,
 } from 'lucide-react'
 import DepartmentBadge from '@/components/DepartmentBadge'
 import { deptColor } from '@/lib/deptColor'
@@ -16,7 +16,7 @@ import { ShowcaseCard } from '@/components/panel'
 import { useIsCompactViewport } from '@/hooks/useIsCompactViewport'
 import {
   AttendanceDepartmentGroup, AttendancePersonRow, AttendanceRoleGroup,
-  OwnerDashboardSummary, TaskOverviewGroup, WaitingOnYouItem, WaitingOnYouItemId,
+  OwnerDashboardSummary, TaskNotificationItem, TaskOverviewGroup, WaitingOnYouItem, WaitingOnYouItemId,
 } from '@/types/OwnerDashboard'
 
 // ─── Spinner ──────────────────────────────────────────────────────────────────
@@ -56,10 +56,6 @@ function canClockIn(shift: MyShift['shift']): boolean {
   return Date.now() >= shiftStart.getTime() - CLOCK_IN_WINDOW_MINUTES_BEFORE * 60000
 }
 
-function isLateForShift(shift: MyShift['shift']): boolean {
-  return Date.now() > new Date(`${shift.shift_date}T${shift.start_time}Z`).getTime()
-}
-
 function canClockOut(shift: MyShift['shift']): boolean {
   if (shift.is_open_ended) return true
   return Date.now() >= new Date(`${shift.shift_date}T${shift.end_time}Z`).getTime()
@@ -71,9 +67,66 @@ function fmtShiftTime(hhmmss: string): string {
   return `${h12}:${String(m).padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'}`
 }
 
+function fmtShiftTimeMinusMinutes(hhmmss: string, minutes: number): string {
+  const [h, m] = hhmmss.split(':').map(Number)
+  const total = (h * 60 + m - minutes + 1440) % 1440
+  return fmtShiftTime(`${Math.floor(total / 60)}:${total % 60}`)
+}
+
 function fmtClockStamp(iso: string | null): string {
   if (!iso) return '--'
   return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'UTC' })
+}
+
+function ClockFlowButton({ icon, label, sub, enabled, completed, activeColor, completedColor = '#16A34A', onClick }: {
+  icon: ReactNode
+  label: string
+  sub: string
+  enabled: boolean
+  completed: boolean
+  activeColor: string
+  completedColor?: string
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      disabled={!enabled}
+      onClick={onClick}
+      style={{
+        border: 'none',
+        borderRadius: 12,
+        padding: '0 16px',
+        height: 62,
+        boxSizing: 'border-box',
+        textAlign: 'left',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 9,
+        minWidth: 152,
+        background: completed ? completedColor : enabled ? activeColor : '#F3F4F6',
+        color: completed || enabled ? '#FFFFFF' : '#9CA3AF',
+        cursor: enabled ? 'pointer' : 'default',
+        boxShadow: 'none',
+      }}
+    >
+      <span style={{ flexShrink: 0 }}>{icon}</span>
+      <span style={{ minWidth: 0 }}>
+        <span style={{ display: 'block', fontWeight: 800, fontSize: '0.9375rem', whiteSpace: 'nowrap' }}>{label}</span>
+        {sub && (
+          <span style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 500, marginTop: 1, opacity: 0.92, whiteSpace: 'nowrap' }}>{sub}</span>
+        )}
+      </span>
+    </button>
+  )
+}
+
+function ClockFlowConnector() {
+  return (
+    <span style={{ width: 46, flex: '0 0 46px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#D1D5DB' }}>
+      <ArrowRight size={16} />
+    </span>
+  )
 }
 
 function CountChip({ value }: { value: string | number }) {
@@ -81,23 +134,6 @@ function CountChip({ value }: { value: string | number }) {
     <span style={{ fontSize: 13, fontWeight: 700, color: '#64748B', background: '#F1F5F9', borderRadius: 999, padding: '2px 10px', whiteSpace: 'nowrap' }}>
       {value}
     </span>
-  )
-}
-
-// Same look as ShowcaseCard's built-in search input (Team page) — used in block headers where
-// the search must sit to the LEFT of the corner link action.
-function HeaderSearchInput({ value, onChange, width = 180 }: { value: string; onChange: (v: string) => void; width?: number }) {
-  return (
-    <div style={{ position: 'relative', flexShrink: 0 }}>
-      <Search size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#9CA3AF', pointerEvents: 'none' }} />
-      <input
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        style={{ width, height: 34, borderRadius: 999, border: '1px solid #E5E7EB', background: '#F9FAFB', padding: '0 12px 0 32px', fontSize: 13, color: '#111827', outline: 'none', boxSizing: 'border-box' }}
-        onFocus={e => { e.currentTarget.style.borderColor = '#F97316'; e.currentTarget.style.background = '#FFFFFF' }}
-        onBlur={e => { e.currentTarget.style.borderColor = '#E5E7EB'; e.currentTarget.style.background = '#F9FAFB' }}
-      />
-    </div>
   )
 }
 
@@ -128,30 +164,35 @@ const WAITING_META: Record<WaitingOnYouItemId, { icon: React.ReactNode; accent: 
 // Relative to the role's base path — prefixed with basePath at push time.
 const WAITING_ROUTES: Record<WaitingOnYouItemId, string> = {
   shift_swap: '/attendance?tab=swaps',
-  off_day_deadline: '/attendance?tab=fixedoff',
+  off_day_deadline: '/attendance?submit=offday',
   job_posting_approval: '/recruitment?view=pending',
   applicant_accept: '/recruitment',
   task_review: '/tasks',
 }
 
 // Shared stat-action card look (Waiting On You + Recruitment Overview): icon badge with a big
-// count, label + arrow, sub line; count 0 flips into the green "All caught up" done state.
-function StatActionCard({ count, label, sub, icon, accent, accentBg, onClick }: {
-  count: number; label: string; sub: string; icon: React.ReactNode; accent: string; accentBg: string; onClick: () => void
+// count, label + arrow; count 0 flips into the green done state.
+function StatActionCard({ count, label, sub, icon, accent, accentBg, onClick, value }: {
+  count: number; label: string; sub: string; icon: React.ReactNode; accent: string; accentBg: string; onClick: () => void; value?: React.ReactNode
 }) {
   const done = count === 0
   const meta = { icon, accent, accentBg, sub }
   return (
     <div
-      onClick={onClick}
+      onClick={done ? undefined : onClick}
       style={{
         flex: 1, minWidth: 150, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 12,
         padding: '18px 19px', borderRadius: 14,
         background: done ? '#F0FDF4' : '#FFFFFF',
         border: `1px solid ${done ? '#D1FAE5' : '#E5E7EB'}`,
-        cursor: 'pointer', transition: 'transform 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease',
+        cursor: done ? 'default' : 'pointer', transition: 'transform 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease',
       }}
-      onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 6px 16px rgba(15,23,42,0.08)'; e.currentTarget.style.borderColor = done ? '#A7F3D0' : '#CBD5E1' }}
+      onMouseEnter={e => {
+        if (done) return
+        e.currentTarget.style.transform = 'translateY(-2px)'
+        e.currentTarget.style.boxShadow = '0 6px 16px rgba(15,23,42,0.08)'
+        e.currentTarget.style.borderColor = '#CBD5E1'
+      }}
       onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none'; e.currentTarget.style.borderColor = done ? '#D1FAE5' : '#E5E7EB' }}
     >
       {/* Top row: icon badge with the big count sitting to its right */}
@@ -163,8 +204,8 @@ function StatActionCard({ count, label, sub, icon, accent, accentBg, onClick }: 
           {done ? <Check size={28} /> : meta.icon}
         </span>
         {!done && (
-          <span style={{ fontSize: 32, fontWeight: 800, lineHeight: 1, color: meta.accent, fontVariantNumeric: 'tabular-nums' }}>
-            {count}
+          <span style={{ fontSize: value ? 19 : 32, fontWeight: 800, lineHeight: 1.08, color: meta.accent, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+            {value ?? count}
           </span>
         )}
       </div>
@@ -182,9 +223,6 @@ function StatActionCard({ count, label, sub, icon, accent, accentBg, onClick }: 
             </span>
           )}
         </div>
-        <p style={{ fontSize: 12.5, fontWeight: 600, margin: '5px 0 0', color: done ? '#16A34A' : '#64748B' }}>
-          {done ? 'All caught up' : meta.sub}
-        </p>
       </div>
     </div>
   )
@@ -200,6 +238,7 @@ function WaitingOnYouCard({ item, onClick }: { item: WaitingOnYouItem; onClick: 
       icon={meta.icon}
       accent={meta.accent}
       accentBg={meta.accentBg}
+      value={item.id === 'off_day_deadline' && item.detail ? item.detail : undefined}
       onClick={onClick}
     />
   )
@@ -214,11 +253,46 @@ const TASK_GROUP_META: Record<string, { color: string; chipBg: string; iconBg: s
   overdue:     { color: '#DC2626', chipBg: '#FEF2F2', iconBg: '#FEE2E2', bar: '#F87171', rowBg: '#FFFFFF', viewAll: 'View all overdue tasks', icon: <Clock size={26} />,        sub: 'Act now',  href: '/tasks?sort=deadline&show=overdue' },
   delay_alert: { color: '#EA580C', chipBg: '#FFF7ED', iconBg: '#FFEDD5', bar: '#FDBA74', rowBg: '#FFFBF5', viewAll: 'View all delay alerts',  icon: <Hourglass size={26} />,    sub: 'Due soon', href: '/tasks?show=delay_alerts' },
   completed:   { color: '#16A34A', chipBg: '#F0FDF4', iconBg: '#DCFCE7', bar: '#86EFAC', rowBg: '#FFFFFF', viewAll: 'View all completed tasks', icon: <CheckCircle2 size={26} />, sub: 'Great job!', href: '/tasks?show=completed_today' },
+  due_today:   { color: '#EA580C', chipBg: '#FFF7ED', iconBg: '#FFEDD5', bar: '#FDBA74', rowBg: '#FFFFFF', viewAll: 'View tasks due today', icon: <Hourglass size={26} />, sub: 'Today', href: '/tasks?sort=deadline&show=due_today' },
+  due_this_week: { color: '#2563EB', chipBg: '#EFF6FF', iconBg: '#DBEAFE', bar: '#93C5FD', rowBg: '#FFFFFF', viewAll: 'View tasks due this week', icon: <Calendar size={26} />, sub: 'This week', href: '/tasks?sort=deadline&show=due_this_week' },
+}
+
+const DASHBOARD_TASK_PRIORITY_COLORS: Record<string, { bg: string; text: string }> = {
+  Low:    { bg: '#F1F5F9', text: '#475569' },
+  Medium: { bg: '#DBEAFE', text: '#1D4ED8' },
+  High:   { bg: '#FFEDD5', text: '#C2410C' },
+  Urgent: { bg: '#FEE2E2', text: '#B91C1C' },
 }
 
 // Left summary card, one per non-empty group — white card, icon bubble, big count.
 // Display-only (not clickable); fills its pair-row's height (see the Task Overview body layout).
-function TaskStatCard({ group }: { group: TaskOverviewGroup }) {
+const TASK_NOTIFICATION_META: Record<TaskNotificationItem['id'], { icon: React.ReactNode; accent: string; accentBg: string; route: string; text: string }> = {
+  new_assigned_task:    { icon: <CheckSquare size={15} />,     accent: '#2563EB', accentBg: '#EFF6FF', route: '/tasks?tab=my', text: 'New tasks assigned to you' },
+  task_rejected:        { icon: <AlertCircle size={15} />,     accent: '#DC2626', accentBg: '#FEF2F2', route: '/tasks?tab=my&show=rework', text: 'Your tasks were rejected' },
+  shift_swap_rejected:  { icon: <ArrowRightLeft size={15} />,  accent: '#D97706', accentBg: '#FFF7ED', route: '/attendance?tab=swaps', text: 'Shift swaps were rejected' },
+}
+
+function TaskNotificationLine({ item, onClick }: { item: TaskNotificationItem; onClick: () => void }) {
+  const meta = TASK_NOTIFICATION_META[item.id]
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        height: 38, border: '1px solid #E5E7EB', borderRadius: 999, background: '#FFFFFF',
+        display: 'inline-flex', alignItems: 'center', gap: 8, padding: '0 12px 0 8px',
+        color: '#334155', fontSize: 15, fontWeight: 700, whiteSpace: 'nowrap', cursor: 'pointer',
+      }}
+    >
+      <span style={{ width: 24, height: 24, borderRadius: 999, background: meta.accentBg, color: meta.accent, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+        {meta.icon}
+      </span>
+      <span>{item.count} {meta.text}</span>
+    </button>
+  )
+}
+
+function TaskStatCard({ group, hideSub = false }: { group: TaskOverviewGroup; hideSub?: boolean }) {
   const meta = TASK_GROUP_META[group.key]
   return (
     <div style={{
@@ -234,7 +308,7 @@ function TaskStatCard({ group }: { group: TaskOverviewGroup }) {
       </span>
       <div style={{ fontSize: 15, fontWeight: 700, color: '#0F172A' }}>{group.label}</div>
       <div style={{ fontSize: 32, fontWeight: 800, color: meta.color, lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>{group.count}</div>
-      <div style={{ fontSize: 12.5, fontWeight: 600, color: '#64748B' }}>{meta.sub}</div>
+      {!hideSub && <div style={{ fontSize: 12.5, fontWeight: 600, color: '#64748B' }}>{meta.sub}</div>}
     </div>
   )
 }
@@ -303,9 +377,6 @@ function TaskGroupSection({ group, onOpenTask }: { group: TaskOverviewGroup; onO
         }}
       >
         {group.tasks.map(task => {
-          // Task page kanban card clone, re-arranged: top row = department badge + avatar + name,
-          // with the stamp pinned right (Overdue = how long overdue; others = the deadline);
-          // the title sits on its own line below.
           const stamp = isCompleted
             ? formatTaskStamp(task.completed_at)
             : group.key === 'overdue'
@@ -313,26 +384,41 @@ function TaskGroupSection({ group, onOpenTask }: { group: TaskOverviewGroup; onO
               : formatTaskStamp(task.due_at)
           const warning = !isCompleted && !!task.due_at &&
             (new Date(task.due_at) < new Date() || new Date(task.due_at).getTime() - Date.now() <= 2 * 60 * 60 * 1000)
+          const priority = task.priority ? DASHBOARD_TASK_PRIORITY_COLORS[task.priority] : null
           return (
             <div
               key={task.id}
               onClick={onOpenTask}
               className="task-card"
               style={{
-                background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 10, padding: '14px 16px',
+                background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 10, padding: '16px',
                 marginBottom: 10, cursor: 'pointer', scrollSnapAlign: 'start',
                 transition: 'transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease',
               }}
               onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = '0 3px 10px rgba(15,23,42,0.07)' }}
               onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none' }}
             >
-              {task.department_id && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-                  <DepartmentBadge departmentId={task.department_id} departmentName={task.department_name} />
+              {priority && task.priority && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12, paddingRight: 24 }}>
+                  <span style={{ fontSize: '0.72rem', fontWeight: 800, padding: '4px 10px', borderRadius: 99, background: priority.bg, color: priority.text, letterSpacing: '0.01em' }}>
+                    {task.priority}
+                  </span>
                 </div>
               )}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#111827', margin: 0, lineHeight: 1.4, minWidth: 0, flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{task.title}</p>
+              <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#111827', margin: '0 0 8px', lineHeight: 1.4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {task.title}
+              </p>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, minHeight: 26 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                  <div style={{ width: 26, height: 26, borderRadius: '50%', background: task.assignee_photo_url ? 'transparent' : '#FFF3E8', border: '1.5px solid #F97316', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden' }}>
+                    {task.assignee_photo_url
+                      ? <img src={task.assignee_photo_url} alt={task.assignee_name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      : <UserCog size={14} color="#F97316" strokeWidth={2} />}
+                  </div>
+                  <span style={{ fontSize: '0.7rem', color: '#374151', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {task.assignee_name}
+                  </span>
+                </div>
                 {stamp && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
                     {warning ? <AlertCircle size={11} color="#EF4444" /> : <Clock size={11} color="#9CA3AF" />}
@@ -507,26 +593,10 @@ function personsOf(dept: AttendanceDepartmentGroup): AttendancePersonRow[] {
   return [...dept.present, ...dept.late, ...dept.absent, ...dept.not_started]
 }
 
-function AttendanceHalf({ title, accent, accentBg, group, search = '' }: {
-  title: string; accent: string; accentBg: string; group: AttendanceRoleGroup; search?: string
+function AttendanceHalf({ title, accent, accentBg, group, search = '', onOpenDetails }: {
+  title: string; accent: string; accentBg: string; group: AttendanceRoleGroup; search?: string; onOpenDetails?: () => void
 }) {
-  // All departments start collapsed; they only expand when the user clicks one.
-  const [openDepts, setOpenDepts] = useState<Set<string> | null>(null)
   const [hoverLegend, setHoverLegend] = useState<string | null>(null)
-  const query = search.trim().toLowerCase()
-  // While a name search is active, whichever departments contain a match are forced open so the
-  // highlighted rows are immediately visible; the user's own open/closed choices resume after.
-  const matchedOpen = query
-    ? new Set(group.departments.filter(d => personsOf(d).some(p => p.name.toLowerCase().includes(query))).map(d => d.department_name))
-    : null
-  const effectiveOpen = matchedOpen ?? openDepts ?? new Set<string>()
-  const toggle = (name: string) => {
-    if (query) return
-    const next = new Set(effectiveOpen)
-    if (next.has(name)) next.delete(name)
-    else next.add(name)
-    setOpenDepts(next)
-  }
   return (
     <div style={{ flex: 1, minWidth: 0, background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 16, padding: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
       {/* Half header */}
@@ -556,7 +626,15 @@ function AttendanceHalf({ title, accent, accentBg, group, search = '' }: {
           { label: 'Absent', count: absent, dot: PROGRESS_ABSENT_COLOR, detailColor: '#B91C1C', groups: buildGroups('absent', () => 'No show') },
         ]
         return (
-          <div style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 12, padding: '20px 18px', marginTop: 4 }}>
+          <div
+            role={onOpenDetails ? 'button' : undefined}
+            tabIndex={onOpenDetails ? 0 : undefined}
+            onClick={onOpenDetails}
+            onKeyDown={e => { if (onOpenDetails && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onOpenDetails() } }}
+            style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 12, padding: '20px 18px', marginTop: 4, cursor: onOpenDetails ? 'pointer' : 'default', transition: 'transform 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease' }}
+            onMouseEnter={e => { if (onOpenDetails) { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.borderColor = '#CBD5E1'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(15,23,42,0.08)' } }}
+            onMouseLeave={e => { if (onOpenDetails) { e.currentTarget.style.transform = 'none'; e.currentTarget.style.borderColor = '#E5E7EB'; e.currentTarget.style.boxShadow = 'none' } }}
+          >
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
               <span style={{ fontSize: 14.5, fontWeight: 800, color: '#0F172A', whiteSpace: 'nowrap' }}>Attendance Progress</span>
               <span style={{ marginLeft: 'auto', fontSize: 16, fontWeight: 800, color: '#0F172A', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
@@ -620,35 +698,9 @@ function AttendanceHalf({ title, accent, accentBg, group, search = '' }: {
           </div>
         )
       })()}
-      {/* Down arrow leading from the progress summary into the per-department breakdown —
-          same solid-circle style as the Task Overview connector arrows */}
-      {group.departments.length === 0 ? null : (
-        <div style={{ display: 'flex', justifyContent: 'center', margin: '-2px 0' }}>
-          <span style={{
-            width: 36, height: 36, borderRadius: 999, background: '#F97316', color: '#FFFFFF',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-            boxShadow: '0 2px 6px rgba(15,23,42,0.22)',
-          }}>
-            <ArrowDown size={19} />
-          </span>
-        </div>
-      )}
-      {/* Departments — two per row; alignItems start so expanding one card doesn't stretch its neighbor */}
       {group.departments.length === 0 ? (
         <EmptyRow text="No one scheduled today" />
-      ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', columnGap: 12, rowGap: 22, alignItems: 'start' }}>
-          {group.departments.map(dept => (
-            <AttendanceDeptSection
-              key={dept.department_name}
-              dept={dept}
-              open={effectiveOpen.has(dept.department_name)}
-              onToggle={() => toggle(dept.department_name)}
-              query={query}
-            />
-          ))}
-        </div>
-      )}
+      ) : null}
     </div>
   )
 }
@@ -656,6 +708,52 @@ function AttendanceHalf({ title, accent, accentBg, group, search = '' }: {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 // Entrance animation — same blockSlideUp the other owner pages play on navigation.
+function TeamOverviewBlock({ summary, loading, onOpenTeam }: {
+  summary: OwnerDashboardSummary | null
+  loading: boolean
+  onOpenTeam: () => void
+}) {
+  const stats = summary
+    ? [
+        { label: 'Manager', count: summary.team_overview.managers, icon: <UserCog size={24} />, color: '#2563EB', bg: '#EFF6FF' },
+        { label: 'Employee', count: summary.team_overview.employees, icon: <UserCheck size={24} />, color: '#16A34A', bg: '#F0FDF4' },
+        { label: 'Casual Worker Pool', count: summary.team_overview.casual_worker_pool, icon: <Users size={24} />, color: '#D97706', bg: '#FFF7ED' },
+      ]
+    : []
+  return (
+    <ShowcaseCard
+      fillHeight
+      icon={<Users size={15} style={{ color: '#F97316' }} />}
+      title="Team"
+      actions={<LinkAction label="To Team Page →" onClick={onOpenTeam} />}
+    >
+      {!summary ? (
+        <EmptyRow text={loading ? 'Loading...' : 'No data yet'} />
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, minHeight: '100%' }}>
+          {stats.map(stat => (
+            <div
+              key={stat.label}
+              style={{
+                flex: 1, minHeight: 92, display: 'flex', alignItems: 'center', gap: 14,
+                border: '1px solid #E5E7EB', borderRadius: 14, background: '#FFFFFF', padding: '16px 18px',
+              }}
+            >
+              <span style={{ width: 52, height: 52, borderRadius: 14, background: stat.bg, color: stat.color, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                {stat.icon}
+              </span>
+              <span style={{ minWidth: 0 }}>
+                <span style={{ display: 'block', fontSize: 13, fontWeight: 700, color: '#64748B', whiteSpace: 'nowrap' }}>{stat.label}</span>
+                <span style={{ display: 'block', marginTop: 3, fontSize: 32, fontWeight: 800, lineHeight: 1, color: stat.color, fontVariantNumeric: 'tabular-nums' }}>{stat.count}</span>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </ShowcaseCard>
+  )
+}
+
 const pageKeyframes = `
   @keyframes blockSlideUp { from { opacity: 0; transform: translateY(20px) } to { opacity: 1; transform: translateY(0) } }
 `
@@ -676,15 +774,12 @@ export default function DashboardView({ sidebar, basePath, viewerRole }: {
   const [summary, setSummary] = useState<OwnerDashboardSummary | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [attendanceSearch, setAttendanceSearch] = useState('')
-  const [taskSearch, setTaskSearch] = useState('')
+  const [managerNotifications, setManagerNotifications] = useState<TaskNotificationItem[]>([])
 
   // ── My Shift Today (Manager's own clock in/out + break in/out, UC49/UC56) ──
   const [myShifts, setMyShifts] = useState<MyShift[]>([])
   const [clockBusyId, setClockBusyId] = useState('')
   const [clockMessage, setClockMessage] = useState('')
-  const [lateReasonFor, setLateReasonFor] = useState<string | null>(null)
-  const [lateReason, setLateReason] = useState('')
 
   const fetchMyShift = useCallback(async (uid: string) => {
     if (!uid) return
@@ -702,8 +797,77 @@ export default function DashboardView({ sidebar, basePath, viewerRole }: {
   const myTodayShifts = useMemo(() => {
     const now = new Date()
     const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-    return myShifts.filter(s => s.shift.shift_date === todayKey)
+    const utcTodayKey = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-${String(now.getUTCDate()).padStart(2, '0')}`
+    return myShifts.filter(s => s.shift.shift_date === todayKey || s.shift.shift_date === utcTodayKey)
   }, [myShifts])
+
+  const renderManagerClockChain = (compactLabel = false) => (
+    <>
+      {myTodayShifts.map(shift => {
+        const clockedIn = !!shift.record?.clock_in_time
+        const clockedOut = !!shift.record?.clock_out_time
+        const breakInDone = !!shift.record?.break_in_time
+        const breakOutDone = !!shift.record?.break_out_time
+        const clockInEnabled = !clockBusyId && !clockedIn && canClockIn(shift.shift)
+        const breakInEnabled = !clockBusyId && clockedIn && !clockedOut && !breakInDone
+        const breakOutEnabled = !clockBusyId && clockedIn && !clockedOut && breakInDone && !breakOutDone
+        const clockOutEnabled = !clockBusyId && clockedIn && !clockedOut && canClockOut(shift.shift)
+        return (
+          <div key={shift.assignment.id} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', minWidth: 0 }}>
+            {!compactLabel && (
+              <span style={{ fontSize: 12.5, fontWeight: 700, color: '#64748B', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {shift.shift.title || 'Shift'} - {fmtShiftTime(shift.shift.start_time)} to {shift.shift.is_open_ended ? 'Open' : fmtShiftTime(shift.shift.end_time)}
+              </span>
+            )}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 0, flexWrap: 'nowrap' }}>
+              <ClockFlowButton
+                icon={<Clock size={19} />}
+                label="Clock In"
+                sub={clockedIn && shift.record?.clock_in_time ? `At ${fmtClockStamp(shift.record.clock_in_time)}` : `From ${fmtShiftTimeMinusMinutes(shift.shift.start_time, CLOCK_IN_WINDOW_MINUTES_BEFORE)}`}
+                enabled={clockInEnabled}
+                completed={clockedIn}
+                activeColor="#F97316"
+                onClick={() => void runClockAction(shift, 'clock_in')}
+              />
+              <ClockFlowConnector />
+              <ClockFlowButton
+                icon={<Coffee size={19} />}
+                label="Break In"
+                sub=""
+                enabled={breakInEnabled}
+                completed={breakInDone}
+                activeColor="#F97316"
+                onClick={() => void runClockAction(shift, 'break_in')}
+              />
+              <ClockFlowConnector />
+              <ClockFlowButton
+                icon={<Coffee size={19} />}
+                label="Break Out"
+                sub=""
+                enabled={breakOutEnabled}
+                completed={breakOutDone}
+                activeColor="#F97316"
+                onClick={() => void runClockAction(shift, 'break_out')}
+              />
+              <ClockFlowConnector />
+              <ClockFlowButton
+                icon={<Clock size={19} />}
+                label="Clock Out"
+                sub={clockedOut && shift.record?.clock_out_time ? `At ${fmtClockStamp(shift.record.clock_out_time)}` : shift.shift.is_open_ended ? 'When done' : `After ${fmtShiftTime(shift.shift.end_time)}`}
+                enabled={clockOutEnabled}
+                completed={clockedOut}
+                activeColor="#334155"
+                onClick={() => void runClockAction(shift, 'clock_out')}
+              />
+            </div>
+          </div>
+        )
+      })}
+      {clockMessage && (
+        <span style={{ fontSize: 12.5, fontWeight: 600, color: clockMessage.includes('success') || clockMessage.includes('Break') ? '#059669' : '#DC2626', whiteSpace: 'nowrap' }}>{clockMessage}</span>
+      )}
+    </>
+  )
 
   const runClockAction = async (shift: MyShift, action: 'clock_in' | 'clock_out' | 'break_in' | 'break_out', extra?: { late_reason?: string }) => {
     setClockBusyId(`${shift.assignment.id}:${action}`)
@@ -718,8 +882,6 @@ export default function DashboardView({ sidebar, basePath, viewerRole }: {
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'Attendance action failed')
-      setLateReasonFor(null)
-      setLateReason('')
       await fetchMyShift(internalUserId)
       setClockMessage(
         action === 'clock_in' ? 'Clocked in successfully.'
@@ -775,22 +937,81 @@ export default function DashboardView({ sidebar, basePath, viewerRole }: {
     }
   }, [viewerRole])
 
+  const fetchManagerNotifications = useCallback(async (cid: string, uid: string) => {
+    if (viewerRole !== 'Manager' || !cid || !uid) return
+    try {
+      const res = await fetch(`/api/task?company_id=${cid}&kanban=true&assigned_user_id=${encodeURIComponent(uid)}&viewer_id=${encodeURIComponent(uid)}`)
+      const data = await res.json()
+      if (!data.success) return
+      const seenKey = `manager_mytasks_seen_${cid}_${uid}`
+      let seen = new Set<string>()
+      try {
+        const raw = localStorage.getItem(seenKey)
+        if (raw) seen = new Set(JSON.parse(raw))
+      } catch {}
+      const signature = (task: { id: string; rejected_at?: string | null }) => `${task.id}::${task.rejected_at ?? ''}`
+      const assigned = ((data.groups?.Assigned ?? []) as Array<{ id: string; rejected_at?: string | null; parent_task_id?: string | null }>)
+        .filter(task => !task.parent_task_id && !seen.has(signature(task)))
+      const rejected = ((data.groups?.['In Progress'] ?? []) as Array<{ id: string; rejected_at?: string | null; rejection_reason?: string | null; parent_task_id?: string | null }>)
+        .filter(task => !task.parent_task_id && !!task.rejection_reason && !!task.rejected_at && !seen.has(signature(task)))
+
+      setManagerNotifications([
+        { id: 'new_assigned_task', label: 'New Assigned Task', count: assigned.length, oldest_at: null, detail: 'Assigned by Owner or Partner' },
+        { id: 'task_rejected', label: 'Task Rejected by Owner', count: rejected.length, oldest_at: null, detail: 'Needs rework' },
+      ].filter(item => item.count > 0) as TaskNotificationItem[])
+    } catch {}
+  }, [viewerRole])
+
   useEffect(() => {
     if (!companyId || !internalUserId) return
     void fetchSummary(companyId, internalUserId)
   }, [companyId, internalUserId, fetchSummary])
 
+  useEffect(() => {
+    if (!companyId || !internalUserId || viewerRole !== 'Manager') return
+    void fetchManagerNotifications(companyId, internalUserId)
+    const handler = () => void fetchManagerNotifications(companyId, internalUserId)
+    window.addEventListener('task-insights-updated', handler)
+    window.addEventListener('storage', handler)
+    return () => {
+      window.removeEventListener('task-insights-updated', handler)
+      window.removeEventListener('storage', handler)
+    }
+  }, [companyId, internalUserId, viewerRole, fetchManagerNotifications])
+
+  useEffect(() => {
+    if (summary && viewerRole === 'Manager' && companyId && internalUserId) void fetchManagerNotifications(companyId, internalUserId)
+  }, [summary, viewerRole, companyId, internalUserId, fetchManagerNotifications])
+
   const waitingCount = summary ? summary.waiting_on_you.filter(i => i.count > 0).length : 0
   const waitingTotal = summary?.waiting_on_you.length ?? 5
+  const notificationCount = managerNotifications.reduce((sum, item) => sum + item.count, 0)
   const taskCount = summary ? summary.task_overview.reduce((sum, g) => sum + g.count, 0) : 0
-  // Task Overview search: filter every group's rows by task title; counts follow the filter.
-  const taskQuery = taskSearch.trim().toLowerCase()
-  const visibleTaskGroups = (summary?.task_overview ?? [])
-    .map(g => {
-      const tasks = taskQuery ? g.tasks.filter(t => t.title.toLowerCase().includes(taskQuery)) : g.tasks
-      return { ...g, tasks, count: taskQuery ? tasks.length : g.count }
-    })
-    .filter(g => g.count > 0)
+  const visibleTaskGroups = (summary?.task_overview ?? []).filter(g => g.count > 0)
+
+  const openWaitingOnYouItem = useCallback((item: WaitingOnYouItem) => {
+    if (item.id === 'applicant_accept') {
+      router.push(item.detail ? `${basePath}/recruitment?job=${item.detail}` : `${basePath}/recruitment`)
+      return
+    }
+    if (item.id === 'task_review' && viewerRole === 'Manager') {
+      router.push(`${basePath}/tasks?tab=kanban`)
+      return
+    }
+    router.push(basePath + WAITING_ROUTES[item.id])
+  }, [basePath, router, viewerRole])
+
+  const openTaskOverviewGroup = useCallback((groupKey: string) => {
+    const href = TASK_GROUP_META[groupKey].href
+    if (viewerRole !== 'Manager') {
+      router.push(basePath + href)
+      return
+    }
+    const [path, query = ''] = href.split('?')
+    const params = new URLSearchParams(query)
+    params.set('tab', 'kanban')
+    router.push(`${basePath}${path}?${params.toString()}`)
+  }, [basePath, router, viewerRole])
 
   // Blocks always render inside a viewport-locked grid on desktop: the page itself never
   // scrolls — overflow lives inside each block. Compact viewports fall back to one
@@ -800,9 +1021,8 @@ export default function DashboardView({ sidebar, basePath, viewerRole }: {
     : {
         flex: 1, minHeight: 0, display: 'grid', gap: 16,
         gridTemplateColumns: 'repeat(12, minmax(0, 1fr))',
-        // Row 1 hugs the Waiting On You cards' natural height (capped so short viewports
-        // still leave row 2 room); row 2 takes everything left.
-        gridTemplateRows: 'minmax(0, min(272px, 40%)) minmax(0, 1fr)',
+        // Row 1 hugs the overview cards' natural height; row 2 takes everything left.
+        gridTemplateRows: 'auto minmax(0, 1fr)',
       }
 
   const cellStyle = (span: number): React.CSSProperties => isCompact
@@ -828,112 +1048,42 @@ export default function DashboardView({ sidebar, basePath, viewerRole }: {
           </div>
         </div>
 
-        {/* ── My Shift Today — Manager's own clock in/out + break in/out (UC49/UC56) ──────── */}
-        {viewerRole === 'Manager' && myTodayShifts.length > 0 && (
-          <div style={{ padding: '0 28px 14px', flexShrink: 0 }}>
-            <div style={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 14, padding: '12px 18px', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-                <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                  <Clock size={15} style={{ color: '#F97316' }} />
-                </div>
-                <span style={{ fontSize: 15, fontWeight: 700, color: '#0F172A', whiteSpace: 'nowrap' }}>My Shift Today</span>
-              </div>
-              {myTodayShifts.map(shift => {
-                const clockedIn = !!shift.record?.clock_in_time
-                const clockedOut = !!shift.record?.clock_out_time
-                const onBreak = !!shift.record?.break_in_time && !shift.record?.break_out_time
-                const breakDone = !!shift.record?.break_in_time && !!shift.record?.break_out_time
-                const busyIn = clockBusyId === `${shift.assignment.id}:clock_in`
-                const busyOut = clockBusyId === `${shift.assignment.id}:clock_out`
-                const busyBreakIn = clockBusyId === `${shift.assignment.id}:break_in`
-                const busyBreakOut = clockBusyId === `${shift.assignment.id}:break_out`
-                const late = !clockedIn && isLateForShift(shift.shift)
-                const askingLate = lateReasonFor === shift.assignment.id
-                return (
-                  <div key={shift.assignment.id} style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', minWidth: 0 }}>
-                    <span style={{ fontSize: 13.5, fontWeight: 600, color: '#334155', whiteSpace: 'nowrap' }}>
-                      {shift.shift.title || 'Shift'} · {fmtShiftTime(shift.shift.start_time)} – {shift.shift.is_open_ended ? 'Open' : fmtShiftTime(shift.shift.end_time)}
-                      {clockedIn && <span style={{ color: '#059669' }}> · In {fmtClockStamp(shift.record!.clock_in_time)}</span>}
-                      {shift.record?.break_in_time && <span style={{ color: '#B45309' }}> · Break {fmtClockStamp(shift.record.break_in_time)}{shift.record.break_out_time ? `–${fmtClockStamp(shift.record.break_out_time)}` : ''}</span>}
-                      {clockedOut && <span style={{ color: '#64748B' }}> · Out {fmtClockStamp(shift.record!.clock_out_time)}</span>}
-                    </span>
-                    {!clockedIn && canClockIn(shift.shift) && !askingLate && (
-                      <button
-                        onClick={() => { if (late) { setLateReasonFor(shift.assignment.id); setLateReason('') } else void runClockAction(shift, 'clock_in') }}
-                        disabled={!!clockBusyId}
-                        style={{ height: 32, padding: '0 16px', border: 'none', borderRadius: 9, background: '#059669', color: '#FFFFFF', fontSize: 13, fontWeight: 700, cursor: clockBusyId ? 'default' : 'pointer', opacity: busyIn ? 0.6 : 1, transition: 'transform 0.12s ease, box-shadow 0.12s ease' }}
-                        onMouseEnter={e => { if (!clockBusyId) { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = '0 4px 10px rgba(5,150,105,0.3)' } }}
-                        onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none' }}
-                      >
-                        {busyIn ? 'Working…' : 'Clock In'}
-                      </button>
-                    )}
-                    {askingLate && (
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                        <input
-                          value={lateReason}
-                          onChange={e => setLateReason(e.target.value)}
-                          placeholder="Reason for being late"
-                          style={{ height: 32, width: 220, borderRadius: 9, border: '1px solid #E5E7EB', background: '#F9FAFB', padding: '0 12px', fontSize: 13, color: '#111827', outline: 'none' }}
-                          onFocus={e => { e.currentTarget.style.borderColor = '#F97316'; e.currentTarget.style.background = '#FFFFFF' }}
-                          onBlur={e => { e.currentTarget.style.borderColor = '#E5E7EB'; e.currentTarget.style.background = '#F9FAFB' }}
-                        />
-                        <button
-                          onClick={() => { if (lateReason.trim()) void runClockAction(shift, 'clock_in', { late_reason: lateReason.trim() }) }}
-                          disabled={!!clockBusyId || !lateReason.trim()}
-                          style={{ height: 32, padding: '0 14px', border: 'none', borderRadius: 9, background: !lateReason.trim() ? '#A7F3D0' : '#059669', color: '#FFFFFF', fontSize: 13, fontWeight: 700, cursor: clockBusyId || !lateReason.trim() ? 'default' : 'pointer', opacity: busyIn ? 0.6 : 1 }}
-                        >
-                          {busyIn ? 'Working…' : 'Submit & Clock In'}
-                        </button>
-                        <button
-                          onClick={() => { setLateReasonFor(null); setLateReason('') }}
-                          style={{ height: 32, padding: '0 10px', border: '1px solid #E5E7EB', borderRadius: 9, background: '#FFFFFF', color: '#64748B', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
-                        >
-                          Cancel
-                        </button>
-                      </span>
-                    )}
-                    {/* Break — one per shift, only while clocked in and not yet clocked out. */}
-                    {clockedIn && !clockedOut && !onBreak && !breakDone && (
-                      <button
-                        onClick={() => void runClockAction(shift, 'break_in')}
-                        disabled={!!clockBusyId}
-                        style={{ height: 32, padding: '0 16px', border: '1.5px solid #FDBA74', borderRadius: 9, background: '#FFF7ED', color: '#C2410C', fontSize: 13, fontWeight: 700, cursor: clockBusyId ? 'default' : 'pointer', opacity: busyBreakIn ? 0.6 : 1 }}
-                      >
-                        {busyBreakIn ? 'Working…' : 'Break In'}
-                      </button>
-                    )}
-                    {clockedIn && !clockedOut && onBreak && (
-                      <button
-                        onClick={() => void runClockAction(shift, 'break_out')}
-                        disabled={!!clockBusyId}
-                        style={{ height: 32, padding: '0 16px', border: 'none', borderRadius: 9, background: '#EA580C', color: '#FFFFFF', fontSize: 13, fontWeight: 700, cursor: clockBusyId ? 'default' : 'pointer', opacity: busyBreakOut ? 0.6 : 1 }}
-                      >
-                        {busyBreakOut ? 'Working…' : 'Break Out'}
-                      </button>
-                    )}
-                    {clockedIn && !clockedOut && canClockOut(shift.shift) && (
-                      <button
-                        onClick={() => void runClockAction(shift, 'clock_out')}
-                        disabled={!!clockBusyId}
-                        style={{ height: 32, padding: '0 16px', border: 'none', borderRadius: 9, background: '#DC2626', color: '#FFFFFF', fontSize: 13, fontWeight: 700, cursor: clockBusyId ? 'default' : 'pointer', opacity: busyOut ? 0.6 : 1, transition: 'transform 0.12s ease, box-shadow 0.12s ease' }}
-                        onMouseEnter={e => { if (!clockBusyId) { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = '0 4px 10px rgba(220,38,38,0.3)' } }}
-                        onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none' }}
-                      >
-                        {busyOut ? 'Working…' : 'Clock Out'}
-                      </button>
-                    )}
-                    {clockedIn && !clockedOut && !canClockOut(shift.shift) && (
-                      <span style={{ fontSize: 12.5, fontWeight: 700, color: '#059669', background: '#F0FDF4', border: '1px solid #D1FAE5', borderRadius: 999, padding: '4px 12px', whiteSpace: 'nowrap' }}>On shift</span>
-                    )}
-                    {clockedOut && (
-                      <span style={{ fontSize: 12.5, fontWeight: 700, color: '#64748B', background: '#F1F5F9', borderRadius: 999, padding: '4px 12px', whiteSpace: 'nowrap' }}>Done for today</span>
-                    )}
+        {/* Manager notification + own shift clock chain */}
+        {viewerRole === 'Manager' && (
+          <div style={{ padding: '0 28px 12px', flexShrink: 0 }}>
+            <div style={{ width: isCompact ? '100%' : 'calc(66.6667% - 5.33px)', maxWidth: '100%', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              <div style={{ width: isCompact ? '100%' : 'fit-content', maxWidth: '100%', height: 92, boxSizing: 'border-box', background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 14, overflow: 'hidden', padding: '0 24px', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap', flexShrink: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexShrink: 0 }}>
+                  <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <Bell size={16} style={{ color: '#F97316' }} />
                   </div>
-                )
-              })}
-              {clockMessage && (
-                <span style={{ marginLeft: 'auto', fontSize: 12.5, fontWeight: 600, color: clockMessage.includes('success') || clockMessage.includes('Break') ? '#059669' : '#DC2626', whiteSpace: 'nowrap' }}>{clockMessage}</span>
+                  <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', whiteSpace: 'nowrap', letterSpacing: '-0.2px', lineHeight: 1.2 }}>Task Notification</span>
+                </div>
+                {!summary ? (
+                  <span style={{ fontSize: 12.5, fontWeight: 700, color: '#94A3B8', whiteSpace: 'nowrap' }}>{loading ? 'Loading...' : 'No data yet'}</span>
+                ) : notificationCount === 0 ? (
+                  <span style={{ height: 34, border: '1px solid #BBF7D0', borderRadius: 999, background: '#F0FDF4', display: 'inline-flex', alignItems: 'center', gap: 8, padding: '0 12px 0 8px', color: '#16A34A', fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap' }}>
+                    <span style={{ width: 22, height: 22, borderRadius: 999, background: '#DCFCE7', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <Check size={14} />
+                    </span>
+                    All caught up
+                  </span>
+                ) : (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, overflowX: 'auto' }}>
+                    {managerNotifications.map(item => (
+                      <TaskNotificationLine
+                        key={item.id}
+                        item={item}
+                        onClick={() => router.push(basePath + TASK_NOTIFICATION_META[item.id].route)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+              {myTodayShifts.length > 0 && (
+                <div style={{ width: isCompact ? '100%' : 'auto', flex: isCompact ? undefined : '1 1 0', minWidth: isCompact ? undefined : 0, maxWidth: '100%', height: 92, boxSizing: 'border-box', background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 14, overflow: 'hidden', padding: '0 18px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
+                  {renderManagerClockChain(true)}
+                </div>
               )}
             </div>
           </div>
@@ -951,7 +1101,6 @@ export default function DashboardView({ sidebar, basePath, viewerRole }: {
             {/* ── Row 1 · Waiting On You (5 cards) ── */}
             <div style={cellStyle(8)}>
               <ShowcaseCard
-                fillHeight={!isCompact}
                 icon={<ListChecks size={15} style={{ color: '#F97316' }} />}
                 title="Waiting On You"
                 rightContent={<CountChip value={`${waitingCount}/${waitingTotal}`} />}
@@ -962,12 +1111,12 @@ export default function DashboardView({ sidebar, basePath, viewerRole }: {
                 ) : waitingCount === 0 ? (
                   <EmptyRow text="All caught up — nothing waiting on you" />
                 ) : (
-                  <div style={{ display: 'flex', gap: 12, minHeight: '100%', flexWrap: isCompact ? 'wrap' : 'nowrap', overflowX: isCompact ? undefined : 'auto' }}>
+                  <div style={{ display: 'flex', gap: 12, flexWrap: isCompact ? 'wrap' : 'nowrap', overflowX: isCompact ? undefined : 'auto' }}>
                     {summary.waiting_on_you.map(item => (
                       <WaitingOnYouCard
                         key={item.id}
                         item={item}
-                        onClick={() => router.push(basePath + WAITING_ROUTES[item.id])}
+                        onClick={() => openWaitingOnYouItem(item)}
                       />
                     ))}
                   </div>
@@ -978,7 +1127,6 @@ export default function DashboardView({ sidebar, basePath, viewerRole }: {
             {/* ── Row 1 · Recruitment Overview ── */}
             <div style={cellStyle(4)}>
               <ShowcaseCard
-                fillHeight={!isCompact}
                 icon={<UserPlus size={15} style={{ color: '#F97316' }} />}
                 title="Recruitment Overview"
                 actions={<LinkAction label="To Recruitment Page →" onClick={() => router.push(`${basePath}/recruitment`)} />}
@@ -1023,10 +1171,9 @@ export default function DashboardView({ sidebar, basePath, viewerRole }: {
               <ShowcaseCard
                 fillHeight={!isCompact}
                 icon={<CheckSquare size={15} style={{ color: '#F97316' }} />}
-                title="Task Overview"
+                title={viewerRole === 'Manager' ? 'Team Task Overview' : 'Task Overview'}
                 actions={
                   <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-                    <HeaderSearchInput value={taskSearch} onChange={setTaskSearch} width={140} />
                     <LinkAction label="To Task Page →" onClick={() => router.push(`${basePath}/tasks`)} />
                   </div>
                 }
@@ -1043,9 +1190,9 @@ export default function DashboardView({ sidebar, basePath, viewerRole }: {
                      many tasks scrolls inside its own panel instead of stretching the page. */
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 16, height: '100%' }}>
                     {visibleTaskGroups.map(group => (
-                      <div key={group.key} style={{ display: 'flex', alignItems: 'stretch', flex: 1, minHeight: 250 }}>
+                      <div key={group.key} style={{ display: 'flex', alignItems: 'stretch', flex: 1, minHeight: viewerRole === 'Manager' ? 218 : 250 }}>
                         <div style={{ width: 176, flexShrink: 0 }}>
-                          <TaskStatCard group={group} />
+                          <TaskStatCard group={group} hideSub={viewerRole === 'Manager'} />
                         </div>
                         <div style={{ width: 48, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                           <span style={{
@@ -1057,17 +1204,19 @@ export default function DashboardView({ sidebar, basePath, viewerRole }: {
                           </span>
                         </div>
                         <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-                          <TaskGroupSection group={group} onOpenTask={() => router.push(basePath + TASK_GROUP_META[group.key].href)} />
-                          <button
-                            onClick={() => router.push(basePath + TASK_GROUP_META[group.key].href)}
-                            style={{
-                              background: 'none', border: 'none', cursor: 'pointer', padding: '8px 0 0',
-                              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
-                              fontSize: 12.5, fontWeight: 700, color: TASK_GROUP_META[group.key].color, flexShrink: 0,
-                            }}
-                          >
-                            {TASK_GROUP_META[group.key].viewAll} <ArrowRight size={14} />
-                          </button>
+                          <TaskGroupSection group={group} onOpenTask={() => openTaskOverviewGroup(group.key)} />
+                          {viewerRole !== 'Manager' && (
+                            <button
+                              onClick={() => openTaskOverviewGroup(group.key)}
+                              style={{
+                                background: 'none', border: 'none', cursor: 'pointer', padding: '8px 0 0',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
+                                fontSize: 12.5, fontWeight: 700, color: TASK_GROUP_META[group.key].color, flexShrink: 0,
+                              }}
+                            >
+                              {TASK_GROUP_META[group.key].viewAll} <ArrowRight size={14} />
+                            </button>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -1076,8 +1225,8 @@ export default function DashboardView({ sidebar, basePath, viewerRole }: {
               </ShowcaseCard>
             </div>
 
-            {/* ── Row 2 · Attendance Overview (Internal + Casual Worker halves) ── */}
-            <div style={cellStyle(8)}>
+            {/* ── Row 2 · Attendance Overview (Manager clock + team progress) ── */}
+            <div style={cellStyle(viewerRole === 'Manager' ? 5 : 8)}>
               <div style={{
                 flex: isCompact ? undefined : 1, minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column',
                 background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, boxShadow: '0 1px 4px rgba(0,0,0,0.05)',
@@ -1090,7 +1239,6 @@ export default function DashboardView({ sidebar, basePath, viewerRole }: {
                     <p style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', margin: 0, letterSpacing: '-0.2px', lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Attendance Overview</p>
                   </div>
                   <div style={{ marginLeft: 'auto', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 14 }}>
-                    <HeaderSearchInput value={attendanceSearch} onChange={setAttendanceSearch} />
                     <LinkAction label="Go to Attendance Page →" onClick={() => router.push(`${basePath}/attendance`)} />
                   </div>
                 </div>
@@ -1099,26 +1247,42 @@ export default function DashboardView({ sidebar, basePath, viewerRole }: {
                   {!summary ? (
                     <EmptyRow text={loading ? 'Loading…' : 'No data yet'} />
                   ) : (
-                    <div style={{ display: 'flex', flexDirection: isCompact ? 'column' : 'row', gap: 32, alignItems: 'stretch', minHeight: '100%' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minHeight: '100%' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 16, alignItems: 'stretch' }}>
                       <AttendanceHalf
                         title="Internal Attendance"
                         accent="#2563EB"
                         accentBg="#EFF6FF"
                         group={summary.attendance_overview.internal}
-                        search={attendanceSearch}
+                        search=""
+                        onOpenDetails={() => router.push(`${basePath}/attendance`)}
                       />
-                      <AttendanceHalf
-                        title="Casual Worker Attendance"
-                        accent="#16A34A"
-                        accentBg="#F0FDF4"
-                        group={summary.attendance_overview.casual}
-                        search={attendanceSearch}
-                      />
+                      {summary.attendance_overview.casual.expected > 0 && (
+                        <AttendanceHalf
+                          title="Casual Worker Attendance"
+                          accent="#16A34A"
+                          accentBg="#F0FDF4"
+                          group={summary.attendance_overview.casual}
+                          search=""
+                          onOpenDetails={() => router.push(`${basePath}/attendance`)}
+                        />
+                      )}
+                      </div>
                     </div>
                   )}
                 </div>
               </div>
             </div>
+
+            {viewerRole === 'Manager' && (
+              <div style={cellStyle(3)}>
+                <TeamOverviewBlock
+                  summary={summary}
+                  loading={loading}
+                  onOpenTeam={() => router.push(`${basePath}/team`)}
+                />
+              </div>
+            )}
 
           </div>
         </div>
@@ -1126,3 +1290,4 @@ export default function DashboardView({ sidebar, basePath, viewerRole }: {
     </div>
   )
 }
+

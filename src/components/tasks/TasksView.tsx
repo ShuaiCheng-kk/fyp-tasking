@@ -1253,6 +1253,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
       if (prev.has(sig)) return prev
       const next = new Set(prev); next.add(sig)
       if (myTasksSeenKey) { try { localStorage.setItem(myTasksSeenKey, JSON.stringify([...next])) } catch {} }
+      window.dispatchEvent(new Event('task-insights-updated'))
       return next
     })
   }, [myTasksSeenKey])
@@ -1281,7 +1282,10 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
   // nothing left to flag "unseen." Rework returns (rejected back to In Progress) are a separate,
   // always-visible "Rework" badge on the card itself (see needsRework) — not this dot — so no
   // signal is lost by excluding non-Assigned columns here.
-  const hasNewMyTasks = !!myTasksKanban && (myTasksKanban['Assigned'] ?? []).some(t => !seenMyTaskSigs.has(myTaskSignature(t)))
+  const isUnseenMyTaskAlert = (task: Task, column: Task['status']) =>
+    !seenMyTaskSigs.has(myTaskSignature(task)) &&
+    (column === 'Assigned' || (column === 'In Progress' && !!task.rejection_reason && !!task.rejected_at))
+  const hasNewMyTasks = !!myTasksKanban && COLUMNS.some(col => (myTasksKanban[col] ?? []).some(t => isUnseenMyTaskAlert(t, col)))
   // My Tasks drag-to-advance (mirrors CasualTaskBoard.tsx) — separate from any drag state
   // elsewhere on this board, since no other tab here supports dragging.
   const [draggingMyTaskId, setDraggingMyTaskId] = useState<string | null>(null)
@@ -1450,6 +1454,14 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
   // animated tab indicator. Manager opens on 'mytasks' — their own Owner/Partner-assigned work —
   // rather than the team board, since that's the first thing they'd want to check in on.
   const [boardViewMode, setBoardViewMode] = useState<'kanban' | 'calendar' | 'mytasks'>(() => scopeToManagerDepartments ? 'mytasks' : 'kanban')
+  useEffect(() => {
+    const tab = new URLSearchParams(window.location.search).get('tab')
+    if (tab === 'kanban' || tab === 'calendar' || tab === 'mytasks') {
+      if (scopeToManagerDepartments && tab === 'calendar') return
+      if (!scopeToManagerDepartments && tab === 'mytasks') return
+      setBoardViewMode(tab)
+    }
+  }, [scopeToManagerDepartments])
   const boardTabBarRef = useRef<HTMLDivElement>(null)
   const boardTabButtonRefs = useRef<Record<'kanban' | 'calendar' | 'mytasks', HTMLButtonElement | null>>({ kanban: null, calendar: null, mytasks: null })
   const [boardTabIndicator, setBoardTabIndicator] = useState({ left: 0, width: 0, opacity: 0 })
@@ -3337,10 +3349,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                       ) : (
                         topLevelTasks.map(task => {
                           const draggable = canDragMyTask(task)
-                          // See hasNewMyTasks above: the dot is Assigned-only, since anything past
-                          // that column has already been acted on (rework returns get their own
-                          // persistent "Rework" badge instead, further down).
-                          const isNew = col === 'Assigned' && !seenMyTaskSigs.has(myTaskSignature(task))
+                          const isNew = isUnseenMyTaskAlert(task, col)
                           return (
                             <div
                               key={task.id}
