@@ -34,11 +34,15 @@ vi.mock('@/services/owner/recruitmentService', () => ({
 }))
 
 vi.mock('@/repositories/owner/attendanceRepository', () => ({
-  attendanceRepository: { getOffDayRequestsByCompanyAndWeek: vi.fn(), getUsersByIds: vi.fn() },
+  attendanceRepository: { getOffDayRequestsByCompanyAndWeek: vi.fn(), getFixedOffDayRequestsByUserAndWeek: vi.fn(), getUsersByIds: vi.fn() },
 }))
 
 vi.mock('@/services/owner/ownerTeamService', () => ({
   ownerTeamService: { getManagerDepartments: vi.fn(), getTeamByCompany: vi.fn() },
+}))
+
+vi.mock('@/services/auth/userService', () => ({
+  userService: { getTeamByCompany: vi.fn() },
 }))
 
 import { ownerDashboardService } from './ownerDashboardService'
@@ -48,6 +52,7 @@ import { taskService } from '@/services/owner/taskService'
 import { recruitmentService } from '@/services/owner/recruitmentService'
 import { attendanceRepository } from '@/repositories/owner/attendanceRepository'
 import { ownerTeamService } from '@/services/owner/ownerTeamService'
+import { userService } from '@/services/auth/userService'
 
 const emptyKanban = { Assigned: [], 'In Progress': [], Review: [], Complete: [] }
 
@@ -61,9 +66,15 @@ function setDefaults() {
   vi.mocked(recruitmentService.getPendingApprovalPostings).mockResolvedValue([])
   vi.mocked(recruitmentService.getApplicants).mockResolvedValue([])
   vi.mocked(attendanceRepository.getOffDayRequestsByCompanyAndWeek).mockResolvedValue([])
+  vi.mocked(attendanceRepository.getFixedOffDayRequestsByUserAndWeek).mockResolvedValue([])
   vi.mocked(attendanceRepository.getUsersByIds).mockResolvedValue([])
   vi.mocked(ownerTeamService.getTeamByCompany).mockResolvedValue([
     { id: 'owner-1', role: 'Owner' } as any,
+  ])
+  vi.mocked(userService.getTeamByCompany).mockResolvedValue([
+    { id: 'manager-1', role: 'Manager', department_id: 'dept-1' } as any,
+    { id: 'employee-1', role: 'Employee', department_id: 'dept-1' } as any,
+    { id: 'casual-1', role: 'Casual Worker', department_id: 'dept-1', casual_worker_verified_at: '2026-07-01T00:00:00Z', casual_worker_blocked_at: null } as any,
   ])
 }
 
@@ -102,6 +113,7 @@ describe('ownerDashboardService.getDashboardSummary', () => {
       expect(result.waiting_on_you.slice(0, -1).map(i => i.id)).toEqual([
         'shift_swap', 'job_posting_approval', 'applicant_accept', 'task_review',
       ])
+      expect(result.waiting_on_you.find(i => i.id === 'applicant_accept')?.detail).toBe('p2')
       // off_day_deadline had no configured deadline, so it stays cleared and sinks to the bottom.
       expect(result.waiting_on_you.at(-1)?.id).toBe('off_day_deadline')
       expect(result.waiting_on_you.at(-1)?.count).toBe(0)
@@ -134,7 +146,7 @@ describe('ownerDashboardService.getDashboardSummary', () => {
 
       const offDay = result.waiting_on_you.find(i => i.id === 'off_day_deadline')!
       expect(offDay.count).toBe(1)
-      expect(offDay.detail).toMatch(/^for /)
+      expect(offDay.detail).toBe('Monday 9:00 AM')
     })
   })
 
@@ -297,6 +309,21 @@ describe('Manager viewer scope (role scope: own departments only)', () => {
     expect(swapItem?.count).toBe(1)
     expect(summary.waiting_on_you.some(i => i.id === 'job_posting_approval')).toBe(false)
     expect(ownerTeamService.getManagerDepartments).toHaveBeenCalledWith('manager-1', 'company-1')
+  })
+
+  it('marks the manager off-day submission reminder done once the active week has a submitted row', async () => {
+    vi.mocked(offDaySettingsService.getDeadline).mockResolvedValue({
+      company_id: 'company-1', deadline_weekday: 1, deadline_time: '09:00', updated_by: null, updated_at: '',
+    })
+    vi.mocked(attendanceRepository.getFixedOffDayRequestsByUserAndWeek).mockResolvedValue([
+      { id: 'fod-1', user_id: 'manager-1', company_id: 'company-1', week_start: '2026-07-20', request_date: '2026-07-21', status: 'pending', source: 'submitted', reviewed_by: null, reviewed_at: null, created_at: '2026-07-16T00:00:00Z' } as any,
+    ])
+
+    const summary = await ownerDashboardService.getDashboardSummary('company-1', 'manager-1', 'Manager')
+
+    const offDayItem = summary.waiting_on_you.find(i => i.id === 'off_day_deadline')
+    expect(offDayItem?.count).toBe(0)
+    expect(offDayItem?.detail).toBe('Monday 9:00 AM')
   })
 
   it('filters attendance overview and recruitment overview to the manager departments', async () => {

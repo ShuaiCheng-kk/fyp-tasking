@@ -398,19 +398,20 @@ const pageKeyframes = `
   @keyframes blockSlideUp  { from { opacity: 0; transform: translateY(20px) } to { opacity: 1; transform: translateY(0) } }
   @keyframes tabContentIn  { from { opacity: 0; transform: translateY(8px) scale(0.99) } to { opacity: 1; transform: translateY(0) scale(1) } }
   @keyframes deptCardIn    { from { opacity: 0; transform: translateY(8px) } to { opacity: 1; transform: translateY(0) } }
-  .recruitment-panel { border: 1px solid ${PANEL_BORDER}; }
-  .recruitment-grid { display: grid; grid-template-columns: 440px minmax(0, 1fr); gap: 16px; align-items: start; }
+  .recruitment-panel { border: 1px solid ${PANEL_BORDER}; min-height: 0; }
+  .recruitment-grid { display: grid; grid-template-columns: 440px minmax(0, 1fr); gap: 16px; align-items: stretch; min-height: 0; height: 100%; overflow: hidden; }
+  .recruitment-scroll-region { scrollbar-gutter: stable; overscroll-behavior: contain; }
   @media (max-width: 1100px) {
-    .recruitment-grid { grid-template-columns: minmax(0, 1fr); }
+    .recruitment-grid { grid-template-columns: minmax(0, 1fr); align-items: start; overflow-y: auto; padding-right: 4px; }
   }
   /* Active/Closed detail + applicants: left detail, an orange flow arrow, then applicants —
      mirroring the template Edit → Preview layout. Detail is the narrower column so it doesn't
      leave a wide band of whitespace beside its left-aligned content. */
   /* Detail | arrow | Applicants | arrow | Confirmed. Applicants and Confirmed share the same
      column width; Detail is a touch narrower so both arrows fit. */
-  .jobs-detail-grid { display: grid; grid-template-columns: minmax(0, 0.9fr) 64px minmax(0, 0.85fr) 64px minmax(0, 0.85fr); align-items: start; row-gap: 16px; }
+  .jobs-detail-grid { display: grid; grid-template-columns: minmax(0, 0.9fr) 64px minmax(0, 0.85fr) 64px minmax(0, 0.85fr); align-items: stretch; row-gap: 16px; min-height: 0; height: 100%; overflow: hidden; }
   @media (max-width: 1400px) {
-    .jobs-detail-grid { grid-template-columns: minmax(0, 1fr); }
+    .jobs-detail-grid { grid-template-columns: minmax(0, 1fr); align-items: start; overflow-y: auto; padding-right: 4px; }
     .jobs-flow-arrow { display: none; }
   }
   .template-edit-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.95fr); gap: 64px; align-items: start; max-width: 1800px; margin: 0 auto; width: 100%; }
@@ -1168,11 +1169,17 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
   }, [router, fetchAll])
 
   useEffect(() => {
-    const jobId = deepLinkJobIdRef.current
+    const currentJobId = new URLSearchParams(window.location.search).get('job')
+    const jobId = deepLinkJobIdRef.current ?? currentJobId
     if (!jobId || livePostings.length === 0) return
     const posting = livePostings.find(p => p.id === jobId)
     if (!posting) return
     deepLinkJobIdRef.current = null
+    setSelectedTemplateId('')
+    setSelectedPendingId('')
+    setSelectedArchivedId('')
+    setPostView('none')
+    setOpenSource('none')
     if (posting.status === 'archived') {
       setActiveTab('post')
       setSelectedArchivedId(jobId)
@@ -2153,7 +2160,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
     <div style={{ display: 'flex', height: '100vh', background: '#F1F5F9' }}>
       <style>{pageKeyframes}</style>
       {sidebar}
-      <main style={{ marginLeft: '64px', flex: 1, height: '100vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', scrollbarGutter: 'stable', animation: 'blockSlideUp 0.38s ease both 0.04s' }}>
+      <main style={{ marginLeft: '64px', flex: 1, height: '100vh', minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', animation: 'blockSlideUp 0.38s ease both 0.04s' }}>
 
         {/* ── Page header ── */}
         <div style={{ padding: '20px 28px 16px', flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 }}>
@@ -2221,7 +2228,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
         </div>
 
         {/* ── Tab content ── */}
-        <div style={{ padding: 0, flex: 1, minHeight: 0, overflowY: 'auto', animation: 'tabContentIn 0.22s ease-out both' }}>
+        <div className="recruitment-scroll-region" style={{ padding: 0, flex: 1, minHeight: 0, overflow: 'hidden', animation: 'tabContentIn 0.22s ease-out both' }}>
           {error && (
             <div style={{ marginBottom: 12, padding: '11px 14px', background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', borderRadius: 10, fontSize: '0.84rem', fontWeight: 600 }}>{error}</div>
           )}

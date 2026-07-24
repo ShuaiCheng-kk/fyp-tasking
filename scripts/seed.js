@@ -110,6 +110,24 @@ function dueAtOn(dateObj, hour = 17) {
 // UTC calendar-day key — for the Casual Worker open-shift below, whose start/end times are
 // derived from the real "now" instant and compared against real now in UTC by the clock-in gate,
 // so its shift_date must match that same UTC day, not the machine's local day.
+function dueLaterToday(hoursFromNow = 2) {
+  const now = new Date()
+  const d = new Date(now)
+  d.setHours(now.getHours() + hoursFromNow, 30, 0, 0)
+  if (dateKey(d) !== dateKey(now)) d.setHours(23, 59, 0, 0)
+  return d.toISOString()
+}
+function activeSubmissionWeekStart(today, deadlineWeekday = 0, deadlineTime = '08:00') {
+  let candidate = mondayOf(today)
+  for (;;) {
+    const targetWeek = addDays(candidate, 7)
+    const deadlineDate = addDays(candidate, (deadlineWeekday + 6) % 7)
+    const [h, m] = deadlineTime.split(':').map(Number)
+    deadlineDate.setHours(h, m, 0, 0)
+    if (Date.now() <= deadlineDate.getTime()) return targetWeek
+    candidate = targetWeek
+  }
+}
 function dateKeyUTC(d) {
   const y = d.getUTCFullYear()
   const m = String(d.getUTCMonth() + 1).padStart(2, '0')
@@ -279,7 +297,6 @@ async function main() {
     'job_templates',
     'employee_off_day_requests',
     'off_day_quota_settings',
-    'employee_fixed_off_days',
     'user_certificates',
     'manager_departments',
     'employee_departments',
@@ -302,6 +319,9 @@ async function main() {
   const { error: swSettingsErr } = await supabase.from('shift_swap_settings').delete().neq('company_id', '00000000-0000-0000-0000-000000000000')
   if (swSettingsErr) console.warn(`  ⚠ 清空 shift_swap_settings 失败: ${swSettingsErr.message}`)
   else console.log('  ✓ 清空 shift_swap_settings')
+  const { error: swDeptSettingsErr } = await supabase.from('shift_swap_department_settings').delete().neq('company_id', '00000000-0000-0000-0000-000000000000')
+  if (swDeptSettingsErr) console.warn(`  ⚠ 清空 shift_swap_department_settings 失败: ${swDeptSettingsErr.message}`)
+  else console.log('  ✓ 清空 shift_swap_department_settings')
   // Platform admin rows (User Admin / Marketing Admin) are excluded — the protect_admin_accounts
   // DB trigger rejects any attempt to delete them, which would otherwise fail this entire statement.
   const { error: uErr } = await supabase.from('users').delete().neq('id', '00000000-0000-0000-0000-000000000000')
@@ -544,17 +564,630 @@ async function main() {
     updated_by: ownerUser.id,
   }, { onConflict: 'company_id' })
   if (deadlineSeedErr) console.warn(`  ⚠ Failed to create off-day submission deadline: ${deadlineSeedErr.message}`)
-  else console.log('  ✓ Off Day submission deadline: Sunday 23:59')
+  else console.log('  ✓ Off Day submission deadline: Sunday 08:00')
+  const closedSubmissionWeek = addDays(activeSubmissionWeekStart(TODAY, 0, '08:00'), -7)
+  const offDayReminderRows = [
+    { user_id: userIdMap['employee1@test.com'].internalId, request_date: dateKey(addDays(closedSubmissionWeek, 1)) },
+    { user_id: userIdMap['employee5@test.com'].internalId, request_date: dateKey(addDays(closedSubmissionWeek, 2)) },
+  ]
+  const { error: offDayReminderErr } = await supabase.from('employee_off_day_requests').insert(
+    offDayReminderRows.map(row => ({
+      user_id: row.user_id,
+      company_id: company.id,
+      request_date: row.request_date,
+      week_start: dateKey(closedSubmissionWeek),
+      status: 'pending',
+      source: 'submitted',
+    })),
+  )
+  if (offDayReminderErr) console.warn(`  ⚠ Failed to seed Manager off-day reminder rows: ${offDayReminderErr.message}`)
+  else console.log('  ✓ Off Day submission reminder rows: 2 pending Operations requests')
+
+  // Step 8b: compact Manager Swap Requests test pack.
+  // The minimal seed intentionally stops before the old full demo data. For the Manager
+  // Attendance -> Swap Requests tab, seed just enough future shifts and Employee<->Employee
+  // swap requests for manager1/manager5 (Operations) to test pending/completed states.
+  console.log('\nStep 8b: Create Manager Swap Requests test data...')
+  const { error: deptSwapSettingsErr } = await supabase.from('shift_swap_department_settings').upsert(
+    depts.map((dept, i) => ({
+      company_id: company.id,
+      department_id: dept.id,
+      auto_approval_enabled: false,
+      monthly_swap_limit: 3,
+      deadline_hours_before_shift: 24,
+      require_review_on_limit_exceeded: true,
+      require_review_on_deadline_exceeded: true,
+      updated_by: userIdMap[`manager${i + 1}@test.com`]?.internalId ?? ownerUser.id,
+    })),
+    { onConflict: 'company_id,department_id' },
+  )
+  if (deptSwapSettingsErr) console.warn(`  ⚠ Failed to create department shift-swap settings: ${deptSwapSettingsErr.message}`)
+  else console.log('  ✓ Department Shift Swap Settings: 3/month, 24 hours before shift, manager review required')
+
+  const minutesAgo = n => new Date(Date.now() - n * 60 * 1000).toISOString()
+  async function createSwapAssignmentPair({ requesterEmail, counterpartEmail, department, requesterDayOffset, counterpartDayOffset, requesterTime = ['09:00', '13:00'], counterpartTime = ['13:30', '17:30'], title }) {
+    const requesterShift = await createShift({
+      company_id: company.id,
+      department_id: department.id,
+      shift_date: dateKey(addDays(TODAY, requesterDayOffset)),
+      start_time: requesterTime[0],
+      end_time: requesterTime[1],
+      title,
+      created_by: ownerUser.id,
+      publication_status: 'published',
+    })
+    const counterpartShift = await createShift({
+      company_id: company.id,
+      department_id: department.id,
+      shift_date: dateKey(addDays(TODAY, counterpartDayOffset)),
+      start_time: counterpartTime[0],
+      end_time: counterpartTime[1],
+      title,
+      created_by: ownerUser.id,
+      publication_status: 'published',
+    })
+    const requesterAssignment = requesterShift && await assignShift(requesterShift.id, userIdMap[requesterEmail].internalId, ownerUser.id)
+    const counterpartAssignment = counterpartShift && await assignShift(counterpartShift.id, userIdMap[counterpartEmail].internalId, ownerUser.id)
+    return { requesterAssignment, counterpartAssignment }
+  }
+  async function createSeedSwap(def) {
+    const { requesterAssignment, counterpartAssignment } = await createSwapAssignmentPair(def)
+    if (!requesterAssignment || !counterpartAssignment) return false
+    const row = {
+      company_id: company.id,
+      requester_id: userIdMap[def.requesterEmail].internalId,
+      requester_assignment_id: requesterAssignment.id,
+      counterpart_id: userIdMap[def.counterpartEmail].internalId,
+      counterpart_assignment_id: counterpartAssignment.id,
+      reason: def.reason,
+      counterpart_status: def.counterpartStatus,
+      counterpart_reviewed_at: def.counterpartReviewedAt ?? null,
+      status: def.status,
+      reviewed_by: def.reviewedBy ?? null,
+      reviewed_at: def.reviewedAt ?? null,
+      requires_owner_review: def.requiresReview ?? false,
+      owner_review_reason: def.ownerReviewReason ?? null,
+      created_at: def.createdAt,
+    }
+    const { error } = await supabase.from('shift_swap_requests').insert(row)
+    if (error) {
+      console.warn(`  ⚠ Failed to create seeded swap (${def.label}): ${error.message}`)
+      return false
+    }
+    return true
+  }
+  const opsDept = depts[0]
+  const manager1Id = userIdMap['manager1@test.com'].internalId
+  const swapSeedDefs = [
+    {
+      label: 'pending-ben-grace-morning',
+      requesterEmail: 'employee1@test.com',
+      counterpartEmail: 'employee5@test.com',
+      department: opsDept,
+      requesterDayOffset: 3,
+      counterpartDayOffset: 4,
+      title: 'Operations Floor Shift',
+      reason: 'Ben needs the afternoon free and Grace already agreed to swap.',
+      status: 'pending',
+      counterpartStatus: 'approved',
+      counterpartReviewedAt: minutesAgo(48),
+      requiresReview: true,
+      createdAt: minutesAgo(60),
+    },
+    {
+      label: 'pending-grace-ben-weekend',
+      requesterEmail: 'employee5@test.com',
+      counterpartEmail: 'employee1@test.com',
+      department: opsDept,
+      requesterDayOffset: 5,
+      counterpartDayOffset: 6,
+      title: 'Weekend Operations Cover',
+      reason: 'Grace is covering a family appointment and Ben can take the weekend slot.',
+      status: 'pending',
+      counterpartStatus: 'approved',
+      counterpartReviewedAt: minutesAgo(38),
+      requiresReview: true,
+      createdAt: minutesAgo(50),
+    },
+    {
+      label: 'approved-ben-grace-evening',
+      requesterEmail: 'employee1@test.com',
+      counterpartEmail: 'employee5@test.com',
+      department: opsDept,
+      requesterDayOffset: 7,
+      counterpartDayOffset: 8,
+      title: 'Operations Evening Cover',
+      reason: 'Ben and Grace swapped to balance opening and closing coverage.',
+      status: 'approved',
+      counterpartStatus: 'approved',
+      counterpartReviewedAt: minutesAgo(95),
+      reviewedBy: manager1Id,
+      reviewedAt: minutesAgo(70),
+      createdAt: minutesAgo(120),
+    },
+    {
+      label: 'rejected-grace-ben-coverage',
+      requesterEmail: 'employee5@test.com',
+      counterpartEmail: 'employee1@test.com',
+      department: opsDept,
+      requesterDayOffset: 9,
+      counterpartDayOffset: 10,
+      title: 'Operations Service Shift',
+      reason: 'Grace wanted to move her service shift to Ben.',
+      status: 'rejected',
+      counterpartStatus: 'approved',
+      counterpartReviewedAt: minutesAgo(88),
+      reviewedBy: manager1Id,
+      reviewedAt: minutesAgo(62),
+      ownerReviewReason: 'Coverage would be too light during the Friday service window.',
+      createdAt: minutesAgo(115),
+    },
+    {
+      label: 'hidden-awaiting-counterpart',
+      requesterEmail: 'employee1@test.com',
+      counterpartEmail: 'employee5@test.com',
+      department: opsDept,
+      requesterDayOffset: 11,
+      counterpartDayOffset: 12,
+      title: 'Operations Standby Shift',
+      reason: 'This one is still waiting for Grace, so Manager Swap Requests should not show it yet.',
+      status: 'pending',
+      counterpartStatus: 'pending',
+      createdAt: minutesAgo(20),
+    },
+  ]
+  let seededSwapCount = 0
+  for (const def of swapSeedDefs) {
+    if (await createSeedSwap(def)) seededSwapCount++
+  }
+  console.log(`  ✓ ${seededSwapCount} Employee shift swap requests seeded for manager1/manager5 Operations testing`)
+
+  // Step 8c: Manager dashboard data pack.
+  // The current seed intentionally returns before the older full-demo section below. That is useful
+  // for focused Attendance tests, but it left manager1@test.com with an empty Dashboard. This pack
+  // keeps the seed compact while ensuring every Manager dashboard block has real Operations data:
+  // Waiting On You, Recruitment Overview, Task Overview, Internal Attendance, and Casual Attendance.
+  console.log('\nStep 8c: Create manager1 dashboard data pack...')
+  const todayKey = dateKey(TODAY)
+  const managerClockStart = new Date(Date.now() + 30 * 60000)
+  const managerClockEnd = new Date(managerClockStart.getTime() + 8 * 60 * 60000)
+  const managerClockDate = dateKeyUTC(managerClockStart)
+  const managerClockStartTime = toHM(managerClockStart)
+  const managerClockEndTime = toHM(managerClockEnd)
+  const manager1UserId = userIdMap['manager1@test.com'].internalId
+  const manager5UserId = userIdMap['manager5@test.com'].internalId
+  const employee1UserId = userIdMap['employee1@test.com'].internalId
+  const employee5UserId = userIdMap['employee5@test.com'].internalId
+
+  const dashboardGuestEmails = ['guest1@test.com', 'guest2@test.com', 'guest3@test.com']
+  for (const guestEmail of dashboardGuestEmails) {
+    const guest = guestApplicants.find(g => g.email === guestEmail)
+    if (!guest) continue
+    const { data: guestAuth, error: guestAuthErr } = await supabase.auth.admin.createUser({
+      email: guest.email,
+      password: PASSWORD,
+      email_confirm: true,
+    })
+    if (guestAuthErr || !guestAuth.user) {
+      console.warn(`  ⚠ Failed to create dashboard guest auth ${guest.email}: ${guestAuthErr?.message}`)
+      continue
+    }
+    const { data: guestUser, error: guestUserErr } = await supabase
+      .from('users')
+      .insert({
+        supabase_auth_id: guestAuth.user.id,
+        full_name: guest.full_name,
+        email_address: guest.email,
+        phone_number: guest.phone_number,
+        date_of_birth: guest.date_of_birth,
+        profile_photo_url: DEMO_PHOTO_URL,
+        role: 'Guest User',
+        company_id: null,
+        skills: guest.skills,
+        resume_url: guest.resume_url,
+      })
+      .select()
+      .single()
+    if (guestUserErr) {
+      console.warn(`  ⚠ Failed to create dashboard guest user ${guest.email}: ${guestUserErr.message}`)
+      continue
+    }
+    userIdMap[guest.email] = { authId: guestAuth.user.id, internalId: guestUser.id }
+    for (const cert of guest.certs) {
+      const { error: certErr } = await supabase.from('user_certificates').insert({
+        user_id: guestUser.id,
+        name: cert.name,
+        file_url: cert.file_url,
+      })
+      if (certErr) console.warn(`  ⚠ Failed to seed dashboard guest certificate (${guest.email}): ${certErr.message}`)
+    }
+  }
+
+  const { data: dashboardCasualAuth, error: dashboardCasualAuthErr } = await supabase.auth.admin.createUser({
+    email: 'casual1@test.com',
+    password: PASSWORD,
+    email_confirm: true,
+  })
+  if (dashboardCasualAuthErr || !dashboardCasualAuth.user) {
+    console.warn(`  ⚠ Failed to create casual1@test.com auth: ${dashboardCasualAuthErr?.message}`)
+  } else {
+    const { data: dashboardCasualUser, error: dashboardCasualUserErr } = await supabase
+      .from('users')
+      .insert({
+        supabase_auth_id: dashboardCasualAuth.user.id,
+        full_name: 'Marcus Lee',
+        email_address: 'casual1@test.com',
+        phone_number: '+65 8300 3001',
+        date_of_birth: '1999-11-20',
+        profile_photo_url: DEMO_PHOTO_URL,
+        role: 'Casual Worker',
+        company_id: company.id,
+        worker_status: 'active',
+        hourly_rate: 18.5,
+      })
+      .select()
+      .single()
+    if (dashboardCasualUserErr) {
+      console.warn(`  ⚠ Failed to create casual1@test.com user: ${dashboardCasualUserErr.message}`)
+    } else {
+      userIdMap['casual1@test.com'] = { authId: dashboardCasualAuth.user.id, internalId: dashboardCasualUser.id }
+      const { error: casualDeptErr } = await supabase.from('casualworker_departments').upsert({
+        casual_worker_id: dashboardCasualUser.id,
+        department_id: opsDept.id,
+        company_id: company.id,
+        verified_at: new Date().toISOString(),
+      }, { onConflict: 'casual_worker_id,department_id' })
+      if (casualDeptErr) console.warn(`  ⚠ Failed to verify casual1@test.com in Operations: ${casualDeptErr.message}`)
+    }
+  }
+
+  const todayInternalShift = await createShift({
+    company_id: company.id,
+    department_id: opsDept.id,
+    shift_date: managerClockDate,
+    start_time: managerClockStartTime,
+    end_time: managerClockEndTime,
+    title: 'Operations Live Floor Coverage',
+    created_by: ownerUser.id,
+    publication_status: 'published',
+  })
+  const todayAssignments = []
+  for (const email of ['manager1@test.com']) {
+    const assignment = await assignShift(todayInternalShift?.id, userIdMap[email].internalId, ownerUser.id)
+    if (assignment) todayAssignments.push({ email, assignment })
+  }
+
+  const dashboardAttendanceShift = await createShift({
+    company_id: company.id,
+    department_id: opsDept.id,
+    shift_date: todayKey,
+    start_time: '09:00',
+    end_time: '17:00',
+    title: 'Operations Day Team Coverage',
+    created_by: ownerUser.id,
+    publication_status: 'published',
+  })
+  const dashboardAttendanceAssignments = []
+  for (const email of ['manager5@test.com', 'employee1@test.com', 'employee5@test.com']) {
+    const assignment = await assignShift(dashboardAttendanceShift?.id, userIdMap[email].internalId, ownerUser.id)
+    if (assignment) dashboardAttendanceAssignments.push({ email, assignment })
+  }
+  await clockRecord(dashboardAttendanceAssignments.find(a => a.email === 'manager5@test.com')?.assignment, manager5UserId, { dateStr: todayKey, breakStart: '12:15', breakEnd: '12:45' })
+  await clockRecord(dashboardAttendanceAssignments.find(a => a.email === 'employee1@test.com')?.assignment, employee1UserId, { dateStr: todayKey, lateMinutes: 20, breakStart: '12:30', breakEnd: '13:00' })
+  console.log(`  ✓ manager1@test.com test shift starts in the clock-in window: ${managerClockDate} ${managerClockStartTime}-${managerClockEndTime} UTC`)
+
+  if (userIdMap['casual1@test.com']) {
+    const casualPreStartStart = new Date(Date.now() + 30 * 60 * 1000)
+    const casualPreStartEnd = new Date(casualPreStartStart.getTime() + 4 * 60 * 60 * 1000)
+    const casualPreStartDate = dateKeyUTC(casualPreStartStart)
+    const casualPreStartStartTime = toHM(casualPreStartStart)
+    const casualPreStartEndTime = toHM(casualPreStartEnd)
+    const { data: casualPreStartJob, error: casualPreStartJobErr } = await supabase
+      .from('job_postings')
+      .insert({
+        company_id: company.id,
+        department_id: opsDept.id,
+        created_by: manager1UserId,
+        title: 'Pre-Shift Cafe Counter Cover',
+        description: 'Cover the cafe counter during the pre-lunch rush. Prepare the till, greet guests, take orders, and keep the counter stocked before the lunch team arrives.',
+        requirements: 'Arrive on time, wear black shoes, comfortable handling cash and customer questions.',
+        location: '1 Raffles Place, Singapore 048616',
+        employment_type: 'Part-time',
+        company_name: company.name,
+        status: 'closed',
+        form_type: 'oneoff',
+        urgency: 'normal',
+        estimated_hours: '4',
+        shift_date: casualPreStartDate,
+        job_start_time: casualPreStartStartTime,
+        openings: 1,
+        experience_required: 'Not Required',
+        minimum_age: 16,
+        uniform_required: true,
+        uniform_type: 'company',
+        uniform_details: 'Black pants and covered shoes. Apron provided on site.',
+        salary_amount: 72,
+        expires_at: casualPreStartDate,
+        archived_at: new Date().toISOString(),
+      })
+      .select()
+      .single()
+    if (casualPreStartJobErr) {
+      console.warn(`  ⚠ Failed to create casual pre-start job posting: ${casualPreStartJobErr.message}`)
+    } else {
+      const { data: casualPreStartApplicant, error: casualPreStartApplicantErr } = await supabase
+        .from('job_applicants')
+        .insert({
+          job_id: casualPreStartJob.id,
+          user_id: userIdMap['casual1@test.com'].internalId,
+          resume_url: 'https://example.com/demo-resumes/marcus-lee-resume.pdf',
+          status: 'accepted',
+          relevant_experience: 'less_than_1',
+          additional_note: 'I can arrive before the shift starts and help with cafe counter setup.',
+        })
+        .select()
+        .single()
+      if (casualPreStartApplicantErr) {
+        console.warn(`  ⚠ Failed to create casual pre-start applicant: ${casualPreStartApplicantErr.message}`)
+      } else {
+        const { error: casualPreStartInvitationErr } = await supabase.from('job_invitations').insert({
+          job_id: casualPreStartJob.id,
+          applicant_id: casualPreStartApplicant.id,
+          sent_by: manager1UserId,
+          status: 'accepted',
+        })
+        if (casualPreStartInvitationErr) console.warn(`  ⚠ Failed to create casual pre-start invitation: ${casualPreStartInvitationErr.message}`)
+      }
+      const todayCasualShift = await createShift({
+        company_id: company.id,
+        department_id: opsDept.id,
+        shift_date: casualPreStartDate,
+        start_time: casualPreStartStartTime,
+        end_time: casualPreStartEndTime,
+        title: 'Pre-Shift Cafe Counter Cover',
+        created_by: manager1UserId,
+        publication_status: 'published',
+        source_job_posting_id: casualPreStartJob.id,
+        flat_rate: 72,
+      })
+      const todayCasualAssignment = await assignShift(todayCasualShift?.id, userIdMap['casual1@test.com'].internalId, manager1UserId, employee1UserId)
+      if (todayCasualShift && todayCasualAssignment) {
+        await createTask({
+          shift_id: todayCasualShift.id,
+          company_id: company.id,
+          department_id: opsDept.id,
+          title: 'Set up the cafe counter float',
+          description: 'Count the starting cash float, turn on the POS, and confirm receipt paper is loaded before opening.',
+          assigned_user_id: userIdMap['casual1@test.com'].internalId,
+          assigned_by: employee1UserId,
+          status: 'Assigned',
+          due_at: dueAtOn(new Date(casualPreStartDate), Number(casualPreStartStartTime.slice(0, 2))),
+          priority: 'High',
+        })
+        await createTask({
+          shift_id: todayCasualShift.id,
+          company_id: company.id,
+          department_id: opsDept.id,
+          title: 'Stock cups, napkins, and takeaway lids',
+          description: 'Top up front-counter consumables from the storeroom before the first order rush.',
+          assigned_user_id: userIdMap['casual1@test.com'].internalId,
+          assigned_by: employee1UserId,
+          status: 'Assigned',
+          due_at: dueAtOn(new Date(casualPreStartDate), Number(casualPreStartStartTime.slice(0, 2))),
+          priority: 'Medium',
+        })
+        const managerCasualAttendanceShift = await createShift({
+          company_id: company.id,
+          department_id: opsDept.id,
+          shift_date: todayKey,
+          start_time: '12:00',
+          end_time: '16:00',
+          title: 'Lunch Service Casual Cover',
+          created_by: manager1UserId,
+          publication_status: 'published',
+        })
+        const managerCasualAttendanceAssignment = await assignShift(managerCasualAttendanceShift?.id, userIdMap['casual1@test.com'].internalId, manager1UserId, employee1UserId)
+        await clockRecord(managerCasualAttendanceAssignment, userIdMap['casual1@test.com'].internalId, { dateStr: todayKey, endStr: '16:00', breakStart: '14:00', breakEnd: '14:15' })
+        const { error: casualMessageErr } = await supabase.from('messages').insert({
+          from_user_id: employee1UserId,
+          to_user_id: userIdMap['casual1@test.com'].internalId,
+          company_id: company.id,
+          content: `Hi Marcus, your cafe counter cover starts at ${casualPreStartStartTime}. Please clock in from 30 minutes before the shift and check the two setup tasks.`,
+          is_read: false,
+          sender_name: 'Ben Seah',
+        })
+        if (casualMessageErr) console.warn(`  ⚠ Failed to create casual pre-start message: ${casualMessageErr.message}`)
+        console.log(`  ✓ Casual Worker pre-start dashboard job: casual1@test.com starts at ${casualPreStartStartTime} UTC (${casualPreStartDate}); no attendance record seeded, so the page shows the pre-work clock-in state`)
+      }
+    }
+  }
+  console.log('  ✓ Today attendance: Operations internal staff rows for Manager dashboard; casual1@test.com has a pre-start dashboard job')
+
+  const managerDashboardJobDefs = [
+    {
+      key: 'manager_deadline_today',
+      title: 'Operations Event Runner - Applications Close Today',
+      expires_at: todayKey,
+      shift_date: dateKey(TOMORROW),
+      openings: 4,
+      job_start_time: '10:00',
+    },
+    {
+      key: 'manager_starting_soon',
+      title: 'Lobby Queue Host - Starts Tomorrow',
+      expires_at: dateKey(addDays(TODAY, 3)),
+      shift_date: dateKey(TOMORROW),
+      openings: 3,
+      job_start_time: '11:00',
+    },
+  ]
+  const managerDashboardJobIds = {}
+  for (const def of managerDashboardJobDefs) {
+    const { key, ...rest } = def
+    const { data: job, error: jobErr } = await supabase
+      .from('job_postings')
+      .insert({
+        company_id: company.id,
+        department_id: opsDept.id,
+        created_by: manager1UserId,
+        description: 'Seeded manager dashboard posting with applicants, deadline, and staffing pressure.',
+        requirements: 'Friendly, punctual, comfortable with guest-facing work.',
+        location: company.location,
+        employment_type: 'Part-time',
+        status: 'open',
+        form_type: 'oneoff',
+        urgency: 'high',
+        estimated_hours: '5',
+        experience_required: 'Not Required',
+        minimum_age: 16,
+        uniform_required: false,
+        salary_amount: 16,
+        ...rest,
+      })
+      .select()
+      .single()
+    if (jobErr) {
+      console.warn(`  ⚠ Failed to create manager dashboard job (${def.title}): ${jobErr.message}`)
+    } else {
+      managerDashboardJobIds[key] = job.id
+    }
+  }
+  for (const guestEmail of dashboardGuestEmails) {
+    if (!managerDashboardJobIds.manager_deadline_today || !userIdMap[guestEmail]) continue
+    const guest = guestApplicants.find(g => g.email === guestEmail)
+    const { error: appErr } = await supabase.from('job_applicants').insert({
+      job_id: managerDashboardJobIds.manager_deadline_today,
+      user_id: userIdMap[guestEmail].internalId,
+      resume_url: guest?.resume_url ?? null,
+      status: 'pending',
+      relevant_experience: 'less_than_1',
+      additional_note: 'Available for the seeded Operations dashboard test shift.',
+      skills_snapshot: guest?.skills ?? null,
+      certificates_snapshot: guest?.certs ?? [],
+    })
+    if (appErr) console.warn(`  ⚠ Failed to create manager dashboard applicant (${guestEmail}): ${appErr.message}`)
+  }
+  console.log('  ✓ Recruitment Overview: deadline-today job, starting-soon job, and pending applicants')
+
+  await createTask({
+    company_id: company.id,
+    department_id: opsDept.id,
+    title: 'Approve cafe counter reset checklist',
+    description: 'Review Ben Seah\'s completed checklist before the evening handover.',
+    assigned_user_id: employee1UserId,
+    assigned_by: manager1UserId,
+    status: 'Review',
+    due_at: dueAtOn(TODAY, 12),
+    percentage_complete: 100,
+    priority: 'High',
+  })
+  await createTask({
+    company_id: company.id,
+    department_id: opsDept.id,
+    title: 'Finish morning stock variance follow-up',
+    description: 'Resolve the stock variance notes before the next delivery window.',
+    assigned_user_id: employee5UserId,
+    assigned_by: manager1UserId,
+    status: 'In Progress',
+    due_at: dueAtOn(YESTERDAY, 16),
+    percentage_complete: 45,
+    priority: 'High',
+  })
+  await createTask({
+    company_id: company.id,
+    department_id: opsDept.id,
+    title: 'Confirm weekend runner briefing',
+    description: 'Confirm the briefing notes and attendee list for the weekend runner team.',
+    assigned_user_id: employee1UserId,
+    assigned_by: manager1UserId,
+    status: 'Assigned',
+    due_at: dueAtOn(TOMORROW, 10),
+    percentage_complete: 0,
+    priority: 'Medium',
+  })
+  await createTask({
+    company_id: company.id,
+    department_id: opsDept.id,
+    title: 'Confirm closing cash handover',
+    description: 'Due-today sample for the Manager Team Task Overview block.',
+    assigned_user_id: employee5UserId,
+    assigned_by: manager1UserId,
+    status: 'Assigned',
+    due_at: dueLaterToday(2),
+    percentage_complete: 0,
+    priority: 'High',
+  })
+  await createTask({
+    company_id: company.id,
+    department_id: opsDept.id,
+    title: 'Owner assigned weekly staffing review',
+    description: 'New Owner-assigned Manager task for the Task Notification block.',
+    assigned_user_id: manager1UserId,
+    assigned_by: ownerUser.id,
+    status: 'Assigned',
+    due_at: dueAtOn(TOMORROW, 14),
+    percentage_complete: 0,
+    priority: 'High',
+  })
+  await createTask({
+    company_id: company.id,
+    department_id: opsDept.id,
+    title: 'Revise weekend staffing plan',
+    description: 'Owner rejected this Manager task so the Task Notification block has a rework alert.',
+    assigned_user_id: manager1UserId,
+    assigned_by: ownerUser.id,
+    status: 'In Progress',
+    due_at: dueAtOn(TOMORROW, 15),
+    percentage_complete: 35,
+    priority: 'High',
+    rejection_reason: 'Please account for the late service window before resubmitting.',
+    rejected_at: minutesAgo(35),
+  })
+  await createTask({
+    company_id: company.id,
+    department_id: opsDept.id,
+    title: 'Close opening float reconciliation',
+    description: 'Completed task for the Manager dashboard completed-today bucket.',
+    assigned_user_id: employee5UserId,
+    assigned_by: manager1UserId,
+    status: 'Complete',
+    due_at: dueAtOn(TODAY, 11),
+    completed_at: dueAtOn(TODAY, 11),
+    percentage_complete: 100,
+    priority: 'Low',
+  })
+  console.log('  ✓ Task Overview: review, overdue, due-soon, and completed-today Operations tasks')
+
+  const { error: opsAnnouncementErr } = await supabase.from('announcements').insert({
+    from_user_id: manager1UserId,
+    company_id: company.id,
+    department_id: opsDept.id,
+    title: 'Operations shift notes for today',
+    content: 'Counter cover, stock variance follow-up, and weekend runner briefing are all active today.',
+  })
+  if (opsAnnouncementErr) console.warn(`  ⚠ Failed to create manager announcement: ${opsAnnouncementErr.message}`)
+  const managerMessageDefs = [
+    { from_user_id: ownerUser.id, to_user_id: manager1UserId, sender_name: 'Sarah Mitchell', content: 'Please keep an eye on the cafe cover applicants before the deadline.', is_read: false },
+    { from_user_id: manager1UserId, to_user_id: employee1UserId, sender_name: 'David Lim', content: 'Thanks for the checklist. I am reviewing it from the dashboard queue now.', is_read: true },
+    { from_user_id: employee5UserId, to_user_id: manager1UserId, sender_name: 'Grace Lim', content: 'I will finish the stock variance follow-up before handover.', is_read: false },
+  ]
+  for (const message of managerMessageDefs) {
+    const { error } = await supabase.from('messages').insert({ ...message, company_id: company.id })
+    if (error) console.warn(`  ⚠ Failed to create manager dashboard message: ${error.message}`)
+  }
+  console.log('  ✓ Communication: Operations announcement + manager1 conversations')
 
   console.log('\n═══════════════════════════════════════════')
-  console.log('  Done: Off Day clean seed is ready. Password for all test accounts: 111111')
+  console.log('  Done: Manager-focused seed is ready. Password for all test accounts: 111111')
   console.log('  Owner:    owner@test.com')
   console.log('  Partner:  partner1@test.com')
   console.log('  Manager:  manager1-8@test.com')
   console.log('  Employee: employee1-8@test.com')
+  console.log('  Casual:   casual1@test.com')
+  console.log('  Guest:    guest1-3@test.com')
   console.log('  Company:  Sunrise Hospitality Group')
-  console.log('  Cleaned and not recreated: shifts, shift_assignments, attendance_records, shift_swap_requests, time_off_requests, employee_off_day_requests, employee_fixed_off_days, jobs, tasks, templates, messages.')
-  console.log('  Test path: login manager1@test.com -> Manager Attendance -> Records -> My Requests -> Submit Off Day.')
+  console.log('  Seeded for testing: manager1@test.com Dashboard, Attendance, Tasks, Recruitment, Communication, Team, and Shift Swap Requests.')
+  console.log('  Test path: login manager1@test.com -> Manager Dashboard. No dashboard overview block should be empty.')
   console.log('═══════════════════════════════════════════')
   return
 

@@ -285,8 +285,15 @@ function formatShiftDateShort(dateStr: string): string {
   return `${weekday}, ${day} ${month}`
 }
 
+function normalizeToFiveMinuteTime(hours: number, minutes: number): { h: number; m: number } {
+  const roundedTotal = Math.round((hours * 60 + minutes) / 5) * 5
+  const normalizedTotal = ((roundedTotal % (24 * 60)) + (24 * 60)) % (24 * 60)
+  return { h: Math.floor(normalizedTotal / 60), m: normalizedTotal % 60 }
+}
+
 function formatShiftHour(time: string): string {
-  const [h, m] = time.split(':').map(Number)
+  const [rawH, rawM] = time.split(':').map(Number)
+  const { h, m } = normalizeToFiveMinuteTime(rawH, rawM)
   const ampm = h < 12 ? 'am' : 'pm'
   const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h
   return m === 0 ? `${h12}${ampm}` : `${h12}:${String(m).padStart(2, '0')}${ampm}`
@@ -297,8 +304,7 @@ function formatShiftHour(time: string): string {
 // with the shift's own start_time/end_time instead of drifting through the browser's timezone.
 function formatClockHour(iso: string): string {
   const d = new Date(iso)
-  const h = d.getUTCHours()
-  const m = d.getUTCMinutes()
+  const { h, m } = normalizeToFiveMinuteTime(d.getUTCHours(), d.getUTCMinutes())
   const ampm = h < 12 ? 'am' : 'pm'
   const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h
   return m === 0 ? `${h12}${ampm}` : `${h12}:${String(m).padStart(2, '0')}${ampm}`
@@ -1238,6 +1244,17 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
       return next
     })
   }, [myReqSeenKey])
+  const getFixedOffMyReqKey = useCallback((rows: FixedOffDayRequestView[]) => {
+    const weekStart = rows[0]?.week_start ?? ''
+    if (!weekStart) return 'offday-unknown'
+    const latestDecisionAt = rows
+      .filter(req => req.source === 'submitted' && req.status !== 'pending')
+      .map(req => req.reviewed_at ?? req.created_at ?? '')
+      .filter(Boolean)
+      .sort()
+      .at(-1)
+    return latestDecisionAt ? `offday-${weekStart}-${latestDecisionAt}` : `offday-${weekStart}`
+  }, [])
 
   const fetchMyRequests = useCallback(async (uid: string) => {
     if (!uid) return
@@ -1274,6 +1291,15 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
   const [editingFixedOffDates, setEditingFixedOffDates] = useState<string[]>([])
   const [editingFixedOffSaving, setEditingFixedOffSaving] = useState(false)
   const [editingFixedOffError, setEditingFixedOffError] = useState('')
+
+  useEffect(() => {
+    const submit = new URLSearchParams(window.location.search).get('submit')
+    if (scopeToManagerDepartments && submit === 'offday') {
+      setMainTab('records')
+      setRequestModalStep('offday')
+      setRequestModalOpen(true)
+    }
+  }, [scopeToManagerDepartments])
 
   const fetchFixedOffQuota = useCallback(async (cid: string, uid: string) => {
     if (!cid || !uid) return
@@ -2822,24 +2848,30 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
   const mySwapResponseCount = mySwaps.filter(s => s.counterpart_id === internalUserId && s.counterpart_status === 'pending' && s.status === 'pending').length
   const mySwapRequesterUpdateCount = mySwaps.filter(s => s.requester_id === internalUserId && s.counterpart_status !== 'pending' && !seenMyReqKeys.has(`swap-${s.id}`)).length
   const myFixedOffUpdateCount = (() => {
-    const unseenWeekKeys = new Set<string>()
+    const groupsByWeek = new Map<string, FixedOffDayRequestView[]>()
     myFixedOff.forEach(req => {
       if (req.source !== 'submitted' || req.status === 'pending') return
-      const key = `offday-${req.week_start}`
-      if (!seenMyReqKeys.has(key)) unseenWeekKeys.add(key)
+      const group = groupsByWeek.get(req.week_start) ?? []
+      group.push(req)
+      groupsByWeek.set(req.week_start, group)
     })
-    return unseenWeekKeys.size
+    let count = 0
+    groupsByWeek.forEach(group => {
+      if (!seenMyReqKeys.has(getFixedOffMyReqKey(group))) count += 1
+    })
+    return count
   })()
   const myRequestAttentionCount = mySwapResponseCount + mySwapRequesterUpdateCount + myFixedOffUpdateCount
+  const managerAttendanceAttentionCount = myRequestAttentionCount + pendingSwapCount
   const sidebarWithAlerts = scopeToManagerDepartments && isValidElement(sidebar)
-    ? cloneElement(sidebar as React.ReactElement<{ attendanceAlertCount?: number }>, { attendanceAlertCount: myRequestAttentionCount })
+    ? cloneElement(sidebar as React.ReactElement<{ attendanceAlertCount?: number }>, { attendanceAlertCount: managerAttendanceAttentionCount })
     : sidebar
 
   // Manager has no "Off Day"/"My Request" tab at all — they never review anyone's Fixed Day Off
   // (UC55 is O/P-only) and submitting is now the header button on Records (see requestModalOpen).
   const mainTabs = [
-    { key: 'records' as const, label: 'Records', dot: scopeToManagerDepartments && !myReqLoading && myRequestAttentionCount > 0 },
-    { key: 'swaps' as const, label: 'Shift Swap', dot: !reqLoading && pendingSwapCount > 0 },
+    { key: 'records' as const, label: 'Team Hub', dot: scopeToManagerDepartments && !myReqLoading && myRequestAttentionCount > 0 },
+    { key: 'swaps' as const, label: 'Swap Requests', dot: !reqLoading && pendingSwapCount > 0 },
     ...(scopeToManagerDepartments ? [] : [
       { key: 'fixedoff' as const, label: 'Off Day', dot: !reqLoading && pendingFixedOffCount > 0 },
     ]),
@@ -2864,7 +2896,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
 
   // ─────────────────────────────────────────────────────────────────────────
   return (
-    <div className="att-page" style={{ display: 'flex', minHeight: '100vh', background: '#F1F5F9' }}>
+    <div className="att-page" style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: '#F1F5F9' }}>
       <style>{`
         @keyframes fadeSlideUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes deptCardIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
@@ -3436,7 +3468,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                 needsResponse: s.counterpart_id === internalUserId && s.counterpart_status === 'pending' && s.status === 'pending',
               })),
               ...[...offdayGroupsByWeek.entries()].map(([weekStart, group]): MyReqItem => ({
-                key: `offday-${weekStart}`, kind: 'offday',
+                key: getFixedOffMyReqKey(group), kind: 'offday',
                 status: group[0].status,
                 createdAt: group.reduce((earliest, f) => f.created_at < earliest ? f.created_at : earliest, group[0].created_at),
                 offdayGroup: group, needsResponse: false,
@@ -3458,12 +3490,22 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                 const s = i.swap!
                 const iAmRequester = isMeRequester(s)
                 const otherName = iAmRequester ? s.counterpart_name : s.requester_name
-                return iAmRequester ? `Swap with ${otherName}` : `Swap request from ${otherName}`
+                return iAmRequester ? `Shift swap with ${otherName}` : `Swap request from ${otherName}`
               }
               const group = i.offdayGroup!
               const weekStartDate = new Date(`${group[0].week_start}T00:00:00`)
               const weekEndDate = new Date(weekStartDate); weekEndDate.setDate(weekEndDate.getDate() + 6)
               return `Week of ${fmt(weekStartDate)} - ${fmt(weekEndDate)}`
+            }
+            const detailTitle = (i: MyReqItem | null): string => {
+              if (!i) return 'Request Detail'
+              if (i.kind === 'swap') {
+                const s = i.swap!
+                const iAmRequester = isMeRequester(s)
+                const otherName = iAmRequester ? s.counterpart_name : s.requester_name
+                return iAmRequester ? `Shift Swap Request Detail with ${otherName}` : `Shift Swap Request Detail from ${otherName}`
+              }
+              return `Off Day Request Detail of ${cardTitle(i)}`
             }
             // A swap sits in one of two "waiting" states before it reaches a final outcome: still
             // waiting on the colleague to accept/decline (Awaiting), or — once the colleague has
@@ -3489,7 +3531,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
             // Detail header shows the same badge as the list card, except the compact "Awaiting"
             // label is spelled out with who it's waiting on — the list card stays short since
             // there's no room there, but the header has space to say it plainly.
-            const selectedHeaderBadge = selected && selectedBadge && selected.kind === 'swap' && !selected.needsResponse
+            const selectedHeaderBadge = selected?.kind === 'offday' ? null : selected && selectedBadge && selected.kind === 'swap' && !selected.needsResponse
               && selected.swap!.status === 'pending' && selected.swap!.counterpart_status === 'pending'
               ? { ...selectedBadge, label: `Awaiting ${selected.swap!.counterpart_name}'s Response` }
               : selected?.needsResponse && selectedBadge
@@ -3618,35 +3660,10 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                         {!selected ? <FileText size={15} style={{ color: '#F97316' }} /> : selected.kind === 'swap' ? <ArrowLeftRight size={15} style={{ color: '#F97316' }} /> : <Calendar size={15} style={{ color: '#F97316' }} />}
                       </div>
                       <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {!selected ? 'Request Detail' : selected.kind === 'swap' ? 'Shift Swap Request Detail' : 'Off Day Request Detail'}
+                        {detailTitle(selected)}
                       </span>
                       {selectedHeaderBadge && (
                         <span style={{ display: 'inline-flex', alignItems: 'center', height: 24, padding: '0 10px', borderRadius: 999, fontSize: 12, fontWeight: 700, background: selectedHeaderBadge.bg, color: selectedHeaderBadge.text, flexShrink: 0, whiteSpace: 'nowrap' }}>{selectedHeaderBadge.label}</span>
-                      )}
-                      {selectedCanWithdrawSwap && (
-                        <button
-                          type="button"
-                          aria-label="Delete shift swap request"
-                          title="Delete request"
-                          disabled={selectedWithdrawingSwap}
-                          onClick={() => { setWithdrawConfirmSwapId(selected.swap!.id) }}
-                          style={{
-                            width: 28,
-                            height: 28,
-                            borderRadius: 8,
-                            border: '1px solid #FECACA',
-                            background: '#FEF2F2',
-                            color: '#EF4444',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            cursor: selectedWithdrawingSwap ? 'default' : 'pointer',
-                            opacity: selectedWithdrawingSwap ? 0.65 : 1,
-                            flexShrink: 0,
-                          }}
-                        >
-                          {selectedWithdrawingSwap ? <Spinner size={12} /> : <Trash2 size={14} />}
-                        </button>
                       )}
                     </div>
                   </div>
@@ -3757,11 +3774,38 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                           const bg = done ? '#F0FDF4' : blocked ? '#FEF2F2' : active ? '#FFFBF5' : '#FFFFFF'
                           const iconBoxBg = done ? '#ECFDF5' : blocked ? '#FEF2F2' : active ? '#FFF7ED' : '#F8FAFC'
                           const iconColor = done ? '#047857' : blocked ? '#B91C1C' : active ? '#F97316' : '#94A3B8'
+                          const showWithdrawHere = selectedCanWithdrawSwap && key === activeStage
                           return (
                             <div style={{ minWidth: 0, minHeight: 380, height: '100%', border: `1px solid ${border}`, borderRadius: 14, background: bg, boxShadow: active ? '0 10px 28px rgba(249,115,22,0.08)' : 'none', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
                               <div style={{ height: 52, padding: '0 16px', borderBottom: `1px solid ${done ? '#BBF7D0' : blocked ? '#FECACA' : active ? '#FED7AA' : '#F3F4F6'}`, display: 'flex', alignItems: 'center', gap: 9 }}>
                                 <span style={{ width: 28, height: 28, borderRadius: 9, background: iconBoxBg, color: iconColor, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{done ? <Check size={14} /> : blocked ? <X size={14} /> : icon}</span>
                                 <span style={{ fontSize: 14, fontWeight: 800, color: '#0F172A', whiteSpace: 'nowrap' }}>{title}</span>
+                                {showWithdrawHere && (
+                                  <button
+                                    type="button"
+                                    aria-label="Delete shift swap request"
+                                    title="Delete request"
+                                    disabled={selectedWithdrawingSwap}
+                                    onClick={() => { setWithdrawConfirmSwapId(s.id) }}
+                                    style={{
+                                      marginLeft: 'auto',
+                                      width: 28,
+                                      height: 28,
+                                      borderRadius: 8,
+                                      border: '1px solid #FECACA',
+                                      background: '#FEF2F2',
+                                      color: '#EF4444',
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      cursor: selectedWithdrawingSwap ? 'default' : 'pointer',
+                                      opacity: selectedWithdrawingSwap ? 0.65 : 1,
+                                      flexShrink: 0,
+                                    }}
+                                  >
+                                    {selectedWithdrawingSwap ? <Spinner size={12} /> : <Trash2 size={14} />}
+                                  </button>
+                                )}
                               </div>
                               <div style={{ padding: 16, flex: 1 }}>
                                 {reviewClosedByDecline ? (
@@ -3850,14 +3894,28 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                         const requestedDates = group.map(f => f.request_date)
                         const weekDates = getWeekDatesFromStart(first.week_start)
                         const isEditingThisFixedOff = !!editingFixedOffGroup?.length && editingFixedOffGroup[0].week_start === first.week_start
+                        const offDayLabel = first.status === 'pending' ? 'Requested Off Days' : 'Confirmed Off Days'
                         const displaySelectedDates = isEditingThisFixedOff ? editingFixedOffDates : requestedDates
                         const displaySelectedSet = new Set(displaySelectedDates)
+                        const reviewedAtLabel = first.status !== 'pending' ? formatCompactAt(first.reviewed_at ?? first.created_at) : ''
                         return (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 18, maxWidth: 620 }}>
+                            {first.status === 'modified' && (
+                              <div style={{ padding: '12px 14px', background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 10, display: 'flex', gap: 9, boxShadow: '0 6px 16px rgba(15,23,42,0.035)' }}>
+                                <Pencil size={15} style={{ color: '#F97316', flexShrink: 0, marginTop: 1 }} />
+                                <p style={{ margin: 0, fontSize: 12.5, color: '#111827', fontWeight: 700 }}>{first.reviewer_name ?? 'Owner/Partner'} moved your day{group.length === 1 ? '' : 's'} off to the date{group.length === 1 ? '' : 's'} shown below.</p>
+                              </div>
+                            )}
+                            {first.status === 'approved' && (
+                              <div style={{ padding: '12px 14px', background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 10, display: 'flex', gap: 9, boxShadow: '0 6px 16px rgba(15,23,42,0.035)' }}>
+                                <Check size={15} style={{ color: '#F97316', flexShrink: 0, marginTop: 1 }} />
+                                <p style={{ margin: 0, fontSize: 12.5, color: '#111827', fontWeight: 700 }}>Requested off days approved{first.reviewer_name ? ` by ${first.reviewer_name}` : ''}.</p>
+                              </div>
+                            )}
                             <div style={{ border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, background: '#FFFFFF', padding: '18px 20px', boxShadow: '0 8px 20px rgba(15,23,42,0.04)' }}>
                               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 14 }}>
                                 <label style={{ ...modalLabelStyle, margin: 0 }}>
-                                  {isEditingThisFixedOff ? 'Choose Days' : 'Requested Off Days'}
+                                  {isEditingThisFixedOff ? 'Choose Days' : offDayLabel}
                                 </label>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                                   <span style={{ ...modalLabelStyle, margin: 0 }}>{displaySelectedDates.length}/{fixedOffQuota}</span>
@@ -3933,19 +3991,13 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                                 </div>
                               )}
                             </div>
+                            {reviewedAtLabel && (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 9, paddingLeft: 4, color: '#111827', fontSize: 12.5, fontWeight: 700 }}>
+                                <Clock size={13} style={{ color: '#F97316', flexShrink: 0 }} />
+                                <span>Processed on {reviewedAtLabel}</span>
+                              </div>
+                            )}
 
-                            {first.status === 'modified' && (
-                              <div style={{ padding: '12px 14px', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 10, display: 'flex', gap: 9 }}>
-                                <Pencil size={15} style={{ color: '#1D4ED8', flexShrink: 0, marginTop: 1 }} />
-                                <p style={{ margin: 0, fontSize: 12.5, color: '#1D4ED8', fontWeight: 700 }}>{first.reviewer_name ?? 'Owner/Partner'} moved your day{group.length === 1 ? '' : 's'} off to the date{group.length === 1 ? '' : 's'} shown above.</p>
-                              </div>
-                            )}
-                            {first.status === 'approved' && (
-                              <div style={{ padding: '12px 14px', background: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: 10, display: 'flex', gap: 9 }}>
-                                <Check size={15} style={{ color: '#047857', flexShrink: 0, marginTop: 1 }} />
-                                <p style={{ margin: 0, fontSize: 12.5, color: '#047857', fontWeight: 700 }}>Approved{first.reviewer_name ? ` by ${first.reviewer_name}` : ''} — enjoy your day{group.length === 1 ? '' : 's'} off.</p>
-                              </div>
-                            )}
                           </div>
                         )
                       })()}
@@ -3985,7 +4037,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                   // flex '0 1 auto' — hug the cards when there are few (no dead space below), but
                   // never grow past the stretched column, so a long list scrolls inside instead.
                   <section style={{ background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, overflow: 'hidden', display: 'flex', flexDirection: 'column', flex: '0 1 auto', minHeight: 0 }}>
-                    <div style={{ padding: '14px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                    <div style={{ height: 58, padding: '0 18px', boxSizing: 'border-box', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
                       <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                         <Inbox size={15} style={{ color: '#F97316' }} />
                       </div>
@@ -4001,7 +4053,6 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                       <div style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 10, flex: 1, minHeight: 0, overflowY: 'auto' }}>
                         {pendingSwaps.map((req, idx) => {
                           const isSelected = idx === selectedIdx
-                          const dc = req.department_name ? deptColor(req.department_name) : '#64748B'
                           return (
                             <button
                               key={req.id}
@@ -4016,9 +4067,10 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                                 animationDelay: `${Math.min(idx, 8) * 50}ms`,
                               }}
                             >
-                              {req.department_name && (
-                                <span style={{ alignSelf: 'flex-start', fontSize: '0.62rem', fontWeight: 800, color: dc, background: `${dc}1a`, borderRadius: 999, padding: '2px 8px', whiteSpace: 'nowrap' }}>{req.department_name}</span>
-                              )}
+                              {!scopeToManagerDepartments && req.department_name && (() => {
+                                const dc = deptColor(req.department_name)
+                                return <span style={{ alignSelf: 'flex-start', fontSize: '0.62rem', fontWeight: 800, color: dc, background: `${dc}1a`, borderRadius: 999, padding: '2px 8px', whiteSpace: 'nowrap' }}>{req.department_name}</span>
+                              })()}
                               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                                 <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 7 }}>
                                   <RoleAvatar role={req.requester_role} size={48} photoUrl={req.requester_photo_url} />
@@ -4188,6 +4240,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
 
                 const SwapCard = ({ req, compact, selected, onSelect }: { req: ShiftSwapRequestView; compact?: boolean; selected?: boolean; onSelect?: () => void }) => {
                   const isReadyForDecision = req.counterpart_status === 'approved' && req.status === 'pending'
+                  const showDepartmentBadge = !scopeToManagerDepartments
                   const initials = (name: string) => name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
                   const avatarColors = ['#3B82F6', '#8B5CF6', '#059669', '#F97316', '#EC4899', '#0EA5E9']
                   const avatarBg = (name: string) => avatarColors[name.charCodeAt(0) % avatarColors.length]
@@ -4254,19 +4307,22 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                         }}
                       >
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', rowGap: 6 }}>
-                          {req.department_name && (() => {
+                          {showDepartmentBadge && req.department_name && (() => {
                             const dc = deptColor(req.department_name)
                             return <span style={{ fontSize: '0.72rem', fontWeight: 800, color: dc, background: `${dc}1a`, borderRadius: 999, padding: '4px 10px', flexShrink: 0 }}>{req.department_name}</span>
                           })()}
                           {req.owner_review_reason && (
                             <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#B91C1C', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 999, padding: '3px 10px', whiteSpace: 'nowrap', flexShrink: 0 }}>{req.owner_review_reason}</span>
                           )}
+                          {approved && req.reviewer_name && (
+                            <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#047857', background: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: 999, padding: '3px 10px', whiteSpace: 'nowrap', flexShrink: 0 }}>Approved by {req.reviewer_name}</span>
+                          )}
                           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, minWidth: 0, flexWrap: 'wrap', rowGap: 6 }}>
                             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
                               <span style={{ fontSize: '0.76rem', fontWeight: 800, color: '#64748B', whiteSpace: 'nowrap' }}>
                                 {isPending ? formatOwnerDecisionTime(req.created_at) : formatOwnerDecisionTime(req.reviewed_at)}
                               </span>
-                              {!isPending && req.reviewer_name && (
+                              {!isPending && !approved && req.reviewer_name && (
                                 <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#94A3B8', whiteSpace: 'nowrap' }}>by {req.reviewer_name}</span>
                               )}
                             </div>
@@ -4342,9 +4398,9 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                       {/* Department badge — top-left corner of the card, above everything else.
                           The requester's swap reason (Shift Swap only, Off Day has none) sits
                           right next to it as a small label. */}
-                      {(req.department_name || req.reason) && (
+                      {(showDepartmentBadge && req.department_name || req.reason) && (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                          {req.department_name && (() => {
+                          {showDepartmentBadge && req.department_name && (() => {
                             const dc = deptColor(req.department_name)
                             return <span style={{ fontSize: '0.72rem', fontWeight: 800, color: dc, background: `${dc}1a`, borderRadius: 999, padding: '4px 10px', whiteSpace: 'nowrap' }}>{req.department_name}</span>
                           })()}
@@ -4425,7 +4481,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                           return (
                         <div style={{ gridColumn: isCompactReqLayout ? '1' : '2', gridRow: isCompactReqLayout ? 'auto' : '1 / span 2', alignSelf: isCompactReqLayout ? 'auto' : 'stretch', minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 10 }}>
                         <section style={{ background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-                          <div style={{ padding: '14px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <div style={{ height: 58, padding: '0 18px', boxSizing: 'border-box', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
                             <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                               <ClipboardList size={15} style={{ color: '#F97316' }} />
                             </div>
@@ -4485,7 +4541,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                           const filteredProcessed = processedDeptFilter === 'all' ? processed : processed.filter(r => r.department_name === processedDeptFilter)
                           return (
                           <section style={{ gridColumn: isCompactReqLayout ? '1' : '3', gridRow: isCompactReqLayout ? 'auto' : '1 / span 2', alignSelf: 'start', maxHeight: isCompactReqLayout ? undefined : '100%', minHeight: 0, background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-                            <div style={{ padding: '11px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <div style={{ height: 58, padding: '0 18px', boxSizing: 'border-box', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
                               <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                                 <CheckCheck size={15} style={{ color: '#F97316' }} />
                               </div>

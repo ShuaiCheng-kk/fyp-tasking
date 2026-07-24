@@ -447,8 +447,15 @@ function shortDate(dateKey: string): string {
   })
 }
 
+function normalizeToFiveMinuteTime(hours: number, minutes: number): { h: number; m: number } {
+  const roundedTotal = Math.round((hours * 60 + minutes) / 5) * 5
+  const normalizedTotal = ((roundedTotal % (24 * 60)) + (24 * 60)) % (24 * 60)
+  return { h: Math.floor(normalizedTotal / 60), m: normalizedTotal % 60 }
+}
+
 function formatShiftHour(time: string): string {
-  const [h, m] = time.split(':').map(Number)
+  const [rawH, rawM] = time.split(':').map(Number)
+  const { h, m } = normalizeToFiveMinuteTime(rawH, rawM)
   const ampm = h < 12 ? 'am' : 'pm'
   const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h
   return m === 0 ? `${h12}${ampm}` : `${h12}:${String(m).padStart(2, '0')}${ampm}`
@@ -3318,7 +3325,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
 
   if (!initialReady) {
     return (
-      <div style={{ display: 'flex', minHeight: '100vh', background: APP_BG }}>
+      <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: APP_BG }}>
         {sidebar}
         <main style={{ flex: 1, display: 'grid', placeItems: 'center', color: TEXT_DARK, fontWeight: 600 }}>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}><Spinner dark /> Loading shifts</span>
@@ -3328,7 +3335,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
   }
 
   return (
-    <div style={{ display: 'flex', minHeight: '100vh', background: APP_BG }}>
+    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: APP_BG }}>
       <style>{pageKeyframes}</style>
       {sidebar}
       <main style={{ marginLeft: 64, height: '100vh', overflow: 'hidden', display: 'flex', flexDirection: 'column', flex: 1, gap: 0, animation: 'blockSlideUp 0.38s ease both 0.04s' }}>

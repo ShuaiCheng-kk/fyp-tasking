@@ -18,6 +18,7 @@ export interface WaitingOnYouItem {
 export interface TaskOverviewRow {
   id: string
   title: string
+  priority: string | null
   assignee_name: string
   assignee_photo_url: string | null
   department_id: string | null
@@ -28,7 +29,7 @@ export interface TaskOverviewRow {
   completed_at: string | null
 }
 
-export type TaskOverviewGroupKey = 'overdue' | 'delay_alert' | 'completed'
+export type TaskOverviewGroupKey = 'overdue' | 'delay_alert' | 'completed' | 'due_today' | 'due_this_week'
 
 export interface TaskOverviewGroup {
   key: TaskOverviewGroupKey
@@ -87,9 +88,27 @@ export interface RecruitmentOverview {
   starting_soon: RecruitmentStartingSoonRow[]
 }
 
+export type TaskNotificationId = 'new_assigned_task' | 'task_rejected' | 'shift_swap_rejected'
+
+export interface TaskNotificationItem {
+  id: TaskNotificationId
+  label: string
+  count: number
+  oldest_at: string | null
+  detail: string | null
+}
+
+export interface TeamOverview {
+  managers: number
+  employees: number
+  casual_worker_pool: number
+}
+
 export interface OwnerDashboardSummary {
+  task_notifications: TaskNotificationItem[]
   waiting_on_you: WaitingOnYouItem[]
   task_overview: TaskOverviewGroup[]
   attendance_overview: AttendanceOverview
   recruitment_overview: RecruitmentOverview
+  team_overview: TeamOverview
 }
