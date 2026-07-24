@@ -45,6 +45,14 @@ export async function GET(req: NextRequest) {
       const requests = await attendanceService.getShiftSwapRequests(company_id, { managerId: manager_id })
       return NextResponse.json({ success: true, requests })
     }
+    if (resource === 'shift_swap_conflict') {
+      const assignment_id = searchParams.get('assignment_id')
+      if (!assignment_id) {
+        return NextResponse.json({ success: false, message: 'assignment_id is required' }, { status: 400 })
+      }
+      const conflict = await attendanceService.getShiftSwapConflict(company_id, assignment_id)
+      return NextResponse.json({ success: true, ...conflict })
+    }
     if (resource === 'time_off') {
       const requests = await attendanceService.getTimeOffRequests(company_id)
       return NextResponse.json({ success: true, requests })
@@ -198,6 +206,25 @@ export async function PATCH(req: NextRequest) {
         new_date: b.new_date as string | undefined,
       })
       return NextResponse.json({ success: true, request })
+    }
+
+    if (action === 'edit_fixed_off_day') {
+      if (
+        typeof b.user_id !== 'string' ||
+        typeof b.company_id !== 'string' ||
+        typeof b.week_start !== 'string' ||
+        !Array.isArray(b.dates) ||
+        !b.dates.every((d): d is string => typeof d === 'string')
+      ) {
+        return NextResponse.json({ success: false, message: 'user_id, company_id, week_start and dates (string[]) are required' }, { status: 400 })
+      }
+      const requests = await attendanceService.editFixedOffDayRequest({
+        user_id: b.user_id,
+        company_id: b.company_id,
+        week_start: b.week_start,
+        dates: b.dates,
+      })
+      return NextResponse.json({ success: true, requests })
     }
 
     if (action === 'apply_ai_approvals') {

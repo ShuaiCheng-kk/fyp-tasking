@@ -48,7 +48,6 @@ vi.mock('@/repositories/owner/attendanceRepository', () => ({
     getEmployeeIdsByDepartments: vi.fn(),
     getEmployeesByCompany: vi.fn(),
     getManagersByCompany: vi.fn(),
-    getScheduledHeadcountForDeptDate: vi.fn(),
     countApprovedShiftSwapsForUser: vi.fn(),
   },
 }))
@@ -1491,12 +1490,10 @@ describe('attendanceService', () => {
       vi.mocked(attendanceRepository.getOffDayRequestsByCompanyAndWeek).mockResolvedValue([
         { id: 'fod-1', user_id: 'emp-1', company_id: 'company-1', request_date: reservedDate, week_start: upcomingWeekStart, status: 'pending', source: 'submitted', reviewed_by: null, reviewed_at: null, created_at: '2026-01-01' },
       ] as any)
-      // dept-ops is normally scheduled with exactly 2 employees every day of the upcoming week —
-      // with emp-1 already reserved off on reservedDate, only 1 remains there (meets the MIN_EMPLOYEES_PER_DAY=1
-      // floor only if nobody else also takes that day off), so emp-2 must NOT also land on reservedDate.
-      // A fresh object per call matters here: the sweep caches+mutates this per (department, date) key,
-      // so a shared mockResolvedValue object would let one date's reservation bleed into every other date.
-      vi.mocked(attendanceRepository.getScheduledHeadcountForDeptDate).mockImplementation(async () => ({ managers: 0, employees: 2 }))
+      // dept-ops's roster is exactly these 2 employees (both department_id: 'dept-ops' above) — with
+      // emp-1 already reserved off on reservedDate, only 1 remains there (meets the
+      // MIN_EMPLOYEES_PER_DAY=1 floor only if nobody else also takes that day off), so emp-2 must
+      // NOT also land on reservedDate.
 
       await attendanceService.getFixedOffDayRequests('company-1')
 
@@ -1519,7 +1516,7 @@ describe('attendanceService', () => {
 
       await attendanceService.getFixedOffDayRequests('company-1')
 
-      expect(attendanceRepository.getScheduledHeadcountForDeptDate).not.toHaveBeenCalled()
+      expect(ownerTeamRepository.findManagerDepartments).not.toHaveBeenCalled()
       expect(attendanceRepository.createFixedOffDayRequests).not.toHaveBeenCalled()
     })
   })

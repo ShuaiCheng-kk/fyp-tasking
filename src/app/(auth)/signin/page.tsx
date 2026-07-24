@@ -49,6 +49,13 @@ const ROLE_ROUTES: Record<string, string> = {
   'User Admin': '/useradmin/dashboard',
 };
 
+function clearTaskingAuthStorage() {
+  localStorage.removeItem('tasking_user_id');
+  localStorage.removeItem('tasking_user_role');
+  localStorage.removeItem('tasking_company_id');
+  localStorage.removeItem('tasking_active_session');
+}
+
 function SignInContent() {
   const searchParams = useSearchParams();
   const isRemoved = searchParams.get('removed') === 'true';
@@ -73,12 +80,13 @@ function SignInContent() {
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
     );
+    const normalizedEmail = email.trim();
 
     try {
       // Sign in client-side so session lives in localStorage and is immediately
       // visible to all subsequent client-side getSession() calls on navigation.
       const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-        email,
+        email: normalizedEmail,
         password,
       });
       if (authError || !authData.user) {
@@ -126,6 +134,7 @@ function SignInContent() {
       if (msg.toLowerCase().includes('email not confirmed')) {
         setErrorMessage('Please confirm your email address before signing in. Check your inbox for the confirmation link.');
       } else {
+        clearTaskingAuthStorage();
         setErrorMessage('Invalid email or password');
       }
       setIsLoading(false);

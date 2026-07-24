@@ -562,32 +562,4 @@ export const attendanceRepository = {
     }))
   },
 
-  async getScheduledHeadcountForDeptDate(company_id: string, department_id: string, date: string): Promise<{ managers: number; employees: number }> {
-    const { data: shifts, error: shiftError } = await supabase
-      .from('shifts')
-      .select('id')
-      .eq('company_id', company_id)
-      .eq('department_id', department_id)
-      .eq('shift_date', date)
-    if (shiftError) throw new Error(shiftError.message)
-    const shiftIds = (shifts ?? []).map((s: { id: string }) => s.id)
-    if (shiftIds.length === 0) return { managers: 0, employees: 0 }
-
-    const { data: assignments, error: assignError } = await supabase
-      .from('shift_assignments')
-      .select('user_id')
-      .in('shift_id', shiftIds)
-    if (assignError) throw new Error(assignError.message)
-    const userIds = [...new Set((assignments ?? []).map((a: { user_id: string }) => a.user_id))]
-    if (userIds.length === 0) return { managers: 0, employees: 0 }
-
-    const { data: users, error: userError } = await supabase
-      .from('users')
-      .select('id, role')
-      .in('id', userIds)
-    if (userError) throw new Error(userError.message)
-    const managers = (users ?? []).filter((u: { role: string }) => u.role === 'Manager').length
-    const employees = (users ?? []).filter((u: { role: string }) => u.role === 'Employee').length
-    return { managers, employees }
-  },
 }

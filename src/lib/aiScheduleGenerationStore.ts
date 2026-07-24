@@ -24,7 +24,7 @@ export type AutoShiftBlock = {
 }
 
 export type AiScheduleKnownRow = { name: string; deptId: string; deptName: string }
-export type AiScheduleAvailability = { fixedOffDates: Set<string>; approvedLeaveDates: Set<string> }
+export type AiScheduleAvailability = { fixedOffDates: Set<string> }
 export type AiScheduleGenerationStatus = 'idle' | 'generating' | 'done' | 'error'
 
 export type AiScheduleGenerationParams = {
@@ -258,12 +258,11 @@ export const aiScheduleGenerationStore = {
         const contextRes = await fetch(`/api/owner/scheduling-rules/context?company_id=${input.companyId}&user_id=${input.userId}&date_from=${input.dateFrom}&date_to=${input.dateTo}`)
         const contextData = await contextRes.json()
         if (contextData.success) {
-          const staff = contextData.context.staff as { id: string; fixed_off_days: string[]; leave_requests: { date: string | null; leave_type: string; status: string }[] }[]
+          const staff = contextData.context.staff as { id: string; fixed_off_days: string[] }[]
           const nextAvailability = new Map<string, AiScheduleAvailability>()
           for (const member of staff) {
             nextAvailability.set(member.id, {
               fixedOffDates: new Set(member.fixed_off_days),
-              approvedLeaveDates: new Set(member.leave_requests.filter(r => r.status === 'approved' && r.date).map(r => r.date as string)),
             })
           }
           setState({ staffAvailability: nextAvailability })

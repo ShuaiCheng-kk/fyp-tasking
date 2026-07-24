@@ -208,6 +208,13 @@ const DASHBOARD_ROUTE_BY_ROLE: Record<string, string> = {
 
 // ─── Navbar ──────────────────────────────────────────────────────────────────
 
+function clearTaskingAuthStorage() {
+  localStorage.removeItem('tasking_user_id')
+  localStorage.removeItem('tasking_user_role')
+  localStorage.removeItem('tasking_company_id')
+  localStorage.removeItem('tasking_active_session')
+}
+
 export default function Navbar() {
   const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -229,22 +236,52 @@ export default function Navbar() {
   }, [pathname]);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session }, error }) => {
+    const acceptSession = async (nextSession: Session | null) => {
+      if (!nextSession) {
+        clearTaskingAuthStorage()
+        setSession(null)
+        return
+      }
+
+      const res = await fetch(`/api/user/me?user_id=${nextSession.user.id}`)
+      if (!res.ok) {
+        clearTaskingAuthStorage()
+        await supabase.auth.signOut()
+        setSession(null)
+        return
+      }
+
+      const data = await res.json()
+      if (!data.success) {
+        clearTaskingAuthStorage()
+        await supabase.auth.signOut()
+        setSession(null)
+        return
+      }
+
+      localStorage.setItem('tasking_user_id', nextSession.user.id)
+      if (data.user?.role) localStorage.setItem('tasking_user_role', data.user.role)
+      setSession(nextSession)
+    }
+
+    supabase.auth.getSession().then(async ({ data: { session }, error }) => {
       if (error?.message?.toLowerCase().includes('refresh token')) {
-        supabase.auth.signOut()
+        clearTaskingAuthStorage()
+        await supabase.auth.signOut()
         setSession(null)
       } else {
-        setSession(session)
+        await acceptSession(session)
       }
       setAuthLoading(false)
     })
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'TOKEN_REFRESHED' && !session) {
-        supabase.auth.signOut()
+        clearTaskingAuthStorage()
+        await supabase.auth.signOut()
         setSession(null)
       } else {
-        setSession(session)
+        await acceptSession(session)
       }
       setAuthLoading(false)
     })
@@ -367,7 +404,7 @@ export default function Navbar() {
                 className="btn-press"
                 onClick={async () => {
                   await supabase.auth.signOut()
-                  localStorage.removeItem('tasking_user_id')
+                  clearTaskingAuthStorage()
                   window.location.href = '/signout';
                 }}
                 style={{
@@ -484,7 +521,7 @@ export default function Navbar() {
               <button
                 onClick={async () => {
                   await supabase.auth.signOut()
-                  localStorage.removeItem('tasking_user_id')
+                  clearTaskingAuthStorage()
                   window.location.href = '/signout';
                 }}
                 style={{

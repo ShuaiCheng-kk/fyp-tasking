@@ -103,10 +103,12 @@ const THEME_MANAGER = {
 export default function OwnerSidebar({
   unreadMessages,
   unreadAnnouncements,
+  attendanceAlertCount,
   role = 'owner',
 }: {
   unreadMessages?: number
   unreadAnnouncements?: number
+  attendanceAlertCount?: number
   role?: SidebarRole
 }) {
   const NAV_ITEMS = navItemsFor(role)
@@ -231,10 +233,39 @@ export default function OwnerSidebar({
         }
         fetchReviewCount()
 
-        fetch(`/api/attendance?resource=pending_requests_count&company_id=${cid}`)
-          .then(r => r.json())
-          .then(data => { if (data.success) setAttendanceCount(data.count ?? 0) })
-          .catch(() => {})
+        const fetchAttendanceBadgeCount = () => {
+          if (role === 'manager') {
+            fetch(`/api/attendance?resource=my_requests&user_id=${internalId}`)
+              .then(r => r.json())
+              .then(data => {
+                if (!data.success) return
+                const seenKey = `manager_myreq_seen_${cid}_${internalId}`
+                let seen = new Set<string>()
+                try {
+                  const raw = localStorage.getItem(seenKey)
+                  if (raw) seen = new Set(JSON.parse(raw))
+                } catch {}
+                const swaps = (data.swaps ?? []) as Array<{ id: string; requester_id: string; counterpart_id: string; counterpart_status: string; status: string }>
+                const fixedOff = (data.fixed_off ?? []) as Array<{ week_start: string; source: string; status: string }>
+                const swapResponseCount = swaps.filter(s => s.counterpart_id === internalId && s.counterpart_status === 'pending' && s.status === 'pending').length
+                const swapUpdateCount = swaps.filter(s => s.requester_id === internalId && s.counterpart_status !== 'pending' && !seen.has(`swap-${s.id}`)).length
+                const fixedOffUpdateKeys = new Set<string>()
+                fixedOff.forEach(req => {
+                  if (req.source !== 'submitted' || req.status === 'pending') return
+                  const key = `offday-${req.week_start}`
+                  if (!seen.has(key)) fixedOffUpdateKeys.add(key)
+                })
+                setAttendanceCount(swapResponseCount + swapUpdateCount + fixedOffUpdateKeys.size)
+              })
+              .catch(() => {})
+            return
+          }
+          fetch(`/api/attendance?resource=pending_requests_count&company_id=${cid}`)
+            .then(r => r.json())
+            .then(data => { if (data.success) setAttendanceCount(data.count ?? 0) })
+            .catch(() => {})
+        }
+        fetchAttendanceBadgeCount()
 
         const fetchTaskAlerts = () => {
           // A Manager's alert scope is their whole department team (every peer manager's tasks),
@@ -308,12 +339,7 @@ export default function OwnerSidebar({
             refreshAnnCount)
           .subscribe()
 
-        const refreshAttendanceCount = () => {
-          fetch(`/api/attendance?resource=pending_requests_count&company_id=${cid}`)
-            .then(r => r.json())
-            .then(data => { if (data.success) setAttendanceCount(data.count ?? 0) })
-            .catch(() => {})
-        }
+        const refreshAttendanceCount = fetchAttendanceBadgeCount
 
         const swapChannel = supabase
           .channel('owner-sidebar-swaps')
@@ -430,7 +456,7 @@ export default function OwnerSidebar({
         {orderedItems.map(({ label, Icon, href, dot }, idx) => {
           const active = pathname === href
           // Communication covers both tabs — unread chat messages OR unread announcements light it up.
-          const showDot = dot === 'messages' ? msgCount > 0 || annCount > 0 : dot === 'announcements' ? annCount > 0 : dot === 'review' ? reviewCount > 0 : dot === 'attendance' ? attendanceCount > 0 : dot === 'tasks' ? taskAlertCount > 0 : false
+          const showDot = dot === 'messages' ? msgCount > 0 || annCount > 0 : dot === 'announcements' ? annCount > 0 : dot === 'review' ? reviewCount > 0 : dot === 'attendance' ? (role === 'manager' && attendanceAlertCount != null ? attendanceAlertCount > 0 : attendanceCount + (attendanceAlertCount ?? 0) > 0) : dot === 'tasks' ? taskAlertCount > 0 : false
           const isDragging = draggingLabel === label
           const isDragOver = dragOverLabel === label
 

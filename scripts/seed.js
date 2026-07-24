@@ -521,8 +521,43 @@ async function main() {
     }
   }
 
-  // ── Step 8: 创建 Guest User 求职者账号 ──────────────────────────────────
-  console.log('\nStep 8: 创建 Guest User 求职者账号...')
+  // ── Step 8: Off Day clean baseline ───────────────────────────────────────
+  // Minimal Off Day test baseline:
+  // Keep only accounts, company, departments, and team relationships. Do not recreate shifts,
+  // assignments, attendance records, swap requests, jobs, tasks, templates, messages, or any
+  // existing off-day requests. This lets you test Manager Submit Off Day first, then generate
+  // real shifts afterwards from a clean schedule.
+  console.log('\nStep 8: Create Off Day clean baseline settings...')
+  const quotaRows = [
+    { company_id: company.id, user_id: null, role: 'Manager', max_days_per_week: 2, updated_by: ownerUser.id },
+    { company_id: company.id, user_id: null, role: 'Employee', max_days_per_week: 2, updated_by: ownerUser.id },
+  ]
+  for (const row of quotaRows) {
+    const { error } = await supabase.from('off_day_quota_settings').insert(row)
+    if (error) console.warn(`  ⚠ Failed to create ${row.role} default off-day quota: ${error.message}`)
+    else console.log(`  ✓ ${row.role} default off-day quota: ${row.max_days_per_week} days/week`)
+  }
+  const { error: deadlineSeedErr } = await supabase.from('off_day_submission_deadline').upsert({
+    company_id: company.id,
+    deadline_weekday: 0,
+    deadline_time: '08:00',
+    updated_by: ownerUser.id,
+  }, { onConflict: 'company_id' })
+  if (deadlineSeedErr) console.warn(`  ⚠ Failed to create off-day submission deadline: ${deadlineSeedErr.message}`)
+  else console.log('  ✓ Off Day submission deadline: Sunday 23:59')
+
+  console.log('\n═══════════════════════════════════════════')
+  console.log('  Done: Off Day clean seed is ready. Password for all test accounts: 111111')
+  console.log('  Owner:    owner@test.com')
+  console.log('  Partner:  partner1@test.com')
+  console.log('  Manager:  manager1-8@test.com')
+  console.log('  Employee: employee1-8@test.com')
+  console.log('  Company:  Sunrise Hospitality Group')
+  console.log('  Cleaned and not recreated: shifts, shift_assignments, attendance_records, shift_swap_requests, time_off_requests, employee_off_day_requests, employee_fixed_off_days, jobs, tasks, templates, messages.')
+  console.log('  Test path: login manager1@test.com -> Manager Attendance -> Records -> My Requests -> Submit Off Day.')
+  console.log('═══════════════════════════════════════════')
+  return
+
   for (const guest of guestApplicants) {
     const { data: authData, error: authErr } = await supabase.auth.admin.createUser({
       email: guest.email,

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   CalendarDays, Clock, UserRound, CheckCircle2, XCircle, AlertCircle,
@@ -28,6 +28,37 @@ function getUpcomingWeekDates(): string[] {
     date.setDate(monday.getDate() + index)
     return date.toISOString().slice(0, 10)
   })
+}
+
+function addDays(date: Date, days: number): Date {
+  const next = new Date(date)
+  next.setDate(next.getDate() + days)
+  return next
+}
+
+function computeWeekStartKey(dateKey: string): string {
+  const date = new Date(`${dateKey}T00:00:00`)
+  const day = date.getDay()
+  const diff = day === 0 ? -6 : 1 - day
+  return addDays(date, diff).toISOString().slice(0, 10)
+}
+
+function resolveActiveSubmissionWeekStart(deadlineWeekday: number, deadlineTime: string): string {
+  const todayKey = new Date().toISOString().slice(0, 10)
+  let candidateWeekStart = computeWeekStartKey(todayKey)
+  for (;;) {
+    const targetWeek = addDays(new Date(`${candidateWeekStart}T00:00:00`), 7).toISOString().slice(0, 10)
+    const offsetFromMonday = (deadlineWeekday + 6) % 7
+    const deadlineDate = addDays(new Date(`${candidateWeekStart}T00:00:00`), offsetFromMonday).toISOString().slice(0, 10)
+    const deadlineMoment = new Date(`${deadlineDate}T${deadlineTime}:00`)
+    if (Date.now() <= deadlineMoment.getTime()) return targetWeek
+    candidateWeekStart = targetWeek
+  }
+}
+
+function getWeekDatesFromStart(weekStart: string): string[] {
+  const monday = new Date(`${weekStart}T00:00:00`)
+  return Array.from({ length: 7 }, (_, index) => addDays(monday, index).toISOString().slice(0, 10))
 }
 
 type AttendanceRecord = {
@@ -177,6 +208,18 @@ export default function EmployeeAttendancePage() {
   const [selectedFixedOffDates, setSelectedFixedOffDates] = useState<string[]>([])
   const [fixedOffQuota,    setFixedOffQuota]    = useState(1)
   const [fixedSubmitting,  setFixedSubmitting]  = useState(false)
+  const [deadlineWeekday,  setDeadlineWeekday]  = useState(2)
+  const [deadlineTime,     setDeadlineTime]     = useState('17:00')
+  const [editingFixedOffGroup, setEditingFixedOffGroup] = useState<FixedOffDayRequestView[] | null>(null)
+  const [editingFixedOffDates, setEditingFixedOffDates] = useState<string[]>([])
+  const [editingFixedOffSaving, setEditingFixedOffSaving] = useState(false)
+
+  const activeSubmissionWeekStart = useMemo(() => resolveActiveSubmissionWeekStart(deadlineWeekday, deadlineTime), [deadlineWeekday, deadlineTime])
+  const activeWeekFixedOff = useMemo(
+    () => myFixedOff.filter(req => req.week_start === activeSubmissionWeekStart && req.source === 'submitted'),
+    [activeSubmissionWeekStart, myFixedOff],
+  )
+  const hasFixedOffForActiveWeek = activeWeekFixedOff.length > 0
 
   // ── summary stats ──────────────────────────────────────────────────────────
   const totalShifts = records.length
@@ -249,6 +292,18 @@ export default function EmployeeAttendancePage() {
       const res = await fetch(`/api/attendance/off-day-settings?company_id=${cid}&user_id=${uid}&resource=my_quota`)
       const data = await res.json()
       if (data.success && typeof data.max_days_per_week === 'number') setFixedOffQuota(data.max_days_per_week)
+    } catch {}
+  }, [])
+
+  const fetchOffDayDeadline = useCallback(async (cid: string, uid: string) => {
+    if (!cid || !uid) return
+    try {
+      const res = await fetch(`/api/attendance/off-day-settings?company_id=${cid}&owner_id=${uid}&resource=deadline`)
+      const data = await res.json()
+      if (data.success) {
+        setDeadlineWeekday(data.deadline?.deadline_weekday ?? 2)
+        setDeadlineTime(data.deadline?.deadline_time ?? '17:00')
+      }
     } catch {}
   }, [])
 
@@ -378,6 +433,12 @@ export default function EmployeeAttendancePage() {
   }
 
   const handleSubmitFixedOff = async () => {
+    if (hasFixedOffForActiveWeek) {
+      setMyReqError(activeWeekFixedOff.some(req => req.status === 'pending')
+        ? 'You already submitted an Off Day request for the currently open week.'
+        : 'This open week has already been reviewed and cannot be submitted again.')
+      return
+    }
     if (selectedFixedOffDates.length !== fixedOffQuota) { setMyReqError(`Select exactly ${fixedOffQuota} day(s).`); return }
     setFixedSubmitting(true); setMyReqError(''); setMyReqSuccess('')
     try {
@@ -409,6 +470,50 @@ export default function EmployeeAttendancePage() {
     })
   }
 
+  const openEditFixedOff = (weekStart: string) => {
+    const group = myFixedOff
+      .filter(req => req.week_start === weekStart && req.source === 'submitted')
+      .sort((a, b) => a.request_date.localeCompare(b.request_date))
+    if (group.length === 0) return
+    setEditingFixedOffGroup(group)
+    setEditingFixedOffDates(group.map(req => req.request_date))
+    setMyReqError('')
+    setMyReqSuccess('')
+  }
+
+  const toggleEditingFixedOffDate = (date: string) => {
+    setMyReqError('')
+    setEditingFixedOffDates(prev => {
+      if (prev.includes(date)) return prev.filter(value => value !== date)
+      if (prev.length >= fixedOffQuota) {
+        setMyReqError(`You must select exactly ${fixedOffQuota} day(s).`)
+        return prev
+      }
+      return [...prev, date].sort()
+    })
+  }
+
+  const handleEditFixedOff = async () => {
+    if (!editingFixedOffGroup) return
+    if (editingFixedOffDates.length !== fixedOffQuota) { setMyReqError(`Select exactly ${fixedOffQuota} day(s).`); return }
+    setEditingFixedOffSaving(true); setMyReqError(''); setMyReqSuccess('')
+    try {
+      const res = await fetch('/api/attendance', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'edit_fixed_off_day', user_id: userId, company_id: companyId, week_start: editingFixedOffGroup[0].week_start, dates: editingFixedOffDates }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message)
+      setMyReqSuccess('Off Day request updated.')
+      setEditingFixedOffGroup(null)
+      setEditingFixedOffDates([])
+      void fetchMyRequests(userId)
+    } catch (err) {
+      setMyReqError(err instanceof Error ? err.message : 'Failed to update request')
+    } finally { setEditingFixedOffSaving(false) }
+  }
+
   useEffect(() => {
     let cancelled = false
     const run = async () => {
@@ -426,7 +531,7 @@ export default function EmployeeAttendancePage() {
       const dashRes = await fetch(`/api/employee/dashboard?user_id=${uid}`)
       const dashData = await dashRes.json()
       const cid = (!cancelled && dashData.success) ? (dashData.company_id || '') : ''
-      if (cid) { setCompanyId(cid); void fetchSwapCandidates(cid); void fetchFixedOffQuota(cid, internalId) }
+      if (cid) { setCompanyId(cid); void fetchSwapCandidates(cid); void fetchFixedOffQuota(cid, internalId); void fetchOffDayDeadline(cid, internalId) }
 
       if (!cancelled) {
         void fetchRecords(uid)
@@ -437,7 +542,7 @@ export default function EmployeeAttendancePage() {
     }
     void run()
     return () => { cancelled = true }
-  }, [router, fetchRecords, fetchMyShift, fetchMyRequests, fetchSwapCandidates, fetchFixedOffQuota, fetchReleaseQueue])
+  }, [router, fetchRecords, fetchMyShift, fetchMyRequests, fetchSwapCandidates, fetchFixedOffQuota, fetchOffDayDeadline, fetchReleaseQueue])
 
   const todayLabel = new Date().toLocaleDateString('en-GB', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })
   const myPendingCount = mySwaps.filter(r => r.status === 'pending').length + myTimeOff.filter(r => r.status === 'pending').length + myFixedOff.filter(r => r.status === 'pending').length
@@ -743,8 +848,9 @@ export default function EmployeeAttendancePage() {
                   style={{ display: 'inline-flex', alignItems: 'center', gap: 7, height: 38, padding: '0 16px', background: leaveFormOpen ? '#14532D' : PANEL, color: leaveFormOpen ? '#FFFFFF' : TEXT, border: `1.5px solid ${leaveFormOpen ? '#14532D' : BORDER}`, borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
                   <ShieldCheck size={14} /> Leave Request
                 </button>
-                <button onClick={() => { setFixedFormOpen(v => !v); setSwapFormOpen(false); setLeaveFormOpen(false) }}
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: 7, height: 38, padding: '0 16px', background: fixedFormOpen ? '#14532D' : PANEL, color: fixedFormOpen ? '#FFFFFF' : TEXT, border: `1.5px solid ${fixedFormOpen ? '#14532D' : BORDER}`, borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+                <button onClick={() => { if (!hasFixedOffForActiveWeek) { setFixedFormOpen(v => !v); setSwapFormOpen(false); setLeaveFormOpen(false); setEditingFixedOffGroup(null) } }}
+                  disabled={hasFixedOffForActiveWeek}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 7, height: 38, padding: '0 16px', background: fixedFormOpen ? '#14532D' : PANEL, color: fixedFormOpen ? '#FFFFFF' : hasFixedOffForActiveWeek ? '#9CA3AF' : TEXT, border: `1.5px solid ${fixedFormOpen ? '#14532D' : BORDER}`, borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: hasFixedOffForActiveWeek ? 'not-allowed' : 'pointer', opacity: hasFixedOffForActiveWeek ? 0.68 : 1 }}>
                   <Calendar size={14} /> Weekly Day Off
                 </button>
                 <button onClick={() => void fetchMyRequests(userId)} disabled={myReqLoading || !userId}
@@ -861,7 +967,7 @@ export default function EmployeeAttendancePage() {
                     <span>{selectedFixedOffDates.length}/{fixedOffQuota} selected</span>
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(108px, 1fr))', gap: 8 }}>
-                    {getUpcomingWeekDates().map(date => {
+                    {getWeekDatesFromStart(activeSubmissionWeekStart).map(date => {
                       const selected = selectedFixedOffDates.includes(date)
                       const atLimit = !selected && selectedFixedOffDates.length >= fixedOffQuota
                       return (
@@ -895,9 +1001,59 @@ export default function EmployeeAttendancePage() {
                   </div>
                   <div style={{ display: 'flex', gap: 8 }}>
                     <button onClick={() => setFixedFormOpen(false)} style={{ flex: 1, height: 38, background: 'none', border: `1.5px solid ${BORDER}`, borderRadius: 9, fontWeight: 700, fontSize: 13, color: MUTED, cursor: 'pointer' }}>Cancel</button>
-                    <button onClick={handleSubmitFixedOff} disabled={fixedSubmitting || selectedFixedOffDates.length !== fixedOffQuota}
-                      style={{ flex: 2, height: 38, background: '#14532D', border: 'none', borderRadius: 9, fontWeight: 700, fontSize: 13, color: '#FFFFFF', cursor: fixedSubmitting ? 'default' : 'pointer', opacity: fixedSubmitting || selectedFixedOffDates.length !== fixedOffQuota ? 0.55 : 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                    <button onClick={handleSubmitFixedOff} disabled={fixedSubmitting || hasFixedOffForActiveWeek || selectedFixedOffDates.length !== fixedOffQuota}
+                      style={{ flex: 2, height: 38, background: '#14532D', border: 'none', borderRadius: 9, fontWeight: 700, fontSize: 13, color: '#FFFFFF', cursor: fixedSubmitting ? 'default' : 'pointer', opacity: fixedSubmitting || hasFixedOffForActiveWeek || selectedFixedOffDates.length !== fixedOffQuota ? 0.55 : 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
                       {fixedSubmitting ? <Spinner /> : <Calendar size={13} />} Request Weekly Day Off
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {editingFixedOffGroup && (
+                <div style={{ background: PANEL, border: `1.5px solid #FED7AA`, borderRadius: 14, padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 13 }}>
+                  <p style={{ margin: 0, fontWeight: 800, fontSize: 14, color: TEXT }}>Edit Weekly Day Off Request</p>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, color: MUTED, fontSize: 12.5, fontWeight: 700 }}>
+                    <span>Requested week</span>
+                    <span>{editingFixedOffDates.length}/{fixedOffQuota} selected</span>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(108px, 1fr))', gap: 8 }}>
+                    {getWeekDatesFromStart(editingFixedOffGroup[0].week_start).map(date => {
+                      const selected = editingFixedOffDates.includes(date)
+                      const atLimit = !selected && editingFixedOffDates.length >= fixedOffQuota
+                      return (
+                        <button
+                          key={date}
+                          type="button"
+                          onClick={() => toggleEditingFixedOffDate(date)}
+                          disabled={atLimit || editingFixedOffSaving}
+                          style={{
+                            minHeight: 58,
+                            padding: '8px 10px',
+                            borderRadius: 10,
+                            border: selected ? '1.5px solid #16A34A' : `1px solid ${BORDER}`,
+                            background: selected ? '#DCFCE7' : '#FFFFFF',
+                            color: selected ? '#166534' : TEXT,
+                            opacity: atLimit ? 0.45 : 1,
+                            cursor: atLimit || editingFixedOffSaving ? 'not-allowed' : 'pointer',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'flex-start',
+                            justifyContent: 'center',
+                            gap: 3,
+                            fontWeight: 800,
+                          }}
+                        >
+                          <span style={{ fontSize: 12 }}>{new Date(`${date}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'short' })}</span>
+                          <span style={{ fontSize: 13 }}>{formatDate(date)}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button onClick={() => { if (!editingFixedOffSaving) { setEditingFixedOffGroup(null); setEditingFixedOffDates([]) } }} disabled={editingFixedOffSaving} style={{ flex: 1, height: 38, background: 'none', border: `1.5px solid ${BORDER}`, borderRadius: 9, fontWeight: 700, fontSize: 13, color: MUTED, cursor: editingFixedOffSaving ? 'default' : 'pointer' }}>Cancel</button>
+                    <button onClick={handleEditFixedOff} disabled={editingFixedOffSaving || editingFixedOffDates.length !== fixedOffQuota}
+                      style={{ flex: 2, height: 38, background: '#14532D', border: 'none', borderRadius: 9, fontWeight: 700, fontSize: 13, color: '#FFFFFF', cursor: editingFixedOffSaving ? 'default' : 'pointer', opacity: editingFixedOffSaving || editingFixedOffDates.length !== fixedOffQuota ? 0.55 : 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                      {editingFixedOffSaving ? <Spinner /> : <Calendar size={13} />} Save Changes
                     </button>
                   </div>
                 </div>
@@ -959,15 +1115,24 @@ export default function EmployeeAttendancePage() {
                     </div>
                     {myFixedOff.length === 0 ? (
                       <div style={{ padding: '20px 16px', color: MUTED, fontSize: 13, textAlign: 'center' }}>No weekly day off requests yet.</div>
-                    ) : myFixedOff.map((req, i) => (
-                      <div key={req.id} style={{ padding: '12px 16px', borderBottom: i < myFixedOff.length - 1 ? `1px solid #F8FAFC` : 'none', display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <div style={{ flex: 1 }}>
-                          <div style={{ fontSize: 13, fontWeight: 600, color: TEXT }}>{formatDate(req.request_date)}</div>
-                          {req.source === 'auto_assigned' && <div style={{ fontSize: 11.5, color: MUTED, marginTop: 2 }}>Auto assigned</div>}
+                    ) : myFixedOff.map((req, i) => {
+                      const canEdit = req.source === 'submitted' && req.status === 'pending' && req.week_start === activeSubmissionWeekStart
+                      return (
+                        <div key={req.id} style={{ padding: '12px 16px', borderBottom: i < myFixedOff.length - 1 ? `1px solid #F8FAFC` : 'none', display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: TEXT }}>{formatDate(req.request_date)}</div>
+                            {req.source === 'auto_assigned' && <div style={{ fontSize: 11.5, color: MUTED, marginTop: 2 }}>Auto assigned</div>}
+                          </div>
+                          {canEdit && (
+                            <button type="button" onClick={() => { setFixedFormOpen(false); setSwapFormOpen(false); setLeaveFormOpen(false); openEditFixedOff(req.week_start) }}
+                              style={{ height: 28, padding: '0 10px', borderRadius: 8, border: '1px solid #FED7AA', background: '#FFF7ED', color: '#C2410C', fontSize: 12, fontWeight: 800, cursor: 'pointer' }}>
+                              Edit
+                            </button>
+                          )}
+                          {statusChip(req.status)}
                         </div>
-                        {statusChip(req.status)}
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 </>
               )}

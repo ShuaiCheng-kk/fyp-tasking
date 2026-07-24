@@ -2926,20 +2926,6 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                                     ? <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 700, background: '#FEE2E2', color: '#B91C1C', border: '1px solid #FCA5A5', whiteSpace: 'nowrap', flexShrink: 0 }}>Rejected</span>
                                     : <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 700, background: '#FFF7ED', color: '#C2410C', border: '1px solid #FED7AA', whiteSpace: 'nowrap', flexShrink: 0 }}>Pending</span>
                                 )}
-                                {/* Rejected = terminal unless resubmitted — the submitting Manager can
-                                    give up on it entirely instead of fixing/resubmitting. Creator-only,
-                                    same rule as Active Jobs delete (canManageApplicants). */}
-                                {isRejected && p.created_by === internalUserId && (
-                                  <button
-                                    type="button"
-                                    onClick={e => { e.stopPropagation(); setDeleteConfirm({ id: p.id, title: p.title, isDraft: false }) }}
-                                    disabled={actionLoading}
-                                    title="Delete rejected posting"
-                                    style={{ border: 'none', background: 'transparent', color: '#DC2626', cursor: actionLoading ? 'default' : 'pointer', display: 'flex', padding: 6, borderRadius: 6, opacity: actionLoading ? 0.5 : 1, flexShrink: 0 }}
-                                    onMouseEnter={e => { if (!actionLoading) e.currentTarget.style.background = '#FEE2E2' }}
-                                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
-                                  ><Trash2 size={14} /></button>
-                                )}
                                 </div>
                               </div>
                               <button
@@ -3200,6 +3186,24 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                         </span>
                       )
                     })()}
+                    {selectedPending.status === 'rejected' && canManageApplicants(selectedPending) && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => void openRejectedInWizard(selectedPending)}
+                          style={{ height: 28, padding: '0 11px', border: 'none', borderRadius: 8, background: 'linear-gradient(135deg, #F97316, #EA580C)', color: '#FFFFFF', display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, fontWeight: 800, cursor: 'pointer', flexShrink: 0 }}
+                        >
+                          <Pencil size={12} /> Edit &amp; Resubmit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDeleteConfirm({ id: selectedPending.id, title: selectedPending.title, isDraft: false })}
+                          style={{ height: 28, padding: '0 11px', border: '1px solid #FECACA', borderRadius: 8, background: '#FEF2F2', color: '#DC2626', display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, fontWeight: 800, cursor: 'pointer', flexShrink: 0 }}
+                        >
+                          <Trash2 size={12} /> Delete
+                        </button>
+                      </>
+                    )}
                   </div>
                   {/* Approve/Reject only make sense on a posting still awaiting a decision — an
                       already-rejected one needs the Manager to fix and resubmit first (see the
@@ -3225,25 +3229,6 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                     </div>
                     {selectedPending.rejection_reason && (
                       <p style={{ margin: 0, fontSize: '0.8125rem', color: '#7F1D1D', lineHeight: 1.5 }}>{selectedPending.rejection_reason}</p>
-                    )}
-                    {canManageApplicants(selectedPending) && (
-                      <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-                        <button
-                          type="button"
-                          onClick={() => void openRejectedInWizard(selectedPending)}
-                          style={{ alignSelf: 'flex-start', display: 'inline-flex', alignItems: 'center', gap: 6, border: 'none', borderRadius: 9, background: 'linear-gradient(135deg, #F97316, #EA580C)', color: '#FFFFFF', height: 32, padding: '0 14px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}
-                        >
-                          <Pencil size={13} /> Edit &amp; Resubmit for Approval
-                        </button>
-                        {/* Give up on it entirely instead of fixing/resubmitting. */}
-                        <button
-                          type="button"
-                          onClick={() => setDeleteConfirm({ id: selectedPending.id, title: selectedPending.title, isDraft: false })}
-                          style={{ alignSelf: 'flex-start', display: 'inline-flex', alignItems: 'center', gap: 6, border: '1px solid #FECACA', borderRadius: 9, background: '#FFFFFF', color: '#DC2626', height: 32, padding: '0 14px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}
-                        >
-                          <Trash2 size={13} /> Delete
-                        </button>
-                      </div>
                     )}
                   </div>
                 )}
