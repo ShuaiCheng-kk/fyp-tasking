@@ -1,19 +1,6 @@
 import { employeeDashboardRepository } from '@/repositories/employee/employeeDashboardRepository'
 import { employeeInboxRepository } from '@/repositories/employee/employeeInboxRepository'
 
-type AssignedWorkDTO = {
-  id: string
-  shift_id: string
-  title: string
-  instruction: string | null
-  shift_date: string
-  start_time: string
-  end_time: string
-  assignment_status: string
-  manager_name: string
-  manager_email: string
-}
-
 export const employeeDashboardService = {
   async getDashboard(
     auth_user_id: string
@@ -23,7 +10,7 @@ export const employeeDashboardService = {
     department_id: string
     department_name: string
     employee_id: string
-    assigned_work: AssignedWorkDTO[]
+    supervised_workers: Awaited<ReturnType<typeof employeeDashboardRepository.getSupervisedWorkersToday>>
   }> {
     const user =
       await employeeInboxRepository.findUserByAuthIdOrInternalId(auth_user_id)
@@ -41,8 +28,8 @@ export const employeeDashboardService = {
       throw new Error('Dashboard data not found')
     }
 
-    const assignedWork =
-      await employeeDashboardRepository.getAssignedWork(internalUserId)
+    const supervisedWorkers =
+      await employeeDashboardRepository.getSupervisedWorkersToday(internalUserId, dashboard.company_id)
 
     return {
       company_id: dashboard.company_id,
@@ -50,7 +37,7 @@ export const employeeDashboardService = {
       department_id: dashboard.department_id,
       department_name: dashboard.department_name,
       employee_id: internalUserId,
-      assigned_work: assignedWork,
+      supervised_workers: supervisedWorkers,
     }
   },
 }

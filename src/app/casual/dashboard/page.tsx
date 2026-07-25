@@ -205,12 +205,6 @@ export default function CasualDashboardPage() {
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'Attendance action failed')
-      showToast(
-        action === 'clock_in' ? 'Clocked in.'
-        : action === 'clock_out' ? 'Clocked out — see you next time.'
-        : action === 'break_in' ? 'Break started.'
-        : 'Break ended — welcome back.'
-      )
       await load(authId)
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Attendance action failed')

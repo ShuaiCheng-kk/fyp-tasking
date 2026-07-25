@@ -1169,12 +1169,11 @@ export default function DashboardView({ sidebar, basePath, viewerRole }: {
     </>
   )
 
-  const runClockAction = async (shift: MyShift, action: 'clock_in' | 'clock_out' | 'break_in' | 'break_out', extra?: { late_reason?: string }) => {
+  const runClockAction = async (shift: MyShift, action: 'clock_in' | 'clock_out' | 'break_in' | 'break_out') => {
     setClockBusyId(`${shift.assignment.id}:${action}`)
     setClockMessage('')
     try {
       const body: Record<string, unknown> = { action, user_id: internalUserId, shift_assignment_id: shift.assignment.id }
-      if (extra?.late_reason) body.late_reason = extra.late_reason
       const res = await fetch('/api/employee/attendance', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1425,7 +1424,8 @@ export default function DashboardView({ sidebar, basePath, viewerRole }: {
           </h1>
           <div data-owner-header-badges style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
             {internalUserId && <OwnerUserBadge userId={internalUserId} companyId={companyId} />}
-            {companyId && <OwnerPlanBadge plan={currentPlan} currentCompanyId={companyId} />}
+            {/* Subscription plan is Owner/Partner-only — Manager (and every other role) can't switch it. */}
+            {companyId && !viewerRole && <OwnerPlanBadge plan={currentPlan} currentCompanyId={companyId} />}
           </div>
         </div>
 

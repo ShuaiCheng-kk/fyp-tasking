@@ -1196,7 +1196,8 @@ export default function CommunicationView({ renderSidebar, basePath }: {
           </div>
           <div data-owner-header-badges style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
             {internalUserId && <OwnerUserBadge userId={internalUserId} companyId={companyId ?? ''} />}
-            {companyId && <OwnerPlanBadge plan={currentPlan} currentCompanyId={companyId} />}
+            {/* Subscription plan is Owner/Partner-only — Manager (and every other role) can't switch it. */}
+            {companyId && (userRole === 'Owner' || userRole === 'Partner') && <OwnerPlanBadge plan={currentPlan} currentCompanyId={companyId} />}
           </div>
         </div>
 

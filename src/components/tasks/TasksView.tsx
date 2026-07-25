@@ -1197,13 +1197,19 @@ function TaskCard({
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToManagerDepartments = false }: {
+export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToManagerDepartments = false, scopeToEmployeeSupervised = false }: {
   sidebar: React.ReactNode
-  // Task assignment is strictly one level down: Owner/Partner assign to Managers,
-  // a Manager assigns to Employees.
-  assigneeRole?: 'Manager' | 'Employee'
+  // Task assignment is strictly one level down: Owner/Partner assign to Managers, a Manager
+  // assigns to Employees, an Employee assigns to the Casual Workers they supervise.
+  assigneeRole?: 'Manager' | 'Employee' | 'Casual Worker'
   // Manager role scope: department board limited to the viewer's own departments.
   scopeToManagerDepartments?: boolean
+  // Employee role scope: narrower than Manager — assignable members are only the Casual
+  // Workers this Employee supervises TODAY (see taskRepository.getSupervisedCasualWorkerIds),
+  // never a whole department, and UC14/16-18/20-23 (templates, duplicate, recurring, archive,
+  // AI suggestion, workload/delay alerts, dependencies) are O/P/M-only so are hidden entirely —
+  // confirmed 2026-07-26.
+  scopeToEmployeeSupervised?: boolean
 }) {
   const router = useRouter()
 
@@ -1458,11 +1464,11 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
   useEffect(() => {
     const tab = new URLSearchParams(window.location.search).get('tab')
     if (tab === 'kanban' || tab === 'calendar' || tab === 'mytasks') {
-      if (scopeToManagerDepartments && tab === 'calendar') return
+      if ((scopeToManagerDepartments || scopeToEmployeeSupervised) && tab === 'calendar') return
       if (!scopeToManagerDepartments && tab === 'mytasks') return
       setBoardViewMode(tab)
     }
-  }, [scopeToManagerDepartments])
+  }, [scopeToManagerDepartments, scopeToEmployeeSupervised])
   const boardTabBarRef = useRef<HTMLDivElement>(null)
   const boardTabButtonRefs = useRef<Record<'kanban' | 'calendar' | 'mytasks', HTMLButtonElement | null>>({ kanban: null, calendar: null, mytasks: null })
   const [boardTabIndicator, setBoardTabIndicator] = useState({ left: 0, width: 0, opacity: 0 })
@@ -1470,7 +1476,9 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
   // The Kanban tab shows a notification dot (same UI as Attendance's Requests tab); the dot
   // widens the button, so the indicator must re-measure when it appears/disappears. My Tasks
   // (Manager only) gets the same treatment for its own new-task dot.
-  const hasTaskNotifications = delayAlerts.length > 0 || workloadSuggestions.length > 0
+  // Workload Rebalancing Alert (UC21) / Task Delay Alert (UC22) are O/P/M-only — Employee never
+  // sees the Notification panel, so its tab-dot must stay off too, regardless of underlying data.
+  const hasTaskNotifications = !scopeToEmployeeSupervised && (delayAlerts.length > 0 || workloadSuggestions.length > 0)
 
   useLayoutEffect(() => {
     const container = boardTabBarRef.current
@@ -1712,10 +1720,13 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
     return () => { cancelled = true }
   }, [router])
 
-  // ── Fetch departments + members ─────────────────────────────────────────────
+  // ── Fetch departments + members (Owner/Partner/Manager) ─────────────────────
+  // Employee uses a completely different source below — /api/team/members never returns
+  // Casual Workers, and department scope comes from the Employee's own single department,
+  // not /api/manager/departments (which is keyed on manager_departments membership).
 
   useEffect(() => {
-    if (!companyId) return
+    if (!companyId || scopeToEmployeeSupervised) return
     Promise.all([
       fetch(`/api/company/departments?company_id=${companyId}`).then(r => r.json()),
       fetch(`/api/team/members?company_id=${companyId}`).then(r => r.json()),
@@ -1736,18 +1747,45 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
       if (memberData.success) setMembers(memberData.members)
       if (statsData.success) setDeptTaskStats(statsData.dept_stats ?? [])
     }).catch(() => {})
-  }, [companyId, internalUserId, scopeToManagerDepartments])
+  }, [companyId, internalUserId, scopeToManagerDepartments, scopeToEmployeeSupervised])
+
+  // ── Fetch department + supervised Casual Workers (Employee) ─────────────────
+  // Reuses /api/employee/dashboard's supervised_workers (today-scoped, supervisor_employee_id-
+  // based — the same live mechanism task assignment eligibility and the clock-out release queue
+  // already use), mapped into the shared Member shape so assignableMembers (below) just works.
+  useEffect(() => {
+    if (!companyId || !internalUserId || !scopeToEmployeeSupervised) return
+    fetch(`/api/employee/dashboard?user_id=${internalUserId}`)
+      .then(r => r.json())
+      .then(data => {
+        if (!data.success) return
+        const dept: Department = { id: data.department_id, name: data.department_name }
+        setDepartments([dept])
+        setDeptColorOverrides([dept])
+        const cwMembers: Member[] = (data.supervised_workers ?? []).map((w: { id: string; full_name: string; email_address: string; phone_number: string; profile_photo_url: string | null }) => ({
+          id: w.id,
+          full_name: w.full_name,
+          role: 'Casual Worker',
+          department_id: data.department_id,
+          email_address: w.email_address,
+          phone_number: w.phone_number,
+        }))
+        setMembers(cwMembers)
+      }).catch(() => {})
+  }, [companyId, internalUserId, scopeToEmployeeSupervised])
 
   // ── Fetch task templates ────────────────────────────────────────────────────
 
   const fetchTaskTemplates = useCallback(async (cid: string) => {
-    if (!cid) return
+    // Task Template (UC14) is O/P/M-only — Employee never fetches, so taskTemplates stays empty
+    // and the "Use Template" picker in the New Task modal never renders.
+    if (!cid || scopeToEmployeeSupervised) return
     if (scopeToManagerDepartments && !internalUserId) return
     const scopeParam = scopeToManagerDepartments && internalUserId ? `&manager_scope_id=${encodeURIComponent(internalUserId)}` : ''
     const res = await fetch(`/api/task-template?company_id=${cid}${scopeParam}`)
     const data = await res.json()
     setTaskTemplates(data.success ? data.templates ?? [] : [])
-  }, [scopeToManagerDepartments, internalUserId])
+  }, [scopeToManagerDepartments, scopeToEmployeeSupervised, internalUserId])
 
   useEffect(() => {
     if (!companyId) return
@@ -1805,15 +1843,19 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
       // ones they personally assigned. Managers get the same peer visibility within their own
       // department(s), resolved server-side (manager_scope_id) since it depends on
       // manager_departments membership, not just role — but stay assigner-only for management.
+      // Employee has no peer tier at all (one Employee per Casual Worker per shift) — always just
+      // their own assigned_by, never the O/P fallback list below.
       const scopeParam = scopeToManagerDepartments
         ? `manager_scope_id=${encodeURIComponent(internalUserId)}`
-        : `assigned_by=${encodeURIComponent(members.filter(m => m.role === 'Owner' || m.role === 'Partner').map(m => m.id).join(',') || internalUserId)}`
+        : scopeToEmployeeSupervised
+          ? `assigned_by=${encodeURIComponent(internalUserId)}`
+          : `assigned_by=${encodeURIComponent(members.filter(m => m.role === 'Owner' || m.role === 'Partner').map(m => m.id).join(',') || internalUserId)}`
       const res = await fetch(`/api/task?company_id=${cid}&kanban=true&${scopeParam}&viewer_id=${encodeURIComponent(internalUserId)}`)
       const data = await res.json()
       if (data.success) setKanban(data.groups)
     } catch {}
     finally { if (!silent) setKanbanLoading(false) }
-  }, [internalUserId, members, scopeToManagerDepartments])
+  }, [internalUserId, members, scopeToManagerDepartments, scopeToEmployeeSupervised])
 
   // My Tasks (Manager only) — tasks where assigned_user_id is this Manager, which per the
   // one-level-down assignment rule can only ever have been assigned by an Owner or Partner.
@@ -1863,11 +1905,13 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
 
   // Owner and Partner are peer "assigner" roles (a Partner is effectively a backup Owner) — same
   // cross-management the Shifts page already gives them over each other's shifts. On this tier
-  // (!scopeToManagerDepartments), every task's assigner is guaranteed to be an Owner or Partner
-  // (strictly-one-level-down rule), so any signed-in viewer here may act on any task, not just
-  // ones they personally assigned. Manager's own tier (scopeToManagerDepartments) keeps the
-  // stricter assigner-only rule — mirrors assertIsTaskOwner in taskService.ts.
-  const isTaskOwner = (task: Task) => !!internalUserId && !!task.assigned_by && (task.assigned_by === internalUserId || !scopeToManagerDepartments)
+  // (neither scopeToManagerDepartments nor scopeToEmployeeSupervised), every task's assigner is
+  // guaranteed to be an Owner or Partner (strictly-one-level-down rule), so any signed-in viewer
+  // here may act on any task, not just ones they personally assigned. Manager's and Employee's
+  // own tiers both keep the stricter assigner-only rule, no peer widening — mirrors
+  // assertIsTaskOwner in taskService.ts ("Manager/Employee assigners are unaffected").
+  const isOwnerPartnerPeerTier = !scopeToManagerDepartments && !scopeToEmployeeSupervised
+  const isTaskOwner = (task: Task) => !!internalUserId && !!task.assigned_by && (task.assigned_by === internalUserId || isOwnerPartnerPeerTier)
 
   // Same assigner-only-with-O/P-peer-widening rule as isTaskOwner (mirrors assertIsTemplateOwner
   // in taskTemplateService.ts), but templates don't get isTaskOwner's "every row here is
@@ -2755,7 +2799,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
     // Manager only ever has one department — force it regardless of the caller's deptId (e.g. a
     // company-wide template passes '', which would otherwise leave the form's only-ever-valid
     // department unset with no picker to fix it, since the field is hidden for Manager below).
-    setNewDeptId(scopeToManagerDepartments ? (orderedDepartments[0]?.id ?? deptId) : deptId)
+    setNewDeptId((scopeToManagerDepartments || scopeToEmployeeSupervised) ? (orderedDepartments[0]?.id ?? deptId) : deptId)
     setNewAssigneeIds(memberId ? [memberId] : [])
     setNewShiftId('')
     setNewStartDate(boardViewMode === 'kanban' && taskDate > todayTaskDate ? taskDate : todayTaskDate)
@@ -3539,9 +3583,9 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
   // the department card grid — which exists to pick between multiple departments — has nothing to
   // pick between. Auto-select it so the sidebar goes straight to the member list, no click needed.
   useEffect(() => {
-    if (!scopeToManagerDepartments || selectedDeptId || orderedDepartments.length === 0) return
+    if (!(scopeToManagerDepartments || scopeToEmployeeSupervised) || selectedDeptId || orderedDepartments.length === 0) return
     setSelectedDeptId(orderedDepartments[0].id)
-  }, [scopeToManagerDepartments, selectedDeptId, orderedDepartments, setSelectedDeptId])
+  }, [scopeToManagerDepartments, scopeToEmployeeSupervised, selectedDeptId, orderedDepartments, setSelectedDeptId])
 
   // Departments load async — check newly seen ones in the Deadline Calendar filter as they
   // arrive, without resurrecting departments the user has explicitly unchecked.
@@ -3708,7 +3752,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
           animation: tabContentIn 0.22s ease-out both;
         }
 
-        ${scopeToManagerDepartments ? `
+        ${(scopeToManagerDepartments || scopeToEmployeeSupervised) ? `
         .task-dept-panel,
         .task-side-section,
         .task-side-card,
@@ -3777,7 +3821,8 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
           </div>
           <div data-owner-header-badges style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
             {internalUserId && <OwnerUserBadge userId={internalUserId} companyId={companyId} />}
-            {companyId && <OwnerPlanBadge plan={currentPlan} currentCompanyId={companyId} />}
+            {/* Subscription plan is Owner/Partner-only — Manager (and every other role) can't switch it. */}
+            {companyId && !scopeToManagerDepartments && !scopeToEmployeeSupervised && <OwnerPlanBadge plan={currentPlan} currentCompanyId={companyId} />}
           </div>
         </div>
 
@@ -3821,10 +3866,14 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                     { id: 'mytasks' as const, label: 'My Tasks' },
                     { id: 'kanban' as const, label: 'Team Tasks' },
                   ]
-                : [
-                    { id: 'kanban' as const, label: 'Board' },
-                    { id: 'calendar' as const, label: 'Deadline Calendar' },
-                  ]
+                // Employee: no My Tasks tab (lives on the Dashboard instead) and no Deadline
+                // Calendar tab (matches Manager not having one either) — just the board.
+                : scopeToEmployeeSupervised
+                  ? [{ id: 'kanban' as const, label: 'Board' }]
+                  : [
+                      { id: 'kanban' as const, label: 'Board' },
+                      { id: 'calendar' as const, label: 'Deadline Calendar' },
+                    ]
               ).map(tab => {
                 const active = boardViewMode === tab.id
                 return (
@@ -3900,7 +3949,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                         const clickable = card.count > 0 || active
                         const ring = `0 0 0 2px #FFFFFF, 0 0 0 3.5px ${card.iconColor}`
                         return (
-                          <div key={card.key} className="task-side-card" style={{ border: '1px solid #E5E7EB', borderRadius: 12, background: '#F9FAFB', padding: '11px 12px', display: 'flex', alignItems: 'center', gap: 10, animationDelay: scopeToManagerDepartments ? '0s' : `${0.12 + cardIdx * 0.06}s` }}>
+                          <div key={card.key} className="task-side-card" style={{ border: '1px solid #E5E7EB', borderRadius: 12, background: '#F9FAFB', padding: '11px 12px', display: 'flex', alignItems: 'center', gap: 10, animationDelay: (scopeToManagerDepartments || scopeToEmployeeSupervised) ? '0s' : `${0.12 + cardIdx * 0.06}s` }}>
                             <span style={{ width: 28, height: 28, borderRadius: 9, background: card.iconBg, color: card.iconColor, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                               {card.icon}
                             </span>
@@ -3916,11 +3965,11 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                               onClick={clickable ? () => {
                                 if (active) {
                                   setDeadlineBucketFilter(null)
-                                  if (scopeToManagerDepartments) { setHighlightSource(null); setHighlightedDelayTaskIds(new Set()) }
+                                  if (scopeToManagerDepartments || scopeToEmployeeSupervised) { setHighlightSource(null); setHighlightedDelayTaskIds(new Set()) }
                                   return
                                 }
                                 setDeadlineBucketFilter(card.key)
-                                if (scopeToManagerDepartments) {
+                                if (scopeToManagerDepartments || scopeToEmployeeSupervised) {
                                   setBoardViewMode('kanban')
                                   setHighlightSource('snapshot')
                                   setHighlightedDelayTaskIds(new Set(card.tasks.map(t => t.id)))
@@ -3931,7 +3980,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                                 }
                               } : undefined}
                               disabled={!clickable}
-                              title={active ? 'Clear' : !clickable ? undefined : scopeToManagerDepartments ? `Highlight ${card.label} tasks on the board` : `Show ${card.label} tasks in the calendar`}
+                              title={active ? 'Clear' : !clickable ? undefined : (scopeToManagerDepartments || scopeToEmployeeSupervised) ? `Highlight ${card.label} tasks on the board` : `Show ${card.label} tasks in the calendar`}
                               style={{ minWidth: 30, height: 30, padding: '0 9px', border: 'none', borderRadius: 999, background: clickable ? card.iconBg : '#F3F4F6', color: clickable ? card.iconColor : '#6B7280', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 800, flexShrink: 0, boxSizing: 'border-box', cursor: clickable ? 'pointer' : 'default', boxShadow: active ? ring : 'none', transition: 'box-shadow 0.15s ease, transform 0.15s ease' }}
                               onMouseEnter={e => { if (clickable) { e.currentTarget.style.boxShadow = ring; e.currentTarget.style.transform = 'scale(1.08)' } }}
                               onMouseLeave={e => { e.currentTarget.style.boxShadow = active ? ring : 'none'; e.currentTarget.style.transform = 'none' }}
@@ -4084,7 +4133,9 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                 </>
                 ) : (
                 <>
+                {/* Workload Rebalancing Alert (UC21) / Task Delay Alert (UC22) are O/P/M-only. */}
                 {/* overflow visible so the CardInfo hover tooltips aren't clipped at the section edge */}
+                {!scopeToEmployeeSupervised && (
                 <section className="task-side-section" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, overflow: 'visible', animationDelay: '0.05s' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 18px', borderBottom: '1px solid #F3F4F6' }}>
                     <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -4185,27 +4236,31 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                     {insightError && <div style={{ color: '#DC2626', fontSize: 12, fontWeight: 700 }}>{insightError}</div>}
                   </div>
                 </section>
+                )}
 
-                {scopeToManagerDepartments && deadlineSummarySection}
+                {(scopeToManagerDepartments || scopeToEmployeeSupervised) && deadlineSummarySection}
 
               <section className="task-dept-panel" style={{ width: '100%', background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, overflow: 'visible' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '16px 18px', borderBottom: '1px solid #F3F4F6' }}>
-                  {scopeToManagerDepartments ? (
-                    // Manager only ever has the one department in scope — no back button (nothing
-                    // to go back to) and no department color dot (no other department to tell it
-                    // apart from), just the flat member list below.
+                  {(scopeToManagerDepartments || scopeToEmployeeSupervised) ? (
+                    // Manager/Employee only ever have their own single department in scope — no
+                    // back button (nothing to go back to) and no department color dot (no other
+                    // department to tell it apart from), just the flat member list below.
                     <>
                       <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                         <Users size={15} style={{ color: '#F97316' }} />
                       </div>
                       <span style={{ fontWeight: 700, fontSize: '1rem', color: '#0F172A' }}>Member</span>
-                      <button
-                        type="button"
-                        onClick={openAiAssign}
-                        style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, border: 0, borderRadius: 8, background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', color: '#FFFFFF', height: 30, padding: '0 12px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', flexShrink: 0 }}
-                      >
-                        <Sparkles size={13} strokeWidth={2.5} /> AI Assign
-                      </button>
+                      {/* AI Task Assignment Suggestion (UC20) is O/P/M-only. */}
+                      {!scopeToEmployeeSupervised && (
+                        <button
+                          type="button"
+                          onClick={openAiAssign}
+                          style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, border: 0, borderRadius: 8, background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', color: '#FFFFFF', height: 30, padding: '0 12px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', flexShrink: 0 }}
+                        >
+                          <Sparkles size={13} strokeWidth={2.5} /> AI Assign
+                        </button>
+                      )}
                     </>
                   ) : selectedDept ? (
                     <>
@@ -4539,22 +4594,27 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                     )}
                   </div>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                    <button
-                      type="button"
-                      onClick={openArchiveModal}
-                      disabled={!companyId}
-                      style={{ height: 38, padding: '0 14px', border: `1px solid ${TASK_BORDER}`, borderRadius: 8, background: '#FFFFFF', color: companyId ? TASK_TEXT : '#94A3B8', fontSize: 13, fontWeight: 700, cursor: companyId ? 'pointer' : 'not-allowed', display: 'inline-flex', alignItems: 'center', gap: 7 }}
-                    >
-                      <Archive size={15} /> Archive
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setTemplatesModalOpen(true)}
-                      disabled={!companyId}
-                      style={{ height: 38, padding: '0 14px', border: `1px solid ${TASK_BORDER}`, borderRadius: 8, background: '#FFFFFF', color: companyId ? TASK_TEXT : '#94A3B8', fontSize: 13, fontWeight: 700, cursor: companyId ? 'pointer' : 'not-allowed', display: 'inline-flex', alignItems: 'center', gap: 7 }}
-                    >
-                      <LayoutTemplate size={15} /> Templates
-                    </button>
+                    {/* Archive (UC18) / Task Template (UC14) are O/P/M-only, not part of Employee's scope. */}
+                    {!scopeToEmployeeSupervised && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={openArchiveModal}
+                          disabled={!companyId}
+                          style={{ height: 38, padding: '0 14px', border: `1px solid ${TASK_BORDER}`, borderRadius: 8, background: '#FFFFFF', color: companyId ? TASK_TEXT : '#94A3B8', fontSize: 13, fontWeight: 700, cursor: companyId ? 'pointer' : 'not-allowed', display: 'inline-flex', alignItems: 'center', gap: 7 }}
+                        >
+                          <Archive size={15} /> Archive
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setTemplatesModalOpen(true)}
+                          disabled={!companyId}
+                          style={{ height: 38, padding: '0 14px', border: `1px solid ${TASK_BORDER}`, borderRadius: 8, background: '#FFFFFF', color: companyId ? TASK_TEXT : '#94A3B8', fontSize: 13, fontWeight: 700, cursor: companyId ? 'pointer' : 'not-allowed', display: 'inline-flex', alignItems: 'center', gap: 7 }}
+                        >
+                          <LayoutTemplate size={15} /> Templates
+                        </button>
+                      </>
+                    )}
                     {boardViewMode === 'calendar' && (
                       <>
                         <button
@@ -4636,7 +4696,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                                       members={members}
                                       shiftOptions={shiftOptions}
                                       departments={departments}
-                                      showDept={selectedDeptId === '' && !scopeToManagerDepartments}
+                                      showDept={selectedDeptId === '' && !scopeToManagerDepartments && !scopeToEmployeeSupervised}
                                       onClick={() => openTask(task, true)}
                                       onEdit={() => openTask(task, false)}
                                       subTaskCount={subTasks.length}
@@ -4648,7 +4708,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                                       // department, so it's worth labeling whose task this is.
                                       // Owner/Partner don't get this — not asked for, and their
                                       // board already only shows tasks either of them assigned.
-                                      viewerId={scopeToManagerDepartments ? internalUserId : undefined}
+                                      viewerId={(scopeToManagerDepartments || scopeToEmployeeSupervised) ? internalUserId : undefined}
                                     />
                                     {isExpanded && subTasks.length > 0 && (
                                       <div style={{ marginTop: -6, marginBottom: 14, paddingLeft: 6, paddingRight: 20 }}>
@@ -4671,7 +4731,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                                                 members={members}
                                                 shiftOptions={shiftOptions}
                                                 departments={departments}
-                                                showDept={selectedDeptId === '' && !scopeToManagerDepartments}
+                                                showDept={selectedDeptId === '' && !scopeToManagerDepartments && !scopeToEmployeeSupervised}
                                                 onClick={() => {}}
                                                 onEdit={() => openTask(sub, false)}
                                                 clickable={false}
@@ -4887,13 +4947,18 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                   once the task reached Review/Complete: submitted/approved work only offers the
                   Approve/Reject sign-off above, no Duplicate/Archive/Delete. */}
               {isOwner && selectedTask.status !== 'Review' && selectedTask.status !== 'Complete' && (
-                <div style={{ padding: '0 20px 18px', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
-                  <button type="button" onClick={handleDuplicateTask} style={{ height: 36, border: '1px solid #E5E7EB', borderRadius: 8, background: '#FFFFFF', color: '#334155', fontSize: 12, fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-                    <Copy size={13} /> Duplicate
-                  </button>
-                  <button type="button" onClick={handleArchiveTask} disabled={taskActionLoading === 'archive'} style={{ height: 36, border: '1px solid #FED7AA', borderRadius: 8, background: '#FFF7ED', color: '#C2410C', fontSize: 12, fontWeight: 700, cursor: taskActionLoading ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-                    {taskActionLoading === 'archive' ? <Spinner size={12} dark /> : <Archive size={13} />} Archive
-                  </button>
+                <div style={{ padding: '0 20px 18px', display: 'grid', gridTemplateColumns: scopeToEmployeeSupervised ? '1fr' : 'repeat(3, 1fr)', gap: 8 }}>
+                  {/* Duplicate (UC16) / Archive (UC18) are O/P/M-only — Employee only gets Delete (UC15). */}
+                  {!scopeToEmployeeSupervised && (
+                    <>
+                      <button type="button" onClick={handleDuplicateTask} style={{ height: 36, border: '1px solid #E5E7EB', borderRadius: 8, background: '#FFFFFF', color: '#334155', fontSize: 12, fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                        <Copy size={13} /> Duplicate
+                      </button>
+                      <button type="button" onClick={handleArchiveTask} disabled={taskActionLoading === 'archive'} style={{ height: 36, border: '1px solid #FED7AA', borderRadius: 8, background: '#FFF7ED', color: '#C2410C', fontSize: 12, fontWeight: 700, cursor: taskActionLoading ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                        {taskActionLoading === 'archive' ? <Spinner size={12} dark /> : <Archive size={13} />} Archive
+                      </button>
+                    </>
+                  )}
                   <button type="button" onClick={handleDeleteTask} disabled={deleteLoading} style={{ height: 36, border: 'none', borderRadius: 8, background: deleteLoading ? '#F3A8A8' : 'linear-gradient(135deg, #EF4444, #DC2626)', color: '#FFFFFF', fontSize: 12, fontWeight: 700, cursor: deleteLoading ? 'not-allowed' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, opacity: deleteLoading ? 0.7 : 1 }}>
                     {deleteLoading ? <Spinner size={12} /> : <Trash2 size={13} />} Delete
                   </button>
@@ -4966,8 +5031,8 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                   forced onto editDeptId when the panel opened), so the field is just noise; the
                   Assign To field stays, since reassigning an existing task to someone else in
                   that department is a real edit, not a redundant restatement. */}
-              <div style={scopeToManagerDepartments ? undefined : { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                {!scopeToManagerDepartments && (
+              <div style={(scopeToManagerDepartments || scopeToEmployeeSupervised) ? undefined : { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                {!scopeToManagerDepartments && !scopeToEmployeeSupervised && (
                   <div>
                     <label style={modalLabelStyle}>Department</label>
                     <DropdownField
@@ -5578,7 +5643,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                   hidden. Opened with no assignee yet (e.g. applying a company-wide template),
                   Assign To still needs picking, so it stays — just without the Department field
                   next to it, since that part is never in question for a Manager. */}
-              {!scopeToManagerDepartments ? (
+              {!scopeToManagerDepartments && !scopeToEmployeeSupervised ? (
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                   <div>
                     <label style={modalLabelStyle}>Department</label>

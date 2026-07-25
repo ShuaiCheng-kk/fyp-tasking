@@ -1023,10 +1023,6 @@ function canClockIn(shift: MyShift['shift']): boolean {
   return Date.now() >= shiftStart.getTime() - CLOCK_IN_WINDOW_MINUTES_BEFORE * 60000
 }
 
-function isLateForShift(shift: MyShift['shift']): boolean {
-  return Date.now() > new Date(`${shift.shift_date}T${shift.start_time}Z`).getTime()
-}
-
 function canClockOut(shift: MyShift['shift']): boolean {
   if (shift.is_open_ended) return true
   return Date.now() >= new Date(`${shift.shift_date}T${shift.end_time}Z`).getTime()
@@ -1043,7 +1039,7 @@ function fmtClockStamp(iso: string | null): string {
   return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'UTC' })
 }
 
-export default function AttendanceView({ sidebar, basePath, canModifyClockTimes = true, scopeToManagerDepartments = false, showPersonalClock = false }: {
+export default function AttendanceView({ sidebar, basePath, canModifyClockTimes = true, scopeToManagerDepartments = false, showPersonalClock = false, scopeToEmployeeSupervised = false }: {
   sidebar: React.ReactNode
   basePath: string
   // UC56 (modify clock in/out times) is O/P-only.
@@ -1052,6 +1048,11 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
   scopeToManagerDepartments?: boolean
   // UC49: Managers (and later Employees) clock in/out of their own shifts from this page.
   showPersonalClock?: boolean
+  // Employee role scope: narrower than Manager — records/My Request are scoped to just the
+  // Employee themselves (never a whole department, never an approval queue — Employee is never
+  // an approver for Shift Swap or Fixed Day Off), plus the Casual Worker clock-out release queue
+  // for whoever they supervise today (confirmed 2026-07-26).
+  scopeToEmployeeSupervised?: boolean
 }) {
   const router = useRouter()
   const [internalUserId, setInternalUserId] = useState('')
@@ -1059,13 +1060,14 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
   const [currentPlan, setCurrentPlan] = useState('Free')
 
   // top-level tab; ?tab=swaps|fixedoff deep-links from the dashboard's Waiting On You cards.
-  // Manager has no 'fixedoff' tab at all (see mainTabs below) — ignore that deep link for them
-  // rather than landing on a tab with nothing to render.
+  // Manager has no 'fixedoff' tab at all, Employee has neither 'swaps' nor 'fixedoff' (see
+  // mainTabs below) — ignore deep links to a tab that role has nothing to render on.
   const [mainTab, setMainTab] = useState<'records' | 'swaps' | 'fixedoff'>('records')
   useEffect(() => {
     const tab = new URLSearchParams(window.location.search).get('tab')
+    if (scopeToEmployeeSupervised) return
     if (tab === 'swaps' || (tab === 'fixedoff' && !scopeToManagerDepartments)) setMainTab(tab)
-  }, [scopeToManagerDepartments])
+  }, [scopeToManagerDepartments, scopeToEmployeeSupervised])
   const isCompactReqLayout = useIsCompactViewport(1300)
   // Current Task Assignment / Task Assignment After Swap sit side by side in the middle column
   // of the (up to) 3-column Requests grid above — that column's real width is a fraction of the
@@ -1311,12 +1313,12 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
 
   useEffect(() => {
     const submit = new URLSearchParams(window.location.search).get('submit')
-    if (scopeToManagerDepartments && submit === 'offday') {
+    if ((scopeToManagerDepartments || scopeToEmployeeSupervised) && submit === 'offday') {
       setMainTab('records')
       setRequestModalStep('offday')
       setRequestModalOpen(true)
     }
-  }, [scopeToManagerDepartments])
+  }, [scopeToManagerDepartments, scopeToEmployeeSupervised])
 
   const fetchFixedOffQuota = useCallback(async (cid: string, uid: string) => {
     if (!cid || !uid) return
@@ -1327,18 +1329,20 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
     } catch {}
   }, [])
 
-  // Swap counterparts must be same-department, same-role (Manager) colleagues with an upcoming
-  // (tomorrow+) shift — reuses the timeline endpoint rather than a new API just for this picker.
+  // Swap counterparts must be same-department, same-role colleagues with an upcoming (tomorrow+)
+  // shift — reuses the timeline endpoint rather than a new API just for this picker. Manager's
+  // counterparts are fellow Managers; Employee's are fellow Employees in the same department.
   const fetchSwapCandidates = useCallback(async (cid: string) => {
     if (!cid) return
     try {
       const from = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
       const to = new Date(Date.now() + 31 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
-      const res = await fetch(`/api/shift?company_id=${cid}&date_from=${from}&date_to=${to}&viewer_role=Manager`)
+      const candidateRole = scopeToEmployeeSupervised ? 'Employee' : 'Manager'
+      const res = await fetch(`/api/shift?company_id=${cid}&date_from=${from}&date_to=${to}&viewer_role=${candidateRole}`)
       const data = await res.json()
       if (data.success) setSwapCandidateRows(data.rows ?? [])
     } catch {}
-  }, [])
+  }, [scopeToEmployeeSupervised])
 
   // Read-only company config for the Submit Request modal's subtitles (Swap Deadline / Submission
   // Deadline) — a Manager only reads these (shiftSwapSettingsService.getSettings /
@@ -1370,13 +1374,13 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
   }, [])
 
   useEffect(() => {
-    if (!scopeToManagerDepartments || !companyId || !internalUserId) return
+    if (!(scopeToManagerDepartments || scopeToEmployeeSupervised) || !companyId || !internalUserId) return
     void fetchFixedOffQuota(companyId, internalUserId)
     void fetchSwapCandidates(companyId)
     void fetchMyRequests(internalUserId)
     void fetchSwapDeadlineForManager(companyId, internalUserId)
     void fetchOffDayDeadlineForManager(companyId, internalUserId)
-  }, [scopeToManagerDepartments, companyId, internalUserId, fetchFixedOffQuota, fetchSwapCandidates, fetchMyRequests, fetchSwapDeadlineForManager, fetchOffDayDeadlineForManager])
+  }, [scopeToManagerDepartments, scopeToEmployeeSupervised, companyId, internalUserId, fetchFixedOffQuota, fetchSwapCandidates, fetchMyRequests, fetchSwapDeadlineForManager, fetchOffDayDeadlineForManager])
 
   // Must return the SAME week that submission validation will actually accept — previously this
   // computed its own naive "next Monday from today" independent of the Submission Deadline, so
@@ -1670,8 +1674,6 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
   const [myShifts, setMyShifts] = useState<MyShift[]>([])
   const [clockBusyId, setClockBusyId] = useState('')
   const [clockMessage, setClockMessage] = useState('')
-  const [lateReasonFor, setLateReasonFor] = useState<string | null>(null)
-  const [lateReason, setLateReason] = useState('')
 
   const fetchMyShift = useCallback(async (uid: string) => {
     if (!uid) return
@@ -1693,12 +1695,11 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
     return myShifts.filter(s => s.shift.shift_date === todayKey).sort(compareMyShiftsByDateTime)
   }, [myShifts])
 
-  const runClockAction = async (shift: MyShift, action: 'clock_in' | 'clock_out', extra?: { late_reason?: string }) => {
+  const runClockAction = async (shift: MyShift, action: 'clock_in' | 'clock_out') => {
     setClockBusyId(`${shift.assignment.id}:${action}`)
     setClockMessage('')
     try {
       const body: Record<string, unknown> = { action, user_id: internalUserId, shift_assignment_id: shift.assignment.id }
-      if (extra?.late_reason) body.late_reason = extra.late_reason
       const res = await fetch('/api/employee/attendance', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1706,8 +1707,6 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'Attendance action failed')
-      setLateReasonFor(null)
-      setLateReason('')
       await fetchMyShift(internalUserId)
       if (companyId) void fetchWeekRecords(companyId, arWindowOffset)
       setClockMessage(action === 'clock_in' ? 'Clocked in successfully.' : 'Clocked out successfully.')
@@ -1715,6 +1714,42 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
       setClockMessage(err instanceof Error ? err.message : 'Attendance action failed')
     } finally {
       setClockBusyId('')
+    }
+  }
+
+  // Casual Workers on a one-off job need this Employee to review their work and release them
+  // before they can clock out — see casualAttendanceService.clockOut.
+  const [releaseQueue, setReleaseQueue] = useState<{ id: string; casual_worker_id: string; worker_name: string; clock_in_time: string | null; shift_title: string | null; shift_date: string; start_time: string }[]>([])
+  const [releaseBusyId, setReleaseBusyId] = useState('')
+
+  const fetchReleaseQueue = useCallback(async (uid: string) => {
+    if (!uid) return
+    try {
+      const res = await fetch(`/api/employee/attendance?user_id=${uid}&resource=clockout_release_queue`)
+      const data = await res.json()
+      if (data.success) setReleaseQueue(data.queue ?? [])
+    } catch {}
+  }, [])
+
+  useEffect(() => {
+    if (scopeToEmployeeSupervised && internalUserId) void fetchReleaseQueue(internalUserId)
+  }, [scopeToEmployeeSupervised, internalUserId, fetchReleaseQueue])
+
+  const releaseClockOut = async (item: { id: string }) => {
+    setReleaseBusyId(item.id)
+    try {
+      const res = await fetch('/api/employee/attendance', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'release_clockout', user_id: internalUserId, attendance_record_id: item.id }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message || 'Failed to release clock-out')
+      setReleaseQueue(prev => prev.filter(q => q.id !== item.id))
+    } catch (err) {
+      setClockMessage(err instanceof Error ? err.message : 'Failed to release clock-out')
+    } finally {
+      setReleaseBusyId('')
     }
   }
 
@@ -1729,6 +1764,14 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
     )
   }, [])
 
+  // Employee scope: narrower than Manager's whole department — only this Employee's own
+  // attendance assignment rows, never a colleague's or a Casual Worker's (the CW release queue
+  // below covers Employee's oversight of Casual Workers separately).
+  const scopeToSelf = useCallback(<T extends { assignment?: { user_id?: string | null } }>(rows: T[]): T[] => {
+    if (!scopeToEmployeeSupervised || !internalUserId) return rows
+    return rows.filter(r => r.assignment?.user_id === internalUserId)
+  }, [scopeToEmployeeSupervised, internalUserId])
+
   const fetchWeekRecords = useCallback(async (cid: string, offset: number) => {
     if (!cid) return
     setWeekLoading(true)
@@ -1738,10 +1781,10 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
     try {
       const res = await fetch(`/api/attendance?company_id=${cid}&resource=range&from_date=${from}&to_date=${to}`)
       const data = await res.json()
-      if (data.success) setWeekRecords(scopeByDept(data.records ?? []))
+      if (data.success) setWeekRecords(scopeToSelf(scopeByDept(data.records ?? [])))
     } catch { /* leave stale data */ }
     finally { setWeekLoading(false) }
-  }, [scopeByDept])
+  }, [scopeByDept, scopeToSelf])
 
   // ── CSV export ────────────────────────────────────────────────────────────
   // ── Fetch request data ────────────────────────────────────────────────────
@@ -1785,6 +1828,24 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scopeToManagerDepartments, internalUserId, companyId])
+
+  // Same as above for Employee — resolve their own single department (for the swap-candidate
+  // colleague filter) via /api/employee/dashboard rather than /api/manager/departments.
+  useEffect(() => {
+    if (!scopeToEmployeeSupervised || !internalUserId || !companyId) return
+    let cancelled = false
+    fetch(`/api/employee/dashboard?user_id=${internalUserId}`)
+      .then(r => r.json())
+      .then(d => {
+        if (cancelled || !d.success) return
+        scopedDeptRef.current = { ids: new Set([d.department_id]), names: new Set([d.department_name]) }
+        void fetchWeekRecords(companyId, arWindowOffset)
+        void fetchRequestData(companyId)
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scopeToEmployeeSupervised, internalUserId, companyId])
 
   // ── Fetch current dept shifts for Current Schedule block ─────────────────
   // Fetches a 3-week band (7 days back, 14 forward of the anchor) instead of just the visible
@@ -2606,9 +2667,9 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
   const filteredDeptGroups = useMemo(() => {
     const kw = recordsKeyword.toLowerCase().trim()
 
-    // Manager page: always the merged whole-department list (no Internal Staff/Casual Worker
+    // Manager/Employee page: always the merged whole-scope list (no Internal Staff/Casual Worker
     // panel toggle to drive `source` off). Owner/Partner keep the existing panel-driven split.
-    const source = scopeToManagerDepartments ? allGroups : (recordsRole === 'Casual Worker' ? cwGroups : deptGroups)
+    const source = (scopeToManagerDepartments || scopeToEmployeeSupervised) ? allGroups : (recordsRole === 'Casual Worker' ? cwGroups : deptGroups)
 
     return source
       .filter(g => !selectedDeptId || g.deptId === selectedDeptId)
@@ -2633,7 +2694,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
         })
         return { ...group, people: filtered }
       }).filter(g => g.people.size > 0)
-  }, [deptGroups, cwGroups, allGroups, scopeToManagerDepartments, recordsKeyword, recordsRole, selectedDeptId, casualJobType])
+  }, [deptGroups, cwGroups, allGroups, scopeToManagerDepartments, scopeToEmployeeSupervised, recordsKeyword, recordsRole, selectedDeptId, casualJobType])
 
   // ── Export (CSV or PDF) — fetches the full date range from API, not just the 7-day window ──
   const doExport = useCallback(async (fromDate: string, toDate: string, format: 'csv' | 'pdf') => {
@@ -2894,10 +2955,14 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
 
   // Manager has no "Off Day"/"My Request" tab at all — they never review anyone's Fixed Day Off
   // (UC55 is O/P-only) and submitting is now the header button on Records (see requestModalOpen).
+  // Employee goes further: no "Swap Requests" tab either — Employee never approves a swap (UC53
+  // is Manager/O-P-only), only submits their own, same as Manager's own-request flow.
   const mainTabs = [
-    { key: 'records' as const, label: scopeToManagerDepartments ? 'Team Hub' : 'Records', dot: scopeToManagerDepartments && !myReqLoading && myRequestAttentionCount > 0 },
-    { key: 'swaps' as const, label: scopeToManagerDepartments ? 'Swap Requests' : 'Shift Swap', dot: !reqLoading && pendingSwapCount > 0 },
-    ...(scopeToManagerDepartments ? [] : [
+    { key: 'records' as const, label: (scopeToManagerDepartments || scopeToEmployeeSupervised) ? 'Team Hub' : 'Records', dot: (scopeToManagerDepartments || scopeToEmployeeSupervised) && !myReqLoading && myRequestAttentionCount > 0 },
+    ...(scopeToEmployeeSupervised ? [] : [
+      { key: 'swaps' as const, label: scopeToManagerDepartments ? 'Swap Requests' : 'Shift Swap', dot: !reqLoading && pendingSwapCount > 0 },
+    ]),
+    ...(scopeToManagerDepartments || scopeToEmployeeSupervised ? [] : [
       { key: 'fixedoff' as const, label: 'Off Day', dot: !reqLoading && pendingFixedOffCount > 0 },
     ]),
   ]
@@ -2909,7 +2974,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
   // in DOM order, so the tab's blocks cascade in one after another instead of moving as one page.
   // Already-staggered sections are skipped so refetches (reqLoading flips) don't replay them.
   useLayoutEffect(() => {
-    if (scopeToManagerDepartments) return
+    if (scopeToManagerDepartments || scopeToEmployeeSupervised) return
     const sections = document.querySelectorAll<HTMLElement>('.att-page section')
     let order = 0
     sections.forEach(el => {
@@ -2918,7 +2983,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
       el.style.animationDelay = `${Math.min(order, 8) * 80}ms`
       order++
     })
-  }, [mainTab, reqLoading, scopeToManagerDepartments])
+  }, [mainTab, reqLoading, scopeToManagerDepartments, scopeToEmployeeSupervised])
 
   // ─────────────────────────────────────────────────────────────────────────
   return (
@@ -2959,7 +3024,8 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
           <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">Attendance</h1>
           <div data-owner-header-badges style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
             {internalUserId && <OwnerUserBadge userId={internalUserId} companyId={companyId} />}
-            {companyId && <OwnerPlanBadge plan={currentPlan} currentCompanyId={companyId} />}
+            {/* Subscription plan is Owner/Partner-only — Manager (and every other role) can't switch it. */}
+            {companyId && !scopeToManagerDepartments && !scopeToEmployeeSupervised && <OwnerPlanBadge plan={currentPlan} currentCompanyId={companyId} />}
           </div>
         </div>
 
@@ -2978,8 +3044,6 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                 const clockedOut = !!shift.record?.clock_out_time
                 const busyIn = clockBusyId === `${shift.assignment.id}:clock_in`
                 const busyOut = clockBusyId === `${shift.assignment.id}:clock_out`
-                const late = !clockedIn && isLateForShift(shift.shift)
-                const askingLate = lateReasonFor === shift.assignment.id
                 return (
                   <div key={shift.assignment.id} style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', minWidth: 0 }}>
                     <span style={{ fontSize: 13.5, fontWeight: 600, color: '#334155', whiteSpace: 'nowrap' }}>
@@ -2987,9 +3051,9 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                       {clockedIn && <span style={{ color: '#059669' }}> · In {fmtClockStamp(shift.record!.clock_in_time)}</span>}
                       {clockedOut && <span style={{ color: '#64748B' }}> · Out {fmtClockStamp(shift.record!.clock_out_time)}</span>}
                     </span>
-                    {!clockedIn && canClockIn(shift.shift) && !askingLate && (
+                    {!clockedIn && canClockIn(shift.shift) && (
                       <button
-                        onClick={() => { if (late) { setLateReasonFor(shift.assignment.id); setLateReason('') } else void runClockAction(shift, 'clock_in') }}
+                        onClick={() => void runClockAction(shift, 'clock_in')}
                         disabled={!!clockBusyId}
                         style={{ height: 32, padding: '0 16px', border: 'none', borderRadius: 9, background: '#059669', color: '#FFFFFF', fontSize: 13, fontWeight: 700, cursor: clockBusyId ? 'default' : 'pointer', opacity: busyIn ? 0.6 : 1, transition: 'transform 0.12s ease, box-shadow 0.12s ease' }}
                         onMouseEnter={e => { if (!clockBusyId) { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = '0 4px 10px rgba(5,150,105,0.3)' } }}
@@ -2997,31 +3061,6 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                       >
                         {busyIn ? 'Working…' : 'Clock In'}
                       </button>
-                    )}
-                    {askingLate && (
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                        <input
-                          value={lateReason}
-                          onChange={e => setLateReason(e.target.value)}
-                          placeholder="Reason for being late"
-                          style={{ height: 32, width: 220, borderRadius: 9, border: '1px solid #E5E7EB', background: '#F9FAFB', padding: '0 12px', fontSize: 13, color: '#111827', outline: 'none' }}
-                          onFocus={e => { e.currentTarget.style.borderColor = '#F97316'; e.currentTarget.style.background = '#FFFFFF' }}
-                          onBlur={e => { e.currentTarget.style.borderColor = '#E5E7EB'; e.currentTarget.style.background = '#F9FAFB' }}
-                        />
-                        <button
-                          onClick={() => { if (lateReason.trim()) void runClockAction(shift, 'clock_in', { late_reason: lateReason.trim() }) }}
-                          disabled={!!clockBusyId || !lateReason.trim()}
-                          style={{ height: 32, padding: '0 14px', border: 'none', borderRadius: 9, background: !lateReason.trim() ? '#A7F3D0' : '#059669', color: '#FFFFFF', fontSize: 13, fontWeight: 700, cursor: clockBusyId || !lateReason.trim() ? 'default' : 'pointer', opacity: busyIn ? 0.6 : 1 }}
-                        >
-                          {busyIn ? 'Working…' : 'Submit & Clock In'}
-                        </button>
-                        <button
-                          onClick={() => { setLateReasonFor(null); setLateReason('') }}
-                          style={{ height: 32, padding: '0 10px', border: '1px solid #E5E7EB', borderRadius: 9, background: '#FFFFFF', color: '#64748B', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
-                        >
-                          Cancel
-                        </button>
-                      </span>
                     )}
                     {clockedIn && !clockedOut && canClockOut(shift.shift) && (
                       <button
@@ -3050,6 +3089,38 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
           </div>
         )}
 
+        {/* ── Casual Worker Clock-Out Requests — one-off jobs have no scheduled end time, so
+            each Casual Worker needs this Employee to review their work and release them before
+            they can clock out (see casualAttendanceService.clockOut). ── */}
+        {scopeToEmployeeSupervised && releaseQueue.length > 0 && (
+          <div style={{ padding: '0 28px 14px', flexShrink: 0 }}>
+            <div style={{ background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, padding: '12px 18px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFFBEB', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <Clock size={15} style={{ color: '#D97706' }} />
+                </div>
+                <span style={{ fontSize: 15, fontWeight: 700, color: '#0F172A' }}>Casual Worker Clock-Out Requests</span>
+              </div>
+              {releaseQueue.map(item => (
+                <div key={item.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '10px 14px', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 10 }}>
+                  <div>
+                    <p style={{ margin: 0, fontWeight: 700, fontSize: 13, color: '#111827' }}>{item.worker_name} — {item.shift_title || 'One-off job'}</p>
+                    <p style={{ margin: '2px 0 0', fontSize: 12, color: '#92400E' }}>
+                      Clocked in {item.clock_in_time ? fmtClockStamp(item.clock_in_time) : '—'} — waiting for you to review and release
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => releaseClockOut(item)}
+                    disabled={!!releaseBusyId}
+                    style={{ height: 34, padding: '0 16px', borderRadius: 9, border: 'none', background: '#059669', color: '#fff', fontWeight: 700, fontSize: 13, cursor: releaseBusyId ? 'default' : 'pointer', flexShrink: 0 }}>
+                    {releaseBusyId === item.id ? 'Releasing…' : 'Release Clock-Out'}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* ── Main tab bar ───────────────────────────────────────────────── */}
         <div style={{ padding: '0 28px 16px', flexShrink: 0 }}>
           <CapsuleTabBar tabs={mainTabs} active={mainTab} onChange={setMainTab} />
@@ -3060,16 +3131,16 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
         ══════════════════════════════════════════════════════════════════ */}
         {mainTab === 'records' && (() => {
           return (
-          <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', ...(scopeToManagerDepartments ? { padding: '0 28px 28px', boxSizing: 'border-box', gap: 16 } : {}) }}>
+          <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', ...((scopeToManagerDepartments || scopeToEmployeeSupervised) ? { padding: '0 28px 28px', boxSizing: 'border-box', gap: 16 } : {}) }}>
           <>
-{/* Manager: split Records tab vertically into two equal-height zones: Attendance Records on
-    top, My Requests + Detail below. Each block keeps its own internal scroll. */}
-<div style={{ padding: scopeToManagerDepartments ? 0 : '0 28px 28px', boxSizing: 'border-box', display: 'grid', gridTemplateColumns: scopeToManagerDepartments ? '1fr' : 'minmax(300px, 326px) minmax(0, 1fr)', gap: 16, flex: scopeToManagerDepartments ? '1 1 0' : 1, minHeight: 0, overflow: 'hidden' }}>
+{/* Manager/Employee: split Records tab vertically into two equal-height zones: Attendance
+    Records on top, My Requests + Detail below. Each block keeps its own internal scroll. */}
+<div style={{ padding: (scopeToManagerDepartments || scopeToEmployeeSupervised) ? 0 : '0 28px 28px', boxSizing: 'border-box', display: 'grid', gridTemplateColumns: (scopeToManagerDepartments || scopeToEmployeeSupervised) ? '1fr' : 'minmax(300px, 326px) minmax(0, 1fr)', gap: 16, flex: (scopeToManagerDepartments || scopeToEmployeeSupervised) ? '1 1 0' : 1, minHeight: 0, overflow: 'hidden' }}>
 
-            {/* ── LEFT: Department + Casual Worker panels — Owner/Partner only. Manager's page
-                 shows the whole department merged into the main table instead (see allGroups),
-                 so there's nothing for these panels to filter into for that role. ── */}
-            {!scopeToManagerDepartments && (
+            {/* ── LEFT: Department + Casual Worker panels — Owner/Partner only. Manager's/
+                 Employee's page shows the whole scope merged into the main table instead (see
+                 allGroups), so there's nothing for these panels to filter into for those roles. ── */}
+            {!scopeToManagerDepartments && !scopeToEmployeeSupervised && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minHeight: 0, overflowY: 'auto' }}>
             <section style={{ background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, overflow: 'hidden' }}>
               <div style={{ padding: '14px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -3219,11 +3290,16 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                     </div>
                     {/* Right: Export + search + date range */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <button onClick={() => setExportOpen(true)}
-                        style={{ height: 34, padding: '0 12px', borderRadius: 8, border: `1px solid ${PANEL_BORDER}`, background: '#FFFFFF', color: '#374151', fontWeight: 700, fontSize: 12.5, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}>
-                        <Download size={12} /> Export
-                      </button>
-                      {!scopeToManagerDepartments && (
+                      {/* Export fetches the full company date range directly from the API (bypassing
+                          the client-side self-scoping filter), so it stays O/P/M-only — Employee's
+                          own single-row history isn't worth exporting anyway. */}
+                      {!scopeToEmployeeSupervised && (
+                        <button onClick={() => setExportOpen(true)}
+                          style={{ height: 34, padding: '0 12px', borderRadius: 8, border: `1px solid ${PANEL_BORDER}`, background: '#FFFFFF', color: '#374151', fontWeight: 700, fontSize: 12.5, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}>
+                          <Download size={12} /> Export
+                        </button>
+                      )}
+                      {!scopeToManagerDepartments && !scopeToEmployeeSupervised && (
                         <input
                           value={recordsKeyword}
                           onChange={e => setRecordsKeyword(e.target.value)}
@@ -3264,7 +3340,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                   {/* Column header row */}
                   <div style={{ display: 'grid', gridTemplateColumns: '180px repeat(7, 1fr)', background: 'linear-gradient(135deg,#0F172A 0%,#1E293B 100%)', height: 54 }}>
                     <div style={{ padding: '10px 14px 10px 20px', borderRight: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center' }}>
-                      {scopeToManagerDepartments && (
+                      {(scopeToManagerDepartments || scopeToEmployeeSupervised) && (
                         <span style={{ fontSize: 14, fontWeight: 700, color: 'rgba(255,255,255,0.85)', letterSpacing: '0.01em' }}>Internal Members</span>
                       )}
                     </div>
@@ -3313,7 +3389,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                           const isCWGroup = people[0]?.[1]?.role === 'Casual Worker'
                           // Manager page drops the department color bar entirely — every row is
                           // already their own department, so the color adds nothing to look at.
-                          const barColor = (isCWGroup || scopeToManagerDepartments) ? 'transparent' : deptColor(deptId)
+                          const barColor = (isCWGroup || scopeToManagerDepartments || scopeToEmployeeSupervised) ? 'transparent' : deptColor(deptId)
                           return people.flatMap(([userId, person], rowIdx) => {
                             const isDeptBoundary = !isCWGroup && deptIdx > 0 && rowIdx === 0
                             const borderTop = isDeptBoundary ? EDGE : `1px solid ${PANEL_BORDER}`
@@ -3429,8 +3505,8 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                                                 // clock times — same precedence openReview() uses to pre-fill the modal.
                                                 const inTime = rec.record?.owner_adjusted_clock_in_time ?? rec.record?.clock_in_time
                                                 const outTime = rec.record?.owner_adjusted_clock_out_time ?? rec.record?.clock_out_time
-                                                const clockLabel = scopeToManagerDepartments ? formatRoundedClockHour : formatClockHour
-                                                const shiftLabel = scopeToManagerDepartments ? formatRoundedShiftHour : formatShiftHour
+                                                const clockLabel = (scopeToManagerDepartments || scopeToEmployeeSupervised) ? formatRoundedClockHour : formatClockHour
+                                                const shiftLabel = (scopeToManagerDepartments || scopeToEmployeeSupervised) ? formatRoundedShiftHour : formatShiftHour
                                                 return inTime
                                                   ? `${clockLabel(inTime)} – ${outTime ? clockLabel(outTime) : shiftLabel(rec.shift.end_time)}`
                                                   : `${shiftLabel(rec.shift.start_time)} – ${shiftLabel(rec.shift.end_time)}`
@@ -3475,10 +3551,10 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
           </div>{/* /two-col grid */}
           </>
 
-          {/* ── My Request — Manager only, bottom half of the Records tab. Everything they've
-               submitted via the Submit Request modal above, with the outcome once Owner/Partner
-               decide. ── */}
-          {scopeToManagerDepartments && (() => {
+          {/* ── My Request — Manager/Employee, bottom half of the Records tab. Everything they've
+               submitted via the Submit Request modal above, with the outcome once the approver
+               decides (Owner/Partner for Manager's own; Manager for Employee's). ── */}
+          {(scopeToManagerDepartments || scopeToEmployeeSupervised) && (() => {
             // needsResponse — this viewer is the COUNTERPART of a swap someone else invited them
             // into, and hasn't answered yet. The request never reaches any reviewer's queue until
             // this step is done (getShiftSwapRequests filters out counterpart_status === 'pending'),
@@ -5365,7 +5441,8 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
       {requestModalOpen && (() => {
         const todayStr = new Date().toISOString().slice(0, 10)
         const mySwappableShifts = myShifts.filter(s => s.shift.shift_date > todayStr).sort(compareMyShiftsByDateTime)
-        const colleagueRows = swapCandidateRows.filter(r => r.user_id !== internalUserId && r.role === 'Manager' && (scopedDeptRef.current?.ids.has(r.department_id) ?? false))
+        const candidateColleagueRole = scopeToEmployeeSupervised ? 'Employee' : 'Manager'
+        const colleagueRows = swapCandidateRows.filter(r => r.user_id !== internalUserId && r.role === candidateColleagueRole && (scopedDeptRef.current?.ids.has(r.department_id) ?? false))
         const selectedColleague = colleagueRows.find(r => r.user_id === swapCounterpartId)
         const colleagueShifts = (selectedColleague?.shifts ?? []).filter(s => s.shift_date > todayStr && s.assignment_id)
         const resetRequestForms = () => {

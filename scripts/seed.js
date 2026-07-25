@@ -660,6 +660,55 @@ async function main() {
   const manager1Id = userIdMap['manager1@test.com'].internalId
   const swapSeedDefs = [
     {
+      label: 'owner-pending-rachel-kelvin',
+      requesterEmail: 'manager2@test.com',
+      counterpartEmail: 'manager6@test.com',
+      department: depts[1],
+      requesterDayOffset: 3,
+      counterpartDayOffset: 4,
+      title: 'Marketing Manager Coverage',
+      reason: 'Rachel needs to cover a family commitment and Kelvin already agreed to trade.',
+      status: 'pending',
+      counterpartStatus: 'approved',
+      counterpartReviewedAt: minutesAgo(34),
+      requiresReview: true,
+      ownerReviewReason: 'Manager-level swap requires Owner/Partner review.',
+      createdAt: minutesAgo(44),
+    },
+    {
+      label: 'owner-approved-aaron-natalie',
+      requesterEmail: 'manager3@test.com',
+      counterpartEmail: 'manager7@test.com',
+      department: depts[2],
+      requesterDayOffset: 5,
+      counterpartDayOffset: 6,
+      title: 'Engineering Manager Release Cover',
+      reason: 'Aaron and Natalie swapped release support windows.',
+      status: 'approved',
+      counterpartStatus: 'approved',
+      counterpartReviewedAt: minutesAgo(118),
+      reviewedBy: ownerUser.id,
+      reviewedAt: minutesAgo(92),
+      createdAt: minutesAgo(150),
+    },
+    {
+      label: 'owner-rejected-fiona-samuel',
+      requesterEmail: 'manager4@test.com',
+      counterpartEmail: 'manager8@test.com',
+      department: depts[3],
+      requesterDayOffset: 7,
+      counterpartDayOffset: 8,
+      title: 'Support Manager Queue Cover',
+      reason: 'Fiona asked Samuel to take the live support queue window.',
+      status: 'rejected',
+      counterpartStatus: 'approved',
+      counterpartReviewedAt: minutesAgo(126),
+      reviewedBy: ownerUser.id,
+      reviewedAt: minutesAgo(84),
+      ownerReviewReason: 'Queue handover would leave too little senior coverage.',
+      createdAt: minutesAgo(160),
+    },
+    {
       label: 'pending-ben-grace-morning',
       requesterEmail: 'employee1@test.com',
       counterpartEmail: 'employee5@test.com',
@@ -740,7 +789,7 @@ async function main() {
   for (const def of swapSeedDefs) {
     if (await createSeedSwap(def)) seededSwapCount++
   }
-  console.log(`  ✓ ${seededSwapCount} Employee shift swap requests seeded for manager1/manager5 Operations testing`)
+  console.log(`  ✓ ${seededSwapCount} shift swap requests seeded for Owner queue and manager1/manager5 Operations testing`)
 
   // Step 8c: Manager dashboard data pack.
   // The current seed intentionally returns before the older full-demo section below. That is useful
@@ -756,8 +805,15 @@ async function main() {
   const managerClockEndTime = toHM(managerClockEnd)
   const manager1UserId = userIdMap['manager1@test.com'].internalId
   const manager5UserId = userIdMap['manager5@test.com'].internalId
+  const manager2UserId = userIdMap['manager2@test.com'].internalId
+  const manager3UserId = userIdMap['manager3@test.com'].internalId
+  const manager7UserId = userIdMap['manager7@test.com'].internalId
+  const manager4UserId = userIdMap['manager4@test.com'].internalId
   const employee1UserId = userIdMap['employee1@test.com'].internalId
   const employee5UserId = userIdMap['employee5@test.com'].internalId
+  const employee2UserId = userIdMap['employee2@test.com'].internalId
+  const employee3UserId = userIdMap['employee3@test.com'].internalId
+  const employee4UserId = userIdMap['employee4@test.com'].internalId
 
   const dashboardGuestEmails = ['guest1@test.com', 'guest2@test.com', 'guest3@test.com']
   for (const guestEmail of dashboardGuestEmails) {
@@ -840,6 +896,43 @@ async function main() {
       if (casualDeptErr) console.warn(`  ⚠ Failed to verify casual1@test.com in Operations: ${casualDeptErr.message}`)
     }
   }
+  const { data: dashboardCasual2Auth, error: dashboardCasual2AuthErr } = await supabase.auth.admin.createUser({
+    email: 'casual2@test.com',
+    password: PASSWORD,
+    email_confirm: true,
+  })
+  if (dashboardCasual2AuthErr || !dashboardCasual2Auth.user) {
+    console.warn(`  ⚠ Failed to create casual2@test.com auth: ${dashboardCasual2AuthErr?.message}`)
+  } else {
+    const { data: dashboardCasual2User, error: dashboardCasual2UserErr } = await supabase
+      .from('users')
+      .insert({
+        supabase_auth_id: dashboardCasual2Auth.user.id,
+        full_name: 'Farah Aziz',
+        email_address: 'casual2@test.com',
+        phone_number: '+65 8300 3002',
+        date_of_birth: '1998-07-09',
+        profile_photo_url: DEMO_PHOTO_URL,
+        role: 'Casual Worker',
+        company_id: company.id,
+        worker_status: 'active',
+        hourly_rate: 19.0,
+      })
+      .select()
+      .single()
+    if (dashboardCasual2UserErr) {
+      console.warn(`  ⚠ Failed to create casual2@test.com user: ${dashboardCasual2UserErr.message}`)
+    } else {
+      userIdMap['casual2@test.com'] = { authId: dashboardCasual2Auth.user.id, internalId: dashboardCasual2User.id }
+      const { error: casual2DeptErr } = await supabase.from('casualworker_departments').upsert({
+        casual_worker_id: dashboardCasual2User.id,
+        department_id: depts[1].id,
+        company_id: company.id,
+        verified_at: new Date().toISOString(),
+      }, { onConflict: 'casual_worker_id,department_id' })
+      if (casual2DeptErr) console.warn(`  ⚠ Failed to verify casual2@test.com in Marketing: ${casual2DeptErr.message}`)
+    }
+  }
 
   const todayInternalShift = await createShift({
     company_id: company.id,
@@ -874,6 +967,57 @@ async function main() {
   }
   await clockRecord(dashboardAttendanceAssignments.find(a => a.email === 'manager5@test.com')?.assignment, manager5UserId, { dateStr: todayKey, breakStart: '12:15', breakEnd: '12:45' })
   await clockRecord(dashboardAttendanceAssignments.find(a => a.email === 'employee1@test.com')?.assignment, employee1UserId, { dateStr: todayKey, lateMinutes: 20, breakStart: '12:30', breakEnd: '13:00' })
+
+  const ownerDashboardAttendanceDefs = [
+    {
+      department: depts[1],
+      title: 'Marketing Campaign Desk Coverage',
+      emails: ['manager2@test.com', 'manager6@test.com', 'employee2@test.com', 'employee6@test.com'],
+      clocked: [
+        { email: 'manager2@test.com', userId: manager2UserId, options: { dateStr: todayKey, breakStart: '12:00', breakEnd: '12:30' } },
+        { email: 'employee2@test.com', userId: employee2UserId, options: { dateStr: todayKey, lateMinutes: 25 } },
+      ],
+    },
+    {
+      department: depts[2],
+      title: 'Engineering Release Support',
+      emails: ['manager3@test.com', 'manager7@test.com', 'employee3@test.com', 'employee7@test.com'],
+      clocked: [
+        { email: 'manager3@test.com', userId: manager3UserId, options: { dateStr: todayKey } },
+        { email: 'manager7@test.com', userId: manager7UserId, options: { dateStr: todayKey, lateMinutes: 15 } },
+        { email: 'employee3@test.com', userId: employee3UserId, options: { dateStr: todayKey, breakStart: '12:45', breakEnd: '13:15' } },
+      ],
+    },
+    {
+      department: depts[3],
+      title: 'Customer Support Live Queue',
+      emails: ['manager4@test.com', 'employee4@test.com'],
+      clocked: [
+        { email: 'manager4@test.com', userId: manager4UserId, options: { dateStr: todayKey, lateMinutes: 10 } },
+        { email: 'employee4@test.com', userId: employee4UserId, options: { dateStr: todayKey } },
+      ],
+    },
+  ]
+  for (const def of ownerDashboardAttendanceDefs) {
+    const shift = await createShift({
+      company_id: company.id,
+      department_id: def.department.id,
+      shift_date: todayKey,
+      start_time: '09:00',
+      end_time: '17:00',
+      title: def.title,
+      created_by: ownerUser.id,
+      publication_status: 'published',
+    })
+    const assignments = []
+    for (const email of def.emails) {
+      const assignment = await assignShift(shift?.id, userIdMap[email].internalId, ownerUser.id)
+      if (assignment) assignments.push({ email, assignment })
+    }
+    for (const row of def.clocked) {
+      await clockRecord(assignments.find(a => a.email === row.email)?.assignment, row.userId, row.options)
+    }
+  }
   console.log(`  ✓ manager1@test.com test shift starts in the clock-in window: ${managerClockDate} ${managerClockStartTime}-${managerClockEndTime} UTC`)
 
   if (userIdMap['casual1@test.com']) {
@@ -988,6 +1132,20 @@ async function main() {
         })
         const managerCasualAttendanceAssignment = await assignShift(managerCasualAttendanceShift?.id, userIdMap['casual1@test.com'].internalId, manager1UserId, employee1UserId)
         await clockRecord(managerCasualAttendanceAssignment, userIdMap['casual1@test.com'].internalId, { dateStr: todayKey, endStr: '16:00', breakStart: '14:00', breakEnd: '14:15' })
+        if (userIdMap['casual2@test.com']) {
+          const ownerCasualAttendanceShift = await createShift({
+            company_id: company.id,
+            department_id: depts[1].id,
+            shift_date: todayKey,
+            start_time: '09:00',
+            end_time: '13:00',
+            title: 'Marketing Promo Booth Cover',
+            created_by: ownerUser.id,
+            publication_status: 'published',
+          })
+          const ownerCasualAttendanceAssignment = await assignShift(ownerCasualAttendanceShift?.id, userIdMap['casual2@test.com'].internalId, ownerUser.id, employee2UserId)
+          await clockRecord(ownerCasualAttendanceAssignment, userIdMap['casual2@test.com'].internalId, { dateStr: todayKey, endStr: '13:00', lateMinutes: 18 })
+        }
         const { error: casualMessageErr } = await supabase.from('messages').insert({
           from_user_id: employee1UserId,
           to_user_id: userIdMap['casual1@test.com'].internalId,
@@ -1001,7 +1159,7 @@ async function main() {
       }
     }
   }
-  console.log('  ✓ Today attendance: Operations internal staff rows for Manager dashboard; casual1@test.com has a pre-start dashboard job')
+  console.log('  ✓ Today attendance: Operations rows for Manager dashboard plus multi-department Owner attendance; casual1/casual2 cover both dashboard halves')
 
   const managerDashboardJobDefs = [
     {
@@ -1156,7 +1314,57 @@ async function main() {
     percentage_complete: 100,
     priority: 'Low',
   })
-  console.log('  ✓ Task Overview: review, overdue, due-soon, and completed-today Operations tasks')
+  await createTask({
+    company_id: company.id,
+    department_id: depts[1].id,
+    title: 'Finalize campaign roster exceptions',
+    description: 'Owner dashboard overdue sample: Rachel needs to finish the roster exception review.',
+    assigned_user_id: manager2UserId,
+    assigned_by: ownerUser.id,
+    status: 'Assigned',
+    due_at: dueAtOn(YESTERDAY, 15),
+    percentage_complete: 0,
+    priority: 'High',
+  })
+  await createTask({
+    company_id: company.id,
+    department_id: depts[2].id,
+    title: 'Confirm release support runbook',
+    description: 'Owner dashboard delay-alert sample: assigned long enough ago that it is at risk before tomorrow.',
+    assigned_user_id: manager3UserId,
+    assigned_by: ownerUser.id,
+    status: 'Assigned',
+    due_at: dueAtOn(TOMORROW, 11),
+    created_at: new Date(Date.now() - 36 * 60 * 60 * 1000).toISOString(),
+    percentage_complete: 0,
+    priority: 'Medium',
+  })
+  await createTask({
+    company_id: company.id,
+    department_id: depts[3].id,
+    title: 'Complete customer escalation review',
+    description: 'Owner dashboard completed-today sample for the Task Overview block.',
+    assigned_user_id: manager4UserId,
+    assigned_by: ownerUser.id,
+    status: 'Complete',
+    due_at: dueAtOn(TODAY, 10),
+    completed_at: dueAtOn(TODAY, 10),
+    percentage_complete: 100,
+    priority: 'Low',
+  })
+  await createTask({
+    company_id: company.id,
+    department_id: opsDept.id,
+    title: 'Partner review of weekend floor plan',
+    description: 'Partner-assigned task so Owner dashboard peer-scope task reads have visible data too.',
+    assigned_user_id: manager1UserId,
+    assigned_by: userIdMap['partner1@test.com'].internalId,
+    status: 'Assigned',
+    due_at: dueAtOn(YESTERDAY, 17),
+    percentage_complete: 0,
+    priority: 'High',
+  })
+  console.log('  ✓ Task Overview: manager Operations tasks plus Owner overdue, delay-alert, completed-today, and Partner-assigned samples')
 
   const { error: opsAnnouncementErr } = await supabase.from('announcements').insert({
     from_user_id: manager1UserId,
@@ -1178,7 +1386,7 @@ async function main() {
   console.log('  ✓ Communication: Operations announcement + manager1 conversations')
 
   console.log('\n═══════════════════════════════════════════')
-  console.log('  Done: Manager-focused seed is ready. Password for all test accounts: 111111')
+  console.log('  Done: Owner/Manager dashboard seed is ready. Password for all test accounts: 111111')
   console.log('  Owner:    owner@test.com')
   console.log('  Partner:  partner1@test.com')
   console.log('  Manager:  manager1-8@test.com')
@@ -1186,8 +1394,8 @@ async function main() {
   console.log('  Casual:   casual1@test.com')
   console.log('  Guest:    guest1-3@test.com')
   console.log('  Company:  Sunrise Hospitality Group')
-  console.log('  Seeded for testing: manager1@test.com Dashboard, Attendance, Tasks, Recruitment, Communication, Team, and Shift Swap Requests.')
-  console.log('  Test path: login manager1@test.com -> Manager Dashboard. No dashboard overview block should be empty.')
+  console.log('  Seeded for testing: owner@test.com and manager1@test.com Dashboard, Attendance, Tasks, Recruitment, Communication, Team, and Shift Swap Requests.')
+  console.log('  Test paths: login owner@test.com -> Owner Dashboard, or manager1@test.com -> Manager Dashboard. No dashboard overview block should be empty.')
   console.log('═══════════════════════════════════════════')
   return
 
