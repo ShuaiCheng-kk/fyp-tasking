@@ -82,6 +82,14 @@ async function fetchJson(url: string) {
   return res.json()
 }
 
+function readStringSet(key: string): Set<string> {
+  try {
+    const raw = localStorage.getItem(key)
+    if (raw) return new Set(JSON.parse(raw))
+  } catch {}
+  return new Set()
+}
+
 export function RealtimeNotificationsProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<RuntimeUser | null>(null)
   const [counts, setCounts] = useState<NotificationCounts>(EMPTY_COUNTS)
@@ -149,8 +157,22 @@ export function RealtimeNotificationsProvider({ children }: { children: React.Re
             next.recruitment += waiting.filter(i => i.id === 'job_posting_approval' || i.id === 'applicant_accept').reduce((sum, i) => sum + i.count, 0)
             next.attendance += waiting.filter(i => i.id === 'off_day_deadline' || i.id === 'shift_swap').reduce((sum, i) => sum + i.count, 0)
             next.tasks += waiting.filter(i => i.id === 'task_review').reduce((sum, i) => sum + i.count, 0)
-            next.tasks += taskNotifications.reduce((sum, i) => sum + i.count, 0)
-            next.dashboard = waiting.filter(i => i.count > 0).length + taskNotifications.reduce((sum, i) => sum + i.count, 0)
+            if (role !== 'manager') next.tasks += taskNotifications.reduce((sum, i) => sum + i.count, 0)
+            next.dashboard = waiting.filter(i => i.count > 0).length + (role === 'manager' ? 0 : taskNotifications.reduce((sum, i) => sum + i.count, 0))
+          }
+
+          if (role === 'manager') {
+            const myTasksData = await fetchJson(`/api/task?company_id=${encodeURIComponent(user.companyId)}&kanban=true&assigned_user_id=${encodeURIComponent(user.id)}&viewer_id=${encodeURIComponent(user.id)}`).catch(() => null)
+            if (myTasksData?.success) {
+              const seen = readStringSet(`manager_mytasks_seen_${user.companyId}_${user.id}`)
+              const signature = (task: { id: string; rejected_at?: string | null }) => `${task.id}::${task.rejected_at ?? ''}`
+              const assigned = ((myTasksData.groups?.Assigned ?? []) as Array<{ id: string; rejected_at?: string | null; parent_task_id?: string | null }>)
+                .filter(task => !task.parent_task_id && !seen.has(signature(task)))
+              const rejected = ((myTasksData.groups?.['In Progress'] ?? []) as Array<{ id: string; rejected_at?: string | null; rejection_reason?: string | null; parent_task_id?: string | null }>)
+                .filter(task => !task.parent_task_id && !!task.rejection_reason && !!task.rejected_at && !seen.has(signature(task)))
+              next.tasks += assigned.length + rejected.length
+              next.dashboard += assigned.length + rejected.length
+            }
           }
         }
       }
@@ -159,11 +181,7 @@ export function RealtimeNotificationsProvider({ children }: { children: React.Re
         const appsData = await fetchJson(`/api/guest/applications?user_id=${encodeURIComponent(user.id)}`).catch(() => null)
         if (appsData?.success) {
           const seenKey = `applications_seen_${user.id}`
-          let seen = new Set<string>()
-          try {
-            const raw = localStorage.getItem(seenKey)
-            if (raw) seen = new Set(JSON.parse(raw))
-          } catch {}
+          const seen = readStringSet(seenKey)
           next.applications = ((appsData.applications ?? []) as Array<{ id: string; status: string; invitation_status?: string | null; updated_at?: string | null }>)
             .filter(app => app.status !== 'pending')
             .filter(app => !seen.has(`${app.id}:${app.status}:${app.invitation_status ?? ''}:${app.updated_at ?? ''}`)).length
@@ -251,9 +269,13 @@ export function RealtimeNotificationsProvider({ children }: { children: React.Re
       }
     }
     document.addEventListener('visibilitychange', handleVisible)
+    window.addEventListener('task-insights-updated', scheduleRefresh)
+    window.addEventListener('storage', scheduleRefresh)
 
     return () => {
       document.removeEventListener('visibilitychange', handleVisible)
+      window.removeEventListener('task-insights-updated', scheduleRefresh)
+      window.removeEventListener('storage', scheduleRefresh)
       channels.forEach(channel => { void supabase.removeChannel(channel) })
     }
   }, [queueInvalidation, scheduleRefresh, user])
