@@ -10,6 +10,7 @@ import Link from 'next/link'
 import { LayoutDashboard, Clock, ClipboardList, User, LogOut } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 import { useIsCompactViewport } from '@/hooks/useIsCompactViewport'
+import { useRealtimeNotifications } from '@/components/realtime/RealtimeNotificationsProvider'
 
 // Phone-width tier — below this, hover has no touch equivalent, so the hover-expand rail is
 // replaced by a fixed bottom tab bar instead. Desktop/tablet (>=640px) render is untouched.
@@ -34,6 +35,7 @@ export default function CasualSidebar({ disabled = false }: { disabled?: boolean
   const pathname = usePathname()
   const [expanded, setExpanded] = useState(false)
   const isPhone = useIsCompactViewport(PHONE_BREAKPOINT)
+  const { counts, ready } = useRealtimeNotifications()
 
   const handleLogout = async () => {
     const supabase = createBrowserClient(
@@ -68,6 +70,7 @@ export default function CasualSidebar({ disabled = false }: { disabled?: boolean
         {NAV_ITEMS.map(({ label, Icon, href }) => {
           const active = pathname === href
           const itemDisabled = disabled && label !== 'Profile'
+          const showDot = ready && ((label === 'Applications' && counts.applications > 0) || (label === 'Attendance' && counts.attendance > 0))
           return (
             <Link
               key={label}
@@ -76,12 +79,16 @@ export default function CasualSidebar({ disabled = false }: { disabled?: boolean
               onClick={e => { if (itemDisabled) e.preventDefault() }}
               style={{
                 flex: 1,
+                position: 'relative',
                 display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 3,
                 color: itemDisabled ? '#D1D5DB' : (active ? THEME.sidebarActiveText : THEME.sidebarText),
                 textDecoration: 'none',
               }}
             >
               <Icon size={20} strokeWidth={active ? 2.4 : 2.1} style={{ flexShrink: 0, color: 'currentColor' }} />
+              {showDot && (
+                <span aria-hidden="true" style={{ position: 'absolute', top: 9, right: 'calc(50% - 18px)', width: 8, height: 8, borderRadius: '50%', background: '#EF4444', boxShadow: '0 0 0 2px #FFFFFF' }} />
+              )}
               <span style={{ fontSize: '0.68rem', fontWeight: active ? 700 : 500 }}>{label}</span>
             </Link>
           )
@@ -142,6 +149,7 @@ export default function CasualSidebar({ disabled = false }: { disabled?: boolean
         {NAV_ITEMS.map(({ label, Icon, href }) => {
           const active = pathname === href
           const itemDisabled = disabled && label !== 'Profile'
+          const showDot = ready && ((label === 'Applications' && counts.applications > 0) || (label === 'Attendance' && counts.attendance > 0))
           return (
             <Link
               key={label}
@@ -150,6 +158,7 @@ export default function CasualSidebar({ disabled = false }: { disabled?: boolean
               onClick={e => { if (itemDisabled) e.preventDefault() }}
               style={{
                 display: 'flex',
+                position: 'relative',
                 alignItems: 'center',
                 gap: '10px',
                 padding: '10px 12px',
@@ -169,6 +178,9 @@ export default function CasualSidebar({ disabled = false }: { disabled?: boolean
               onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
             >
               <Icon size={18} strokeWidth={2.1} style={{ flexShrink: 0, color: 'currentColor' }} />
+              {showDot && (
+                <span aria-hidden="true" style={{ position: 'absolute', top: 8, right: expanded ? 12 : 10, width: 8, height: 8, borderRadius: '50%', background: '#EF4444', boxShadow: '0 0 0 2px #FFFFFF' }} />
+              )}
               <span style={{ opacity: expanded ? 1 : 0, transition: 'opacity 0.15s' }}>
                 {label}
               </span>

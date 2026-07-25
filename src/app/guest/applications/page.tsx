@@ -7,6 +7,7 @@ import { useIsCompactViewport } from '@/hooks/useIsCompactViewport'
 import ApplyJobModal from '@/components/guest/ApplyJobModal'
 import { JobCard, JobDetailPanel, JobView } from '@/components/jobs/JobPresentation'
 import { FLOW_STEPS, FlowTone, getApplicationFlowState } from '@/components/guest/ApplicationFlow'
+import { useResourceInvalidation } from '@/components/realtime/RealtimeNotificationsProvider'
 
 // One icon per step, matching FLOW_STEPS' order (Pending Review / Accept-Reject Job Offer / Confirmed).
 const STEP_ICONS = [Clock, Mail, CheckCircle2]
@@ -213,6 +214,18 @@ function ApplicationsContent() {
       })
     )
   }
+
+  useResourceInvalidation(['applications'], () => {
+    if (profile?.id) void loadApplications(profile.id)
+  })
+
+  useEffect(() => {
+    if (!profile?.id || applications.length === 0) return
+    const signatures = applications
+      .filter(app => app.status !== 'pending')
+      .map(app => `${app.id}:${app.status}:${app.invitation_status ?? ''}:`)
+    try { localStorage.setItem(`applications_seen_${profile.id}`, JSON.stringify(signatures)) } catch {}
+  }, [applications, profile?.id])
 
   useEffect(() => {
     const loadPageData = async () => {
@@ -903,4 +916,3 @@ const errorCardStyle: React.CSSProperties = {
   color: '#B91C1C',
   background: '#FEF2F2',
 }
-

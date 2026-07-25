@@ -16,6 +16,7 @@ import AnimatedNumber from '@/components/AnimatedNumber'
 import RoleAvatar from '@/components/RoleAvatar'
 import DropdownField from '@/components/DropdownField'
 import { WorkerCertificate } from '@/types/WorkerProfile'
+import { useResourceInvalidation } from '@/components/realtime/RealtimeNotificationsProvider'
 
 // ─── Department color picker ────────────────────────────────────────────────
 
@@ -1594,6 +1595,11 @@ export default function TeamView({ sidebar, basePath, permissions }: {
       .subscribe()
     return () => { supabase.removeChannel(channel) }
   }, [companyId, fetchTeamMembers])
+
+  useResourceInvalidation(['team'], () => {
+    if (!companyId) return
+    void fetchTeamMembers(companyId)
+  })
 
   const handleMemberImportFile = async (file: File | null) => {
     setMemberImportError('')

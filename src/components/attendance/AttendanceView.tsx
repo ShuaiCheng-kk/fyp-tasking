@@ -31,6 +31,7 @@ import Toast from '@/components/Toast'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { TimelineRow, TimelineShiftBlock } from '@/types/Timeline'
+import { useResourceInvalidation } from '@/components/realtime/RealtimeNotificationsProvider'
 
 const PANEL_BORDER = '#E2E8F0'
 const TEXT_DARK = '#0F172A'
@@ -292,6 +293,13 @@ function normalizeToFiveMinuteTime(hours: number, minutes: number): { h: number;
 }
 
 function formatShiftHour(time: string): string {
+  const [h, m] = time.split(':').map(Number)
+  const ampm = h < 12 ? 'am' : 'pm'
+  const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h
+  return m === 0 ? `${h12}${ampm}` : `${h12}:${String(m).padStart(2, '0')}${ampm}`
+}
+
+function formatRoundedShiftHour(time: string): string {
   const [rawH, rawM] = time.split(':').map(Number)
   const { h, m } = normalizeToFiveMinuteTime(rawH, rawM)
   const ampm = h < 12 ? 'am' : 'pm'
@@ -303,6 +311,15 @@ function formatShiftHour(time: string): string {
 // clock_in/out timestamps with the UTC getters so an owner-modified time formats consistently
 // with the shift's own start_time/end_time instead of drifting through the browser's timezone.
 function formatClockHour(iso: string): string {
+  const d = new Date(iso)
+  const h = d.getUTCHours()
+  const m = d.getUTCMinutes()
+  const ampm = h < 12 ? 'am' : 'pm'
+  const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h
+  return m === 0 ? `${h12}${ampm}` : `${h12}:${String(m).padStart(2, '0')}${ampm}`
+}
+
+function formatRoundedClockHour(iso: string): string {
   const d = new Date(iso)
   const { h, m } = normalizeToFiveMinuteTime(d.getUTCHours(), d.getUTCMinutes())
   const ampm = h < 12 ? 'am' : 'pm'
@@ -1795,6 +1812,14 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
     }
   }, [])
 
+  useResourceInvalidation(['attendance', 'shifts'], () => {
+    if (!companyId) return
+    void fetchWeekRecords(companyId, arWindowOffset)
+    void fetchRequestData(companyId)
+    if (internalUserId) void fetchMyRequests(internalUserId)
+    if (currentShiftsDept) void fetchCurrentShifts(companyId, currentShiftsDept, csAnchorDate)
+  })
+
   // ── Init ──────────────────────────────────────────────────────────────────
   useEffect(() => {
     let cancelled = false
@@ -2870,8 +2895,8 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
   // Manager has no "Off Day"/"My Request" tab at all — they never review anyone's Fixed Day Off
   // (UC55 is O/P-only) and submitting is now the header button on Records (see requestModalOpen).
   const mainTabs = [
-    { key: 'records' as const, label: 'Team Hub', dot: scopeToManagerDepartments && !myReqLoading && myRequestAttentionCount > 0 },
-    { key: 'swaps' as const, label: 'Swap Requests', dot: !reqLoading && pendingSwapCount > 0 },
+    { key: 'records' as const, label: scopeToManagerDepartments ? 'Team Hub' : 'Records', dot: scopeToManagerDepartments && !myReqLoading && myRequestAttentionCount > 0 },
+    { key: 'swaps' as const, label: scopeToManagerDepartments ? 'Swap Requests' : 'Shift Swap', dot: !reqLoading && pendingSwapCount > 0 },
     ...(scopeToManagerDepartments ? [] : [
       { key: 'fixedoff' as const, label: 'Off Day', dot: !reqLoading && pendingFixedOffCount > 0 },
     ]),
@@ -2884,6 +2909,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
   // in DOM order, so the tab's blocks cascade in one after another instead of moving as one page.
   // Already-staggered sections are skipped so refetches (reqLoading flips) don't replay them.
   useLayoutEffect(() => {
+    if (scopeToManagerDepartments) return
     const sections = document.querySelectorAll<HTMLElement>('.att-page section')
     let order = 0
     sections.forEach(el => {
@@ -2892,7 +2918,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
       el.style.animationDelay = `${Math.min(order, 8) * 80}ms`
       order++
     })
-  }, [mainTab, reqLoading])
+  }, [mainTab, reqLoading, scopeToManagerDepartments])
 
   // ─────────────────────────────────────────────────────────────────────────
   return (
@@ -3071,7 +3097,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                         background: isSelected ? `${color}0d` : '#F9FAFB',
                         cursor: 'pointer', overflow: 'hidden',
                         transition: 'box-shadow 0.18s, transform 0.18s, border-color 0.18s, background 0.18s',
-                        animation: `deptCardIn 0.28s ease both ${idx * 55}ms`,
+                        animation: `deptCardIn 0.28s ease both ${scopeToManagerDepartments ? 0 : idx * 55}ms`,
                         boxShadow: isSelected ? `0 4px 16px ${color}22` : undefined,
                       }}
                       onMouseEnter={e => { if (!isSelected) { e.currentTarget.style.transform = 'translateY(-3px)'; e.currentTarget.style.boxShadow = '0 10px 28px rgba(15,23,42,0.11)'; e.currentTarget.style.borderColor = color } }}
@@ -3136,7 +3162,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                         background: isActive ? '#FFF7ED' : '#F9FAFB',
                         cursor: 'pointer',
                         transition: 'box-shadow 0.18s, transform 0.18s, border-color 0.18s, background 0.18s',
-                        animation: `deptCardIn 0.28s ease both ${idx * 55}ms`,
+                        animation: `deptCardIn 0.28s ease both ${scopeToManagerDepartments ? 0 : idx * 55}ms`,
                         boxShadow: isActive ? `0 4px 16px ${ORANGE}22` : undefined,
                       }}
                       onMouseEnter={e => { if (!isActive) { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 8px 20px rgba(15,23,42,0.10)'; e.currentTarget.style.borderColor = ORANGE } }}
@@ -3298,6 +3324,8 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                             // apart at a glance even though they now share a table.
                             const showCwSectionHeader = scopeToManagerDepartments && person.role === 'Casual Worker'
                               && (rowIdx === 0 || people[rowIdx - 1][1].role !== 'Casual Worker')
+                            const maxRecordsInRow = Math.max(1, ...weekDates.map(date => (person.byDate.get(date) ?? []).length))
+                            const rowHeight = Math.min(108, Math.max(60, maxRecordsInRow * 32 + (maxRecordsInRow - 1) * 4 + 20))
                             const rows: React.ReactNode[] = []
                             if (showCwSectionHeader) {
                               rows.push(
@@ -3315,10 +3343,10 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                               <div
                                 key={userId}
                                 className="ar-row-hover"
-                                style={{ display: 'grid', gridTemplateColumns: '180px repeat(7, 1fr)', height: 60, borderTop, background: '#FFFFFF' }}
+                                style={{ display: 'grid', gridTemplateColumns: '180px repeat(7, 1fr)', height: rowHeight, borderTop, background: '#FFFFFF' }}
                               >
                                 {/* Color bar + name — exact Shift page style */}
-                                <div style={{ display: 'flex', alignItems: 'center', borderRight: `1px solid ${PANEL_BORDER}`, overflow: 'hidden', height: 60 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', borderRight: `1px solid ${PANEL_BORDER}`, overflow: 'hidden', height: rowHeight }}>
                                   <div style={{ width: 8, alignSelf: 'stretch', flexShrink: 0, background: barColor, opacity: 0.85 }} />
                                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 10px 0 12px', minWidth: 0, flex: 1 }}>
                                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, flexShrink: 0, background: person.profilePhotoUrl ? 'transparent' : (isManager ? '#FFF7ED' : person.role === 'Employee' ? '#F3F4F6' : '#EFF6FF'), color: isManager ? '#EA580C' : '#4B5563', borderRadius: 999, overflow: 'hidden' }}>
@@ -3343,9 +3371,12 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                                     <div
                                       key={date}
                                       style={{
-                                        padding: '0 6px', borderRight: `1px solid ${PANEL_BORDER}`,
-                                        height: 60, display: 'flex', flexDirection: 'column',
-                                        alignItems: 'stretch', justifyContent: 'center', gap: 4,
+                                        padding: sorted.length > 2 ? '8px 6px' : '0 6px', borderRight: `1px solid ${PANEL_BORDER}`,
+                                        height: rowHeight, display: 'flex', flexDirection: 'column',
+                                        alignItems: 'stretch', justifyContent: sorted.length > 2 ? 'flex-start' : 'center', gap: 4,
+                                        overflowY: sorted.length > 2 ? 'auto' : 'hidden',
+                                        boxSizing: 'border-box',
+                                        scrollbarGutter: sorted.length > 2 ? 'stable' : undefined,
                                         background: isToday ? 'rgba(249,115,22,0.05)' : 'transparent',
                                       }}
                                     >
@@ -3398,9 +3429,11 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                                                 // clock times — same precedence openReview() uses to pre-fill the modal.
                                                 const inTime = rec.record?.owner_adjusted_clock_in_time ?? rec.record?.clock_in_time
                                                 const outTime = rec.record?.owner_adjusted_clock_out_time ?? rec.record?.clock_out_time
+                                                const clockLabel = scopeToManagerDepartments ? formatRoundedClockHour : formatClockHour
+                                                const shiftLabel = scopeToManagerDepartments ? formatRoundedShiftHour : formatShiftHour
                                                 return inTime
-                                                  ? `${formatClockHour(inTime)} – ${outTime ? formatClockHour(outTime) : formatShiftHour(rec.shift.end_time)}`
-                                                  : `${formatShiftHour(rec.shift.start_time)} – ${formatShiftHour(rec.shift.end_time)}`
+                                                  ? `${clockLabel(inTime)} – ${outTime ? clockLabel(outTime) : shiftLabel(rec.shift.end_time)}`
+                                                  : `${shiftLabel(rec.shift.start_time)} – ${shiftLabel(rec.shift.end_time)}`
                                               })()}
                                             </span>
                                             {/* Mirrors the left-hand status icon's 20x20 slot, so a modified pill
@@ -4064,7 +4097,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                                 border: `1.5px solid ${isSelected ? '#FDBA74' : '#E5E7EB'}`,
                                 background: isSelected ? '#FFF7ED' : '#FFFFFF',
                                 borderRadius: 12, padding: '14px 14px 16px', cursor: 'pointer', flexShrink: 0,
-                                animationDelay: `${Math.min(idx, 8) * 50}ms`,
+                                animationDelay: scopeToManagerDepartments ? '0ms' : `${Math.min(idx, 8) * 50}ms`,
                               }}
                             >
                               {!scopeToManagerDepartments && req.department_name && (() => {
@@ -4584,7 +4617,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                                 ? <div style={{ padding: '24px', textAlign: 'center', color: '#9CA3AF', fontSize: '0.875rem' }}>{processedDeptFilter === 'all' ? 'No processed requests.' : `No processed requests for ${processedDeptFilter}.`}</div>
                                 : filteredProcessed.map((req, i) => (
                                     /* Key includes the dept filter so switching it replays the cascade */
-                                    <div key={`${processedDeptFilter}-${req.id}`} className="att-list-in" style={{ animationDelay: `${Math.min(i, 10) * 45}ms`, flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
+                                    <div key={`${processedDeptFilter}-${req.id}`} className="att-list-in" style={{ animationDelay: scopeToManagerDepartments ? '0ms' : `${Math.min(i, 10) * 45}ms`, flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
                                       <SwapCard req={req} compact />
                                     </div>
                                   ))}

@@ -51,6 +51,7 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { useResourceInvalidation } from '@/components/realtime/RealtimeNotificationsProvider'
 
 type Department = {
   id: string
@@ -370,6 +371,14 @@ const pageKeyframes = `
   .tl-name           { transition: color 0.14s ease; }
   .tl-row:hover .tl-name { color: #F97316; }
   .shift-tab-content { animation: tabContentIn 0.22s ease-out both; }
+  .manager-shifts-page .shift-dept-panel,
+  .manager-shifts-page .shift-template-panel,
+  .manager-shifts-page .shift-timeline-panel,
+  .manager-shifts-page .member-card,
+  .manager-shifts-page .shift-template-card,
+  .manager-shifts-page .shift-tab-content {
+    animation-delay: 0s !important;
+  }
   .people-chip       { transition: box-shadow 0.16s ease, border-color 0.16s ease, transform 0.16s ease; }
   .people-chip:hover:not([data-locked="true"]) { box-shadow: 0 3px 10px rgba(0,0,0,0.08); transform: translateY(-1px); }
   .ai-wizard-back-circle { transition: background 0.14s ease; }
@@ -447,15 +456,8 @@ function shortDate(dateKey: string): string {
   })
 }
 
-function normalizeToFiveMinuteTime(hours: number, minutes: number): { h: number; m: number } {
-  const roundedTotal = Math.round((hours * 60 + minutes) / 5) * 5
-  const normalizedTotal = ((roundedTotal % (24 * 60)) + (24 * 60)) % (24 * 60)
-  return { h: Math.floor(normalizedTotal / 60), m: normalizedTotal % 60 }
-}
-
 function formatShiftHour(time: string): string {
-  const [rawH, rawM] = time.split(':').map(Number)
-  const { h, m } = normalizeToFiveMinuteTime(rawH, rawM)
+  const [h, m] = time.split(':').map(Number)
   const ampm = h < 12 ? 'am' : 'pm'
   const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h
   return m === 0 ? `${h12}${ampm}` : `${h12}:${String(m).padStart(2, '0')}${ampm}`
@@ -1276,6 +1278,10 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
     ])
     setLastRefreshed(new Date())
   }, [companyId, fetchCalWeek, fetchFutureRows, fetchTimeline, fetchFixedOffDays, timelineDate, calWeekAnchorDate])
+
+  useResourceInvalidation(['shifts'], () => {
+    void refreshShiftData()
+  })
 
   useEffect(() => {
     if (!companyId) return
@@ -3163,7 +3169,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                   const isDeptBoundary = deptIdx > 0 && rowIdx === 0
                   const borderTop = isDeptBoundary ? EDGE : `1px solid ${BORDER}`
                   const maxShiftsInRow = Math.max(1, ...weekDates.map(date => row.shifts.filter((s: TimelineShiftBlock) => s.shift_date === date).length))
-                  const rowHeight = Math.max(58, maxShiftsInRow * 28 + (maxShiftsInRow - 1) * 4 + 30)
+                  const rowHeight = Math.min(104, Math.max(58, maxShiftsInRow * 28 + (maxShiftsInRow - 1) * 4 + 24))
                   return (
                     <div key={row.user_id ?? `r-${deptIdx}-${rowIdx}`} style={{ display: 'grid', gridTemplateColumns: `${NAME_COL}px repeat(7, 1fr)`, borderTop, background: '#FFFFFF', height: rowHeight }}>
                       {/* Color bar + Name cell */}
@@ -3183,7 +3189,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                         const dayShifts = row.shifts.filter((s: TimelineShiftBlock) => s.shift_date === date)
                         const isPastDate = date < todayStr
                         return (
-                          <div key={date} style={{ padding: '0 6px', borderRight: `1px solid ${BORDER}`, height: rowHeight, overflow: 'hidden', display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'stretch', justifyContent: 'center' }}>
+                          <div key={date} style={{ padding: dayShifts.length > 2 ? '8px 6px' : '0 6px', borderRight: `1px solid ${BORDER}`, height: rowHeight, overflowY: dayShifts.length > 2 ? 'auto' : 'hidden', display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'stretch', justifyContent: dayShifts.length > 2 ? 'flex-start' : 'center', boxSizing: 'border-box', scrollbarGutter: dayShifts.length > 2 ? 'stable' : undefined }}>
                             {dayShifts.length === 0 ? (
                               fixedOffByUserDate.get(`${row.user_id}|${date}`) ? (
                                 <div title={`${row.full_name} — approved off day`} style={{ borderRadius: 999, background: '#F5F3FF', border: '1.5px solid #C4B5FD', display: 'flex', alignItems: 'center', justifyContent: 'center', height: 24, gap: 4 }}>
@@ -3335,7 +3341,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
   }
 
   return (
-    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: APP_BG }}>
+    <div className={scopeToManagerDepartments ? 'manager-shifts-page' : undefined} style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: APP_BG }}>
       <style>{pageKeyframes}</style>
       {sidebar}
       <main style={{ marginLeft: 64, height: '100vh', overflow: 'hidden', display: 'flex', flexDirection: 'column', flex: 1, gap: 0, animation: 'blockSlideUp 0.38s ease both 0.04s' }}>
@@ -3590,7 +3596,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                       No Manager or Employee yet.
                     </div>
                   ) : getDepartmentPeople(selectedDepartment).map((member, memberIdx) => (
-                    <div key={`${member.id}-${shiftViewMode}`} className="member-card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, border: `1px solid ${PANEL_BORDER}`, borderRadius: 12, padding: '13px 12px', background: '#FFFFFF', animationDelay: `${memberIdx * 50}ms` }}>
+                    <div key={`${member.id}-${shiftViewMode}`} className="member-card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, border: `1px solid ${PANEL_BORDER}`, borderRadius: 12, padding: '13px 12px', background: '#FFFFFF', animationDelay: scopeToManagerDepartments ? '0ms' : `${memberIdx * 50}ms` }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
                         <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 999, background: member.profile_photo_url ? 'transparent' : (member.role === 'Manager' ? '#FFF7ED' : '#F3F4F6'), color: member.role === 'Manager' ? '#EA580C' : '#4B5563', flexShrink: 0, overflow: 'hidden' }}>
                           {member.profile_photo_url
@@ -3661,7 +3667,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                       }}
                       style={{
                         position: 'relative',
-                        animation: `deptCardIn 0.28s ease both ${deptIdx * 55}ms`,
+                        animation: `deptCardIn 0.28s ease both ${scopeToManagerDepartments ? 0 : deptIdx * 55}ms`,
                         zIndex: 1,
                         display: 'flex',
                         flexDirection: 'column',
@@ -3788,7 +3794,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
             ) : (
               <div style={{ display: 'grid', gap: 10, marginBottom: 10 }}>
                 {shiftTemplates.map((t, idx) => (
-                  <div key={`${t.id}-${shiftViewMode}`} className="shift-template-card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, border: `1px solid ${PANEL_BORDER}`, borderRadius: 12, padding: '13px 14px', background: '#F9FAFB', animationDelay: `${idx * 50}ms` }}>
+                  <div key={`${t.id}-${shiftViewMode}`} className="shift-template-card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, border: `1px solid ${PANEL_BORDER}`, borderRadius: 12, padding: '13px 14px', background: '#F9FAFB', animationDelay: scopeToManagerDepartments ? '0ms' : `${idx * 50}ms` }}>
                     <div style={{ minWidth: 0, paddingLeft: 4 }}>
                       <p style={{ margin: 0, ...DEPARTMENT_NAME_STYLE, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.name}</p>
                       <p style={{ margin: '6px 0 0', fontSize: 12, color: '#9CA3AF', fontWeight: 600 }}>{formatShiftHour(t.start_time)} – {formatShiftHour(t.end_time)}</p>

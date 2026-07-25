@@ -19,6 +19,7 @@ import DepartmentBadge from '@/components/DepartmentBadge'
 import { Task, TaskInput, KanbanGroup, TaskWorkloadSuggestion, TaskDelayAlert } from '@/types/Task'
 import { TaskTemplate } from '@/types/TaskTemplate'
 import { TimelineRow, TimelineShiftBlock } from '@/types/Timeline'
+import { useResourceInvalidation } from '@/components/realtime/RealtimeNotificationsProvider'
 
 // ─── Date picker constants ────────────────────────────────────────────────────
 
@@ -1844,11 +1845,21 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
     const channel = supabase
       .channel(`tasks-realtime-${companyId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks', filter: `company_id=eq.${companyId}` },
-        () => { void fetchKanban(companyId, true) }
+        () => {
+          void fetchKanban(companyId, true)
+          if (scopeToManagerDepartments) void fetchMyTasksKanban(companyId, true)
+        }
       )
       .subscribe()
     return () => { void supabase.removeChannel(channel) }
-  }, [companyId, fetchKanban])
+  }, [companyId, fetchKanban, fetchMyTasksKanban, scopeToManagerDepartments])
+
+  useResourceInvalidation(['tasks'], () => {
+    if (!companyId) return
+    void fetchKanban(companyId, true)
+    if (scopeToManagerDepartments) void fetchMyTasksKanban(companyId, true)
+    void refreshAllTaskInsights()
+  })
 
   // Owner and Partner are peer "assigner" roles (a Partner is effectively a backup Owner) — same
   // cross-management the Shifts page already gives them over each other's shifts. On this tier
@@ -3697,6 +3708,18 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
           animation: tabContentIn 0.22s ease-out both;
         }
 
+        ${scopeToManagerDepartments ? `
+        .task-dept-panel,
+        .task-side-section,
+        .task-side-card,
+        .task-board-panel,
+        .task-tab-content,
+        .kanban-col,
+        .member-card {
+          animation-delay: 0s !important;
+        }
+        ` : ''}
+
         /* Member sidebar cards */
         .member-card {
           animation: cardStagger 0.30s ease both;
@@ -3877,7 +3900,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                         const clickable = card.count > 0 || active
                         const ring = `0 0 0 2px #FFFFFF, 0 0 0 3.5px ${card.iconColor}`
                         return (
-                          <div key={card.key} className="task-side-card" style={{ border: '1px solid #E5E7EB', borderRadius: 12, background: '#F9FAFB', padding: '11px 12px', display: 'flex', alignItems: 'center', gap: 10, animationDelay: `${0.12 + cardIdx * 0.06}s` }}>
+                          <div key={card.key} className="task-side-card" style={{ border: '1px solid #E5E7EB', borderRadius: 12, background: '#F9FAFB', padding: '11px 12px', display: 'flex', alignItems: 'center', gap: 10, animationDelay: scopeToManagerDepartments ? '0s' : `${0.12 + cardIdx * 0.06}s` }}>
                             <span style={{ width: 28, height: 28, borderRadius: 9, background: card.iconBg, color: card.iconColor, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                               {card.icon}
                             </span>
@@ -4271,7 +4294,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                                     outlineOffset: 3,
                                     boxShadow: isDragOver ? '0 14px 34px rgba(249,115,22,0.12)' : undefined,
                                     transform: isDragging ? 'scale(0.985)' : undefined,
-                                    animation: `deptCardIn 0.28s ease both ${deptIdx * 55}ms`,
+                                    animation: `deptCardIn 0.28s ease both ${scopeToManagerDepartments ? 0 : deptIdx * 55}ms`,
                                   }}
                                   onMouseEnter={e => { if (draggingDepartmentId) return; e.currentTarget.style.transform = 'translateY(-3px)'; e.currentTarget.style.boxShadow = '0 10px 28px rgba(15,23,42,0.11)'; e.currentTarget.style.borderColor = deptColor(d.id) }}
                                   onMouseLeave={e => { if (draggingDepartmentId) return; e.currentTarget.style.transform = isDragging ? 'scale(0.985)' : 'none'; e.currentTarget.style.boxShadow = 'none'; e.currentTarget.style.borderColor = '#F1F5F9' }}
@@ -4588,7 +4611,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                             </div>
                           </div>
                         )}
-                        <div className="kanban-col" style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', background: '#F7F8FA', borderRadius: '12px', overflow: 'hidden', minHeight: 0, height: '100%', border: '1px solid #F0F1F3', animationDelay: `${0.06 + colIdx * 0.05}s` }}>
+                        <div className="kanban-col" style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', background: '#F7F8FA', borderRadius: '12px', overflow: 'hidden', minHeight: 0, height: '100%', border: '1px solid #F0F1F3', animationDelay: scopeToManagerDepartments ? '0s' : `${0.06 + colIdx * 0.05}s` }}>
                           {/* Column header */}
                           <div style={{ padding: '11px 14px 10px', display: 'flex', alignItems: 'center', gap: 7, flexShrink: 0, borderBottom: '1px solid #ECEEF1' }}>
                             <div style={{ color: cfg.color, display: 'flex', alignItems: 'center' }}>{cfg.icon}</div>
@@ -4598,7 +4621,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                           {/* Scrollable card area */}
                           <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '10px 18px 12px', display: 'flex', flexDirection: 'column' }}>
                             {topLevelTasks.length === 0 ? (
-                              <div style={{ flex: 1, minHeight: 164, margin: '8px 0', padding: '32px 0', textAlign: 'center', background: '#F8FAFC', borderRadius: 14, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', animation: 'fadeSlideUp 0.3s ease both', animationDelay: `${0.1 + colIdx * 0.05}s` }}>
+                              <div style={{ flex: 1, minHeight: 164, margin: '8px 0', padding: '32px 0', textAlign: 'center', background: '#F8FAFC', borderRadius: 14, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', animation: 'fadeSlideUp 0.3s ease both', animationDelay: scopeToManagerDepartments ? '0s' : `${0.1 + colIdx * 0.05}s` }}>
                                 {{ Assigned: <Layers size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />, 'In Progress': <Clock size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />, Review: <Eye size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />, Complete: <CheckCircle size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} /> }[col]}
                                 <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>No {cfg.label.toLowerCase()} tasks</p>
                               </div>

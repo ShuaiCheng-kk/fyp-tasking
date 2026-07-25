@@ -16,6 +16,7 @@ import {
   GripVertical,
 } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
+import { useRealtimeNotifications } from '@/components/realtime/RealtimeNotificationsProvider'
 
 export type SidebarRole = 'owner' | 'partner' | 'manager'
 
@@ -127,6 +128,7 @@ export default function OwnerSidebar({
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
   const [draggingLabel, setDraggingLabel] = useState<string | null>(null)
   const [dragOverLabel, setDragOverLabel] = useState<string | null>(null)
+  const realtimeNotifications = useRealtimeNotifications()
 
   // ── Nav order ───────────────────────────────────────────────────────────────
   const [navOrder, setNavOrder] = useState<string[]>(NAV_LABELS)
@@ -423,6 +425,13 @@ export default function OwnerSidebar({
   useEffect(() => { if (unreadMessages !== undefined) setMsgCount(unreadMessages) }, [unreadMessages])
   useEffect(() => { if (unreadAnnouncements !== undefined) setAnnCount(unreadAnnouncements) }, [unreadAnnouncements])
 
+  const communicationDotCount = realtimeNotifications.ready ? realtimeNotifications.counts.communication : msgCount + annCount
+  const reviewDotCount = realtimeNotifications.ready ? realtimeNotifications.counts.recruitment : reviewCount
+  const attendanceDotCount = realtimeNotifications.ready
+    ? realtimeNotifications.counts.attendance + (attendanceAlertCount ?? 0)
+    : attendanceCount + (attendanceAlertCount ?? 0)
+  const taskDotCount = realtimeNotifications.ready ? realtimeNotifications.counts.tasks : taskAlertCount
+
   const visibleLabels = userRole === 'Manager'
     ? navOrder.filter(l => l !== 'Report' && l !== 'Company')
     : navOrder
@@ -493,7 +502,7 @@ export default function OwnerSidebar({
         {orderedItems.map(({ label, Icon, href, dot }, idx) => {
           const active = pathname === href
           // Communication covers both tabs — unread chat messages OR unread announcements light it up.
-          const showDot = dot === 'messages' ? msgCount > 0 || annCount > 0 : dot === 'announcements' ? annCount > 0 : dot === 'review' ? reviewCount > 0 : dot === 'attendance' ? (role === 'manager' && attendanceAlertCount != null ? attendanceAlertCount > 0 : attendanceCount + (attendanceAlertCount ?? 0) > 0) : dot === 'tasks' ? taskAlertCount > 0 : false
+          const showDot = dot === 'messages' ? communicationDotCount > 0 : dot === 'announcements' ? annCount > 0 : dot === 'review' ? reviewDotCount > 0 : dot === 'attendance' ? attendanceDotCount > 0 : dot === 'tasks' ? taskDotCount > 0 : false
           const isDragging = draggingLabel === label
           const isDragOver = dragOverLabel === label
 
