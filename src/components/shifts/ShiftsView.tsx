@@ -780,7 +780,7 @@ const modalInputStyle: React.CSSProperties = {
   background: '#FFFFFF',
 }
 
-export default function ShiftsView({ sidebar, basePath, canManageShifts = true, scopeToManagerDepartments = false }: {
+export default function ShiftsView({ sidebar, basePath, canManageShifts = true, scopeToManagerDepartments = false, scopeToEmployeeSelf = false }: {
   sidebar: React.ReactNode
   basePath: string
   // UC1-11 are O/P-only: false renders the schedule read-only (no create/edit/publish/bulk/AI/templates).
@@ -788,10 +788,14 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
   // Manager role scope: /api/shift calls pass viewer_role/viewer_user_id so the server
   // limits rows to the viewer's departments; the department panel is filtered the same way.
   scopeToManagerDepartments?: boolean
+  // Employee role scope: narrower than Manager — /api/shift returns only the Employee's own
+  // row plus any Casual Worker shift blocks they currently supervise (see shiftService's
+  // getTimelineShifts Employee branch), never their whole department.
+  scopeToEmployeeSelf?: boolean
 }) {
-  // Manager only ever sees their own department's people on this page, so department
+  // Manager/Employee only ever see their own scoped slice of people on this page, so department
   // color-coding is meaningless — fall back to the brand orange instead of deptColor().
-  const shiftBarColor = (departmentId: string) => scopeToManagerDepartments ? '#F97316' : deptColor(departmentId)
+  const shiftBarColor = (departmentId: string) => (scopeToManagerDepartments || scopeToEmployeeSelf) ? '#F97316' : deptColor(departmentId)
   const router = useRouter()
   const timelineControlsRef = useRef<HTMLDivElement>(null)
   const todayStr = useMemo(() => formatDateKey(new Date()), [])
@@ -809,7 +813,11 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
   const [initialReady, setInitialReady] = useState(false)
   const [authUserId, setAuthUserId] = useState('')
   const [internalUserId, setInternalUserId] = useState('')
-  const viewerParams = scopeToManagerDepartments && internalUserId ? `&viewer_role=Manager&viewer_user_id=${internalUserId}` : ''
+  const viewerParams = scopeToManagerDepartments && internalUserId
+    ? `&viewer_role=Manager&viewer_user_id=${internalUserId}`
+    : scopeToEmployeeSelf && internalUserId
+      ? `&viewer_role=Employee&viewer_user_id=${internalUserId}`
+      : ''
   const [ownerName, setOwnerName] = useState('Owner')
   const [companyId, setCompanyId] = useState('')
   const [company, setCompany] = useState<Company | null>(null)
@@ -1138,7 +1146,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
 
   const fetchAssignmentData = useCallback(async (cid: string, silent = false) => {
     if (!cid) return
-    if (scopeToManagerDepartments && !internalUserId) return
+    if ((scopeToManagerDepartments || scopeToEmployeeSelf) && !internalUserId) return
     if (!silent) setAssignmentDataLoading(true)
     try {
       const [deptRes, memberRes, managerRes] = await Promise.all([
@@ -1181,7 +1189,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
 
   const fetchTimeline = useCallback(async (cid: string, date: string) => {
     if (!cid || !date) return
-    if (scopeToManagerDepartments && !internalUserId) return
+    if ((scopeToManagerDepartments || scopeToEmployeeSelf) && !internalUserId) return
     setTimelineLoading(true)
     try {
       const res = await fetch(`/api/shift?company_id=${cid}&date_from=${date}&date_to=${date}${viewerParams}`)
@@ -1194,7 +1202,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
 
   const fetchFutureRows = useCallback(async (cid: string) => {
     if (!cid) return
-    if (scopeToManagerDepartments && !internalUserId) return
+    if ((scopeToManagerDepartments || scopeToEmployeeSelf) && !internalUserId) return
     const res = await fetch(`/api/shift?company_id=${cid}&date_from=${minDate}&date_to=${maxDate}${viewerParams}`)
     const data = await res.json()
     setFutureRows(data.success ? data.rows ?? [] : [])
@@ -1218,7 +1226,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
 
   const fetchCalWeek = useCallback(async (cid: string, anchorDate: string) => {
     if (!cid || !anchorDate) return
-    if (scopeToManagerDepartments && !internalUserId) return
+    if ((scopeToManagerDepartments || scopeToEmployeeSelf) && !internalUserId) return
     setCalWeekLoading(true)
     try {
       const anchor = new Date(`${anchorDate}T00:00:00`)
@@ -3354,7 +3362,8 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
 
           <div data-owner-header-badges style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
             {internalUserId && <OwnerUserBadge userId={internalUserId} companyId={companyId} />}
-            {companyId && <OwnerPlanBadge plan={company?.plan ?? 'Free'} currentCompanyId={companyId} />}
+            {/* Subscription plan is Owner/Partner-only — Manager/Employee (and every other role) can't switch it. */}
+            {companyId && !scopeToManagerDepartments && !scopeToEmployeeSelf && <OwnerPlanBadge plan={company?.plan ?? 'Free'} currentCompanyId={companyId} />}
           </div>
         </div>
 

@@ -151,29 +151,6 @@ describe('employeeAttendanceService — Clock In / Clock Out (UC49, shared with 
   })
 })
 
-describe('employeeAttendanceService — clockIn with late_reason (UC49)', () => {
-  beforeEach(() => { vi.clearAllMocks() })
-
-  it('stores late_reason and attachment_url on created record', async () => {
-    vi.mocked(employeeAttendanceRepository.getUserByAuthId).mockResolvedValue(user)
-    vi.mocked(employeeAttendanceRepository.getAssignmentById).mockResolvedValue(assignment)
-    vi.mocked(employeeAttendanceRepository.getAttendanceRecordByAssignmentId).mockResolvedValue(null)
-    vi.mocked(employeeAttendanceRepository.createAttendanceRecord).mockResolvedValue({ id: 'ar-1', late_reason: 'Traffic', attachment_url: 'http://x.com/f.pdf' } as any)
-
-    await employeeAttendanceService.clockIn({
-      authId: 'auth-1',
-      shift_assignment_id: 'assignment-1',
-      clock_time: '2026-07-01T08:20:00Z',
-      late_reason: 'Traffic',
-      attachment_url: 'http://x.com/f.pdf',
-    })
-
-    expect(employeeAttendanceRepository.createAttendanceRecord).toHaveBeenCalledWith(
-      expect.objectContaining({ late_reason: 'Traffic', attachment_url: 'http://x.com/f.pdf' })
-    )
-  })
-})
-
 describe('employeeAttendanceService — breakIn (UC49)', () => {
   beforeEach(() => { vi.clearAllMocks() })
 
@@ -241,47 +218,6 @@ describe('employeeAttendanceService — breakOut (UC49)', () => {
     } as any)
     await expect(employeeAttendanceService.breakOut({ authId: 'auth-1', shift_assignment_id: 'assignment-1' }))
       .rejects.toThrow('Break already ended')
-  })
-})
-
-describe('employeeAttendanceService — recordAbsence (UC49)', () => {
-  beforeEach(() => { vi.clearAllMocks() })
-
-  it('creates a record with null clock times and absence_reason', async () => {
-    vi.mocked(employeeAttendanceRepository.getUserByAuthId).mockResolvedValue(user)
-    vi.mocked(employeeAttendanceRepository.getAssignmentById).mockResolvedValue(assignment)
-    vi.mocked(employeeAttendanceRepository.getAttendanceRecordByAssignmentId).mockResolvedValue(null)
-    vi.mocked(employeeAttendanceRepository.createAttendanceRecord).mockResolvedValue({ id: 'ar-1', clock_in_time: null } as any)
-
-    await employeeAttendanceService.recordAbsence({
-      authId: 'auth-1',
-      shift_assignment_id: 'assignment-1',
-      absence_reason: 'Sick day',
-    })
-
-    expect(employeeAttendanceRepository.createAttendanceRecord).toHaveBeenCalledWith(
-      expect.objectContaining({ clock_in_time: null, absence_reason: 'Sick day', status: 'submitted' })
-    )
-  })
-
-  it('updates existing record with absence_reason if one already exists', async () => {
-    vi.mocked(employeeAttendanceRepository.getUserByAuthId).mockResolvedValue(user)
-    vi.mocked(employeeAttendanceRepository.getAssignmentById).mockResolvedValue(assignment)
-    vi.mocked(employeeAttendanceRepository.getAttendanceRecordByAssignmentId).mockResolvedValue({
-      id: 'ar-1', clock_in_time: null, attachment_url: null,
-    } as any)
-    vi.mocked(employeeAttendanceRepository.updateAttendanceRecord).mockResolvedValue({ id: 'ar-1' } as any)
-
-    await employeeAttendanceService.recordAbsence({
-      authId: 'auth-1',
-      shift_assignment_id: 'assignment-1',
-      absence_reason: 'Family emergency',
-    })
-
-    expect(employeeAttendanceRepository.updateAttendanceRecord).toHaveBeenCalledWith('ar-1', expect.objectContaining({
-      absence_reason: 'Family emergency',
-      status: 'submitted',
-    }))
   })
 })
 

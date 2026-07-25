@@ -18,7 +18,7 @@ import {
 import { createBrowserClient } from '@supabase/ssr'
 import { useRealtimeNotifications } from '@/components/realtime/RealtimeNotificationsProvider'
 
-export type SidebarRole = 'owner' | 'partner' | 'manager'
+export type SidebarRole = 'owner' | 'partner' | 'manager' | 'employee'
 
 type DotKey = 'messages' | 'announcements' | 'review' | 'attendance' | 'tasks' | null
 
@@ -35,7 +35,13 @@ function navItemsFor(role: SidebarRole) {
   ]
   // Report is O/P-only (UC62-64); Company/Team is O/P-only too — Managers don't manage
   // members or departments and don't get either menu item.
-  return role === 'manager' ? items.filter(i => i.label !== 'Report' && i.label !== 'Company') : items
+  if (role === 'manager') return items.filter(i => i.label !== 'Report' && i.label !== 'Company')
+  // Employee: no Company (O-only), no Recruitment (O/P/M-only), no Report (O/P-only), and no
+  // standalone Communication page — Employee can't post Announcements (O/P/M-only), so a full
+  // Communication page would only ever hold the Message tab; that lives as a panel on the
+  // Dashboard instead (confirmed 2026-07-25).
+  if (role === 'employee') return items.filter(i => ['Dashboard', 'Shifts', 'Tasks', 'Attendance'].includes(i.label))
+  return items
 }
 
 function orderKeyFor(role: SidebarRole): string {
@@ -101,6 +107,20 @@ const THEME_MANAGER = {
   logoutHoverBg: 'rgba(239,68,68,0.18)',
 }
 
+// Employee's sidebar: green background (same treatment as Partner/Manager), same orange accent
+// as everyone else (confirmed 2026-07-25).
+const THEME_EMPLOYEE = {
+  sidebarBg: '#14532D',
+  sidebarText: '#FFFFFF',
+  sidebarActiveBg: 'transparent',
+  sidebarActiveText: '#F97316',
+  sidebarActiveTint: 'rgba(249,115,22,0.15)',
+  sidebarHoverBg: 'rgba(255,255,255,0.07)',
+  sidebarBorder: '#0F3F24',
+  logoBorder: '#0F3F24',
+  logoutHoverBg: 'rgba(239,68,68,0.18)',
+}
+
 export default function OwnerSidebar({
   unreadMessages,
   unreadAnnouncements,
@@ -115,7 +135,7 @@ export default function OwnerSidebar({
   const NAV_ITEMS = navItemsFor(role)
   const NAV_LABELS = NAV_ITEMS.map(i => i.label)
   const ORDER_KEY = orderKeyFor(role)
-  const THEME = role === 'partner' ? THEME_DARK : role === 'manager' ? THEME_MANAGER : THEME_LIGHT
+  const THEME = role === 'partner' ? THEME_DARK : role === 'manager' ? THEME_MANAGER : role === 'employee' ? THEME_EMPLOYEE : THEME_LIGHT
   const pathname = usePathname()
   const [expanded, setExpanded] = useState(false)
   const [userRole, setUserRole] = useState('')
@@ -236,13 +256,16 @@ export default function OwnerSidebar({
         fetchReviewCount()
 
         const fetchAttendanceBadgeCount = () => {
-          if (role === 'manager') {
+          if (role === 'manager' || role === 'employee') {
             Promise.all([
               fetch(`/api/attendance?resource=my_requests&user_id=${internalId}`).then(r => r.json()).catch(() => ({ success: false })),
-              fetch(`/api/attendance?company_id=${cid}&resource=shift_swaps&manager_id=${internalId}`).then(r => r.json()).catch(() => ({ success: false })),
+              // Employee never approves — only Manager gets the shift-swap review queue count.
+              role === 'manager'
+                ? fetch(`/api/attendance?company_id=${cid}&resource=shift_swaps&manager_id=${internalId}`).then(r => r.json()).catch(() => ({ success: false }))
+                : Promise.resolve({ success: true, requests: [] }),
             ])
               .then(([data, queueData]) => {
-                const seenKey = `manager_myreq_seen_${cid}_${internalId}`
+                const seenKey = `${role}_myreq_seen_${cid}_${internalId}`
                 let seen = new Set<string>()
                 try {
                   const raw = localStorage.getItem(seenKey)
@@ -285,13 +308,16 @@ export default function OwnerSidebar({
 
         const fetchTaskAlerts = () => {
           // A Manager's Tasks sidebar dot includes both team-task alerts and unseen My Tasks.
+          // Workload Rebalancing (UC21) and Task Delay Alert (UC22) are O/P/M-only, so Employee
+          // only gets the unseen "My Tasks" component, never the workload/delay counts.
+          const includeMyTasks = role === 'manager' || role === 'employee'
           const scopeParam = role === 'manager' ? `manager_scope_id=${internalId}` : `assigned_by=${internalId}`
-          const myTasksSeenKey = `manager_mytasks_seen_${cid}_${internalId}`
+          const myTasksSeenKey = role === 'manager' ? `manager_mytasks_seen_${cid}_${internalId}` : `employee_mytasks_seen_${cid}_${internalId}`
           const myTaskSignature = (task: { id: string; rejected_at?: string | null }) => `${task.id}::${task.rejected_at ?? ''}`
           Promise.all([
-            fetch(`/api/task?company_id=${cid}&suggestion=workload&${scopeParam}`).then(r => r.json()).catch(() => ({ success: false })),
-            fetch(`/api/task?company_id=${cid}&suggestion=delay&${scopeParam}&viewer_id=${internalId}`).then(r => r.json()).catch(() => ({ success: false })),
-            role === 'manager'
+            role === 'employee' ? Promise.resolve({ success: true, suggestions: [] }) : fetch(`/api/task?company_id=${cid}&suggestion=workload&${scopeParam}`).then(r => r.json()).catch(() => ({ success: false })),
+            role === 'employee' ? Promise.resolve({ success: true, alerts: [] }) : fetch(`/api/task?company_id=${cid}&suggestion=delay&${scopeParam}&viewer_id=${internalId}`).then(r => r.json()).catch(() => ({ success: false })),
+            includeMyTasks
               ? fetch(`/api/task?company_id=${cid}&kanban=true&assigned_user_id=${encodeURIComponent(internalId)}&viewer_id=${encodeURIComponent(internalId)}`).then(r => r.json()).catch(() => ({ success: false }))
               : Promise.resolve({ success: true, groups: { Assigned: [] } }),
           ]).then(([workloadData, delayData, myTasksData]) => {
@@ -302,7 +328,7 @@ export default function OwnerSidebar({
               const raw = localStorage.getItem(myTasksSeenKey)
               if (raw) seenMyTasks = new Set(JSON.parse(raw))
             } catch {}
-            const newMyTaskCount = role === 'manager' && myTasksData.success
+            const newMyTaskCount = includeMyTasks && myTasksData.success
               ? [
                   ...(((myTasksData.groups?.Assigned ?? []) as Array<{ id: string; rejected_at?: string | null; parent_task_id?: string | null }>)),
                   ...(((myTasksData.groups?.['In Progress'] ?? []) as Array<{ id: string; rejected_at?: string | null; rejection_reason?: string | null; parent_task_id?: string | null }>))
@@ -434,7 +460,9 @@ export default function OwnerSidebar({
 
   const visibleLabels = userRole === 'Manager'
     ? navOrder.filter(l => l !== 'Report' && l !== 'Company')
-    : navOrder
+    : userRole === 'Employee'
+      ? navOrder.filter(l => ['Dashboard', 'Shifts', 'Tasks', 'Attendance'].includes(l))
+      : navOrder
 
   const orderedItems = visibleLabels
     .map(label => NAV_ITEMS.find(item => item.label === label))

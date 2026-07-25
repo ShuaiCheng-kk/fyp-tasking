@@ -803,6 +803,7 @@ export const shiftService = {
         deptMap.get(shift.department_id) ?? 'Unknown department',
         assignment.id,
         assignment.assignment_status,
+        assignment.supervisor_employee_id,
       ))
     }
 
@@ -830,7 +831,25 @@ export const shiftService = {
       ))
     }
 
-    return Array.from(rowMap.values())
+    let rows = Array.from(rowMap.values())
+
+    // Employee's Shifts page (read-only) scopes to just their own row plus any Casual Worker
+    // shift blocks they currently supervise — never the whole department/company like Manager
+    // gets. A CW's row keeps only the blocks this Employee supervises; blocks they don't
+    // supervise, and every other Manager/Employee/Unassigned row, are dropped entirely.
+    if (viewer?.role === 'Employee' && viewer.user_id) {
+      const viewerId = viewer.user_id
+      rows = rows
+        .map(row => {
+          if (row.user_id === viewerId) return row
+          if (row.role !== 'Casual Worker') return null
+          const shifts = row.shifts.filter(block => block.supervisor_employee_id === viewerId)
+          return shifts.length > 0 ? { ...row, shifts } : null
+        })
+        .filter((row): row is TimelineRow => row !== null)
+    }
+
+    return rows
       .map(row => ({
         ...row,
         shifts: row.shifts.sort((a, b) => a.start_time.localeCompare(b.start_time)),
@@ -975,6 +994,7 @@ function toTimelineShiftBlock(
   department_name: string,
   assignment_id: string | null,
   assignment_status: string | null,
+  supervisor_employee_id: string | null = null,
 ): TimelineShiftBlock {
   return {
     id: shift.id,
@@ -994,6 +1014,7 @@ function toTimelineShiftBlock(
     split_group_id: shift.split_group_id,
     assignment_status,
     template_id: shift.template_id,
+    supervisor_employee_id,
   }
 }
 

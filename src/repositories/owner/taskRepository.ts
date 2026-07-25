@@ -325,17 +325,21 @@ export const taskRepository = {
     return (data ?? []).map((row: { department_id: string }) => row.department_id)
   },
 
-  // Casual Workers this Employee actually supervises within a given department — i.e. the exact
-  // set an Employee is allowed to assign tasks to (one level down, per the company hierarchy).
-  // Supervision is recorded per shift_assignment (supervisor_employee_id), not company/department-
-  // wide, so this only counts CWs the Employee has a real supervising shift relationship with.
+  // Casual Workers this Employee actually supervises TODAY — i.e. the exact set an Employee is
+  // allowed to assign tasks to (one level down, per the company hierarchy). Supervision is
+  // recorded per shift_assignment (supervisor_employee_id), scoped to today's shift_date only:
+  // a CW who worked yesterday or is booked for tomorrow isn't assignable until their own shift
+  // day arrives (confirmed 2026-07-25) — matches the real-world "they're on the floor today, so I
+  // can hand them work today" relationship, not a standing roster.
   async getSupervisedCasualWorkerIds(employee_id: string, company_id: string, department_id: string): Promise<string[]> {
+    const today = new Date().toISOString().slice(0, 10)
     const { data, error } = await supabase
       .from('shift_assignments')
-      .select('user_id, shifts!inner(company_id, department_id)')
+      .select('user_id, shifts!inner(company_id, department_id, shift_date)')
       .eq('supervisor_employee_id', employee_id)
       .eq('shifts.company_id', company_id)
       .eq('shifts.department_id', department_id)
+      .eq('shifts.shift_date', today)
     if (error) throw new Error(error.message)
     return [...new Set((data ?? []).map((row: { user_id: string }) => row.user_id))]
   },

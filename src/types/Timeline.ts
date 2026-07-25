@@ -16,6 +16,9 @@ export interface TimelineShiftBlock {
   split_group_id: string | null
   assignment_status: string | null
   template_id: string | null
+  // Casual Worker one-off/shift jobs only — the Employee who supervises this specific shift
+  // block, used to scope an Employee viewer's Shifts page to just the CWs they supervise.
+  supervisor_employee_id: string | null
 }
 
 export interface TimelineRow {

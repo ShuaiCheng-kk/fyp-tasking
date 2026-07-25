@@ -41,7 +41,7 @@ export const employeeAttendanceService = {
 
   // Shared by Manager and Employee — both are scheduled internal staff who clock in/out
   // against their own shift_assignment the same way (see CLAUDE.md: Manager ⊇ Employee).
-  async clockIn(input: { authId: string; shift_assignment_id: string; clock_time?: string; notes?: string | null; late_reason?: string | null; attachment_url?: string | null }) {
+  async clockIn(input: { authId: string; shift_assignment_id: string; clock_time?: string; notes?: string | null }) {
     const user = await employeeAttendanceRepository.getUserByAuthId(input.authId)
     if (!user) throw new Error('User not found')
 
@@ -72,8 +72,6 @@ export const employeeAttendanceService = {
         confirmed_by_employee_id: user.id,
         status: 'clocked_in',
         employee_notes: input.notes ?? existing.employee_notes,
-        late_reason: input.late_reason ?? existing.late_reason,
-        attachment_url: input.attachment_url ?? existing.attachment_url,
       })
     }
 
@@ -85,8 +83,6 @@ export const employeeAttendanceService = {
       submitted_by_employee_id: user.id,
       status: 'clocked_in',
       employee_notes: input.notes ?? null,
-      late_reason: input.late_reason ?? null,
-      attachment_url: input.attachment_url ?? null,
       owner_status: 'pending',
     })
   },
@@ -182,34 +178,5 @@ export const employeeAttendanceService = {
     if (record.clock_out_released_at) throw new Error('Already released')
 
     return employeeAttendanceRepository.releaseClockOut(attendance_record_id, user.id)
-  },
-
-  async recordAbsence(input: { authId: string; shift_assignment_id: string; absence_reason: string; attachment_url?: string | null }) {
-    const user = await employeeAttendanceRepository.getUserByAuthId(input.authId)
-    if (!user) throw new Error('User not found')
-
-    const assignment = await employeeAttendanceRepository.getAssignmentById(input.shift_assignment_id)
-    if (!assignment || assignment.user_id !== user.id) throw new Error('Shift assignment not found for this user')
-
-    const existing = await employeeAttendanceRepository.getAttendanceRecordByAssignmentId(input.shift_assignment_id)
-    if (existing) {
-      return employeeAttendanceRepository.updateAttendanceRecord(existing.id, {
-        absence_reason: input.absence_reason,
-        attachment_url: input.attachment_url ?? existing.attachment_url,
-        status: 'submitted',
-      })
-    }
-
-    return employeeAttendanceRepository.createAttendanceRecord({
-      shift_assignment_id: input.shift_assignment_id,
-      casual_worker_id: user.id,
-      clock_in_time: null,
-      confirmed_by_employee_id: user.id,
-      submitted_by_employee_id: user.id,
-      status: 'submitted',
-      absence_reason: input.absence_reason,
-      attachment_url: input.attachment_url ?? null,
-      owner_status: 'pending',
-    })
   },
 }

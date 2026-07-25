@@ -64,8 +64,6 @@ export async function POST(req: NextRequest) {
         shift_assignment_id,
         clock_time: typeof b.clock_time === 'string' ? b.clock_time : undefined,
         notes: typeof b.notes === 'string' ? b.notes : null,
-        late_reason: typeof b.late_reason === 'string' ? b.late_reason : null,
-        attachment_url: typeof b.attachment_url === 'string' ? b.attachment_url : null,
       })
       return NextResponse.json({ success: true, record }, { status: 201 })
     }
@@ -87,19 +85,6 @@ export async function POST(req: NextRequest) {
 
     if (b.action === 'break_out') {
       const record = await employeeAttendanceService.breakOut({ authId, shift_assignment_id })
-      return NextResponse.json({ success: true, record })
-    }
-
-    if (b.action === 'record_absence') {
-      if (typeof b.absence_reason !== 'string' || !b.absence_reason.trim()) {
-        return NextResponse.json({ success: false, message: 'absence_reason is required' }, { status: 400 })
-      }
-      const record = await employeeAttendanceService.recordAbsence({
-        authId,
-        shift_assignment_id,
-        absence_reason: b.absence_reason,
-        attachment_url: typeof b.attachment_url === 'string' ? b.attachment_url : null,
-      })
       return NextResponse.json({ success: true, record })
     }
 
