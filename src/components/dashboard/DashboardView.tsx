@@ -5,8 +5,8 @@ import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
 import {
   ListChecks, CheckSquare, ClipboardList, UserPlus,
-  ArrowRightLeft, Calendar, Eye, Users, Check, ArrowRight, CheckCircle2,
-  Clock, Coffee, Hourglass, ChevronDown, ChevronUp, AlertCircle, Bell, UserCog, UserCheck,
+  ArrowRightLeft, Calendar, Eye, Users, Check, ArrowRight, ArrowDown, CheckCircle2,
+  Clock, Coffee, Hourglass, ChevronDown, ChevronUp, AlertCircle, Search, Bell, UserCog, UserCheck,
 } from 'lucide-react'
 import DepartmentBadge from '@/components/DepartmentBadge'
 import { deptColor } from '@/lib/deptColor'
@@ -137,6 +137,23 @@ function CountChip({ value }: { value: string | number }) {
   )
 }
 
+// Same look as ShowcaseCard's built-in search input (Team page) - used in block headers where
+// the search must sit to the LEFT of the corner link action.
+function HeaderSearchInput({ value, onChange, width = 180 }: { value: string; onChange: (v: string) => void; width?: number }) {
+  return (
+    <div style={{ position: 'relative', flexShrink: 0 }}>
+      <Search size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#9CA3AF', pointerEvents: 'none' }} />
+      <input
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        style={{ width, height: 34, borderRadius: 999, border: '1px solid #E5E7EB', background: '#F9FAFB', padding: '0 12px 0 32px', fontSize: 13, color: '#111827', outline: 'none', boxSizing: 'border-box' }}
+        onFocus={e => { e.currentTarget.style.borderColor = '#F97316'; e.currentTarget.style.background = '#FFFFFF' }}
+        onBlur={e => { e.currentTarget.style.borderColor = '#E5E7EB'; e.currentTarget.style.background = '#F9FAFB' }}
+      />
+    </div>
+  )
+}
+
 function LinkAction({ label, onClick }: { label: string; onClick: () => void }) {
   return (
     <button
@@ -164,7 +181,7 @@ const WAITING_META: Record<WaitingOnYouItemId, { icon: React.ReactNode; accent: 
 // Relative to the role's base path — prefixed with basePath at push time.
 const WAITING_ROUTES: Record<WaitingOnYouItemId, string> = {
   shift_swap: '/attendance?tab=swaps',
-  off_day_deadline: '/attendance?submit=offday',
+  off_day_deadline: '/attendance?tab=fixedoff',
   job_posting_approval: '/recruitment?view=pending',
   applicant_accept: '/recruitment',
   task_review: '/tasks',
@@ -172,26 +189,27 @@ const WAITING_ROUTES: Record<WaitingOnYouItemId, string> = {
 
 // Shared stat-action card look (Waiting On You + Recruitment Overview): icon badge with a big
 // count, label + arrow; count 0 flips into the green done state.
-function StatActionCard({ count, label, sub, icon, accent, accentBg, onClick, value }: {
-  count: number; label: string; sub: string; icon: React.ReactNode; accent: string; accentBg: string; onClick: () => void; value?: React.ReactNode
+function StatActionCard({ count, label, sub, icon, accent, accentBg, onClick, value, compact = false, disableDoneClick = false }: {
+  count: number; label: string; sub: string; icon: React.ReactNode; accent: string; accentBg: string; onClick: () => void; value?: React.ReactNode; compact?: boolean; disableDoneClick?: boolean
 }) {
   const done = count === 0
+  const clickable = !(done && disableDoneClick)
   const meta = { icon, accent, accentBg, sub }
   return (
     <div
-      onClick={done ? undefined : onClick}
+      onClick={clickable ? onClick : undefined}
       style={{
         flex: 1, minWidth: 150, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 12,
         padding: '18px 19px', borderRadius: 14,
         background: done ? '#F0FDF4' : '#FFFFFF',
         border: `1px solid ${done ? '#D1FAE5' : '#E5E7EB'}`,
-        cursor: done ? 'default' : 'pointer', transition: 'transform 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease',
+        cursor: clickable ? 'pointer' : 'default', transition: 'transform 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease',
       }}
       onMouseEnter={e => {
-        if (done) return
+        if (!clickable) return
         e.currentTarget.style.transform = 'translateY(-2px)'
         e.currentTarget.style.boxShadow = '0 6px 16px rgba(15,23,42,0.08)'
-        e.currentTarget.style.borderColor = '#CBD5E1'
+        e.currentTarget.style.borderColor = done ? '#A7F3D0' : '#CBD5E1'
       }}
       onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none'; e.currentTarget.style.borderColor = done ? '#D1FAE5' : '#E5E7EB' }}
     >
@@ -223,12 +241,17 @@ function StatActionCard({ count, label, sub, icon, accent, accentBg, onClick, va
             </span>
           )}
         </div>
+        {!compact && (
+          <p style={{ fontSize: 12.5, fontWeight: 600, margin: '5px 0 0', color: done ? '#16A34A' : '#64748B' }}>
+            {done ? 'All caught up' : meta.sub}
+          </p>
+        )}
       </div>
     </div>
   )
 }
 
-function WaitingOnYouCard({ item, onClick }: { item: WaitingOnYouItem; onClick: () => void }) {
+function WaitingOnYouCard({ item, onClick, managerMode = false }: { item: WaitingOnYouItem; onClick: () => void; managerMode?: boolean }) {
   const meta = WAITING_META[item.id]
   return (
     <StatActionCard
@@ -238,7 +261,9 @@ function WaitingOnYouCard({ item, onClick }: { item: WaitingOnYouItem; onClick: 
       icon={meta.icon}
       accent={meta.accent}
       accentBg={meta.accentBg}
-      value={item.id === 'off_day_deadline' && item.detail ? item.detail : undefined}
+      value={managerMode && item.id === 'off_day_deadline' && item.detail ? item.detail : undefined}
+      compact={managerMode}
+      disableDoneClick={managerMode}
       onClick={onClick}
     />
   )
@@ -333,7 +358,7 @@ function formatTaskStamp(iso: string | null): string | null {
   return `${String(d.getDate()).padStart(2, '0')} ${d.toLocaleDateString('en-US', { month: 'short' })}, ${time}`
 }
 
-function TaskGroupSection({ group, onOpenTask }: { group: TaskOverviewGroup; onOpenTask: () => void }) {
+function TaskGroupSection({ group, onOpenTask, managerStyle = false }: { group: TaskOverviewGroup; onOpenTask: () => void; managerStyle?: boolean }) {
   const isCompleted = group.key === 'completed'
   // Scrollable list whose viewport height snaps to a whole number of cards, so the resting
   // view never shows a half-cut card. The down-chevron under it is a pure HINT (not a button)
@@ -391,41 +416,62 @@ function TaskGroupSection({ group, onOpenTask }: { group: TaskOverviewGroup; onO
               onClick={onOpenTask}
               className="task-card"
               style={{
-                background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 10, padding: '16px',
+                background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 10, padding: managerStyle ? '16px' : '14px 16px',
                 marginBottom: 10, cursor: 'pointer', scrollSnapAlign: 'start',
                 transition: 'transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease',
               }}
               onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = '0 3px 10px rgba(15,23,42,0.07)' }}
               onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none' }}
             >
-              {priority && task.priority && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12, paddingRight: 24 }}>
-                  <span style={{ fontSize: '0.72rem', fontWeight: 800, padding: '4px 10px', borderRadius: 99, background: priority.bg, color: priority.text, letterSpacing: '0.01em' }}>
-                    {task.priority}
-                  </span>
-                </div>
+              {managerStyle ? (
+                <>
+                  {priority && task.priority && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12, paddingRight: 24 }}>
+                      <span style={{ fontSize: '0.72rem', fontWeight: 800, padding: '4px 10px', borderRadius: 99, background: priority.bg, color: priority.text, letterSpacing: '0.01em' }}>
+                        {task.priority}
+                      </span>
+                    </div>
+                  )}
+                  <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#111827', margin: '0 0 8px', lineHeight: 1.4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {task.title}
+                  </p>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, minHeight: 26 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                      <div style={{ width: 26, height: 26, borderRadius: '50%', background: task.assignee_photo_url ? 'transparent' : '#FFF3E8', border: '1.5px solid #F97316', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden' }}>
+                        {task.assignee_photo_url
+                          ? <img src={task.assignee_photo_url} alt={task.assignee_name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                          : <UserCog size={14} color="#F97316" strokeWidth={2} />}
+                      </div>
+                      <span style={{ fontSize: '0.7rem', color: '#374151', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {task.assignee_name}
+                      </span>
+                    </div>
+                    {stamp && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                        {warning ? <AlertCircle size={11} color="#EF4444" /> : <Clock size={11} color="#9CA3AF" />}
+                        <span style={{ fontSize: '0.7rem', fontWeight: 600, color: warning ? '#EF4444' : '#9CA3AF', whiteSpace: 'nowrap' }}>{stamp}</span>
+                      </div>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <>
+                  {task.department_id && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                      <DepartmentBadge departmentId={task.department_id} departmentName={task.department_name} />
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#111827', margin: 0, lineHeight: 1.4, minWidth: 0, flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{task.title}</p>
+                    {stamp && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                        {warning ? <AlertCircle size={11} color="#EF4444" /> : <Clock size={11} color="#9CA3AF" />}
+                        <span style={{ fontSize: '0.7rem', fontWeight: 600, color: warning ? '#EF4444' : '#9CA3AF', whiteSpace: 'nowrap' }}>{stamp}</span>
+                      </div>
+                    )}
+                  </div>
+                </>
               )}
-              <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#111827', margin: '0 0 8px', lineHeight: 1.4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {task.title}
-              </p>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, minHeight: 26 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-                  <div style={{ width: 26, height: 26, borderRadius: '50%', background: task.assignee_photo_url ? 'transparent' : '#FFF3E8', border: '1.5px solid #F97316', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden' }}>
-                    {task.assignee_photo_url
-                      ? <img src={task.assignee_photo_url} alt={task.assignee_name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                      : <UserCog size={14} color="#F97316" strokeWidth={2} />}
-                  </div>
-                  <span style={{ fontSize: '0.7rem', color: '#374151', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {task.assignee_name}
-                  </span>
-                </div>
-                {stamp && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
-                    {warning ? <AlertCircle size={11} color="#EF4444" /> : <Clock size={11} color="#9CA3AF" />}
-                    <span style={{ fontSize: '0.7rem', fontWeight: 600, color: warning ? '#EF4444' : '#9CA3AF', whiteSpace: 'nowrap' }}>{stamp}</span>
-                  </div>
-                )}
-              </div>
             </div>
           )
         })}
@@ -593,22 +639,41 @@ function personsOf(dept: AttendanceDepartmentGroup): AttendancePersonRow[] {
   return [...dept.present, ...dept.late, ...dept.absent, ...dept.not_started]
 }
 
-function AttendanceHalf({ title, accent, accentBg, group, search = '', onOpenDetails }: {
-  title: string; accent: string; accentBg: string; group: AttendanceRoleGroup; search?: string; onOpenDetails?: () => void
+function AttendanceHalf({ title, accent, accentBg, group, search = '', onOpenDetails, flatProgressHeader = false, showDepartmentBreakdown = true }: {
+  title: string; accent: string; accentBg: string; group: AttendanceRoleGroup; search?: string; onOpenDetails?: () => void; flatProgressHeader?: boolean; showDepartmentBreakdown?: boolean
 }) {
+  const [openDepts, setOpenDepts] = useState<Set<string> | null>(null)
   const [hoverLegend, setHoverLegend] = useState<string | null>(null)
+  const query = search.trim().toLowerCase()
+  const matchedOpen = query
+    ? new Set(group.departments.filter(d => personsOf(d).some(p => p.name.toLowerCase().includes(query))).map(d => d.department_name))
+    : null
+  const effectiveOpen = matchedOpen ?? openDepts ?? new Set<string>()
+  const toggle = (name: string) => {
+    if (query) return
+    const next = new Set(effectiveOpen)
+    if (next.has(name)) next.delete(name)
+    else next.add(name)
+    setOpenDepts(next)
+  }
+  const hasAttendance = group.departments.length > 0
   return (
     <div style={{ flex: 1, minWidth: 0, background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 16, padding: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
       {/* Half header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+      <div style={{ display: flatProgressHeader ? 'grid' : 'flex', gridTemplateColumns: flatProgressHeader ? (hasAttendance ? '34px minmax(0, 1fr) 64px' : '34px minmax(0, 1fr)') : undefined, alignItems: 'center', gap: 10 }}>
         <span style={{ width: 34, height: 34, borderRadius: 10, background: accentBg, color: accent, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
           <Users size={17} />
         </span>
         <span style={{ fontSize: 15.5, fontWeight: 800, color: '#0F172A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{title}</span>
+        {flatProgressHeader && hasAttendance && (
+          <span style={{ fontSize: 16, fontWeight: 800, color: '#0F172A', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', textAlign: 'right' }}>
+            {group.checked_in} / {group.expected}
+          </span>
+        )}
       </div>
       {/* Progress summary strip — skipped entirely when no one's scheduled today, so the block
           collapses to just the header + empty-state row instead of a 0/0 progress bar. */}
-      {group.departments.length === 0 ? null : (() => {
+      {!hasAttendance ? null : (() => {
         const late = group.departments.reduce((n, d) => n + d.late.length, 0)
         const absent = group.departments.reduce((n, d) => n + d.absent.length, 0)
         const present = group.departments.reduce((n, d) => n + d.present.length, 0)
@@ -631,17 +696,21 @@ function AttendanceHalf({ title, accent, accentBg, group, search = '', onOpenDet
             tabIndex={onOpenDetails ? 0 : undefined}
             onClick={onOpenDetails}
             onKeyDown={e => { if (onOpenDetails && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onOpenDetails() } }}
-            style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 12, padding: '20px 18px', marginTop: 4, cursor: onOpenDetails ? 'pointer' : 'default', transition: 'transform 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease' }}
-            onMouseEnter={e => { if (onOpenDetails) { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.borderColor = '#CBD5E1'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(15,23,42,0.08)' } }}
-            onMouseLeave={e => { if (onOpenDetails) { e.currentTarget.style.transform = 'none'; e.currentTarget.style.borderColor = '#E5E7EB'; e.currentTarget.style.boxShadow = 'none' } }}
+            style={flatProgressHeader
+              ? { padding: '4px 14px 2px', cursor: onOpenDetails ? 'pointer' : 'default' }
+              : { background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 12, padding: '20px 18px', marginTop: 4, cursor: onOpenDetails ? 'pointer' : 'default', transition: 'transform 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease' }}
+            onMouseEnter={e => { if (!flatProgressHeader && onOpenDetails) { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.borderColor = '#CBD5E1'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(15,23,42,0.08)' } }}
+            onMouseLeave={e => { if (!flatProgressHeader && onOpenDetails) { e.currentTarget.style.transform = 'none'; e.currentTarget.style.borderColor = '#E5E7EB'; e.currentTarget.style.boxShadow = 'none' } }}
           >
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-              <span style={{ fontSize: 14.5, fontWeight: 800, color: '#0F172A', whiteSpace: 'nowrap' }}>Attendance Progress</span>
-              <span style={{ marginLeft: 'auto', fontSize: 16, fontWeight: 800, color: '#0F172A', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
-                {group.checked_in} / {group.expected}
-              </span>
-            </div>
-            <div style={{ marginTop: 14 }}>
+            {!flatProgressHeader && (
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                <span style={{ fontSize: 14.5, fontWeight: 800, color: '#0F172A', whiteSpace: 'nowrap' }}>Attendance Progress</span>
+                <span style={{ marginLeft: 'auto', fontSize: 16, fontWeight: 800, color: '#0F172A', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                  {group.checked_in} / {group.expected}
+                </span>
+              </div>
+            )}
+            <div style={{ marginTop: flatProgressHeader ? 0 : 14 }}>
               <SegmentedProgress present={present} late={late} absent={absent} max={group.expected} height={24} />
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 18, flexWrap: 'wrap' }}>
@@ -700,6 +769,29 @@ function AttendanceHalf({ title, accent, accentBg, group, search = '', onOpenDet
       })()}
       {group.departments.length === 0 ? (
         <EmptyRow text="No one scheduled today" />
+      ) : showDepartmentBreakdown ? (
+        <>
+          <div style={{ display: 'flex', justifyContent: 'center', margin: '-2px 0' }}>
+            <span style={{
+              width: 36, height: 36, borderRadius: 999, background: '#F97316', color: '#FFFFFF',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+              boxShadow: '0 2px 6px rgba(15,23,42,0.22)',
+            }}>
+              <ArrowDown size={19} />
+            </span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', columnGap: 12, rowGap: 22, alignItems: 'start' }}>
+            {group.departments.map(dept => (
+              <AttendanceDeptSection
+                key={dept.department_name}
+                dept={dept}
+                open={effectiveOpen.has(dept.department_name)}
+                onToggle={() => toggle(dept.department_name)}
+                query={query}
+              />
+            ))}
+          </div>
+        </>
       ) : null}
     </div>
   )
@@ -774,6 +866,8 @@ export default function DashboardView({ sidebar, basePath, viewerRole }: {
   const [summary, setSummary] = useState<OwnerDashboardSummary | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [attendanceSearch, setAttendanceSearch] = useState('')
+  const [taskSearch, setTaskSearch] = useState('')
   const [managerNotifications, setManagerNotifications] = useState<TaskNotificationItem[]>([])
 
   // ── My Shift Today (Manager's own clock in/out + break in/out, UC49/UC56) ──
@@ -987,11 +1081,21 @@ export default function DashboardView({ sidebar, basePath, viewerRole }: {
   const waitingTotal = summary?.waiting_on_you.length ?? 5
   const notificationCount = managerNotifications.reduce((sum, item) => sum + item.count, 0)
   const taskCount = summary ? summary.task_overview.reduce((sum, g) => sum + g.count, 0) : 0
-  const visibleTaskGroups = (summary?.task_overview ?? []).filter(g => g.count > 0)
+  const taskQuery = viewerRole === 'Manager' ? '' : taskSearch.trim().toLowerCase()
+  const visibleTaskGroups = (summary?.task_overview ?? [])
+    .map(g => {
+      const tasks = taskQuery ? g.tasks.filter(t => t.title.toLowerCase().includes(taskQuery)) : g.tasks
+      return { ...g, tasks, count: taskQuery ? tasks.length : g.count }
+    })
+    .filter(g => g.count > 0)
 
   const openWaitingOnYouItem = useCallback((item: WaitingOnYouItem) => {
     if (item.id === 'applicant_accept') {
       router.push(item.detail ? `${basePath}/recruitment?job=${item.detail}` : `${basePath}/recruitment`)
+      return
+    }
+    if (item.id === 'off_day_deadline' && viewerRole === 'Manager') {
+      router.push(`${basePath}/attendance?submit=offday`)
       return
     }
     if (item.id === 'task_review' && viewerRole === 'Manager') {
@@ -1101,6 +1205,7 @@ export default function DashboardView({ sidebar, basePath, viewerRole }: {
             {/* ── Row 1 · Waiting On You (5 cards) ── */}
             <div style={cellStyle(8)}>
               <ShowcaseCard
+                fillHeight={!isCompact && viewerRole !== 'Manager'}
                 icon={<ListChecks size={15} style={{ color: '#F97316' }} />}
                 title="Waiting On You"
                 rightContent={<CountChip value={`${waitingCount}/${waitingTotal}`} />}
@@ -1116,6 +1221,7 @@ export default function DashboardView({ sidebar, basePath, viewerRole }: {
                       <WaitingOnYouCard
                         key={item.id}
                         item={item}
+                        managerMode={viewerRole === 'Manager'}
                         onClick={() => openWaitingOnYouItem(item)}
                       />
                     ))}
@@ -1127,6 +1233,7 @@ export default function DashboardView({ sidebar, basePath, viewerRole }: {
             {/* ── Row 1 · Recruitment Overview ── */}
             <div style={cellStyle(4)}>
               <ShowcaseCard
+                fillHeight={!isCompact && viewerRole !== 'Manager'}
                 icon={<UserPlus size={15} style={{ color: '#F97316' }} />}
                 title="Recruitment Overview"
                 actions={<LinkAction label="To Recruitment Page →" onClick={() => router.push(`${basePath}/recruitment`)} />}
@@ -1144,6 +1251,8 @@ export default function DashboardView({ sidebar, basePath, viewerRole }: {
                       icon={<ClipboardList size={26} />}
                       accent="#DC2626"
                       accentBg="#FEF2F2"
+                      compact={viewerRole === 'Manager'}
+                      disableDoneClick={viewerRole === 'Manager'}
                       onClick={() => {
                         const ids = summary.recruitment_overview.deadline_today.map(r => r.job_id)
                         router.push(ids.length > 0 ? `${basePath}/recruitment?highlight=${ids.join(',')}` : `${basePath}/recruitment`)
@@ -1156,6 +1265,8 @@ export default function DashboardView({ sidebar, basePath, viewerRole }: {
                       icon={<Hourglass size={26} />}
                       accent="#D97706"
                       accentBg="#FFF7ED"
+                      compact={viewerRole === 'Manager'}
+                      disableDoneClick={viewerRole === 'Manager'}
                       onClick={() => {
                         const ids = summary.recruitment_overview.starting_soon.map(r => r.job_id)
                         router.push(ids.length > 0 ? `${basePath}/recruitment?highlight=${ids.join(',')}` : `${basePath}/recruitment`)
@@ -1174,6 +1285,7 @@ export default function DashboardView({ sidebar, basePath, viewerRole }: {
                 title={viewerRole === 'Manager' ? 'Team Task Overview' : 'Task Overview'}
                 actions={
                   <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                    {viewerRole !== 'Manager' && <HeaderSearchInput value={taskSearch} onChange={setTaskSearch} width={140} />}
                     <LinkAction label="To Task Page →" onClick={() => router.push(`${basePath}/tasks`)} />
                   </div>
                 }
@@ -1204,7 +1316,7 @@ export default function DashboardView({ sidebar, basePath, viewerRole }: {
                           </span>
                         </div>
                         <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-                          <TaskGroupSection group={group} onOpenTask={() => openTaskOverviewGroup(group.key)} />
+                          <TaskGroupSection group={group} onOpenTask={() => openTaskOverviewGroup(group.key)} managerStyle={viewerRole === 'Manager'} />
                           {viewerRole !== 'Manager' && (
                             <button
                               onClick={() => openTaskOverviewGroup(group.key)}
@@ -1239,6 +1351,7 @@ export default function DashboardView({ sidebar, basePath, viewerRole }: {
                     <p style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', margin: 0, letterSpacing: '-0.2px', lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Attendance Overview</p>
                   </div>
                   <div style={{ marginLeft: 'auto', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 14 }}>
+                    {viewerRole !== 'Manager' && <HeaderSearchInput value={attendanceSearch} onChange={setAttendanceSearch} />}
                     <LinkAction label="Go to Attendance Page →" onClick={() => router.push(`${basePath}/attendance`)} />
                   </div>
                 </div>
@@ -1247,27 +1360,29 @@ export default function DashboardView({ sidebar, basePath, viewerRole }: {
                   {!summary ? (
                     <EmptyRow text={loading ? 'Loading…' : 'No data yet'} />
                   ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minHeight: '100%' }}>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 16, alignItems: 'stretch' }}>
+                    <div style={{ display: 'flex', flexDirection: viewerRole === 'Manager' || isCompact ? 'column' : 'row', gap: viewerRole === 'Manager' ? 16 : 32, alignItems: 'stretch', minHeight: '100%' }}>
                       <AttendanceHalf
-                        title="Internal Attendance"
+                        title={viewerRole === 'Manager' ? 'Internal Attendance Progress' : 'Internal Attendance'}
                         accent="#2563EB"
                         accentBg="#EFF6FF"
                         group={summary.attendance_overview.internal}
-                        search=""
-                        onOpenDetails={() => router.push(`${basePath}/attendance`)}
+                        search={viewerRole === 'Manager' ? '' : attendanceSearch}
+                        onOpenDetails={viewerRole === 'Manager' ? () => router.push(`${basePath}/attendance`) : undefined}
+                        flatProgressHeader={viewerRole === 'Manager'}
+                        showDepartmentBreakdown={viewerRole !== 'Manager'}
                       />
-                      {summary.attendance_overview.casual.expected > 0 && (
+                      {(viewerRole !== 'Manager' || summary.attendance_overview.casual.expected > 0) && (
                         <AttendanceHalf
-                          title="Casual Worker Attendance"
+                          title={viewerRole === 'Manager' ? 'Casual Worker Attendance Progress' : 'Casual Worker Attendance'}
                           accent="#16A34A"
                           accentBg="#F0FDF4"
                           group={summary.attendance_overview.casual}
-                          search=""
-                          onOpenDetails={() => router.push(`${basePath}/attendance`)}
+                          search={viewerRole === 'Manager' ? '' : attendanceSearch}
+                          onOpenDetails={viewerRole === 'Manager' ? () => router.push(`${basePath}/attendance`) : undefined}
+                          flatProgressHeader={viewerRole === 'Manager'}
+                          showDepartmentBreakdown={viewerRole !== 'Manager'}
                         />
                       )}
-                      </div>
                     </div>
                   )}
                 </div>
