@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation'
 import Link from 'next/link'
 import { LayoutDashboard, ClipboardList, LogOut, Settings } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
+import { useRealtimeNotifications } from '@/components/realtime/RealtimeNotificationsProvider'
 
 const NAV_ITEMS = [
   { label: 'Dashboard',  Icon: LayoutDashboard, href: '/employee/dashboard' },
@@ -19,6 +20,7 @@ const SIDEBAR_BORDER = '#0F3F24'
 export default function EmployeeSidebar() {
   const pathname = usePathname()
   const [expanded, setExpanded] = useState(false)
+  const { counts, ready } = useRealtimeNotifications()
 
   const handleLogout = async () => {
     const supabase = createBrowserClient(
@@ -87,12 +89,14 @@ export default function EmployeeSidebar() {
       <nav style={{ flex: 1, padding: '12px 8px', overflow: 'hidden' }}>
         {NAV_ITEMS.map(({ label, Icon, href }) => {
           const active = pathname === href
+          const showDot = ready && label === 'Attendance' && counts.attendance > 0
           return (
             <a
               key={label}
               href={href}
               style={{
                 display: 'flex',
+                position: 'relative',
                 alignItems: 'center',
                 gap: '10px',
                 padding: '10px 12px',
@@ -111,6 +115,9 @@ export default function EmployeeSidebar() {
               onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = 'transparent' }}
             >
               <Icon size={18} strokeWidth={2.1} style={{ display: 'block', color: 'currentColor', flexShrink: 0 }} />
+              {showDot && (
+                <span aria-hidden="true" style={{ position: 'absolute', top: 8, right: expanded ? 12 : 10, width: 8, height: 8, borderRadius: '50%', background: '#EF4444', boxShadow: '0 0 0 2px #14532D' }} />
+              )}
               <span style={{ opacity: expanded ? 1 : 0, transition: 'opacity 0.15s' }}>
                 {label}
               </span>

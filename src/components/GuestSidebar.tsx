@@ -8,6 +8,7 @@ import { usePathname } from 'next/navigation'
 import Link from 'next/link'
 import { User, ClipboardList, LogOut } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
+import { useRealtimeNotifications } from '@/components/realtime/RealtimeNotificationsProvider'
 
 const NAV_ITEMS = [
   { label: 'Applications', Icon: ClipboardList, href: '/guest/applications' },
@@ -25,6 +26,7 @@ const THEME = {
 export default function GuestSidebar() {
   const pathname = usePathname()
   const [expanded, setExpanded] = useState(false)
+  const { counts, ready } = useRealtimeNotifications()
 
   const handleLogout = async () => {
     const supabase = createBrowserClient(
@@ -93,12 +95,14 @@ export default function GuestSidebar() {
       <nav style={{ flex: 1, padding: '12px 8px', overflow: 'hidden' }}>
         {NAV_ITEMS.map(({ label, Icon, href }) => {
           const active = pathname === href
+          const showDot = ready && label === 'Applications' && counts.applications > 0
           return (
             <Link
               key={label}
               href={href}
               style={{
                 display: 'flex',
+                position: 'relative',
                 alignItems: 'center',
                 gap: '10px',
                 padding: '10px 12px',
@@ -118,6 +122,9 @@ export default function GuestSidebar() {
               onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
             >
               <Icon size={18} strokeWidth={2.1} style={{ flexShrink: 0, color: 'currentColor' }} />
+              {showDot && (
+                <span aria-hidden="true" style={{ position: 'absolute', top: 8, right: expanded ? 12 : 10, width: 8, height: 8, borderRadius: '50%', background: '#EF4444', boxShadow: '0 0 0 2px #FFFFFF' }} />
+              )}
               <span style={{ opacity: expanded ? 1 : 0, transition: 'opacity 0.15s' }}>
                 {label}
               </span>

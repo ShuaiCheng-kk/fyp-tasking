@@ -28,6 +28,7 @@ import { useIsCompactContainer } from '@/hooks/useIsCompactContainer'
 import DepartmentBadge from '@/components/DepartmentBadge'
 import RoleAvatar from '@/components/RoleAvatar'
 import DatePickerField from '@/components/DatePickerField'
+import { useResourceInvalidation } from '@/components/realtime/RealtimeNotificationsProvider'
 
 type Tab = 'jobs' | 'closed' | 'post'
 type Department = { id: string; name: string }
@@ -1202,6 +1203,13 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
     else setArchivedApplicants([])
   }, [selectedArchivedId, fetchArchivedApplicants, internalUserId])
 
+  useResourceInvalidation(['recruitment'], () => {
+    if (!companyId || !internalUserId) return
+    void fetchAll(companyId, internalUserId)
+    if (selectedLiveId) void fetchApplicants(selectedLiveId, internalUserId)
+    if (selectedArchivedId) void fetchArchivedApplicants(selectedArchivedId, internalUserId)
+  })
+
   // Manager's Department field is removed from the wizard (it's always their own single
   // department — see below), so nothing ever fires the RDrop's onChange that used to both set
   // formDeptId and load that department's shift options — resetForm() below now does that
@@ -2370,7 +2378,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                         background: active ? `${dc}0d` : highlighted ? '#FFF7ED' : '#F9FAFB',
                         cursor: 'pointer', overflow: 'hidden',
                         transition: 'box-shadow 0.18s, transform 0.18s, border-color 0.18s, background 0.18s, margin-left 0.18s',
-                        animation: `deptCardIn 0.28s ease both ${idx * 55}ms`,
+                        animation: `deptCardIn 0.28s ease both ${scopeToManagerDepartments ? 0 : idx * 55}ms`,
                         boxShadow: active ? `0 4px 16px ${dc}22` : highlighted ? '0 0 0 3px rgba(249,115,22,0.16)' : undefined,
                       }}
                       onMouseEnter={e => { if (!active) { e.currentTarget.style.transform = 'translateY(-3px)'; e.currentTarget.style.boxShadow = '0 10px 28px rgba(15,23,42,0.11)'; e.currentTarget.style.borderColor = dc } }}
@@ -2871,7 +2879,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                         background: isSelected ? '#FFF7ED' : '#F9FAFB',
                         cursor: 'pointer', overflow: 'hidden',
                         transition: 'box-shadow 0.18s, transform 0.18s, border-color 0.18s, background 0.18s',
-                        animation: `deptCardIn 0.28s ease both ${idx * 55}ms`,
+                        animation: `deptCardIn 0.28s ease both ${scopeToManagerDepartments ? 0 : idx * 55}ms`,
                         boxShadow: isSelected ? '0 4px 16px rgba(249,115,22,0.15)' : undefined,
                       }}
                       onMouseEnter={e => { if (!isSelected) { e.currentTarget.style.transform = 'translateY(-3px)'; e.currentTarget.style.boxShadow = '0 10px 28px rgba(15,23,42,0.11)'; e.currentTarget.style.borderColor = '#F97316' } }}
@@ -2915,7 +2923,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                               display: 'flex', flexDirection: 'column', gap: 16,
                               marginLeft: isRejected ? 18 : 0,
                               border: '1px solid #E5E7EB', borderRadius: 10, padding: '16px 16px 18px', background: '#F9FAFB',
-                              animation: `deptCardIn 0.28s ease both ${i * 55}ms`,
+                              animation: `deptCardIn 0.28s ease both ${scopeToManagerDepartments ? 0 : i * 55}ms`,
                             }}>
                               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, minWidth: 0 }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
@@ -2972,7 +2980,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                             <div key={p.id} style={{
                               display: 'flex', flexDirection: 'column', gap: 16,
                               border: '1px solid #E5E7EB', borderRadius: 10, padding: '16px 16px 18px', background: '#F9FAFB',
-                              animation: `deptCardIn 0.28s ease both ${i * 55}ms`,
+                              animation: `deptCardIn 0.28s ease both ${scopeToManagerDepartments ? 0 : i * 55}ms`,
                             }}>
                               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
@@ -3033,7 +3041,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                             <div key={p.id} style={{
                               display: 'flex', flexDirection: 'column', gap: 16,
                               border: '1px solid #E5E7EB', borderRadius: 10, padding: '16px 16px 18px', background: '#F9FAFB',
-                              animation: `deptCardIn 0.28s ease both ${i * 55}ms`,
+                              animation: `deptCardIn 0.28s ease both ${scopeToManagerDepartments ? 0 : i * 55}ms`,
                             }}>
                               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
@@ -3096,7 +3104,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                       <div key={t.id} style={{
                         display: 'flex', flexDirection: 'column', gap: 16,
                         border: '1px solid #E5E7EB', borderRadius: 10, padding: '16px 16px 18px', background: '#F9FAFB',
-                        animation: `deptCardIn 0.28s ease both ${idx * 55}ms`,
+                        animation: `deptCardIn 0.28s ease both ${scopeToManagerDepartments ? 0 : idx * 55}ms`,
                       }}>
                         {/* Department + job type badge row */}
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>

@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { Plus_Jakarta_Sans, Inter } from 'next/font/google';
+import { RealtimeNotificationsProvider } from '@/components/realtime/RealtimeNotificationsProvider';
 import './globals.css';
 
 const plusJakartaSans = Plus_Jakarta_Sans({
@@ -23,7 +24,9 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" data-scroll-behavior="smooth" className={`${plusJakartaSans.variable} ${inter.variable}`} suppressHydrationWarning>
-      <body suppressHydrationWarning>{children}</body>
+      <body suppressHydrationWarning>
+        <RealtimeNotificationsProvider>{children}</RealtimeNotificationsProvider>
+      </body>
     </html>
   );
 }

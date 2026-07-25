@@ -10,6 +10,8 @@ import Spinner from '@/components/Spinner'
 import Toast from '@/components/Toast'
 import DepartmentBadge from '@/components/DepartmentBadge'
 import { setDeptColorOverrides } from '@/lib/deptColor'
+import { useIsCompactViewport } from '@/hooks/useIsCompactViewport'
+import { useResourceInvalidation } from '@/components/realtime/RealtimeNotificationsProvider'
 import {
   Plus, X, Trash2, Pencil, Megaphone,
   Send, Search, SquarePen, Check, Bell, MessageSquare, Crown,
@@ -459,6 +461,13 @@ export default function CommunicationView({ renderSidebar, basePath }: {
       .finally(() => setInviteLoading(false))
   }, [internalUserId])
 
+  useResourceInvalidation(['communication'], () => {
+    fetchAnnouncements()
+    fetchUnreadCount()
+    fetchConversations()
+    fetchInvites()
+  })
+
   useEffect(() => {
     if (!internalUserId) return
     fetchConversations()
@@ -746,6 +755,10 @@ export default function CommunicationView({ renderSidebar, basePath }: {
   const canPostCompanyWide = ['owner', 'partner'].includes(userRole?.toLowerCase())
   // Managers may only broadcast within their own department — never company-wide, never another department.
   const isManagerRole = userRole === 'Manager'
+  const isManagerCompact = useIsCompactViewport(1180)
+  const managerCommGridStyle: React.CSSProperties = isManagerRole && isManagerCompact
+    ? { flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gridTemplateRows: 'minmax(240px, 0.48fr) minmax(320px, 0.52fr)', gap: 12, overflow: 'hidden' }
+    : { flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: '400px minmax(0, 1fr)', gap: 12, overflow: 'hidden' }
   const announcementAudienceOptions = isManagerRole
     ? (userDeptId ? [{ value: userDeptId, label: departments.find(d => d.id === userDeptId)?.name ?? 'My Department' }] : [])
     : [
@@ -1066,7 +1079,7 @@ export default function CommunicationView({ renderSidebar, basePath }: {
           border: selected ? '1.5px solid rgba(249,115,22,0.35)' : '1.5px solid #EDF2F7',
           borderRadius: 12, cursor: 'pointer', width: '100%', marginBottom: 8,
           boxShadow: selected ? '0 6px 18px rgba(249,115,22,0.08)' : '0 1px 3px rgba(0,0,0,0.03)',
-          animationDelay: `${i * 0.04}s`,
+          animationDelay: isManagerRole ? '0s' : `${i * 0.04}s`,
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
@@ -1270,10 +1283,10 @@ export default function CommunicationView({ renderSidebar, basePath }: {
 
           {/* ── Chat tab ── */}
           {activeTab === 'chat' && (
-            <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: '400px minmax(0, 1fr)', gap: 12, overflow: 'hidden' }}>
+            <div style={managerCommGridStyle}>
 
               {/* Left: conversations — own card, sized to fit its content (not stretched full height) */}
-              <div style={{ alignSelf: 'start', maxHeight: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', background: '#FFFFFF', borderRadius: 14, border: '1px solid #E5E7EB', boxShadow: '0 1px 4px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
+              <div style={{ alignSelf: isManagerRole && isManagerCompact ? 'stretch' : 'start', maxHeight: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', background: '#FFFFFF', borderRadius: 14, border: '1px solid #E5E7EB', boxShadow: '0 1px 4px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '16px 18px', borderBottom: '1px solid #E2E8F0', flexShrink: 0 }}>
                   <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                     <MessageSquare size={15} style={{ color: '#F97316' }} />
@@ -1324,7 +1337,7 @@ export default function CommunicationView({ renderSidebar, basePath }: {
                             border: active ? '1.5px solid rgba(249,115,22,0.35)' : '1.5px solid #EDF2F7',
                             borderRadius: 12, cursor: 'grab', textAlign: 'left', width: '100%', marginBottom: 14,
                             boxShadow: active ? '0 6px 18px rgba(249,115,22,0.08)' : '0 1px 3px rgba(0,0,0,0.03)',
-                            animationDelay: `${i * 0.04}s`,
+                            animationDelay: isManagerRole ? '0s' : `${i * 0.04}s`,
                           }}
                         >
                           <button onClick={() => openPanelSolo(conv.partnerId)} style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0, background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', padding: 0 }}>
@@ -1629,7 +1642,7 @@ export default function CommunicationView({ renderSidebar, basePath }: {
 
           {/* ── Announcements tab ── */}
           {activeTab === 'announcements' && (
-            <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: '400px minmax(0, 1fr)', gap: 12, overflow: 'hidden' }}>
+            <div style={managerCommGridStyle}>
 
               {/* Left: list — two stacked blocks, each sized to fit its content */}
               <div style={{ maxHeight: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 12, overflowY: 'auto' }}>
@@ -1818,7 +1831,7 @@ export default function CommunicationView({ renderSidebar, basePath }: {
               ) : (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 14 }}>
                   {invites.map((invite, i) => (
-                    <div key={invite.id} className="comm-ann-card" style={{ padding: 18, background: '#FFFFFF', border: '1.5px solid #EDF2F7', borderRadius: 14, animationDelay: `${i * 0.05}s` }}>
+                    <div key={invite.id} className="comm-ann-card" style={{ padding: 18, background: '#FFFFFF', border: '1.5px solid #EDF2F7', borderRadius: 14, animationDelay: isManagerRole ? '0s' : `${i * 0.05}s` }}>
                       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 14 }}>
                         <div style={{ width: 38, height: 38, borderRadius: 10, background: '#FFF7ED', color: '#F97316', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                           <Bell size={16} />
