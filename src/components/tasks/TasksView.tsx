@@ -1206,9 +1206,10 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
   scopeToManagerDepartments?: boolean
   // Employee role scope: narrower than Manager — assignable members are only the Casual
   // Workers this Employee supervises TODAY (see taskRepository.getSupervisedCasualWorkerIds),
-  // never a whole department, and UC14/16-18/20-23 (templates, duplicate, recurring, archive,
-  // AI suggestion, workload/delay alerts, dependencies) are O/P/M-only so are hidden entirely —
-  // confirmed 2026-07-26.
+  // never a whole department. UC14/16-18/21-23 (templates, duplicate, recurring, archive,
+  // workload/delay alerts, dependencies) stay O/P/M-only and hidden — confirmed 2026-07-26.
+  // AI Assign (UC20) was extended to Employee on 2026-07-27, scoped to their supervised Casual
+  // Workers only (see openAiAssign / employeeDashboardService.getSupervisedTaskScope).
   scopeToEmployeeSupervised?: boolean
 }) {
   const router = useRouter()
@@ -4258,16 +4259,15 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                         <Users size={15} style={{ color: '#F97316' }} />
                       </div>
                       <span style={{ fontWeight: 700, fontSize: '1rem', color: '#0F172A' }}>Member</span>
-                      {/* AI Task Assignment Suggestion (UC20) is O/P/M-only. */}
-                      {!scopeToEmployeeSupervised && (
-                        <button
-                          type="button"
-                          onClick={openAiAssign}
-                          style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, border: 0, borderRadius: 8, background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', color: '#FFFFFF', height: 30, padding: '0 12px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', flexShrink: 0 }}
-                        >
-                          <Sparkles size={13} strokeWidth={2.5} /> AI Assign
-                        </button>
-                      )}
+                      {/* AI Task Assignment Suggestion (UC20) — Employee gets it too, scoped to
+                          the Casual Workers they supervise (see openAiAssign/handleGenerate below). */}
+                      <button
+                        type="button"
+                        onClick={openAiAssign}
+                        style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, border: 0, borderRadius: 8, background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', color: '#FFFFFF', height: 30, padding: '0 12px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', flexShrink: 0 }}
+                      >
+                        <Sparkles size={13} strokeWidth={2.5} /> AI Assign
+                      </button>
                     </>
                   ) : selectedDept ? (
                     <>
@@ -6660,6 +6660,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                 want_sub_tasks: aiSubTaskEnabled,
                 task_date: aiAssignDate,
                 manager_scope_id: scopeToManagerDepartments ? internalUserId : undefined,
+                employee_scope_id: scopeToEmployeeSupervised ? internalUserId : undefined,
               }),
             })
             const data = await res.json()
@@ -6732,7 +6733,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                     <Sparkles size={15} color="#fff" strokeWidth={2} />
                   </div>
                   <div>
-                    <h2 style={{ margin: 0, fontWeight: 700, fontSize: '1rem', color: '#111827', fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>Auto Task Assignment</h2>
+                    <h2 style={{ margin: 0, fontWeight: 700, fontSize: '1rem', color: '#111827' }}>Auto Task Assignment</h2>
                   </div>
                 </div>
                 <button onClick={() => setAiModal(false)} style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8 }}>
@@ -6839,11 +6840,11 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                         />
                       </div>
 
-                      {/* Department — Manager's is forced server-side (generateAssignmentSuggestion
-                          never guesses across departments for them), so there's nothing to show
-                          here; Assignee alone takes the full row. */}
-                      <div style={scopeToManagerDepartments ? undefined : { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                        {!scopeToManagerDepartments && (
+                      {/* Department — Manager's/Employee's is forced server-side
+                          (generateAssignmentSuggestion never guesses across departments for
+                          them), so there's nothing to show here; Assignee alone takes the full row. */}
+                      <div style={(scopeToManagerDepartments || scopeToEmployeeSupervised) ? undefined : { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                        {!scopeToManagerDepartments && !scopeToEmployeeSupervised && (
                           <div style={aiReviewFieldStyle}>
                             <label style={{ ...modalLabelStyle, marginBottom: 0 }}>Department</label>
                             <DropdownField
@@ -6862,7 +6863,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                             value={aiManagerId}
                             options={aiManagerDropdownOptions}
                             onChange={setAiManagerId}
-                            placeholder={aiManagerDropdownOptions.length === 0 ? `No ${scopeToManagerDepartments ? 'employees' : 'managers'} available` : 'Select assignee'}
+                            placeholder={aiManagerDropdownOptions.length === 0 ? `No ${scopeToManagerDepartments ? 'employees' : scopeToEmployeeSupervised ? 'casual workers' : 'managers'} available` : 'Select assignee'}
                             disabled={aiManagerDropdownOptions.length === 0}
                           />
                         </div>

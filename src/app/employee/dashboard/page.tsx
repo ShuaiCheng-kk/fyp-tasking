@@ -1,57 +1,24 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { createBrowserClient } from '@supabase/ssr'
-import { Clock, Coffee, CheckSquare, Users, Send, MessageCircle, AlertTriangle } from 'lucide-react'
+import { Clock, Coffee, Users, Phone } from 'lucide-react'
 import EmployeeSidebar from '@/components/EmployeeSidebar'
 import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
-import { Task, KanbanGroup } from '@/types/Task'
+import RoleAvatar from '@/components/RoleAvatar'
 import { useResourceInvalidation } from '@/components/realtime/RealtimeNotificationsProvider'
+import { ShowcaseCard } from '@/components/panel'
+import {
+  CLOCK_IN_WINDOW_MINUTES_BEFORE, canClockIn, canClockOut,
+  fmtShiftTime, fmtShiftTimeMinusMinutes, fmtClockStamp,
+  ClockFlowButton, ClockFlowConnector,
+} from '@/components/dashboard/ClockFlow'
+import EmployeeMyTasksBoard from '@/components/employee/EmployeeMyTasksBoard'
+import EmployeeChatbox from '@/components/employee/EmployeeChatbox'
 
-const GREEN  = '#16A34A'
-const BORDER = '#E5E7EB'
 const TEXT   = '#111827'
 const MUTED  = '#6B7280'
-const PANEL  = '#FFFFFF'
-
-const CLOCK_IN_WINDOW_MINUTES_BEFORE = 30
-
-function canClockIn(shift: { shift_date: string; start_time: string }): boolean {
-  const shiftStart = new Date(`${shift.shift_date}T${shift.start_time}Z`)
-  const earliestClockIn = new Date(shiftStart.getTime() - CLOCK_IN_WINDOW_MINUTES_BEFORE * 60000)
-  return Date.now() >= earliestClockIn.getTime()
-}
-
-function canClockOut(shift: { shift_date: string; end_time: string; is_open_ended: boolean }): boolean {
-  if (shift.is_open_ended) return true
-  const shiftEnd = new Date(`${shift.shift_date}T${shift.end_time}Z`)
-  return Date.now() >= shiftEnd.getTime()
-}
-
-function formatTime(value: string | null | undefined): string {
-  if (!value) return '—'
-  if (value.includes('T')) return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-  return value.slice(0, 5)
-}
-
-function Spinner({ dark = false }: { dark?: boolean }) {
-  return (
-    <svg className="animate-spin" width="14" height="14" viewBox="0 0 18 18" style={{ display: 'inline-block', flexShrink: 0 }}>
-      <circle cx="9" cy="9" r="7" stroke={dark ? 'rgba(17,24,39,0.2)' : 'rgba(255,255,255,0.35)'} strokeWidth="2.5" fill="none" />
-      <path d="M9 2a7 7 0 0 1 7 7" stroke={dark ? '#111827' : 'white'} strokeWidth="2.5" strokeLinecap="round" fill="none" />
-    </svg>
-  )
-}
-
-function Avatar({ name, size = 34, color = GREEN }: { name: string; size?: number; color?: string }) {
-  const initials = name.split(' ').map(p => p[0]).join('').slice(0, 2).toUpperCase()
-  return (
-    <div style={{ width: size, height: size, borderRadius: '50%', background: color + '22', color, fontWeight: 700, fontSize: size * 0.38, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-      {initials}
-    </div>
-  )
-}
+const ACCENT = '#F97316'
 
 type MyShiftRecord = { id: string; clock_in_time: string | null; clock_out_time: string | null; break_in_time: string | null; break_out_time: string | null; status: string }
 type MyShift = {
@@ -84,26 +51,12 @@ type SupervisedWorker = {
   is_open_ended: boolean
 }
 
-type Contact = { id: string; full_name: string; role: string; email_address: string }
-type Conversation = { partnerId: string; partnerName: string; partnerRole: string; lastMessage: string; lastTime: string; unreadCount: number }
-type Message = { id: string; from_user_id: string; to_user_id: string; content: string; created_at: string }
-
-const STATUS_LABEL: Record<Task['status'], { label: string; color: string; bg: string }> = {
-  'Assigned':    { label: 'Assigned',    color: '#475569', bg: '#F1F5F9' },
-  'In Progress': { label: 'In Progress', color: '#2563EB', bg: '#DBEAFE' },
-  'Review':      { label: 'In Review',   color: '#EA580C', bg: '#FFEDD5' },
-  'Complete':    { label: 'Complete',    color: '#16A34A', bg: '#DCFCE7' },
-}
-
 export default function EmployeeDashboard() {
   const router = useRouter()
 
   const [userId, setUserId]       = useState('')
   const [authUserId, setAuthUserId] = useState('')
   const [companyId, setCompanyId] = useState('')
-  const [companyName, setCompanyName] = useState('')
-  const [departmentName, setDepartmentName] = useState('')
-  const [loading, setLoading]     = useState(true)
 
   // My Shift
   const [myShifts, setMyShifts]       = useState<MyShift[]>([])
@@ -114,21 +67,6 @@ export default function EmployeeDashboard() {
   const [supervisedWorkers, setSupervisedWorkers] = useState<SupervisedWorker[]>([])
   const [releaseQueue, setReleaseQueue]           = useState<ClockOutReleaseItem[]>([])
   const [releaseBusyId, setReleaseBusyId]         = useState('')
-
-  // My Tasks — tasks this Employee's Manager assigned to them (separate from the Tasks page,
-  // which is where this Employee assigns work down to their Casual Workers).
-  const [myTasks, setMyTasks]       = useState<Task[]>([])
-  const [myTasksLoading, setMyTasksLoading] = useState(true)
-
-  // Messages — Manager, same-department Employee colleagues, and today's supervised Casual
-  // Workers (see employeeInboxRepository.getEmployeeContacts). Compact panel, not a full page.
-  const [contacts, setContacts]           = useState<Contact[]>([])
-  const [conversations, setConversations] = useState<Conversation[]>([])
-  const [activeContactId, setActiveContactId] = useState('')
-  const [messages, setMessages]           = useState<Message[]>([])
-  const [msgInput, setMsgInput]           = useState('')
-  const [sendingMsg, setSendingMsg]       = useState(false)
-  const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const fetchMyShift = useCallback(async (uid: string) => {
     try {
@@ -152,46 +90,6 @@ export default function EmployeeDashboard() {
     return data
   }, [])
 
-  const fetchMyTasks = useCallback(async (cid: string, empId: string) => {
-    setMyTasksLoading(true)
-    try {
-      const res = await fetch(`/api/task?company_id=${cid}&kanban=true&assigned_user_id=${encodeURIComponent(empId)}&viewer_id=${encodeURIComponent(empId)}`)
-      const data = await res.json()
-      if (data.success) {
-        const groups = data.groups as KanbanGroup
-        const all = [...groups.Assigned, ...groups['In Progress'], ...groups.Review, ...groups.Complete]
-          .filter(t => !t.parent_task_id)
-          .sort((a, b) => (a.due_at ?? '').localeCompare(b.due_at ?? ''))
-        setMyTasks(all)
-      }
-    } catch {}
-    finally { setMyTasksLoading(false) }
-  }, [])
-
-  const fetchContacts = useCallback(async (uid: string) => {
-    try {
-      const res = await fetch(`/api/employee/contacts?user_id=${uid}`)
-      const data = await res.json()
-      if (data.success) setContacts(data.contacts ?? [])
-    } catch {}
-  }, [])
-
-  const fetchConversations = useCallback(async (empId: string) => {
-    try {
-      const res = await fetch(`/api/inbox/messages?user_id=${empId}`)
-      const data = await res.json()
-      if (data.success) setConversations(data.conversations ?? [])
-    } catch {}
-  }, [])
-
-  const fetchThread = useCallback(async (empId: string, partnerId: string) => {
-    try {
-      const res = await fetch(`/api/inbox/messages/${partnerId}?user_id=${empId}`)
-      const data = await res.json()
-      if (data.success) setMessages(data.messages ?? [])
-    } catch {}
-  }, [])
-
   useEffect(() => {
     let cancelled = false
     const run = async () => {
@@ -209,58 +107,28 @@ export default function EmployeeDashboard() {
       if (cancelled) return
       if (dash.success) {
         setCompanyId(dash.company_id ?? '')
-        setCompanyName(dash.company_name ?? '')
-        setDepartmentName(dash.department_name ?? '')
         setSupervisedWorkers(dash.supervised_workers ?? [])
-        void fetchMyTasks(dash.company_id, internalId)
       }
 
       void fetchMyShift(internalId)
       void fetchReleaseQueue(uid)
-      void fetchContacts(uid)
-      void fetchConversations(internalId)
-      setLoading(false)
     }
     void run()
     return () => { cancelled = true }
-  }, [router, fetchDashboard, fetchMyShift, fetchReleaseQueue, fetchContacts, fetchConversations, fetchMyTasks])
+  }, [router, fetchDashboard, fetchMyShift, fetchReleaseQueue])
 
-  useEffect(() => {
-    if (!activeContactId || !userId) return
-    void fetchThread(userId, activeContactId)
-  }, [activeContactId, userId, fetchThread])
-
-  // Live-updates the Shift/Supervised Workers/My Tasks widgets when a Manager reassigns a shift,
-  // a Casual Worker clocks in/out, or a task is created/reviewed — matching the Owner/Manager
+  // Live-updates the Shift/Supervised Workers widgets when a Manager reassigns a shift or a
+  // Casual Worker clocks in/out (My Tasks and Messages handle their own realtime refresh
+  // internally — see EmployeeMyTasksBoard/EmployeeChatbox) — matching the Owner/Manager
   // dashboards' realtime behavior instead of requiring a manual refresh.
-  useResourceInvalidation(['dashboard', 'shifts', 'tasks', 'attendance', 'team'], () => {
+  useResourceInvalidation(['dashboard', 'shifts', 'attendance', 'team'], () => {
     if (!authUserId || !userId) return
     void fetchMyShift(userId)
     void fetchReleaseQueue(authUserId)
-    void fetchContacts(authUserId)
-    if (companyId) void fetchMyTasks(companyId, userId)
     void fetchDashboard(authUserId).then(dash => {
       if (dash.success) setSupervisedWorkers(dash.supervised_workers ?? [])
     })
   })
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
-
-  useEffect(() => {
-    if (!userId) return
-    const supabase = createBrowserClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!)
-    const channel = supabase
-      .channel('employee-dashboard-messages')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `to_user_id=eq.${userId}` }, (payload) => {
-        const newMsg = payload.new as Message
-        if (activeContactId && newMsg.from_user_id === activeContactId) setMessages(prev => [...prev, newMsg])
-        void fetchConversations(userId)
-      })
-      .subscribe()
-    return () => { supabase.removeChannel(channel) }
-  }, [userId, activeContactId, fetchConversations])
 
   const runClockAction = async (shift: MyShift, action: 'clock_in' | 'clock_out' | 'break_in' | 'break_out') => {
     setClockBusyId(`${shift.assignment.id}:${action}`)
@@ -297,32 +165,7 @@ export default function EmployeeDashboard() {
     } finally { setReleaseBusyId('') }
   }
 
-  const openContact = (contactId: string) => {
-    setActiveContactId(contactId)
-    setMessages([])
-  }
-
-  const handleSend = async () => {
-    if (!msgInput.trim() || !activeContactId || !userId) return
-    setSendingMsg(true)
-    try {
-      const res = await fetch('/api/inbox/messages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ from_user_id: userId, to_user_id: activeContactId, content: msgInput.trim() }),
-      })
-      const data = await res.json()
-      if (data.success) {
-        setMsgInput('')
-        await fetchThread(userId, activeContactId)
-        void fetchConversations(userId)
-      }
-    } catch {}
-    finally { setSendingMsg(false) }
-  }
-
-  const activeContact = contacts.find(c => c.id === activeContactId)
-  const title = companyName && departmentName ? `${companyName} [${departmentName}]` : companyName || 'Dashboard'
+  const title = "Today's Overview"
   // Shift dates are UTC-nominal (see casualAttendanceService's Clock In window), but between
   // local midnight and the local UTC offset the local and UTC calendar days disagree — matching
   // either key (not just the local one) keeps a genuinely-today shift from vanishing then.
@@ -332,6 +175,8 @@ export default function EmployeeDashboard() {
     const utcTodayKey = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-${String(now.getUTCDate()).padStart(2, '0')}`
     return s.shift.shift_date === todayKey || s.shift.shift_date === utcTodayKey
   })
+  // Earliest start time first, so the grid fills left-to-right in shift order.
+  const sortedSupervisedWorkers = [...supervisedWorkers].sort((a, b) => a.start_time.localeCompare(b.start_time))
 
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: '#F1F5F9' }}>
@@ -340,202 +185,156 @@ export default function EmployeeDashboard() {
 
       <main style={{ marginLeft: 64, height: '100vh', overflow: 'hidden', display: 'flex', flexDirection: 'column', flex: 1, gap: 0, animation: 'blockSlideUp 0.38s ease both 0.04s' }}>
         <div style={{ padding: '20px 28px 16px', flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 }}>
-          <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">{loading ? 'Dashboard' : title}</h1>
+          <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">{title}</h1>
           <div data-owner-header-badges style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
             {userId && companyId && <OwnerUserBadge userId={userId} companyId={companyId} />}
           </div>
         </div>
 
-        <div style={{ padding: '0 28px 28px', flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: '1.1fr 0.9fr', gap: 16 }}>
-          {/* ── Left column: My Shift, My Tasks ── */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minHeight: 0 }}>
-            {/* My Shift */}
-            <section style={{ background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 12, padding: '14px 18px', flexShrink: 0 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-                <Clock size={15} color={GREEN} />
-                <span style={{ fontWeight: 700, fontSize: 14, color: TEXT }}>My Shift</span>
+        {/* CSS Grid with an explicit blank spacer at row 1/column 2 — the Clock card (row 1,
+            column 1) is short and content-sized, so without a matching-height placeholder beside
+            it, "My Tasks" (row 2, column 1) and "Casual Workers Today" (row 2, column 2) would
+            start at different Y positions. The spacer has no content, so row 1's auto height is
+            still driven only by the Clock card — it just reserves that same height on the right
+            so row 2 lines up across both columns. */}
+        <div style={{ padding: '0 28px 28px', flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: '0.9fr 1.1fr', gridTemplateRows: 'auto minmax(0, 1fr)', gap: 16 }}>
+            {/* My Shift — same Clock In/Break In/Break Out/Clock Out stepper as Manager's
+                Dashboard (src/components/dashboard/ClockFlow.tsx). Manager's own version isn't
+                wrapped in a titled panel either — just the bare button row in a plain bordered
+                box — so this matches that exactly instead of adding a "My Shift" header. */}
+            <div style={{ gridColumn: 1, gridRow: 1, minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 8 }}>
+            {clockMessage && (
+              <div style={{ padding: '8px 12px', background: clockMessage.toLowerCase().includes('fail') || clockMessage.toLowerCase().includes('wait') ? '#FEF2F2' : '#ECFDF5', color: clockMessage.toLowerCase().includes('fail') || clockMessage.toLowerCase().includes('wait') ? '#B91C1C' : '#047857', borderRadius: 8, fontSize: 12.5, fontWeight: 600 }}>
+                {clockMessage}
               </div>
-              {clockMessage && (
-                <div style={{ marginBottom: 8, padding: '8px 12px', background: clockMessage.toLowerCase().includes('fail') || clockMessage.toLowerCase().includes('wait') ? '#FEF2F2' : '#ECFDF5', color: clockMessage.toLowerCase().includes('fail') || clockMessage.toLowerCase().includes('wait') ? '#B91C1C' : '#047857', borderRadius: 8, fontSize: 12.5, fontWeight: 600 }}>
-                  {clockMessage}
-                </div>
-              )}
+            )}
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 10, maxWidth: '100%', height: 92, boxSizing: 'border-box', background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 14, padding: '0 18px', overflow: 'hidden' }}>
               {myTodayShifts.length === 0 ? (
                 <p style={{ margin: 0, color: MUTED, fontSize: 13 }}>No shift scheduled today.</p>
               ) : myTodayShifts.map(shift => {
-                const clockedIn  = !!shift.record?.clock_in_time
+                const clockedIn = !!shift.record?.clock_in_time
                 const clockedOut = !!shift.record?.clock_out_time
-                const onBreak    = !!shift.record?.break_in_time && !shift.record?.break_out_time
-                const breakDone  = !!shift.record?.break_in_time && !!shift.record?.break_out_time
+                const breakInDone = !!shift.record?.break_in_time
+                const breakOutDone = !!shift.record?.break_out_time
+                const clockInEnabled = !clockBusyId && !clockedIn && canClockIn(shift.shift)
+                const breakInEnabled = !clockBusyId && clockedIn && !clockedOut && !breakInDone
+                const breakOutEnabled = !clockBusyId && clockedIn && !clockedOut && breakInDone && !breakOutDone
+                const clockOutEnabled = !clockBusyId && clockedIn && !clockedOut && canClockOut(shift.shift)
                 return (
-                  <div key={shift.assignment.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '10px 0', borderTop: `1px solid #F1F5F9` }}>
-                    <div>
-                      <p style={{ margin: 0, fontWeight: 600, fontSize: 13, color: TEXT }}>{shift.shift.title || 'My Shift'}</p>
-                      <p style={{ margin: '2px 0 0', fontSize: 12, color: MUTED }}>
-                        {formatTime(shift.shift.start_time)} – {formatTime(shift.shift.end_time)}
-                        {clockedIn && <> · In {formatTime(shift.record?.clock_in_time)}</>}
-                        {onBreak && <> · On break</>}
-                        {breakDone && !clockedOut && <> · Break done</>}
-                        {clockedOut && <> · Out {formatTime(shift.record?.clock_out_time)}</>}
-                      </p>
+                    <div key={shift.assignment.id} style={{ display: 'flex', alignItems: 'center', gap: 0, overflowX: 'auto' }}>
+                      <ClockFlowButton
+                        icon={<Clock size={19} />}
+                        label="Clock In"
+                        sub={clockedIn && shift.record?.clock_in_time ? `At ${fmtClockStamp(shift.record.clock_in_time)}` : `From ${fmtShiftTimeMinusMinutes(shift.shift.start_time, CLOCK_IN_WINDOW_MINUTES_BEFORE)}`}
+                        enabled={clockInEnabled}
+                        completed={clockedIn}
+                        activeColor={ACCENT}
+                        onClick={() => void runClockAction(shift, 'clock_in')}
+                      />
+                      <ClockFlowConnector />
+                      <ClockFlowButton
+                        icon={<Coffee size={19} />}
+                        label="Break In"
+                        sub={breakInDone && shift.record?.break_in_time ? `At ${fmtClockStamp(shift.record.break_in_time)}` : ''}
+                        enabled={breakInEnabled}
+                        completed={breakInDone}
+                        activeColor={ACCENT}
+                        onClick={() => void runClockAction(shift, 'break_in')}
+                      />
+                      <ClockFlowConnector />
+                      <ClockFlowButton
+                        icon={<Coffee size={19} />}
+                        label="Break Out"
+                        sub={breakOutDone && shift.record?.break_out_time ? `At ${fmtClockStamp(shift.record.break_out_time)}` : ''}
+                        enabled={breakOutEnabled}
+                        completed={breakOutDone}
+                        activeColor={ACCENT}
+                        onClick={() => void runClockAction(shift, 'break_out')}
+                      />
+                      <ClockFlowConnector />
+                      <ClockFlowButton
+                        icon={<Clock size={19} />}
+                        label="Clock Out"
+                        sub={clockedOut && shift.record?.clock_out_time ? `At ${fmtClockStamp(shift.record.clock_out_time)}` : shift.shift.is_open_ended ? 'When done' : `After ${fmtShiftTime(shift.shift.end_time)}`}
+                        enabled={clockOutEnabled}
+                        completed={clockedOut}
+                        activeColor="#334155"
+                        onClick={() => void runClockAction(shift, 'clock_out')}
+                      />
                     </div>
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      {!clockedIn && canClockIn(shift.shift) && (
-                        <button onClick={() => runClockAction(shift, 'clock_in')} disabled={!!clockBusyId}
-                          style={{ height: 32, padding: '0 12px', borderRadius: 8, border: 'none', background: GREEN, color: '#fff', fontWeight: 700, fontSize: 12, cursor: 'pointer' }}>
-                          {clockBusyId === `${shift.assignment.id}:clock_in` ? 'Working…' : 'Clock In'}
-                        </button>
-                      )}
-                      {clockedIn && !clockedOut && !onBreak && !breakDone && (
-                        <button onClick={() => runClockAction(shift, 'break_in')} disabled={!!clockBusyId}
-                          style={{ height: 32, padding: '0 12px', borderRadius: 8, border: '1.5px solid #D97706', background: '#FFFBEB', color: '#B45309', fontWeight: 700, fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}>
-                          <Coffee size={12} /> Break In
-                        </button>
-                      )}
-                      {clockedIn && !clockedOut && onBreak && (
-                        <button onClick={() => runClockAction(shift, 'break_out')} disabled={!!clockBusyId}
-                          style={{ height: 32, padding: '0 12px', borderRadius: 8, border: '1.5px solid #D97706', background: '#FFF7ED', color: '#B45309', fontWeight: 700, fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}>
-                          <Coffee size={12} /> Break Out
-                        </button>
-                      )}
-                      {clockedIn && !clockedOut && canClockOut(shift.shift) && (
-                        <button onClick={() => runClockAction(shift, 'clock_out')} disabled={!!clockBusyId}
-                          style={{ height: 32, padding: '0 12px', borderRadius: 8, border: 'none', background: '#334155', color: '#fff', fontWeight: 700, fontSize: 12, cursor: 'pointer' }}>
-                          {clockBusyId === `${shift.assignment.id}:clock_out` ? 'Working…' : 'Clock Out'}
-                        </button>
-                      )}
-                    </div>
-                  </div>
                 )
               })}
-            </section>
+            </div>
+            </div>
 
-            {/* My Tasks — assigned to this Employee by their Manager */}
-            <section style={{ background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 12, padding: '14px 18px', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexShrink: 0 }}>
-                <CheckSquare size={15} color={GREEN} />
-                <span style={{ fontWeight: 700, fontSize: 14, color: TEXT }}>My Tasks</span>
-                <span style={{ fontSize: 11.5, fontWeight: 700, color: MUTED, marginLeft: 'auto' }}>{myTasks.length} total</span>
-              </div>
-              <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {myTasksLoading ? (
-                  <div style={{ padding: '20px 0', textAlign: 'center', color: MUTED, fontSize: 13 }}><Spinner dark /> Loading…</div>
-                ) : myTasks.length === 0 ? (
-                  <p style={{ margin: 0, color: MUTED, fontSize: 13 }}>No tasks assigned to you yet.</p>
-                ) : myTasks.map(task => {
-                  const s = STATUS_LABEL[task.status]
-                  const needsRework = !!task.rejection_reason && task.status === 'In Progress'
-                  return (
-                    <div key={task.id} style={{ border: `1px solid ${BORDER}`, borderRadius: 10, padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <p style={{ margin: 0, fontWeight: 600, fontSize: 13, color: TEXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{task.title}</p>
-                        {task.due_at && <p style={{ margin: '2px 0 0', fontSize: 11.5, color: MUTED }}>Due {new Date(task.due_at).toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>}
-                      </div>
-                      {needsRework && (
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 800, padding: '3px 8px', borderRadius: 999, background: '#FEF2F2', color: '#DC2626' }}>
-                          <AlertTriangle size={10} /> Rework
-                        </span>
-                      )}
-                      <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 9px', borderRadius: 999, background: s.bg, color: s.color, whiteSpace: 'nowrap' }}>{s.label}</span>
-                    </div>
-                  )
-                })}
-              </div>
-            </section>
-          </div>
+            {/* Blank spacer — see the comment on the grid container above. */}
+            <div style={{ gridColumn: 2, gridRow: 1, minHeight: 0 }} />
 
-          {/* ── Right column: Supervised Casual Workers + Messages ── */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minHeight: 0 }}>
-            {/* Supervised Casual Workers today + clock-out release queue */}
-            <section style={{ background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 12, padding: '14px 18px', flexShrink: 0, maxHeight: '38%', overflowY: 'auto' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-                <Users size={15} color={GREEN} />
-                <span style={{ fontWeight: 700, fontSize: 14, color: TEXT }}>Casual Workers Today</span>
-                <span style={{ fontSize: 11.5, fontWeight: 700, color: MUTED, marginLeft: 'auto' }}>{supervisedWorkers.length}</span>
-              </div>
-              {supervisedWorkers.length === 0 ? (
-                <p style={{ margin: 0, color: MUTED, fontSize: 13 }}>No Casual Workers under you today.</p>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {supervisedWorkers.map(w => {
-                    const release = releaseQueue.find(r => r.casual_worker_id === w.id)
-                    return (
-                      <div key={w.shift_assignment_id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 9, background: '#F8FAFC' }}>
-                        <Avatar name={w.full_name} size={30} />
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <p style={{ margin: 0, fontWeight: 600, fontSize: 12.5, color: TEXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{w.full_name}</p>
-                          <p style={{ margin: '1px 0 0', fontSize: 11, color: MUTED }}>{w.shift_title} · {formatTime(w.start_time)}–{w.is_open_ended ? 'Open' : formatTime(w.end_time)}</p>
-                        </div>
-                        {release && (
-                          <button onClick={() => releaseClockOut(release)} disabled={!!releaseBusyId}
-                            style={{ height: 28, padding: '0 10px', borderRadius: 7, border: 'none', background: GREEN, color: '#fff', fontWeight: 700, fontSize: 11, cursor: releaseBusyId ? 'default' : 'pointer', flexShrink: 0 }}>
-                            {releaseBusyId === release.id ? '…' : 'Release'}
-                          </button>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-            </section>
+            {/* My Tasks — assigned to this Employee by their Manager. Same Kanban board design
+                as Manager's Tasks page "My Tasks" tab (see EmployeeMyTasksBoard's header comment). */}
+            <div style={{ gridColumn: 1, gridRow: 2, minHeight: 0, minWidth: 0 }}>
+              <EmployeeMyTasksBoard companyId={companyId} internalUserId={userId} />
+            </div>
 
-            {/* Messages — Manager, department colleagues, and today's Casual Workers */}
-            <section style={{ background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 12, flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden' }}>
-              <div style={{ width: 150, flexShrink: 0, borderRight: `1px solid ${BORDER}`, display: 'flex', flexDirection: 'column', overflowY: 'auto' }}>
-                <div style={{ padding: '12px 12px 8px', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-                  <MessageCircle size={13} color={GREEN} />
-                  <span style={{ fontWeight: 700, fontSize: 12.5, color: TEXT }}>Messages</span>
-                </div>
-                {contacts.map(c => {
-                  const conv = conversations.find(v => v.partnerId === c.id)
-                  return (
-                    <button key={c.id} onClick={() => openContact(c.id)}
-                      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', border: 'none', background: activeContactId === c.id ? '#DCFCE7' : 'transparent', cursor: 'pointer', textAlign: 'left' }}>
-                      <Avatar name={c.full_name} size={26} color={c.role === 'Manager' ? '#2563EB' : GREEN} />
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <p style={{ margin: 0, fontWeight: 600, fontSize: 11.5, color: TEXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.full_name}</p>
-                      </div>
-                      {conv && conv.unreadCount > 0 && (
-                        <span style={{ minWidth: 15, height: 15, padding: '0 3px', borderRadius: 999, background: '#EF4444', color: '#fff', fontSize: 9, fontWeight: 900, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{conv.unreadCount}</span>
-                      )}
-                    </button>
-                  )
-                })}
-                {contacts.length === 0 && <p style={{ padding: '0 12px', color: MUTED, fontSize: 12 }}>No contacts yet.</p>}
-              </div>
-
-              <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-                {!activeContact ? (
-                  <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: MUTED, fontSize: 13 }}>Select a contact to start chatting.</div>
+          <div style={{ gridColumn: 2, gridRow: 2, minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {/* Supervised Casual Workers today — same contact-row language as the Casual Worker's
+                own "Supervisor" block (src/app/casual/dashboard/page.tsx): avatar, name, phone.
+                Side-by-side cards once there's more than one worker. Shift line shows the full
+                start–end range for a normal shift, or just the start time for a one-off
+                (open-ended) job, since those have no scheduled end. A Casual Worker on a one-off
+                job can't clock out on their own page until this Employee approves it (see
+                employeeAttendanceService.releaseClockOut) — that action sits inline on the card.
+                Height hugs its own content up to a cap (own scrollbar beyond that) instead of
+                being forced to match Chatbox's height. */}
+            <div style={{ maxHeight: 260, display: 'flex', flexDirection: 'column' }}>
+              <ShowcaseCard icon={<Users size={15} color={ACCENT} />} title="Casual Workers Today" fillHeight>
+                {supervisedWorkers.length === 0 ? (
+                  <p style={{ margin: 0, color: MUTED, fontSize: 13 }}>No Casual Workers under you today.</p>
                 ) : (
-                  <>
-                    <div style={{ padding: '10px 14px', borderBottom: `1px solid ${BORDER}`, flexShrink: 0 }}>
-                      <span style={{ fontWeight: 700, fontSize: 13, color: TEXT }}>{activeContact.full_name}</span>
-                    </div>
-                    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      {messages.map(m => {
-                        const mine = m.from_user_id === userId
-                        return (
-                          <div key={m.id} style={{ alignSelf: mine ? 'flex-end' : 'flex-start', maxWidth: '80%', background: mine ? GREEN : '#F1F5F9', color: mine ? '#fff' : TEXT, padding: '7px 11px', borderRadius: 12, fontSize: 12.5 }}>
-                            {m.content}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))', gap: 12 }}>
+                    {sortedSupervisedWorkers.map(w => {
+                      const release = releaseQueue.find(r => r.casual_worker_id === w.id)
+                      return (
+                        <div key={w.shift_assignment_id} style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 12, borderRadius: 12, border: '1px solid #E5E7EB', minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+                            <RoleAvatar role="Casual Worker" photoUrl={w.profile_photo_url} size={44} />
+                            <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                              <p style={{ margin: 0, fontWeight: 700, fontSize: 13.5, color: TEXT }}>{w.full_name}</p>
+                              {w.phone_number && (
+                                <a href={`tel:${w.phone_number}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: TEXT, textDecoration: 'none' }}>
+                                  <Phone size={11} color={ACCENT} style={{ flexShrink: 0 }} /> {w.phone_number}
+                                </a>
+                              )}
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: MUTED, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                <Clock size={11} color={ACCENT} style={{ flexShrink: 0 }} />
+                                {w.is_open_ended ? `From ${fmtShiftTime(w.start_time)}` : `${fmtShiftTime(w.start_time)} – ${fmtShiftTime(w.end_time)}`}
+                              </span>
+                            </div>
                           </div>
-                        )
-                      })}
-                      <div ref={messagesEndRef} />
-                    </div>
-                    <div style={{ padding: '10px 14px', borderTop: `1px solid ${BORDER}`, display: 'flex', gap: 8, flexShrink: 0 }}>
-                      <input value={msgInput} onChange={e => setMsgInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void handleSend() }}
-                        placeholder="Type a message…"
-                        style={{ flex: 1, height: 34, padding: '0 12px', border: `1px solid ${BORDER}`, borderRadius: 8, fontSize: 12.5, outline: 'none' }} />
-                      <button onClick={handleSend} disabled={sendingMsg || !msgInput.trim()}
-                        style={{ width: 34, height: 34, borderRadius: 8, border: 'none', background: GREEN, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', opacity: sendingMsg || !msgInput.trim() ? 0.6 : 1 }}>
-                        <Send size={14} />
-                      </button>
-                    </div>
-                  </>
+                          {release && (
+                            <button
+                              type="button"
+                              onClick={() => releaseClockOut(release)}
+                              disabled={!!releaseBusyId}
+                              style={{ width: '100%', height: 30, padding: '0 12px', borderRadius: 8, border: 'none', background: ACCENT, color: '#fff', fontWeight: 700, fontSize: 11.5, cursor: releaseBusyId ? 'default' : 'pointer' }}
+                            >
+                              {releaseBusyId === release.id ? '…' : 'Approve Clock Out'}
+                            </button>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
                 )}
-              </div>
-            </section>
+              </ShowcaseCard>
+            </div>
+
+            {/* Messages — same "Chatbox" design as Owner/Partner/Manager's Communication page
+                (conversation list + up to 4 side-by-side chat panels via drag-and-drop), scoped
+                to this Employee's Manager/colleagues/supervised Casual Workers. */}
+            <div style={{ flex: 1, minHeight: 0 }}>
+              <EmployeeChatbox companyId={companyId} internalUserId={userId} />
+            </div>
           </div>
         </div>
       </main>

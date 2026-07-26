@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { aiTaskAssignService } from '@/services/owner/aiTaskAssignService'
 import { taskService } from '@/services/owner/taskService'
+import { employeeDashboardService } from '@/services/employee/employeeDashboardService'
 
 export async function POST(req: NextRequest) {
   let body: unknown
@@ -31,6 +32,13 @@ export async function POST(req: NextRequest) {
     const manager_scope_id = typeof b.manager_scope_id === 'string' ? b.manager_scope_id : undefined
     const managerScope = manager_scope_id ? await taskService.getManagerTeamScope(b.company_id, manager_scope_id) : null
 
+    // Employee Tasks page scope: the AI is forced to the Employee's own department and can only
+    // recommend a Casual Worker this Employee actually supervises today — never a whole department.
+    const employee_scope_id = typeof b.employee_scope_id === 'string' ? b.employee_scope_id : undefined
+    const employeeScope = employee_scope_id
+      ? await employeeDashboardService.getSupervisedTaskScope(employee_scope_id, b.company_id)
+      : null
+
     const suggestion = await aiTaskAssignService.generateAssignmentSuggestion({
       company_id: b.company_id,
       title: b.title,
@@ -38,8 +46,9 @@ export async function POST(req: NextRequest) {
       priority: b.priority,
       want_sub_tasks: b.want_sub_tasks === true,
       task_date: typeof b.task_date === 'string' ? b.task_date : undefined,
-      department_ids: managerScope?.departmentIds,
-      candidate_role: managerScope ? 'Employee' : 'Manager',
+      department_ids: managerScope?.departmentIds ?? (employeeScope ? [employeeScope.department_id].filter(Boolean) : undefined),
+      candidate_role: managerScope ? 'Employee' : employeeScope ? 'Casual Worker' : 'Manager',
+      candidate_pool: employeeScope?.candidates,
     })
     return NextResponse.json({ success: true, suggestion })
   } catch (err) {

@@ -21,6 +21,11 @@ import {
 import RoleAvatar from '@/components/RoleAvatar'
 import { ModalOverlay, ModalBox, ModalHeader } from '@/components/modal'
 import { useResourceInvalidation } from '@/components/realtime/RealtimeNotificationsProvider'
+import {
+  CLOCK_IN_WINDOW_MINUTES_BEFORE, canClockIn, canClockOut,
+  fmtShiftTime, fmtShiftTimeMinusMinutes, fmtClockStamp,
+  ClockFlowButton, ClockFlowConnector,
+} from '@/components/dashboard/ClockFlow'
 
 // ─── Spinner ──────────────────────────────────────────────────────────────────
 
@@ -59,86 +64,6 @@ type MyShift = {
   assignment: { id: string; user_id: string }
   shift: { id: string; title: string | null; shift_date: string; start_time: string; end_time: string; is_open_ended: boolean }
   record: MyShiftRecord | null
-}
-
-const CLOCK_IN_WINDOW_MINUTES_BEFORE = 30
-
-function canClockIn(shift: MyShift['shift']): boolean {
-  const shiftStart = new Date(`${shift.shift_date}T${shift.start_time}Z`)
-  return Date.now() >= shiftStart.getTime() - CLOCK_IN_WINDOW_MINUTES_BEFORE * 60000
-}
-
-function canClockOut(shift: MyShift['shift']): boolean {
-  if (shift.is_open_ended) return true
-  return Date.now() >= new Date(`${shift.shift_date}T${shift.end_time}Z`).getTime()
-}
-
-function fmtShiftTime(hhmmss: string): string {
-  const [h, m] = hhmmss.split(':').map(Number)
-  const h12 = h % 12 === 0 ? 12 : h % 12
-  return `${h12}:${String(m).padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'}`
-}
-
-function fmtShiftTimeMinusMinutes(hhmmss: string, minutes: number): string {
-  const [h, m] = hhmmss.split(':').map(Number)
-  const total = (h * 60 + m - minutes + 1440) % 1440
-  return fmtShiftTime(`${Math.floor(total / 60)}:${total % 60}`)
-}
-
-function fmtClockStamp(iso: string | null): string {
-  if (!iso) return '--'
-  return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
-}
-
-function ClockFlowButton({ icon, label, sub, enabled, completed, activeColor, completedColor = '#16A34A', onClick }: {
-  icon: ReactNode
-  label: string
-  sub: string
-  enabled: boolean
-  completed: boolean
-  activeColor: string
-  completedColor?: string
-  onClick: () => void
-}) {
-  return (
-    <button
-      type="button"
-      disabled={!enabled}
-      onClick={onClick}
-      style={{
-        border: 'none',
-        borderRadius: 12,
-        padding: '0 16px',
-        height: 62,
-        boxSizing: 'border-box',
-        textAlign: 'left',
-        display: 'flex',
-        alignItems: 'center',
-        gap: 9,
-        minWidth: 152,
-        background: completed ? completedColor : enabled ? activeColor : '#F3F4F6',
-        color: completed || enabled ? '#FFFFFF' : '#9CA3AF',
-        cursor: enabled ? 'pointer' : 'default',
-        boxShadow: 'none',
-      }}
-    >
-      <span style={{ flexShrink: 0 }}>{icon}</span>
-      <span style={{ minWidth: 0 }}>
-        <span style={{ display: 'block', fontWeight: 800, fontSize: '0.9375rem', whiteSpace: 'nowrap' }}>{label}</span>
-        {sub && (
-          <span style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 500, marginTop: 1, opacity: 0.92, whiteSpace: 'nowrap' }}>{sub}</span>
-        )}
-      </span>
-    </button>
-  )
-}
-
-function ClockFlowConnector() {
-  return (
-    <span style={{ width: 46, flex: '0 0 46px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#D1D5DB' }}>
-      <ArrowRight size={16} />
-    </span>
-  )
 }
 
 function CountChip({ value }: { value: string | number }) {

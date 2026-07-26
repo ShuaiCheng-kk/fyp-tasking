@@ -285,4 +285,46 @@ describe('aiTaskAssignService.generateAssignmentSuggestion (UC20)', () => {
       expect(result.reason).toContain('No employees available')
     })
   })
+
+  // Employee viewer (department_ids + candidate_role: 'Casual Worker' + candidate_pool resolved
+  // server-side from employee_scope_id in the route, via employeeDashboardService's
+  // getSupervisedTaskScope). Extended to Employee 2026-07-27.
+  describe('Employee viewer scope (department_ids + candidate_role: Casual Worker + candidate_pool)', () => {
+    const supervisedWorkers = [
+      { id: 'cw-1', full_name: 'Daniel Wong' },
+      { id: 'cw-2', full_name: 'Priya Nair' },
+    ]
+
+    it('forces the department instead of letting the AI pick one, and never queries by department for candidates', async () => {
+      const result = await aiTaskAssignService.generateAssignmentSuggestion({
+        company_id: 'company-1', title: 'Promotion Poster', description: '', priority: 'High', want_sub_tasks: false,
+        department_ids: ['dept-1'], candidate_role: 'Casual Worker', candidate_pool: supervisedWorkers,
+      })
+
+      expect(result.department_id).toBe('dept-1')
+      expect(companyService.getManagersByDepartment).not.toHaveBeenCalled()
+      expect(taskRepository.getEmployeesByDepartment).not.toHaveBeenCalled()
+    })
+
+    it('recommends the lightest-loaded supervised Casual Worker only, not the whole department', async () => {
+      const result = await aiTaskAssignService.generateAssignmentSuggestion({
+        company_id: 'company-1', title: 'Prepare report', description: '', priority: 'High', want_sub_tasks: false,
+        department_ids: ['dept-1'], candidate_role: 'Casual Worker', candidate_pool: supervisedWorkers,
+      })
+
+      expect(result.recommended_manager_id).toBe('cw-1')
+      expect(result.candidates.map(c => c.id)).toEqual(['cw-1', 'cw-2'])
+      expect(result.reason).toContain('casual workers')
+    })
+
+    it('reports no casual workers available when the Employee supervises no one today', async () => {
+      const result = await aiTaskAssignService.generateAssignmentSuggestion({
+        company_id: 'company-1', title: 'Prepare report', description: '', priority: 'High', want_sub_tasks: false,
+        department_ids: ['dept-1'], candidate_role: 'Casual Worker', candidate_pool: [],
+      })
+
+      expect(result.recommended_manager_id).toBeNull()
+      expect(result.reason).toContain('No casual workers available')
+    })
+  })
 })

@@ -3761,8 +3761,12 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                 />
               </div>
 
-              {managerShiftTab === 'schedule' && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 16, flex: 1, minHeight: 0 }}>
+              {/* Both tabs stay mounted at all times (toggled via display, not conditional
+                  render) — MyRequestsPanel/SwapRequestsPanel each report their own pending count
+                  via onAttentionCount, and that only ever fires once the component has mounted
+                  and fetched. Unmounting the inactive tab meant its count (and the Swap Requests
+                  tab's own red dot) stayed at 0 until the user actually clicked into it. */}
+              <div style={{ display: managerShiftTab === 'schedule' ? 'flex' : 'none', flexDirection: 'column', gap: 16, flex: 1, minHeight: 0 }}>
                   <section className="shift-calendar-panel" style={{ background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, display: 'flex', flexDirection: 'column', flex: '1 1 0', minHeight: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '14px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, flexWrap: 'wrap', flexShrink: 0 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -3837,11 +3841,9 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                       onAttentionCount={setMyReqAlertCount}
                     />
                   </div>
-                </div>
-              )}
+              </div>
 
-              {managerShiftTab === 'swaps' && (
-                <div style={{ flex: '1 1 0', minHeight: 0 }}>
+              <div style={{ display: managerShiftTab === 'swaps' ? 'block' : 'none', flex: '1 1 0', minHeight: 0 }}>
                   <SwapRequestsPanel
                     companyId={companyId}
                     internalUserId={internalUserId}
@@ -3849,8 +3851,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                     showErrorToast={showErrorToast}
                     onAttentionCount={setSwapAlertCount}
                   />
-                </div>
-              )}
+              </div>
             </div>
           )}
 
