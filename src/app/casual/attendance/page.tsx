@@ -11,6 +11,7 @@ import { TitledBlock } from '@/components/panel'
 import { JobDetailPanel, JobView } from '@/components/jobs/JobPresentation'
 import RoleAvatar from '@/components/RoleAvatar'
 import { useIsCompactViewport } from '@/hooks/useIsCompactViewport'
+import { useResourceInvalidation } from '@/components/realtime/RealtimeNotificationsProvider'
 
 type HistoryEntry = {
   id: string
@@ -270,23 +271,32 @@ export default function CasualAttendancePage() {
     return () => observer.disconnect()
   }, [loading, history.length])
 
+  const [authId, setAuthId] = useState('')
+
+  const loadHistory = async (uid: string) => {
+    const res = await fetch(`/api/casual/attendance?resource=history&user_id=${uid}`)
+    const data = await res.json()
+    if (data.success) {
+      setHistory(data.history)
+      if (data.history.length > 0) setSelectedId(prev => prev ?? data.history[0].id)
+    }
+    setLoading(false)
+  }
+
   useEffect(() => {
     const uid = localStorage.getItem('tasking_user_id')
     if (!uid) {
       router.replace('/signin')
       return
     }
-    const load = async () => {
-      const res = await fetch(`/api/casual/attendance?resource=history&user_id=${uid}`)
-      const data = await res.json()
-      if (data.success) {
-        setHistory(data.history)
-        if (data.history.length > 0) setSelectedId(data.history[0].id)
-      }
-      setLoading(false)
-    }
-    void load()
+    setAuthId(uid)
+    void loadHistory(uid)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router])
+
+  // Live-updates the record list when a clock-in/out is recorded or an Owner/Manager edits a
+  // clock time, matching the Manager/Employee attendance pages' realtime behavior.
+  useResourceInvalidation(['attendance'], () => { if (authId) void loadHistory(authId) })
 
   const filteredHistory = monthFilter ? history.filter(e => e.shift_date.slice(0, 7) === monthFilter) : history
 

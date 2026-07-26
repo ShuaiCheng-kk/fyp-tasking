@@ -9,6 +9,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Download, FileText, ImagePlus, MessageCircle, Paperclip, Send, X } from 'lucide-react'
 import { TitledBlock } from '@/components/panel'
+import { useResourceInvalidation } from '@/components/realtime/RealtimeNotificationsProvider'
 
 type Message = {
   id: string
@@ -61,6 +62,10 @@ export default function CasualMessagePanel({ authId, companyId, supervisorId, su
     void load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authId, supervisorId])
+
+  // Live-updates the thread when the supervising Employee sends a message, matching the
+  // Owner/Manager Communication panel's realtime behavior.
+  useResourceInvalidation(['communication'], () => { void load() })
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })

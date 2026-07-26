@@ -306,7 +306,8 @@ const DASHBOARD_TASK_PRIORITY_COLORS: Record<string, { bg: string; text: string 
 const TASK_NOTIFICATION_META: Record<TaskNotificationItem['id'], { icon: React.ReactNode; accent: string; accentBg: string; route: string; text: string }> = {
   new_assigned_task:    { icon: <CheckSquare size={15} />,     accent: '#2563EB', accentBg: '#EFF6FF', route: '/tasks?tab=my', text: 'New tasks assigned to you' },
   task_rejected:        { icon: <AlertCircle size={15} />,     accent: '#DC2626', accentBg: '#FEF2F2', route: '/tasks?tab=my&show=rework', text: 'Your tasks were rejected' },
-  shift_swap_rejected:  { icon: <ArrowRightLeft size={15} />,  accent: '#D97706', accentBg: '#FFF7ED', route: '/attendance?tab=swaps', text: 'Shift swaps were rejected' },
+  // Manager-only notification list — Attendance is folded into the Shifts page for Manager.
+  shift_swap_rejected:  { icon: <ArrowRightLeft size={15} />,  accent: '#D97706', accentBg: '#FFF7ED', route: '/shifts?tab=swaps', text: 'Shift swaps were rejected' },
 }
 
 function TaskNotificationLine({ item, onClick }: { item: TaskNotificationItem; onClick: () => void }) {
@@ -1362,7 +1363,15 @@ export default function DashboardView({ sidebar, basePath, viewerRole }: {
       return
     }
     if (item.id === 'off_day_deadline' && viewerRole === 'Manager') {
-      router.push(`${basePath}/attendance?submit=offday`)
+      // Attendance is folded into the Shifts page for Manager (My Requests panel there still
+      // reads this same ?submit=offday deep link to open straight to the Off Day step).
+      router.push(`${basePath}/shifts?submit=offday`)
+      return
+    }
+    if (item.id === 'shift_swap' && viewerRole === 'Manager') {
+      // Swap Requests is a Shifts-page tab for Manager now (same ?tab=swaps deep-link convention
+      // AttendanceView used before the move).
+      router.push(`${basePath}/shifts?tab=swaps`)
       return
     }
     if (item.id === 'task_review' && viewerRole === 'Manager') {
@@ -1644,7 +1653,8 @@ export default function DashboardView({ sidebar, basePath, viewerRole }: {
                   </div>
                   <div style={{ marginLeft: 'auto', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 14 }}>
                     {viewerRole !== 'Manager' && <HeaderSearchInput value={attendanceSearch} onChange={setAttendanceSearch} />}
-                    <LinkAction label="Go to Attendance Page →" onClick={() => router.push(`${basePath}/attendance`)} />
+                    {/* Attendance is folded into the Shifts page for Manager — no standalone Attendance page to link to. */}
+                    <LinkAction label="Go to Attendance Page →" onClick={() => router.push(viewerRole === 'Manager' ? `${basePath}/shifts` : `${basePath}/attendance`)} />
                   </div>
                 </div>
                 <div style={{ borderTop: '1px solid #E5E7EB', flexShrink: 0 }} />
@@ -1659,7 +1669,7 @@ export default function DashboardView({ sidebar, basePath, viewerRole }: {
                         accentBg="#EFF6FF"
                         group={summary.attendance_overview.internal}
                         search={viewerRole === 'Manager' ? '' : attendanceSearch}
-                        onOpenDetails={viewerRole === 'Manager' ? () => router.push(`${basePath}/attendance`) : undefined}
+                        onOpenDetails={viewerRole === 'Manager' ? () => router.push(`${basePath}/shifts`) : undefined}
                         flatProgressHeader={viewerRole === 'Manager'}
                         showDepartmentBreakdown={viewerRole !== 'Manager'}
                       />
@@ -1670,7 +1680,7 @@ export default function DashboardView({ sidebar, basePath, viewerRole }: {
                           accentBg="#F0FDF4"
                           group={summary.attendance_overview.casual}
                           search={viewerRole === 'Manager' ? '' : attendanceSearch}
-                          onOpenDetails={viewerRole === 'Manager' ? () => router.push(`${basePath}/attendance`) : undefined}
+                          onOpenDetails={viewerRole === 'Manager' ? () => router.push(`${basePath}/shifts`) : undefined}
                           flatProgressHeader={viewerRole === 'Manager'}
                           showDepartmentBreakdown={viewerRole !== 'Manager'}
                           personColumnLabel="Casual Worker"

@@ -7,6 +7,7 @@ import { Clock, Coffee, CheckSquare, Users, Send, MessageCircle, AlertTriangle }
 import EmployeeSidebar from '@/components/EmployeeSidebar'
 import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
 import { Task, KanbanGroup } from '@/types/Task'
+import { useResourceInvalidation } from '@/components/realtime/RealtimeNotificationsProvider'
 
 const GREEN  = '#16A34A'
 const BORDER = '#E5E7EB'
@@ -229,6 +230,20 @@ export default function EmployeeDashboard() {
     void fetchThread(userId, activeContactId)
   }, [activeContactId, userId, fetchThread])
 
+  // Live-updates the Shift/Supervised Workers/My Tasks widgets when a Manager reassigns a shift,
+  // a Casual Worker clocks in/out, or a task is created/reviewed — matching the Owner/Manager
+  // dashboards' realtime behavior instead of requiring a manual refresh.
+  useResourceInvalidation(['dashboard', 'shifts', 'tasks', 'attendance', 'team'], () => {
+    if (!authUserId || !userId) return
+    void fetchMyShift(userId)
+    void fetchReleaseQueue(authUserId)
+    void fetchContacts(authUserId)
+    if (companyId) void fetchMyTasks(companyId, userId)
+    void fetchDashboard(authUserId).then(dash => {
+      if (dash.success) setSupervisedWorkers(dash.supervised_workers ?? [])
+    })
+  })
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
@@ -308,10 +323,14 @@ export default function EmployeeDashboard() {
 
   const activeContact = contacts.find(c => c.id === activeContactId)
   const title = companyName && departmentName ? `${companyName} [${departmentName}]` : companyName || 'Dashboard'
+  // Shift dates are UTC-nominal (see casualAttendanceService's Clock In window), but between
+  // local midnight and the local UTC offset the local and UTC calendar days disagree — matching
+  // either key (not just the local one) keeps a genuinely-today shift from vanishing then.
   const myTodayShifts = myShifts.filter(s => {
     const now = new Date()
     const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-    return s.shift.shift_date === todayKey
+    const utcTodayKey = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-${String(now.getUTCDate()).padStart(2, '0')}`
+    return s.shift.shift_date === todayKey || s.shift.shift_date === utcTodayKey
   })
 
   return (

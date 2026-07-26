@@ -123,7 +123,7 @@ export default function GuestSidebar() {
             >
               <Icon size={18} strokeWidth={2.1} style={{ flexShrink: 0, color: 'currentColor' }} />
               {showDot && (
-                <span aria-hidden="true" style={{ position: 'absolute', top: 8, right: expanded ? 12 : 10, width: 8, height: 8, borderRadius: '50%', background: '#EF4444', boxShadow: '0 0 0 2px #FFFFFF' }} />
+                <span aria-hidden="true" style={{ position: 'absolute', top: -3, right: -3, width: 8, height: 8, borderRadius: '50%', background: '#EF4444', boxShadow: '0 0 0 2px #FFFFFF' }} />
               )}
               <span style={{ opacity: expanded ? 1 : 0, transition: 'opacity 0.15s' }}>
                 {label}

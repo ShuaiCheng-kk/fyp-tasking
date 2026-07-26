@@ -182,9 +182,12 @@ export function RealtimeNotificationsProvider({ children }: { children: React.Re
         if (appsData?.success) {
           const seenKey = `applications_seen_${user.id}`
           const seen = readStringSet(seenKey)
-          next.applications = ((appsData.applications ?? []) as Array<{ id: string; status: string; invitation_status?: string | null; updated_at?: string | null }>)
+          next.applications = ((appsData.applications ?? []) as Array<{ id: string; status: string; job_invitations?: { status?: string | null }[] | null }>)
             .filter(app => app.status !== 'pending')
-            .filter(app => !seen.has(`${app.id}:${app.status}:${app.invitation_status ?? ''}:${app.updated_at ?? ''}`)).length
+            .filter(app => {
+              const invitationStatus = Array.isArray(app.job_invitations) ? app.job_invitations[0]?.status ?? '' : ''
+              return !seen.has(`${app.id}:${app.status}:${invitationStatus}:`)
+            }).length
         }
       }
     } finally {

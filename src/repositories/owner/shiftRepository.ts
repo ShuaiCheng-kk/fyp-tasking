@@ -307,14 +307,18 @@ export const shiftRepository = {
   async getCompanyMembers(company_id: string): Promise<(User & { department_id: string | null })[]> {
     const { data, error } = await supabase
       .from('users')
-      .select('*, manager_departments!manager_departments_manager_id_fkey(department_id), employee_departments(department_id)')
+      .select('*, manager_departments!manager_departments_manager_id_fkey(department_id), employee_departments(department_id), casualworker_departments(department_id)')
       .eq('company_id', company_id)
     if (error) throw new Error(error.message)
     return (data ?? []).map((row: any) => ({
       ...row,
-      department_id: row.manager_departments?.[0]?.department_id ?? row.employee_departments?.[0]?.department_id ?? null,
+      // Casual Worker's home department lives in casualworker_departments, not
+      // employee_departments — without this branch every CW came back department_id: null and
+      // was silently dropped from every department-grouped view (Shift Timeline/Calendar).
+      department_id: row.manager_departments?.[0]?.department_id ?? row.employee_departments?.[0]?.department_id ?? row.casualworker_departments?.[0]?.department_id ?? null,
       manager_departments: undefined,
       employee_departments: undefined,
+      casualworker_departments: undefined,
     })) as (User & { department_id: string | null })[]
   },
 

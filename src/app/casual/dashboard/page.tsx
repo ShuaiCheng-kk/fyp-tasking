@@ -9,6 +9,7 @@ import { TitledBlock } from '@/components/panel'
 import RoleAvatar from '@/components/RoleAvatar'
 import { JobDetailPanel, JobView } from '@/components/jobs/JobPresentation'
 import { useIsCompactViewport } from '@/hooks/useIsCompactViewport'
+import { useResourceInvalidation } from '@/components/realtime/RealtimeNotificationsProvider'
 
 type JobItem = {
   assignment_id: string
@@ -175,6 +176,10 @@ export default function CasualDashboardPage() {
     void load(uid)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router])
+
+  // Live-updates the job/shift timeline when a shift is (re)assigned, cancelled, or its details
+  // change, matching the Manager/Employee dashboards' realtime behavior.
+  useResourceInvalidation(['dashboard', 'shifts', 'tasks'], () => { if (authId) void load(authId) })
 
   // Availability flips at exact wall-clock moments: the Clock In window opening (start − 30 min)
   // and, for a clocked-in fixed-end shift, the scheduled end time. Schedule one re-render at the
