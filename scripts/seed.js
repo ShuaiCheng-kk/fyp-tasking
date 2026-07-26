@@ -262,6 +262,8 @@ const legacyTestEmailsToDelete = [
   ...guestApplicants.map(g => g.email),
   'casual1@test.com',
   'casual2@test.com',
+  'casual3@test.com',
+  'casual4@test.com',
   'partner2@test.com',
   ...Array.from({ length: 10 }, (_, i) => `cw${i + 1}@test.com`),
   ...Array.from({ length: 10 }, (_, i) => `guest${i + 1}@test.com`),
@@ -1082,84 +1084,208 @@ async function main() {
         })
         if (casualPreStartInvitationErr) console.warn(`  ⚠ Failed to create casual pre-start invitation: ${casualPreStartInvitationErr.message}`)
       }
-      const todayCasualShift = await createShift({
-        company_id: company.id,
-        department_id: opsDept.id,
-        shift_date: casualPreStartDate,
-        start_time: casualPreStartStartTime,
-        end_time: casualPreStartEndTime,
-        title: 'Pre-Shift Cafe Counter Cover',
-        created_by: manager1UserId,
-        publication_status: 'published',
-        source_job_posting_id: casualPreStartJob.id,
-        flat_rate: 72,
-      })
-      const todayCasualAssignment = await assignShift(todayCasualShift?.id, userIdMap['casual1@test.com'].internalId, manager1UserId, employee1UserId)
-      if (todayCasualShift && todayCasualAssignment) {
-        await createTask({
-          shift_id: todayCasualShift.id,
+      // Marcus Lee (casual1@test.com) intentionally has NO shift/assignment/task/clock-record
+      // seeded this week — Manager wanted to see the Shift Calendar's Casual Workers section
+      // rendering an all-"OFF" row (job posting/applicant/invitation above still seeded, just no
+      // shift attached to them).
+      if (userIdMap['casual2@test.com']) {
+        const ownerCasualAttendanceShift = await createShift({
           company_id: company.id,
-          department_id: opsDept.id,
-          title: 'Set up the cafe counter float',
-          description: 'Count the starting cash float, turn on the POS, and confirm receipt paper is loaded before opening.',
-          assigned_user_id: userIdMap['casual1@test.com'].internalId,
-          assigned_by: employee1UserId,
-          status: 'Assigned',
-          due_at: dueAtOn(new Date(casualPreStartDate), Number(casualPreStartStartTime.slice(0, 2))),
-          priority: 'High',
-        })
-        await createTask({
-          shift_id: todayCasualShift.id,
-          company_id: company.id,
-          department_id: opsDept.id,
-          title: 'Stock cups, napkins, and takeaway lids',
-          description: 'Top up front-counter consumables from the storeroom before the first order rush.',
-          assigned_user_id: userIdMap['casual1@test.com'].internalId,
-          assigned_by: employee1UserId,
-          status: 'Assigned',
-          due_at: dueAtOn(new Date(casualPreStartDate), Number(casualPreStartStartTime.slice(0, 2))),
-          priority: 'Medium',
-        })
-        const managerCasualAttendanceShift = await createShift({
-          company_id: company.id,
-          department_id: opsDept.id,
+          department_id: depts[1].id,
           shift_date: todayKey,
-          start_time: '12:00',
-          end_time: '16:00',
-          title: 'Lunch Service Casual Cover',
-          created_by: manager1UserId,
+          start_time: '09:00',
+          end_time: '13:00',
+          title: 'Marketing Promo Booth Cover',
+          created_by: ownerUser.id,
           publication_status: 'published',
         })
-        const managerCasualAttendanceAssignment = await assignShift(managerCasualAttendanceShift?.id, userIdMap['casual1@test.com'].internalId, manager1UserId, employee1UserId)
-        await clockRecord(managerCasualAttendanceAssignment, userIdMap['casual1@test.com'].internalId, { dateStr: todayKey, endStr: '16:00', breakStart: '14:00', breakEnd: '14:15' })
-        if (userIdMap['casual2@test.com']) {
-          const ownerCasualAttendanceShift = await createShift({
-            company_id: company.id,
-            department_id: depts[1].id,
-            shift_date: todayKey,
-            start_time: '09:00',
-            end_time: '13:00',
-            title: 'Marketing Promo Booth Cover',
-            created_by: ownerUser.id,
-            publication_status: 'published',
-          })
-          const ownerCasualAttendanceAssignment = await assignShift(ownerCasualAttendanceShift?.id, userIdMap['casual2@test.com'].internalId, ownerUser.id, employee2UserId)
-          await clockRecord(ownerCasualAttendanceAssignment, userIdMap['casual2@test.com'].internalId, { dateStr: todayKey, endStr: '13:00', lateMinutes: 18 })
-        }
-        const { error: casualMessageErr } = await supabase.from('messages').insert({
-          from_user_id: employee1UserId,
-          to_user_id: userIdMap['casual1@test.com'].internalId,
-          company_id: company.id,
-          content: `Hi Marcus, your cafe counter cover starts at ${casualPreStartStartTime}. Please clock in from 30 minutes before the shift and check the two setup tasks.`,
-          is_read: false,
-          sender_name: 'Ben Seah',
-        })
-        if (casualMessageErr) console.warn(`  ⚠ Failed to create casual pre-start message: ${casualMessageErr.message}`)
-        console.log(`  ✓ Casual Worker pre-start dashboard job: casual1@test.com starts at ${casualPreStartStartTime} UTC (${casualPreStartDate}); no attendance record seeded, so the page shows the pre-work clock-in state`)
+        const ownerCasualAttendanceAssignment = await assignShift(ownerCasualAttendanceShift?.id, userIdMap['casual2@test.com'].internalId, ownerUser.id, employee2UserId)
+        await clockRecord(ownerCasualAttendanceAssignment, userIdMap['casual2@test.com'].internalId, { dateStr: todayKey, endStr: '13:00', lateMinutes: 18 })
       }
+      console.log('  ✓ Casual Worker pre-start dashboard job posting/application seeded; no shift/task/clock-record for casual1@test.com this week (Manager Shift Calendar all-OFF row test)')
     }
   }
   console.log('  ✓ Today attendance: Operations rows for Manager dashboard plus multi-department Owner attendance; casual1/casual2 cover both dashboard halves')
+
+  // ── Employee Tasks page demo: Grace Lim (employee5) supervises a Casual Worker today, so her
+  // Tasks page (Assign/Edit/Delete/Sub-task to the Casual Workers she supervises) has real data
+  // instead of the empty state. A fresh Casual Worker rather than reusing casual1/casual2, who
+  // are already booked at other times today under employee1/employee2's supervision.
+  const { data: casual3Auth, error: casual3AuthErr } = await supabase.auth.admin.createUser({
+    email: 'casual3@test.com',
+    password: PASSWORD,
+    email_confirm: true,
+  })
+  if (casual3AuthErr || !casual3Auth.user) {
+    console.warn(`  ⚠ Failed to create casual3@test.com auth: ${casual3AuthErr?.message}`)
+  } else {
+    const { data: casual3User, error: casual3UserErr } = await supabase
+      .from('users')
+      .insert({
+        supabase_auth_id: casual3Auth.user.id,
+        full_name: 'Priya Nair',
+        email_address: 'casual3@test.com',
+        phone_number: '+65 8300 3003',
+        date_of_birth: '2000-03-22',
+        profile_photo_url: DEMO_PHOTO_URL,
+        role: 'Casual Worker',
+        company_id: company.id,
+        worker_status: 'active',
+        hourly_rate: 17.5,
+      })
+      .select()
+      .single()
+    if (casual3UserErr) {
+      console.warn(`  ⚠ Failed to create casual3@test.com user: ${casual3UserErr.message}`)
+    } else {
+      userIdMap['casual3@test.com'] = { authId: casual3Auth.user.id, internalId: casual3User.id }
+      const { error: casual3DeptErr } = await supabase.from('casualworker_departments').upsert({
+        casual_worker_id: casual3User.id,
+        department_id: opsDept.id,
+        company_id: company.id,
+        verified_at: new Date().toISOString(),
+      }, { onConflict: 'casual_worker_id,department_id' })
+      if (casual3DeptErr) console.warn(`  ⚠ Failed to verify casual3@test.com in Operations: ${casual3DeptErr.message}`)
+
+      // Dynamic "now"-relative shift (not a fixed UTC clock time) — same reasoning as
+      // casualPreStartStart above: a fixed UTC window can fall outside "now" depending on when the
+      // script is run vs. the tester's local time (Singapore is UTC+8), which would leave
+      // workActionsUnlocked() false and hide the Casual Worker's task board / clock-in entirely.
+      // Started 1h ago so it reads as already-in-progress whenever this is run or tested.
+      const emp5Shift1Start = new Date(Date.now() - 60 * 60 * 1000)
+      const emp5Shift1End = new Date(emp5Shift1Start.getTime() + 8 * 60 * 60 * 1000)
+      const emp5Shift1Date = dateKeyUTC(emp5Shift1Start)
+      const emp5Shift1StartTime = toHM(emp5Shift1Start)
+      const emp5Shift1EndTime = toHM(emp5Shift1End)
+      const employee5CasualShift = await createShift({
+        company_id: company.id,
+        department_id: opsDept.id,
+        shift_date: emp5Shift1Date,
+        start_time: emp5Shift1StartTime,
+        end_time: emp5Shift1EndTime,
+        title: 'Weekend Cafe Support',
+        created_by: manager1UserId,
+        publication_status: 'published',
+      })
+      const employee5CasualAssignment = await assignShift(employee5CasualShift?.id, casual3User.id, manager1UserId, employee5UserId)
+      if (employee5CasualShift && employee5CasualAssignment) {
+        await createTask({
+          shift_id: employee5CasualShift.id, company_id: company.id, department_id: opsDept.id,
+          title: 'Restock cafe display fridge',
+          description: "Top up the display fridge with today's pastries and check expiry labels before opening.",
+          assigned_user_id: casual3User.id, assigned_by: employee5UserId,
+          status: 'Assigned', due_at: new Date(emp5Shift1Start.getTime() + 2 * 3600000).toISOString(), priority: 'Medium',
+        })
+        await createTask({
+          shift_id: employee5CasualShift.id, company_id: company.id, department_id: opsDept.id,
+          title: 'Clean and reset cafe tables',
+          description: 'Wipe down all cafe tables and chairs, and reset condiment trays between the lunch and afternoon rush.',
+          assigned_user_id: casual3User.id, assigned_by: employee5UserId,
+          status: 'In Progress', percentage_complete: 45, due_at: new Date(emp5Shift1Start.getTime() + 4 * 3600000).toISOString(), priority: 'Medium',
+        })
+        await createTask({
+          shift_id: employee5CasualShift.id, company_id: company.id, department_id: opsDept.id,
+          title: 'Count afternoon float',
+          description: 'Count the till float at the afternoon handover and log the total on the shift sheet.',
+          assigned_user_id: casual3User.id, assigned_by: employee5UserId,
+          status: 'Review', percentage_complete: 100, due_at: new Date(emp5Shift1Start.getTime() + 5 * 3600000).toISOString(), priority: 'High',
+        })
+        await createTask({
+          shift_id: employee5CasualShift.id, company_id: company.id, department_id: opsDept.id,
+          title: 'Set up morning coffee station',
+          description: 'Set up the coffee station, grind beans for the day, and check the milk fridge stock.',
+          assigned_user_id: casual3User.id, assigned_by: employee5UserId,
+          status: 'Complete', percentage_complete: 100,
+          due_at: emp5Shift1Start.toISOString(), completed_at: emp5Shift1Start.toISOString(),
+        })
+        console.log(`  ✓ Employee Tasks 页演示数据：Grace Lim（employee5）今天督导 Priya Nair（casual3），4 条 Task 覆盖 Assigned/In Progress/Review/Complete；班次 ${emp5Shift1StartTime}-${emp5Shift1EndTime} UTC（${emp5Shift1Date}）现在正好在班内`)
+      }
+    }
+  }
+
+  // Second Casual Worker under the same Employee today — so the Employee Tasks page's Member
+  // panel shows a real "one Employee, multiple Casual Workers" scenario, not just a single row.
+  const { data: casual4Auth, error: casual4AuthErr } = await supabase.auth.admin.createUser({
+    email: 'casual4@test.com',
+    password: PASSWORD,
+    email_confirm: true,
+  })
+  if (casual4AuthErr || !casual4Auth.user) {
+    console.warn(`  ⚠ Failed to create casual4@test.com auth: ${casual4AuthErr?.message}`)
+  } else {
+    const { data: casual4User, error: casual4UserErr } = await supabase
+      .from('users')
+      .insert({
+        supabase_auth_id: casual4Auth.user.id,
+        full_name: 'Daniel Wong',
+        email_address: 'casual4@test.com',
+        phone_number: '+65 8300 3004',
+        date_of_birth: '2001-01-17',
+        profile_photo_url: DEMO_PHOTO_URL,
+        role: 'Casual Worker',
+        company_id: company.id,
+        worker_status: 'active',
+        hourly_rate: 17.0,
+      })
+      .select()
+      .single()
+    if (casual4UserErr) {
+      console.warn(`  ⚠ Failed to create casual4@test.com user: ${casual4UserErr.message}`)
+    } else {
+      userIdMap['casual4@test.com'] = { authId: casual4Auth.user.id, internalId: casual4User.id }
+      const { error: casual4DeptErr } = await supabase.from('casualworker_departments').upsert({
+        casual_worker_id: casual4User.id,
+        department_id: opsDept.id,
+        company_id: company.id,
+        verified_at: new Date().toISOString(),
+      }, { onConflict: 'casual_worker_id,department_id' })
+      if (casual4DeptErr) console.warn(`  ⚠ Failed to verify casual4@test.com in Operations: ${casual4DeptErr.message}`)
+
+      // Same dynamic "now"-relative reasoning as casual3's shift above — started 90 min ago on a
+      // 9h shift, staggered slightly from casual3's so the two Casual Workers aren't identical.
+      const emp5Shift2Start = new Date(Date.now() - 90 * 60 * 1000)
+      const emp5Shift2End = new Date(emp5Shift2Start.getTime() + 9 * 60 * 60 * 1000)
+      const emp5Shift2Date = dateKeyUTC(emp5Shift2Start)
+      const emp5Shift2StartTime = toHM(emp5Shift2Start)
+      const emp5Shift2EndTime = toHM(emp5Shift2End)
+      const employee5CasualShift2 = await createShift({
+        company_id: company.id,
+        department_id: opsDept.id,
+        shift_date: emp5Shift2Date,
+        start_time: emp5Shift2StartTime,
+        end_time: emp5Shift2EndTime,
+        title: 'Weekend Floor Support',
+        created_by: manager1UserId,
+        publication_status: 'published',
+      })
+      const employee5CasualAssignment2 = await assignShift(employee5CasualShift2?.id, casual4User.id, manager1UserId, employee5UserId)
+      if (employee5CasualShift2 && employee5CasualAssignment2) {
+        await createTask({
+          shift_id: employee5CasualShift2.id, company_id: company.id, department_id: opsDept.id,
+          title: 'Sweep and mop dining floor',
+          description: 'Sweep and mop the dining floor before the doors open, paying extra attention to the entrance mat area.',
+          assigned_user_id: casual4User.id, assigned_by: employee5UserId,
+          status: 'Assigned', due_at: new Date(emp5Shift2Start.getTime() + 3 * 3600000).toISOString(), priority: 'Low',
+        })
+        await createTask({
+          shift_id: employee5CasualShift2.id, company_id: company.id, department_id: opsDept.id,
+          title: 'Restock napkins and cutlery trays',
+          description: 'Top up napkin dispensers and cutlery trays at every table before the lunch rush.',
+          assigned_user_id: casual4User.id, assigned_by: employee5UserId,
+          status: 'In Progress', percentage_complete: 60, due_at: new Date(emp5Shift2Start.getTime() + 4 * 3600000).toISOString(), priority: 'Medium',
+        })
+        await createTask({
+          shift_id: employee5CasualShift2.id, company_id: company.id, department_id: opsDept.id,
+          title: 'Clear and reset outdoor seating',
+          description: 'Clear used cups and trays from the outdoor seating area and wipe down every table.',
+          assigned_user_id: casual4User.id, assigned_by: employee5UserId,
+          status: 'Complete', percentage_complete: 100,
+          due_at: emp5Shift2Start.toISOString(), completed_at: emp5Shift2Start.toISOString(),
+        })
+        console.log(`  ✓ Employee Tasks 页演示数据：Grace Lim（employee5）今天同时督导 Daniel Wong（casual4），3 条 Task 覆盖 Assigned/In Progress/Complete；班次 ${emp5Shift2StartTime}-${emp5Shift2EndTime} UTC（${emp5Shift2Date}）现在正好在班内 —— 验证一个 Employee 同时带多个 CW 的场景`)
+      }
+    }
+  }
 
   const managerDashboardJobDefs = [
     {

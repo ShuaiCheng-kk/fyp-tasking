@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
+import { createBrowserClient } from '@supabase/ssr'
 import { Search, Building2, Users, X, AlertTriangle, CheckCircle, ChevronRight, ChevronDown, ChevronUp, ChevronLeft, ChevronsUpDown } from 'lucide-react'
 import UserAdminSidebar from '@/components/UserAdminSidebar'
 import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
@@ -292,6 +293,26 @@ export default function UserAdminDashboard() {
     const t = setTimeout(() => fetchUsers(userSearch, roleFilters, statusFilters), 300)
     return () => clearTimeout(t)
   }, [userSearch, roleFilters, statusFilters, fetchUsers])
+
+  // Platform-wide (no company scope) realtime — User Admin isn't scoped to one company like
+  // RealtimeNotificationsProvider's channels are, so this listens directly instead of going
+  // through that provider. Refreshes the currently-filtered list plus the header totals whenever
+  // any company or user changes anywhere on the platform (onboarding, suspension, removal, etc).
+  useEffect(() => {
+    const supabase = createBrowserClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!)
+    const refresh = () => {
+      void fetchCompanies(compSearch)
+      void fetchUsers(userSearch, roleFilters, statusFilters)
+      fetch('/api/useradmin/companies').then(r => r.json()).then(d => setTotalCompanyCount((d.companies ?? []).length)).catch(() => {})
+      fetch('/api/useradmin/users').then(r => r.json()).then(d => setTotalUserCount((d.users ?? []).length)).catch(() => {})
+    }
+    const channel = supabase
+      .channel('useradmin-platform-data')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'companies' }, refresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, refresh)
+      .subscribe()
+    return () => { void supabase.removeChannel(channel) }
+  }, [compSearch, userSearch, roleFilters, statusFilters, fetchCompanies, fetchUsers])
 
   const toggleRole = (role: string) =>
     setRoleFilters(prev => prev.includes(role) ? prev.filter(r => r !== role) : [...prev, role])

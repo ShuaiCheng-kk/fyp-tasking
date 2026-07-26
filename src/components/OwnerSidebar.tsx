@@ -34,13 +34,21 @@ function navItemsFor(role: SidebarRole) {
     { label: 'Report',        Icon: BarChart2,        href: `/${role}/report`,        dot: null as DotKey },
   ]
   // Report is O/P-only (UC62-64); Company/Team is O/P-only too — Managers don't manage
-  // members or departments and don't get either menu item.
-  if (role === 'manager') return items.filter(i => i.label !== 'Report' && i.label !== 'Company')
+  // members or departments and don't get either menu item. Attendance is folded entirely into
+  // the Shifts page for Manager (merged Shift Calendar + My Requests + Swap Requests) — no
+  // standalone Attendance nav item, and the alert dot that used to sit on Attendance now sits
+  // on Shifts instead (same attendanceAlertCount prop/counter, just relabelled onto Shifts).
+  if (role === 'manager') return items
+    .filter(i => i.label !== 'Report' && i.label !== 'Company' && i.label !== 'Attendance')
+    .map(i => i.label === 'Shifts' ? { ...i, dot: 'attendance' as DotKey } : i)
   // Employee: no Company (O-only), no Recruitment (O/P/M-only), no Report (O/P-only), and no
   // standalone Communication page — Employee can't post Announcements (O/P/M-only), so a full
   // Communication page would only ever hold the Message tab; that lives as a panel on the
-  // Dashboard instead (confirmed 2026-07-25).
-  if (role === 'employee') return items.filter(i => ['Dashboard', 'Shifts', 'Tasks', 'Attendance'].includes(i.label))
+  // Dashboard instead (confirmed 2026-07-25). Attendance is folded into the Shifts page too
+  // (same merge as Manager) — no standalone Attendance nav item, dot moves onto Shifts.
+  if (role === 'employee') return items
+    .filter(i => ['Dashboard', 'Shifts', 'Tasks'].includes(i.label))
+    .map(i => i.label === 'Shifts' ? { ...i, dot: 'attendance' as DotKey } : i)
   return items
 }
 
@@ -461,7 +469,7 @@ export default function OwnerSidebar({
   const visibleLabels = userRole === 'Manager'
     ? navOrder.filter(l => l !== 'Report' && l !== 'Company')
     : userRole === 'Employee'
-      ? navOrder.filter(l => ['Dashboard', 'Shifts', 'Tasks', 'Attendance'].includes(l))
+      ? navOrder.filter(l => ['Dashboard', 'Shifts', 'Tasks'].includes(l))
       : navOrder
 
   const orderedItems = visibleLabels

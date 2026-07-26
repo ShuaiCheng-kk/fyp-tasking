@@ -15,6 +15,7 @@ import { TitledBlock } from '@/components/panel'
 import { ModalHeader, modalLabelStyle, modalInputStyle } from '@/components/modal'
 import { modalKeyframes } from '@/components/theme/tokens'
 import { useIsCompactContainer } from '@/hooks/useIsCompactContainer'
+import { useResourceInvalidation } from '@/components/realtime/RealtimeNotificationsProvider'
 
 const COLUMNS: Task['status'][] = ['Assigned', 'In Progress', 'Review', 'Complete']
 const STATUS_PERCENT: Record<Task['status'], number> = { Assigned: 0, 'In Progress': 33, Review: 66, Complete: 100 }
@@ -70,6 +71,10 @@ export default function CasualTaskBoard({ companyId, shiftId, userId }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyId, shiftId, userId])
 
+  // Live-updates the board when the assigning Employee rejects/approves a task or edits its
+  // sub-tasks, so a rework notice appears without the Casual Worker refreshing the page.
+  useResourceInvalidation(['tasks'], () => { void load() })
+
   const canDragTask = (task: Task): boolean =>
     task.status !== 'Review' && task.status !== 'Complete'
 
@@ -100,21 +105,30 @@ export default function CasualTaskBoard({ companyId, shiftId, userId }: Props) {
     }
   }
 
-  // Sub-tasks are a plain checklist for the Casual Worker — tick to complete, tick again to undo.
+  // Sub-tasks are a one-way checklist (matches taskService.completeSubTask): tick in sequence
+  // order while the parent is In Progress; there is no un-ticking. Ticking the last one promotes
+  // the parent (and its siblings) to Review, so a full reload after success keeps everything —
+  // parent status, sibling percentages — in sync rather than hand-patching local state.
+  const canToggleSubTask = (sub: Task): boolean => {
+    if (sub.is_completed) return false
+    const parent = tasks.find(t => t.id === sub.parent_task_id)
+    if (!parent || parent.status !== 'In Progress') return false
+    const siblings = tasks.filter(t => t.parent_task_id === sub.parent_task_id)
+    return !siblings.some(s => (s.sequence_order ?? 0) < (sub.sequence_order ?? 0) && !s.is_completed)
+  }
+
   const toggleSubTask = async (sub: Task) => {
-    const nextStatus: Task['status'] = sub.status === 'Complete' ? 'Assigned' : 'Complete'
-    const nextPct = STATUS_PERCENT[nextStatus]
-    setTasks(prev => prev.map(t =>
-      t.id === sub.id ? { ...t, status: nextStatus, percentage_complete: nextPct, is_completed: nextStatus === 'Complete' } : t
-    ))
+    if (!canToggleSubTask(sub)) return
+    setTasks(prev => prev.map(t => t.id === sub.id ? { ...t, is_completed: true } : t))
     try {
       const res = await fetch('/api/task', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: sub.id, status: nextStatus, percentage_complete: nextPct }),
+        body: JSON.stringify({ id: sub.id, action: 'complete_subtask', assigned_by: userId }),
       })
       const data = await res.json()
       if (!data.success) throw new Error()
+      void load()
     } catch {
       void load()
     }
@@ -271,10 +285,20 @@ export default function CasualTaskBoard({ companyId, shiftId, userId }: Props) {
 
                         {expanded && subTasks.length > 0 && (
                           <div style={{ marginTop: 8, paddingLeft: 14 }}>
-                            {subTasks.map((sub, idx) => (
+                            {subTasks.map((sub, idx) => {
+                              const done = sub.is_completed
+                              const canToggle = canToggleSubTask(sub)
+                              const toggleTitle = done
+                                ? 'Completed'
+                                : task.status !== 'In Progress'
+                                ? 'Start the task before checking off sub-tasks'
+                                : canToggle
+                                ? 'Mark as done'
+                                : 'Complete the previous sub-task first'
+                              return (
                               <div key={sub.id} style={{ display: 'flex', alignItems: 'stretch', gap: 8 }}>
                                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
-                                  <span style={{ width: 20, height: 20, marginTop: 10, borderRadius: '50%', background: sub.status === 'Complete' ? '#DCFCE7' : '#FFF3E8', color: sub.status === 'Complete' ? '#15803D' : '#EA580C', fontSize: 11, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                  <span style={{ width: 20, height: 20, marginTop: 10, borderRadius: '50%', background: done ? '#DCFCE7' : '#FFF3E8', color: done ? '#15803D' : '#EA580C', fontSize: 11, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                                     {idx + 1}
                                   </span>
                                   {idx < subTasks.length - 1 && <div style={{ width: 1, flex: 1, background: '#E2E8F0' }} />}
@@ -283,27 +307,31 @@ export default function CasualTaskBoard({ companyId, shiftId, userId }: Props) {
                                   onClick={() => setDetailTask(sub)}
                                   style={{ flex: 1, minWidth: 0, marginBottom: 8, padding: '9px 12px', borderRadius: 8, background: '#FAFAFA', border: '1px solid #EEF0F2', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}
                                 >
-                                  <p style={{ margin: 0, flex: 1, minWidth: 0, fontSize: '0.75rem', fontWeight: 600, color: sub.status === 'Complete' ? '#9CA3AF' : '#111827', textDecoration: sub.status === 'Complete' ? 'line-through' : 'none' }}>
+                                  <p style={{ margin: 0, flex: 1, minWidth: 0, fontSize: '0.75rem', fontWeight: 600, color: done ? '#9CA3AF' : '#111827', textDecoration: done ? 'line-through' : 'none' }}>
                                     {sub.title}
                                   </p>
                                   <button
                                     type="button"
+                                    disabled={!canToggle}
                                     onClick={e => { e.stopPropagation(); void toggleSubTask(sub) }}
-                                    title={sub.status === 'Complete' ? 'Mark as not done' : 'Mark as done'}
+                                    title={toggleTitle}
                                     style={{
                                       width: 22, height: 22, borderRadius: '50%', flexShrink: 0,
-                                      border: sub.status === 'Complete' ? 'none' : '1.5px solid #D1D5DB',
-                                      background: sub.status === 'Complete' ? '#16A34A' : '#FFFFFF',
+                                      border: done ? 'none' : '1.5px solid #D1D5DB',
+                                      background: done ? '#16A34A' : '#FFFFFF',
                                       color: '#FFFFFF',
                                       display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                      cursor: 'pointer', padding: 0,
+                                      cursor: canToggle ? 'pointer' : 'not-allowed',
+                                      opacity: !done && !canToggle ? 0.5 : 1,
+                                      padding: 0,
                                     }}
                                   >
-                                    {sub.status === 'Complete' && <Check size={13} strokeWidth={3} />}
+                                    {done && <Check size={13} strokeWidth={3} />}
                                   </button>
                                 </div>
                               </div>
-                            ))}
+                              )
+                            })}
                           </div>
                         )}
                         </div>

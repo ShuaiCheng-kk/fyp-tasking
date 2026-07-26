@@ -1,8 +1,9 @@
 ﻿'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
+import { createBrowserClient } from '@supabase/ssr'
 import { Check, ExternalLink, FileText, ImagePlus, RefreshCcw, Save, Trash2 } from 'lucide-react'
 import AdminSidebar from '@/components/AdminSidebar'
 import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
@@ -131,28 +132,41 @@ export default function AdminDashboardPage() {
       .catch(() => {})
   }, [adminUserId])
 
+  const loadPages = useCallback(async (adminId: string) => {
+    setLoadingPages(true)
+    setError('')
+    try {
+      const res = await fetch(`/api/marketingadmin/pages?admin_user_id=${encodeURIComponent(adminId)}`)
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message)
+      const nextPages = (data.pages ?? []) as MarketingPageSummary[]
+      setPages(nextPages)
+      setSelectedSlug(current => current || nextPages.find(page => page.slug === 'home')?.slug || nextPages[0]?.slug || '')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load marketing pages')
+    } finally {
+      setLoadingPages(false)
+    }
+  }, [])
+
   useEffect(() => {
     if (!adminUserId) return
+    loadPages(adminUserId)
+  }, [adminUserId, loadPages])
 
-    const loadPages = async () => {
-      setLoadingPages(true)
-      setError('')
-      try {
-        const res = await fetch(`/api/marketingadmin/pages?admin_user_id=${encodeURIComponent(adminUserId)}`)
-        const data = await res.json()
-        if (!data.success) throw new Error(data.message)
-        const nextPages = (data.pages ?? []) as MarketingPageSummary[]
-        setPages(nextPages)
-        setSelectedSlug(current => current || nextPages.find(page => page.slug === 'home')?.slug || nextPages[0]?.slug || '')
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load marketing pages')
-      } finally {
-        setLoadingPages(false)
-      }
-    }
-
-    loadPages()
-  }, [adminUserId])
+  // Platform-wide (no company scope) realtime — only refreshes the page LIST (sidebar), never
+  // the currently-open page's content/drafts: another Marketing Admin renaming/adding/removing a
+  // page shows up live, but this never silently overwrites text this admin is mid-typing in the
+  // open page's editor (see loadPage below, which owns `drafts` and only runs on slug change).
+  useEffect(() => {
+    if (!adminUserId) return
+    const supabase = createBrowserClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!)
+    const channel = supabase
+      .channel('marketingadmin-pages')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'marketing_pages' }, () => loadPages(adminUserId))
+      .subscribe()
+    return () => { void supabase.removeChannel(channel) }
+  }, [adminUserId, loadPages])
 
 
   useEffect(() => {

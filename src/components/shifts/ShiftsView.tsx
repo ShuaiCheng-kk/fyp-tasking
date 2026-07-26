@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { cloneElement, isValidElement, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import {
@@ -34,8 +34,12 @@ import {
   Redo2,
   Copy,
   Send,
+  Download,
+  Search,
 } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
+import jsPDF from 'jspdf'
+import autoTable from 'jspdf-autotable'
 import Toast from '@/components/Toast'
 import OwnerPlanBadge from '@/components/owner/PlanBadge'
 import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
@@ -52,6 +56,13 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useResourceInvalidation } from '@/components/realtime/RealtimeNotificationsProvider'
+import { AttendanceDashboardRecord } from '@/types/Attendance'
+import { ModalOverlay, ModalBox, ModalHeader } from '@/components/modal'
+import { ARStatus, getARStatus, ARStatusIcon } from '@/components/attendance/ARStatus'
+import EditAttendanceRecordModal from '@/components/attendance/EditAttendanceRecordModal'
+import MyRequestsPanel from '@/components/attendance/MyRequestsPanel'
+import SwapRequestsPanel from '@/components/attendance/SwapRequestsPanel'
+import { CapsuleTabBar } from '@/components/attendance/CapsuleTabBar'
 
 type Department = {
   id: string
@@ -458,6 +469,18 @@ function shortDate(dateKey: string): string {
 
 function formatShiftHour(time: string): string {
   const [h, m] = time.split(':').map(Number)
+  const ampm = h < 12 ? 'am' : 'pm'
+  const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h
+  return m === 0 ? `${h12}${ampm}` : `${h12}:${String(m).padStart(2, '0')}${ampm}`
+}
+
+// Shift times are UTC-nominal (stored/compared as literal wall-clock) — read clock_in/out
+// timestamps with the UTC getters so a Manager-recorded clock time formats consistently with the
+// shift's own start_time/end_time instead of drifting through the browser's timezone.
+function formatClockHour(iso: string): string {
+  const d = new Date(iso)
+  const h = d.getUTCHours()
+  const m = d.getUTCMinutes()
   const ampm = h < 12 ? 'am' : 'pm'
   const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h
   return m === 0 ? `${h12}${ampm}` : `${h12}:${String(m).padStart(2, '0')}${ampm}`
@@ -969,6 +992,199 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [errorToast, setErrorToast] = useState<string | null>(null)
   const errorToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Small wrapper callbacks — same shape AttendanceView's helpers use — so panels extracted out of
+  // it (MyRequestsPanel/SwapRequestsPanel/EditAttendanceRecordModal) can be reused here unchanged.
+  const showSuccessToast = useCallback((message: string) => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+    setSuccessToast(message)
+    toastTimerRef.current = setTimeout(() => setSuccessToast(null), 3000)
+  }, [])
+  const showErrorToast = useCallback((message: string) => {
+    if (errorToastTimerRef.current) clearTimeout(errorToastTimerRef.current)
+    setErrorToast(message)
+    errorToastTimerRef.current = setTimeout(() => setErrorToast(null), 4000)
+  }, [])
+
+  // ── Manager-only: Shift Timeline is dropped and the Shift Calendar is promoted, with past/
+  // today cells rendered in the Attendance Records style (status pill + click-to-edit) instead of
+  // a shift-time bar. Two page-level tabs replace the old Attendance page's tabs: "Schedule"
+  // (Calendar + My Requests) and "Swap Requests". ──
+  const [managerShiftTab, setManagerShiftTab] = useState<'schedule' | 'swaps'>('schedule')
+  // ?tab=swaps deep-links from the dashboard's Waiting On You "Shift Swap" card (same convention
+  // AttendanceView's mainTab used before Manager's Swap Requests moved onto this page).
+  useEffect(() => {
+    if (!scopeToManagerDepartments) return
+    const tab = new URLSearchParams(window.location.search).get('tab')
+    if (tab === 'swaps') setManagerShiftTab('swaps')
+  }, [scopeToManagerDepartments])
+  const [arRecords, setArRecords] = useState<AttendanceDashboardRecord[]>([])
+  const [arRecordsLoading, setArRecordsLoading] = useState(false)
+  const [reviewRecord, setReviewRecord] = useState<AttendanceDashboardRecord | null>(null)
+  const [calSearchKeyword, setCalSearchKeyword] = useState('')
+  const [calExportOpen, setCalExportOpen] = useState(false)
+  const [calExportFrom, setCalExportFrom] = useState('')
+  const [calExportTo, setCalExportTo] = useState('')
+  const [calExportLoading, setCalExportLoading] = useState(false)
+  const [myReqAlertCount, setMyReqAlertCount] = useState(0)
+  const [swapAlertCount, setSwapAlertCount] = useState(0)
+
+  const fetchArWeekRecords = useCallback(async (cid: string, from: string, to: string) => {
+    if (!cid) return
+    setArRecordsLoading(true)
+    try {
+      const res = await fetch(`/api/attendance?company_id=${cid}&resource=range&from_date=${from}&to_date=${to}`)
+      const data = await res.json()
+      if (data.success) setArRecords(data.records ?? [])
+    } catch { /* leave stale data */ }
+    finally { setArRecordsLoading(false) }
+  }, [])
+
+  useEffect(() => {
+    if ((!scopeToManagerDepartments && !scopeToEmployeeSelf) || !companyId) return
+    const anchor = new Date(`${calWeekAnchorDate}T00:00:00`)
+    const dow = (anchor.getDay() + 6) % 7
+    const mon = new Date(anchor); mon.setDate(anchor.getDate() - dow)
+    const sun = new Date(mon); sun.setDate(mon.getDate() + 6)
+    void fetchArWeekRecords(companyId, formatDateKey(mon), formatDateKey(sun))
+  }, [scopeToManagerDepartments, scopeToEmployeeSelf, companyId, calWeekAnchorDate, fetchArWeekRecords])
+
+  useResourceInvalidation(['attendance'], () => {
+    if ((!scopeToManagerDepartments && !scopeToEmployeeSelf) || !companyId) return
+    const anchor = new Date(`${calWeekAnchorDate}T00:00:00`)
+    const dow = (anchor.getDay() + 6) % 7
+    const mon = new Date(anchor); mon.setDate(anchor.getDate() - dow)
+    const sun = new Date(mon); sun.setDate(mon.getDate() + 6)
+    void fetchArWeekRecords(companyId, formatDateKey(mon), formatDateKey(sun))
+  })
+
+  const arByUserDate = useMemo(() => {
+    const map = new Map<string, AttendanceDashboardRecord[]>()
+    arRecords.forEach(rec => {
+      const key = `${rec.assignment.user_id}|${rec.shift.shift_date}`
+      const list = map.get(key) ?? []
+      list.push(rec)
+      map.set(key, list)
+    })
+    return map
+  }, [arRecords])
+
+  // Employee's own department name for the calendar title — `departments`/`orderedDepartments`
+  // aren't scoped for Employee (unlike Manager's own-department fetch), so read it off the
+  // Employee's own calendar row instead, which the server already scopes to their department.
+  const employeeDeptName = useMemo(
+    () => calWeekRows.find(r => r.user_id === internalUserId)?.department_name ?? null,
+    [calWeekRows, internalUserId],
+  )
+
+  // Employee has no Swap Requests approval queue (swapAlertCount stays 0 for them), so this is
+  // just myReqAlertCount alone — same prop/relabeling mechanism as Manager's Shifts-dot merge.
+  const managerShiftAlertCount = myReqAlertCount + swapAlertCount
+  const sidebarWithShiftAlerts = (scopeToManagerDepartments || scopeToEmployeeSelf) && isValidElement(sidebar)
+    ? cloneElement(sidebar as React.ReactElement<{ attendanceAlertCount?: number }>, { attendanceAlertCount: managerShiftAlertCount })
+    : sidebar
+
+  // Manager's Export — CSV/PDF of the currently-visible scoped attendance records (own
+  // department's Employees + Casual Workers), mirroring AttendanceView's doExport but without the
+  // Owner/Partner-only department/CW-job-type filters.
+  const doCalExport = useCallback(async (fromDate: string, toDate: string, format: 'csv' | 'pdf') => {
+    if (!companyId) return
+    setCalExportLoading(true)
+    try {
+      const params = new URLSearchParams({ company_id: companyId, resource: 'range', from_date: fromDate, to_date: toDate })
+      const res = await fetch(`/api/attendance?${params}`)
+      const data = await res.json()
+      const allRecords: AttendanceDashboardRecord[] = data.records ?? []
+
+      const header = ['Date', 'Role', 'Name', 'Shift Time', 'Clock In', 'Clock Out', 'Total Hours']
+      const rows: string[][] = []
+
+      const roundToMs = (iso: string): number => {
+        const d = new Date(iso)
+        return Math.round(d.getTime() / (5 * 60000)) * (5 * 60000)
+      }
+      const fmtTime = (iso: string | null | undefined): string => {
+        if (!iso) return '—'
+        const ms = roundToMs(iso)
+        const totalMin = Math.floor(ms / 60000) % (24 * 60)
+        const h24 = Math.floor(totalMin / 60)
+        const m = totalMin % 60
+        const ampm = h24 < 12 ? 'AM' : 'PM'
+        const displayH = h24 % 12 === 0 ? 12 : h24 % 12
+        return `${displayH}:${String(m).padStart(2, '0')} ${ampm}`
+      }
+      const fmtShiftHour2 = (hhmm: string): string => {
+        const [hStr, mStr] = hhmm.split(':')
+        const h24 = parseInt(hStr, 10)
+        const m = parseInt(mStr, 10)
+        const ampm = h24 < 12 ? 'AM' : 'PM'
+        const displayH = h24 % 12 === 0 ? 12 : h24 % 12
+        return m === 0 ? `${displayH}${ampm}` : `${displayH}:${String(m).padStart(2, '0')}${ampm}`
+      }
+      const fmtDuration = (ms: number): string => {
+        if (ms <= 0) return '—'
+        const totalMin = Math.round(ms / 60000)
+        const h = Math.floor(totalMin / 60)
+        const m = totalMin % 60
+        return h > 0 && m > 0 ? `${h}h ${m}m` : h > 0 ? `${h}h` : `${m}m`
+      }
+
+      for (const rec of allRecords) {
+        const breakMs = rec.record?.break_in_time && rec.record?.break_out_time
+          ? roundToMs(rec.record.break_out_time) - roundToMs(rec.record.break_in_time)
+          : 0
+        const workMs = rec.record?.clock_in_time && rec.record?.clock_out_time
+          ? roundToMs(rec.record.clock_out_time) - roundToMs(rec.record.clock_in_time) - breakMs
+          : 0
+        const isOneOff = rec.shift.is_open_ended
+        const shiftTime = isOneOff
+          ? fmtShiftHour2(rec.shift.start_time)
+          : `${fmtShiftHour2(rec.shift.start_time)} – ${fmtShiftHour2(rec.shift.end_time)}`
+        rows.push([
+          rec.shift.shift_date,
+          rec.assignee_role,
+          rec.assignee_name,
+          shiftTime,
+          fmtTime(rec.record?.clock_in_time),
+          fmtTime(rec.record?.clock_out_time),
+          fmtDuration(workMs),
+        ])
+      }
+      rows.sort((a, b) => a[0].localeCompare(b[0]))
+
+      const dateRange = fromDate && toDate ? `_${fromDate}_to_${toDate}` : ''
+      const suffix = `Team_Attendance${dateRange}`
+
+      if (format === 'pdf') {
+        const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' })
+        const dateLabel = fromDate && toDate ? `${fromDate} – ${toDate}` : 'All Dates'
+        doc.setFont('helvetica', 'bold')
+        doc.setFontSize(13)
+        doc.text(`Attendance Report  |  ${dateLabel}`, 40, 36)
+        autoTable(doc, {
+          head: [header],
+          body: rows,
+          startY: 50,
+          styles: { fontSize: 7.5, cellPadding: 4, font: 'helvetica' },
+          headStyles: { fillColor: [249, 115, 22], textColor: 255, fontStyle: 'bold' },
+          alternateRowStyles: { fillColor: [249, 250, 251] },
+          margin: { left: 40, right: 40 },
+        })
+        doc.save(`${suffix}.pdf`)
+      } else {
+        const csv = [header, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n')
+        const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url; a.download = `${suffix}.csv`; a.click()
+        URL.revokeObjectURL(url)
+      }
+      showSuccessToast('Export ready — check your downloads.')
+    } catch (err) {
+      showErrorToast(err instanceof Error ? err.message : 'Failed to export records')
+    } finally {
+      setCalExportLoading(false)
+    }
+  }, [companyId, showSuccessToast, showErrorToast])
   // If the Owner goes back and changes dates/departments/shift types after already generating (or
   // while still generating) a schedule, the old/in-flight run is for a different input and must
   // not be shown as-is — clear it so the "generate" step asks for a fresh run against the new
@@ -1303,11 +1519,11 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
   }, [companyId, fetchAssignmentData, fetchFutureRows, fetchTimeline, fetchShiftTemplates, fetchFixedOffDays, timelineDate])
 
   useEffect(() => {
-    // Manager view shows the Calendar section alongside the Timeline at all times (no tab switching),
-    // so it needs calendar week data regardless of shiftViewMode.
-    if (!companyId || (shiftViewMode !== 'calendar' && !scopeToManagerDepartments)) return
+    // Manager/Employee show the Calendar section merged with Attendance at all times (no
+    // Timeline/Calendar tab switching), so it needs calendar week data regardless of shiftViewMode.
+    if (!companyId || (shiftViewMode !== 'calendar' && !scopeToManagerDepartments && !scopeToEmployeeSelf)) return
     void fetchCalWeek(companyId, calWeekAnchorDate)
-  }, [companyId, shiftViewMode, calWeekAnchorDate, fetchCalWeek, scopeToManagerDepartments])
+  }, [companyId, shiftViewMode, calWeekAnchorDate, fetchCalWeek, scopeToManagerDepartments, scopeToEmployeeSelf])
 
   // Confirmed fixed off: `${user_id}|${YYYY-MM-DD}` → true (same keying as the Attendance page).
   // 'modified' counts too — that's the status once Owner/Partner moves a request's date instead of
@@ -3107,16 +3323,22 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
     })
     const todayStr = formatDateKey(new Date())
 
-    // Build per-user rows, filtered to selected dept if any, excluding open shifts and unassigned/CW rows
+    // Build per-user rows, filtered to selected dept if any, excluding open shifts.
+    // Manager merges Casual Workers into the same calendar as internal staff (matching the old
+    // Attendance Records block's "Internal Members" + "Casual Workers" sections) — Owner/Partner
+    // keep the existing internal-staff-only Weekly Shift view.
     const deptFilter = selectedDepartment?.id
     const filteredRows = calWeekRows.filter(r =>
       r.user_id !== null &&
       r.department_id &&
-      (r.role === 'Manager' || r.role === 'Employee') &&
+      (r.role === 'Manager' || r.role === 'Employee' || ((scopeToManagerDepartments || scopeToEmployeeSelf) && r.role === 'Casual Worker')) &&
       (!deptFilter || r.department_id === deptFilter)
     )
     // Sort: Manager → Employee → Casual Worker, then alpha
-    const sortedRows = [...filteredRows].sort((a, b) =>
+    const searchedRows = scopeToManagerDepartments && calSearchKeyword.trim()
+      ? filteredRows.filter(r => r.full_name.toLowerCase().includes(calSearchKeyword.trim().toLowerCase()))
+      : filteredRows
+    const sortedRows = [...searchedRows].sort((a, b) =>
       roleRank(a.role) - roleRank(b.role) || a.full_name.localeCompare(b.full_name)
     )
 
@@ -3146,7 +3368,11 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
         <div style={{ minWidth: 700, borderRadius: 12, overflow: 'hidden', border: `1px solid ${BORDER}` }}>
           {/* Header row */}
           <div style={{ display: 'grid', gridTemplateColumns: `${NAME_COL}px repeat(7, 1fr)`, background: 'linear-gradient(135deg, #0F172A 0%, #1E293B 100%)', height: 54, position: 'sticky', top: 0, zIndex: 5 }}>
-            <div style={{ padding: '10px 14px', borderRight: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center' }} />
+            <div style={{ padding: '10px 14px 10px 20px', borderRight: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center' }}>
+              {(scopeToManagerDepartments || scopeToEmployeeSelf) && (
+                <span style={{ fontSize: 14, fontWeight: 700, color: 'rgba(255,255,255,0.85)', letterSpacing: '0.01em' }}>Internal Members</span>
+              )}
+            </div>
             {weekDates.map(date => {
               const d = new Date(`${date}T00:00:00`)
               const dayNum = String(d.getDate()).padStart(2, '0')
@@ -3178,13 +3404,29 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                   const borderTop = isDeptBoundary ? EDGE : `1px solid ${BORDER}`
                   const maxShiftsInRow = Math.max(1, ...weekDates.map(date => row.shifts.filter((s: TimelineShiftBlock) => s.shift_date === date).length))
                   const rowHeight = Math.min(104, Math.max(58, maxShiftsInRow * 28 + (maxShiftsInRow - 1) * 4 + 24))
+                  // Manager/Employee merge internal staff and Casual Workers into one table — a
+                  // labelled section break marks where internal staff ends and CW rows begin.
+                  const showCwSectionHeader = (scopeToManagerDepartments || scopeToEmployeeSelf) && row.role === 'Casual Worker'
+                    && (rowIdx === 0 || deptRowsCal[deptId][rowIdx - 1].role !== 'Casual Worker')
                   return (
-                    <div key={row.user_id ?? `r-${deptIdx}-${rowIdx}`} style={{ display: 'grid', gridTemplateColumns: `${NAME_COL}px repeat(7, 1fr)`, borderTop, background: '#FFFFFF', height: rowHeight }}>
-                      {/* Color bar + Name cell */}
+                    <div key={row.user_id ?? `r-${deptIdx}-${rowIdx}`}>
+                    {showCwSectionHeader && (
+                      <div style={{ display: 'grid', gridTemplateColumns: `${NAME_COL}px repeat(7, 1fr)`, height: 54, background: 'linear-gradient(135deg, #0F172A 0%, #1E293B 100%)', borderTop: `1px solid ${BORDER}` }}>
+                        <div style={{ padding: '10px 14px 10px 20px', borderRight: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center' }}>
+                          <span style={{ fontSize: 14, fontWeight: 700, color: 'rgba(255,255,255,0.85)', letterSpacing: '0.01em' }}>Casual Workers</span>
+                        </div>
+                        {weekDates.map(date => <div key={date} style={{ borderRight: '1px solid rgba(255,255,255,0.08)' }} />)}
+                      </div>
+                    )}
+                    <div style={{ display: 'grid', gridTemplateColumns: `${NAME_COL}px repeat(7, 1fr)`, borderTop: showCwSectionHeader ? 'none' : borderTop, background: '#FFFFFF', height: rowHeight }}>
+                      {/* Color bar + Name cell — Manager drops the color bar entirely (every row
+                          is already their own department, so it adds nothing to look at). */}
                       <div style={{ display: 'flex', alignItems: 'center', borderRight: `1px solid ${BORDER}`, overflow: 'hidden', height: rowHeight }}>
-                        <div style={{ width: 8, alignSelf: 'stretch', flexShrink: 0, background: barColor, opacity: 0.85 }} />
+                        {!scopeToManagerDepartments && !scopeToEmployeeSelf && (
+                          <div style={{ width: 8, alignSelf: 'stretch', flexShrink: 0, background: barColor, opacity: 0.85 }} />
+                        )}
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 10px 0 12px', minWidth: 0, flex: 1, cursor: 'default', textAlign: 'left', height: '100%' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, flexShrink: 0, background: row.profile_photo_url ? 'transparent' : (isManager ? '#FFF7ED' : '#F3F4F6'), color: isManager ? '#EA580C' : '#4B5563', borderRadius: 999, overflow: 'hidden' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, flexShrink: 0, background: row.profile_photo_url ? 'transparent' : (isManager ? '#FFF7ED' : row.role === 'Casual Worker' ? '#EFF6FF' : '#F3F4F6'), color: isManager ? '#EA580C' : '#4B5563', borderRadius: 999, overflow: 'hidden' }}>
                             {row.profile_photo_url
                               ? <img src={row.profile_photo_url} alt={row.full_name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                               : isManager ? <UserCog size={13} /> : <UserRound size={13} />}
@@ -3196,6 +3438,65 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                       {weekDates.map(date => {
                         const dayShifts = row.shifts.filter((s: TimelineShiftBlock) => s.shift_date === date)
                         const isPastDate = date < todayStr
+                        // Employee sees the whole department's shift schedule (see
+                        // shiftService.getTimelineShifts) but only ever sees attendance-record
+                        // detail (clock in/out pills) for their own row or a Casual Worker they
+                        // currently supervise that day — a peer Manager's/Employee's clock times
+                        // stay private, unlike Manager's own board which can see everyone's.
+                        const employeeCanSeeAttendance = !scopeToEmployeeSelf
+                          || row.user_id === internalUserId
+                          || (row.role === 'Casual Worker' && dayShifts.some(s => s.supervisor_employee_id === internalUserId))
+                        // Manager/Employee: past/today cells with an actual attendance record (a
+                        // shift existed that day) render in the Attendance Records status-pill
+                        // style instead of the plain shift-time bar — clicking opens the same
+                        // UC56 review modal the old Attendance page used (read-only for Employee,
+                        // see the EditAttendanceRecordModal's canModifyClockTimes prop below).
+                        const arRecordsForCell = (scopeToManagerDepartments || scopeToEmployeeSelf) && employeeCanSeeAttendance && date <= todayStr && row.user_id
+                          ? arByUserDate.get(`${row.user_id}|${date}`) ?? []
+                          : []
+                        if (arRecordsForCell.length > 0) {
+                          const sortedAr = [...arRecordsForCell].sort((a, b) => {
+                            const order: Record<ARStatus, number> = { absent: 0, late: 1, present: 2, 'no-shift': 3 }
+                            return order[getARStatus(a)] - order[getARStatus(b)]
+                          })
+                          return (
+                            <div key={date} style={{ padding: sortedAr.length > 2 ? '8px 6px' : '0 6px', borderRight: `1px solid ${BORDER}`, height: rowHeight, overflowY: sortedAr.length > 2 ? 'auto' : 'hidden', display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'stretch', justifyContent: sortedAr.length > 2 ? 'flex-start' : 'center', boxSizing: 'border-box', scrollbarGutter: sortedAr.length > 2 ? 'stable' : undefined }}>
+                              {sortedAr.map((rec, ri) => {
+                                const st = getARStatus(rec)
+                                const pillBorder = st === 'absent' ? '1.5px solid #EF4444' : st === 'late' ? '1.5px solid #F59E0B' : '1.5px solid #10B981'
+                                const wasModified = rec.record?.owner_status === 'modified'
+                                const inTime = rec.record?.owner_adjusted_clock_in_time ?? rec.record?.clock_in_time
+                                const outTime = rec.record?.owner_adjusted_clock_out_time ?? rec.record?.clock_out_time
+                                return (
+                                  <button
+                                    key={ri}
+                                    onClick={() => setReviewRecord(rec)}
+                                    style={{
+                                      display: 'grid', gridTemplateColumns: '20px 1fr 20px', alignItems: 'center',
+                                      padding: '0 4px', height: 28, flexShrink: 0,
+                                      background: st === 'absent' ? '#FEF2F2' : st === 'late' ? '#FFFBEB' : '#ECFDF5',
+                                      border: pillBorder, borderRadius: 999, cursor: 'pointer', width: '100%',
+                                    }}
+                                    onMouseEnter={e => { e.currentTarget.style.filter = 'brightness(0.96)' }}
+                                    onMouseLeave={e => { e.currentTarget.style.filter = 'none' }}
+                                  >
+                                    <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}><ARStatusIcon status={st} /></span>
+                                    <span style={{ fontSize: 10.5, fontWeight: 600, color: '#0F172A', whiteSpace: 'nowrap', textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                      {inTime
+                                        ? `${formatClockHour(inTime)} – ${outTime ? formatClockHour(outTime) : formatShiftHour(rec.shift.end_time)}`
+                                        : `${formatShiftHour(rec.shift.start_time)} – ${formatShiftHour(rec.shift.end_time)}`}
+                                    </span>
+                                    <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                      {wasModified && (
+                                        <span title={`Modified${rec.modifier_name ? ` by ${rec.modifier_name}` : ''}`} style={{ width: 16, height: 16, borderRadius: '50%', background: '#F97316', color: '#fff', fontSize: 9, fontWeight: 800, lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>M</span>
+                                      )}
+                                    </span>
+                                  </button>
+                                )
+                              })}
+                            </div>
+                          )
+                        }
                         return (
                           <div key={date} style={{ padding: dayShifts.length > 2 ? '8px 6px' : '0 6px', borderRight: `1px solid ${BORDER}`, height: rowHeight, overflowY: dayShifts.length > 2 ? 'auto' : 'hidden', display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'stretch', justifyContent: dayShifts.length > 2 ? 'flex-start' : 'center', boxSizing: 'border-box', scrollbarGutter: dayShifts.length > 2 ? 'stable' : undefined }}>
                             {dayShifts.length === 0 ? (
@@ -3247,6 +3548,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                           </div>
                         )
                       })}
+                    </div>
                     </div>
                   )
                 })
@@ -3349,9 +3651,9 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
   }
 
   return (
-    <div className={scopeToManagerDepartments ? 'manager-shifts-page' : undefined} style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: APP_BG }}>
+    <div className={(scopeToManagerDepartments || scopeToEmployeeSelf) ? 'manager-shifts-page' : undefined} style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: APP_BG }}>
       <style>{pageKeyframes}</style>
-      {sidebar}
+      {sidebarWithShiftAlerts}
       <main style={{ marginLeft: 64, height: '100vh', overflow: 'hidden', display: 'flex', flexDirection: 'column', flex: 1, gap: 0, animation: 'blockSlideUp 0.38s ease both 0.04s' }}>
         <div style={{ padding: '20px 28px 16px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24, flexShrink: 0 }}>
           <div>
@@ -3367,7 +3669,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
           </div>
         </div>
 
-        {!scopeToManagerDepartments && (
+        {!scopeToManagerDepartments && !scopeToEmployeeSelf && (
         <div style={{ padding: '0 28px 16px', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start' }}>
             <div
@@ -3447,93 +3749,141 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
           )}
 
           {companyId && scopeToManagerDepartments && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 16, flex: 1, minHeight: 0, overflowY: 'auto' }}>
-              <section className="shift-timeline-panel" style={{ background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '14px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, flexWrap: 'wrap', flexShrink: 0 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                      <CalendarDays size={15} style={{ color: '#F97316' }} />
-                    </div>
-                    <span style={SECTION_TITLE_STYLE}>{orderedDepartments[0] ? `${orderedDepartments[0].name} Shift Timeline` : 'Shift Timeline'}</span>
-                  </div>
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                    <div ref={timelineControlsRef} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                      <button type="button" onClick={() => setTimelineDateAndClearSelection(formatDateKey(new Date()))} style={{ height: 38, padding: '0 14px', border: `1px solid ${PANEL_BORDER}`, borderRadius: 8, background: timelineDate === formatDateKey(new Date()) ? '#F97316' : '#FFFFFF', color: timelineDate === formatDateKey(new Date()) ? '#FFFFFF' : TEXT_DARK, fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'background 0.15s, color 0.15s' }}>Today</button>
-                      <button type="button" onClick={() => setTimelineByOffset(-1)} style={iconButtonStyle}><ChevronLeft size={16} /></button>
-                      <TimelineDatePicker value={timelineDate} onChange={setTimelineDateAndClearSelection} shiftDates={datesWithShifts} anchorRef={timelineControlsRef} />
-                      <button type="button" onClick={() => setTimelineByOffset(1)} style={iconButtonStyle}><ChevronRight size={16} /></button>
-                    </div>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger
-                        data-testid="shift-timeline-menu"
-                        aria-label="Timeline options"
-                        style={{ ...iconButtonStyle, width: 38, height: 38 }}
-                      >
-                        <MoreHorizontal size={16} />
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" sideOffset={10} style={{ width: 280, borderRadius: 16, padding: 16, border: `1px solid ${PANEL_BORDER}`, background: '#FFFFFF', boxShadow: '0 4px 24px rgba(0,0,0,0.10)' }}>
-                        <p style={{ margin: '0 0 10px', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.07em', color: '#9CA3AF' }}>Time Window</p>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 14 }}>
-                          {[
-                            {
-                              label: 'Auto-fit',
-                              onClick: () => { setRangeStartHour(autoFitRange.from); setRangeEndHour(autoFitRange.to); setIsAutoFit(true) },
-                              active: isAutoFit,
-                            },
-                            {
-                              label: 'Full day',
-                              onClick: () => { setRangeStartHour(0); setRangeEndHour(24); setIsAutoFit(false) },
-                              active: !isAutoFit && rangeStartHour === 0 && rangeEndHour === 24,
-                            },
-                          ].map(option => (
-                            <button
-                              key={option.label}
-                              type="button"
-                              onClick={option.onClick}
-                              style={{
-                                cursor: 'pointer',
-                                borderRadius: 10,
-                                border: option.active ? '1.5px solid #FDBA74' : `1px solid ${PANEL_BORDER}`,
-                                background: option.active ? '#FFF7ED' : '#F9FAFB',
-                                padding: '8px 6px',
-                                textAlign: 'center',
-                              }}
-                            >
-                              <p style={{ margin: 0, fontSize: 12, fontWeight: 600, color: option.active ? '#EA580C' : '#374151' }}>{option.label}</p>
-                            </button>
-                          ))}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16, flex: 1, minHeight: 0 }}>
+              <div style={{ flexShrink: 0 }}>
+                <CapsuleTabBar
+                  tabs={[
+                    { key: 'schedule' as const, label: 'Schedule' },
+                    { key: 'swaps' as const, label: 'Swap Requests', dot: swapAlertCount > 0 },
+                  ]}
+                  active={managerShiftTab}
+                  onChange={setManagerShiftTab}
+                />
+              </div>
+
+              {managerShiftTab === 'schedule' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 16, flex: 1, minHeight: 0 }}>
+                  <section className="shift-calendar-panel" style={{ background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, display: 'flex', flexDirection: 'column', flex: '1 1 0', minHeight: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '14px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, flexWrap: 'wrap', flexShrink: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                          <CalendarDays size={15} style={{ color: '#F97316' }} />
                         </div>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                          {[
-                            { label: 'From', val: rangeStartHour, dec: () => { setIsAutoFit(false); setRangeStartHour(Math.max(0, rangeStartHour - 1)) }, inc: () => { setIsAutoFit(false); setRangeStartHour(Math.min(rangeEndHour - 1, rangeStartHour + 1)) } },
-                            { label: 'To', val: rangeEndHour, dec: () => { setIsAutoFit(false); setRangeEndHour(Math.max(rangeStartHour + 1, rangeEndHour - 1)) }, inc: () => { setIsAutoFit(false); setRangeEndHour(Math.min(24, rangeEndHour + 1)) } },
-                          ].map(control => (
-                            <div key={control.label}>
-                              <p style={{ margin: '0 0 6px', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.07em', color: '#9CA3AF' }}>{control.label}</p>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                <button type="button" onClick={control.dec} aria-label={`Decrease ${control.label}`} style={{ width: 28, height: 28, borderRadius: 7, border: `1px solid ${PANEL_BORDER}`, background: '#F9FAFB', cursor: 'pointer', fontSize: 14, color: MUTED, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>−</button>
-                                <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: TEXT_DARK, textAlign: 'center' }}>{formatHourLabel(control.val)}</span>
-                                <button type="button" onClick={control.inc} aria-label={`Increase ${control.label}`} style={{ width: 28, height: 28, borderRadius: 7, border: `1px solid ${PANEL_BORDER}`, background: '#F9FAFB', cursor: 'pointer', fontSize: 14, color: MUTED, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>+</button>
-                              </div>
-                            </div>
-                          ))}
+                        <span style={SECTION_TITLE_STYLE}>{orderedDepartments[0] ? `${orderedDepartments[0].name} Shift Calendar` : 'Shift Calendar'}</span>
+                        {arRecordsLoading && <Spinner size={13} dark />}
+                        {/* Legend for the past/today cells' Attendance Records-style pills — same
+                            icons/labels the old Attendance Records block showed. */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                            <ARStatusIcon status="present" />
+                            <span style={{ fontSize: 13, fontWeight: 600, color: '#374151' }}>Present</span>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                            <ARStatusIcon status="late" />
+                            <span style={{ fontSize: 13, fontWeight: 600, color: '#374151' }}>Late</span>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                            <ARStatusIcon status="absent" />
+                            <span style={{ fontSize: 13, fontWeight: 600, color: '#374151' }}>Absent</span>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                            <span style={{ width: 16, height: 16, borderRadius: '50%', background: '#F97316', color: '#fff', fontSize: 9, fontWeight: 800, lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>M</span>
+                            <span style={{ fontSize: 13, fontWeight: 600, color: '#374151' }}>Modified</span>
+                          </div>
                         </div>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <button type="button" onClick={() => { setCalExportFrom(''); setCalExportTo(''); setCalExportOpen(true) }}
+                          style={{ height: 38, padding: '0 12px', borderRadius: 8, border: `1px solid ${PANEL_BORDER}`, background: '#FFFFFF', color: '#374151', fontWeight: 700, fontSize: 12.5, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}>
+                          <Download size={13} /> Export
+                        </button>
+                        <div style={{ position: 'relative' }}>
+                          <Search size={13} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#9CA3AF', pointerEvents: 'none' }} />
+                          <input
+                            value={calSearchKeyword}
+                            onChange={e => setCalSearchKeyword(e.target.value)}
+                            placeholder="Search name..."
+                            style={{ height: 38, padding: '0 12px 0 30px', border: `1px solid ${PANEL_BORDER}`, borderRadius: 8, fontSize: 13, color: TEXT_DARK, background: '#FFFFFF', outline: 'none', width: 148, fontFamily: 'inherit' }}
+                          />
+                        </div>
+                        {(() => {
+                          const anchor = new Date(`${calWeekAnchorDate}T00:00:00`)
+                          const dow = (anchor.getDay() + 6) % 7  // 0=Mon … 6=Sun
+                          const mon = new Date(anchor); mon.setDate(anchor.getDate() - dow)
+                          const sun = new Date(mon); sun.setDate(mon.getDate() + 6)
+                          const fmt = (d: Date) => `${String(d.getDate()).padStart(2,'0')} ${d.toLocaleDateString('en-AU',{month:'short'})}`
+                          const weekLabel = `${fmt(mon)} – ${fmt(sun)} ${sun.getFullYear()}`
+                          const goWeek = (dir: number) => setCalWeekAnchorDate(formatDateKey(addDays(mon, dir * 7)))
+                          return (
+                            <>
+                              <button type="button" onClick={() => goWeek(-1)} style={iconButtonStyle}><ChevronLeft size={16} /></button>
+                              <span style={{ fontSize: 13, fontWeight: 500, color: TEXT_DARK, padding: '0 12px', minWidth: 176, textAlign: 'center', height: 38, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, border: `1px solid ${PANEL_BORDER}`, borderRadius: 9, background: '#FFFFFF', fontFamily: 'var(--font-body), system-ui, sans-serif' }}><CalendarDays size={14} color="#64748B" style={{ flexShrink: 0 }} />{weekLabel}</span>
+                              <button type="button" onClick={() => goWeek(1)} style={iconButtonStyle}><ChevronRight size={16} /></button>
+                            </>
+                          )
+                        })()}
+                      </div>
+                    </div>
+                    {renderCalendarView()}
+                  </section>
+
+                  <div style={{ flex: '1 1 0', minHeight: 0 }}>
+                    <MyRequestsPanel
+                      companyId={companyId}
+                      internalUserId={internalUserId}
+                      variant="manager"
+                      showSuccessToast={showSuccessToast}
+                      showErrorToast={showErrorToast}
+                      onAttentionCount={setMyReqAlertCount}
+                    />
                   </div>
                 </div>
-                {renderTimeline()}
-              </section>
+              )}
 
-              <section className="shift-calendar-panel" style={{ background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
+              {managerShiftTab === 'swaps' && (
+                <div style={{ flex: '1 1 0', minHeight: 0 }}>
+                  <SwapRequestsPanel
+                    companyId={companyId}
+                    internalUserId={internalUserId}
+                    showSuccessToast={showSuccessToast}
+                    showErrorToast={showErrorToast}
+                    onAttentionCount={setSwapAlertCount}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Employee: same Shift Calendar + My Requests merge as Manager, minus the Swap
+              Requests approval queue (Employee never approves swaps — only Manager and O/P do,
+              per the swap-approval split; Employee only submits its own via MyRequestsPanel).
+              No Schedule/Swap Requests tab bar since there's only ever one section to show. ── */}
+          {companyId && scopeToEmployeeSelf && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16, flex: 1, minHeight: 0 }}>
+              <section className="shift-calendar-panel" style={{ background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, display: 'flex', flexDirection: 'column', flex: '1 1 0', minHeight: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '14px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, flexWrap: 'wrap', flexShrink: 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                       <CalendarDays size={15} style={{ color: '#F97316' }} />
                     </div>
-                    <span style={SECTION_TITLE_STYLE}>{orderedDepartments[0] ? `${orderedDepartments[0].name} Shift Calendar` : 'Shift Calendar'}</span>
+                    <span style={SECTION_TITLE_STYLE}>{employeeDeptName ? `${employeeDeptName} Shift Calendar` : 'Shift Calendar'}</span>
+                    {arRecordsLoading && <Spinner size={13} dark />}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                        <ARStatusIcon status="present" />
+                        <span style={{ fontSize: 13, fontWeight: 600, color: '#374151' }}>Present</span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                        <ARStatusIcon status="late" />
+                        <span style={{ fontSize: 13, fontWeight: 600, color: '#374151' }}>Late</span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                        <ARStatusIcon status="absent" />
+                        <span style={{ fontSize: 13, fontWeight: 600, color: '#374151' }}>Absent</span>
+                      </div>
+                    </div>
                   </div>
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                     {(() => {
                       const anchor = new Date(`${calWeekAnchorDate}T00:00:00`)
                       const dow = (anchor.getDay() + 6) % 7  // 0=Mon … 6=Sun
@@ -3554,10 +3904,21 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                 </div>
                 {renderCalendarView()}
               </section>
+
+              <div style={{ flex: '1 1 0', minHeight: 0 }}>
+                <MyRequestsPanel
+                  companyId={companyId}
+                  internalUserId={internalUserId}
+                  variant="employee"
+                  showSuccessToast={showSuccessToast}
+                  showErrorToast={showErrorToast}
+                  onAttentionCount={setMyReqAlertCount}
+                />
+              </div>
             </div>
           )}
 
-          {companyId && !scopeToManagerDepartments && (
+          {companyId && !scopeToManagerDepartments && !scopeToEmployeeSelf && (
             <>
               <div style={{ display: 'grid', gridTemplateColumns: 'minmax(300px, 326px) minmax(0, 1fr)', gap: 16, alignItems: 'stretch', flex: 1, minHeight: 0, overflow: 'hidden' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minWidth: 0, minHeight: 0, overflowY: 'auto' }}>
@@ -6079,6 +6440,73 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
             </div>
           </div>
         </div>
+      )}
+
+      {/* ── Manager: UC56 click-to-edit clock time; Employee: same review popup but read-only
+          (canModifyClockTimes=false) since Employee can never modify clock times ── */}
+      {(scopeToManagerDepartments || scopeToEmployeeSelf) && (
+        <EditAttendanceRecordModal
+          record={reviewRecord}
+          onClose={() => setReviewRecord(null)}
+          onSaved={() => {
+            const anchor = new Date(`${calWeekAnchorDate}T00:00:00`)
+            const dow = (anchor.getDay() + 6) % 7
+            const mon = new Date(anchor); mon.setDate(anchor.getDate() - dow)
+            const sun = new Date(mon); sun.setDate(mon.getDate() + 6)
+            void fetchArWeekRecords(companyId, formatDateKey(mon), formatDateKey(sun))
+          }}
+          companyId={companyId}
+          internalUserId={internalUserId}
+          basePath={basePath}
+          canModifyClockTimes={scopeToManagerDepartments}
+          scopeToManagerDepartments={scopeToManagerDepartments}
+          showSuccessToast={showSuccessToast}
+          showErrorToast={showErrorToast}
+        />
+      )}
+
+      {/* ── Manager-only: Export the Shift Calendar's attendance data ── */}
+      {scopeToManagerDepartments && calExportOpen && (
+        <ModalOverlay onClose={() => setCalExportOpen(false)} maxWidth="420px">
+          <ModalBox>
+            <ModalHeader title="Export Attendance Records" icon={<Download size={15} color="#fff" strokeWidth={2.5} />} onClose={() => setCalExportOpen(false)} />
+            <div style={{ padding: '0 24px', display: 'flex', flexDirection: 'column' }}>
+              <div style={{ padding: '16px 0', borderBottom: '1px solid #F3F4F6' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <div>
+                    <label style={{ ...modalLabelStyle, fontSize: '0.8125rem' }}>From</label>
+                    <DatePickerField
+                      value={calExportFrom}
+                      onChange={setCalExportFrom}
+                      placeholder="Select date"
+                      max={calExportTo || new Date().toISOString().slice(0, 10)}
+                      clearable={false}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ ...modalLabelStyle, fontSize: '0.8125rem' }}>To</label>
+                    <DatePickerField
+                      value={calExportTo}
+                      onChange={setCalExportTo}
+                      placeholder="Select date"
+                      min={calExportFrom || undefined}
+                      max={new Date().toISOString().slice(0, 10)}
+                      clearable={false}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div style={{ padding: '16px 24px 20px', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button type="button" disabled={calExportLoading || !calExportFrom || !calExportTo} onClick={() => void doCalExport(calExportFrom, calExportTo, 'csv')} style={{ height: 38, padding: '0 16px', borderRadius: 9, border: `1px solid ${PANEL_BORDER}`, background: '#FFFFFF', color: '#374151', fontWeight: 700, fontSize: 13, cursor: (calExportLoading || !calExportFrom || !calExportTo) ? 'not-allowed' : 'pointer', opacity: (calExportLoading || !calExportFrom || !calExportTo) ? 0.6 : 1, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                {calExportLoading ? <Spinner size={13} dark /> : <Download size={13} />} CSV
+              </button>
+              <button type="button" disabled={calExportLoading || !calExportFrom || !calExportTo} onClick={() => void doCalExport(calExportFrom, calExportTo, 'pdf')} style={{ height: 38, padding: '0 16px', borderRadius: 9, border: 'none', background: 'linear-gradient(135deg, #F97316, #EA580C)', color: '#FFFFFF', fontWeight: 700, fontSize: 13, cursor: (calExportLoading || !calExportFrom || !calExportTo) ? 'not-allowed' : 'pointer', opacity: (calExportLoading || !calExportFrom || !calExportTo) ? 0.6 : 1, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                {calExportLoading ? <Spinner size={13} /> : <Download size={13} />} PDF
+              </button>
+            </div>
+          </ModalBox>
+        </ModalOverlay>
       )}
 
       <Toast message={successToast ?? ''} />

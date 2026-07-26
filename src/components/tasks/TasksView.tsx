@@ -1769,6 +1769,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
           department_id: data.department_id,
           email_address: w.email_address,
           phone_number: w.phone_number,
+          profile_photo_url: w.profile_photo_url,
         }))
         setMembers(cwMembers)
       }).catch(() => {})
@@ -3826,7 +3827,10 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
           </div>
         </div>
 
-        {/* Board view tab switcher: Kanban / Calendar */}
+        {/* Board view tab switcher: Kanban / Calendar — Employee only ever has the one Board
+            tab (My Tasks lives on the Dashboard, no Deadline Calendar), so there's nothing to
+            switch between and the tab bar is just noise. */}
+        {!scopeToEmployeeSupervised && (
         <div style={{ padding: '0 28px 16px', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start' }}>
             <div
@@ -3915,6 +3919,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
             </div>
           </div>
         </div>
+        )}
 
         <div style={{ padding: '0 28px 28px', flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
           {!initialReady || (boardViewMode === 'mytasks' ? myTasksKanbanLoading : kanbanLoading) ? (
@@ -4238,7 +4243,9 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                 </section>
                 )}
 
-                {(scopeToManagerDepartments || scopeToEmployeeSupervised) && deadlineSummarySection}
+                {/* Employee doesn't get the Deadline Summary block — keeps the Board focused on
+                    just Assign/Edit/Delete/Sub-task (UC12/13/15/19), per the confirmed UC scope. */}
+                {scopeToManagerDepartments && deadlineSummarySection}
 
               <section className="task-dept-panel" style={{ width: '100%', background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, overflow: 'visible' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '16px 18px', borderBottom: '1px solid #F3F4F6' }}>
@@ -4398,15 +4405,18 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                               )
                             })}
                           </div>
-                          <div style={{ display: 'flex', justifyContent: 'center' }}>
-                            <button
-                              type="button"
-                              onClick={openAiAssign}
-                              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', color: '#FFFFFF', height: 36, padding: '0 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
-                            >
-                              <Sparkles size={15} strokeWidth={2.5} /> AI Assign
-                            </button>
-                          </div>
+                          {/* AI Task Assignment Suggestion (UC20) is O/P/M-only. */}
+                          {!scopeToEmployeeSupervised && (
+                            <div style={{ display: 'flex', justifyContent: 'center' }}>
+                              <button
+                                type="button"
+                                onClick={openAiAssign}
+                                style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', color: '#FFFFFF', height: 36, padding: '0 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+                              >
+                                <Sparkles size={15} strokeWidth={2.5} /> AI Assign
+                              </button>
+                            </div>
+                          )}
                         </>
                       )
                     }
@@ -4479,6 +4489,19 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                           >
                             <Plus size={15} strokeWidth={2.5} />
                           </button>
+                        </div>
+                      )
+                    }
+
+                    if (sortedDeptMembers.length === 0) {
+                      return (
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, padding: '28px 12px', textAlign: 'center' }}>
+                          <span style={{ width: 40, height: 40, borderRadius: 999, background: '#F3F4F6', color: '#9CA3AF', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <Users size={19} />
+                          </span>
+                          <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: '#6B7280' }}>
+                            {scopeToEmployeeSupervised ? 'No Casual Workers under you today' : `No ${assigneeRole}s in this department yet`}
+                          </p>
                         </div>
                       )
                     }
@@ -4845,8 +4868,10 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                 )}
 
                 {/* Reviewed By — not always the same as Assigned By, since Owner/Partner are peer
-                    "assigner" roles and either may approve a task the other assigned */}
-                {selectedTask.status === 'Complete' && (
+                    "assigner" roles and either may approve a task the other assigned. Employee has
+                    no peer tier at all (assigner-only, per isTaskOwner), so the reviewer is always
+                    themselves — showing this field would just be a redundant restatement. */}
+                {selectedTask.status === 'Complete' && !scopeToEmployeeSupervised && (
                   <div>
                     <label style={modalLabelStyle}>Reviewed By</label>
                     <div style={selectedTask.reviewed_by ? viewFieldValue : viewEmpty}>
@@ -5142,7 +5167,10 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                   )}
                 </div>
 
-                <div style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: 10 }}>
+                {/* Set Recurring Task (UC17) is O/P/M-only — hidden via display:none rather than
+                    unmounting, so the (always-false-for-Employee) editRecurringEnabled state and
+                    its Preview block below stay harmlessly inert without touching this markup. */}
+                <div style={scopeToEmployeeSupervised ? { display: 'none' } : { border: '1px solid #E5E7EB', borderRadius: 10, padding: 10 }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', flex: 1 }}>
                       <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: '0.8125rem', color: '#374151' }}>
@@ -5784,7 +5812,10 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                   )}
                 </div>
 
-                <div style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: 10 }}>
+                {/* Set Recurring Task (UC17) is O/P/M-only — hidden via display:none rather than
+                    unmounting, so the (always-false-for-Employee) newRecurringEnabled state and
+                    its Preview block below stay harmlessly inert without touching this markup. */}
+                <div style={scopeToEmployeeSupervised ? { display: 'none' } : { border: '1px solid #E5E7EB', borderRadius: 10, padding: 10 }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', flex: 1 }}>
                       <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: '0.8125rem', color: '#374151' }}>

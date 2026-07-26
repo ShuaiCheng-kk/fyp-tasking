@@ -833,20 +833,15 @@ export const shiftService = {
 
     let rows = Array.from(rowMap.values())
 
-    // Employee's Shifts page (read-only) scopes to just their own row plus any Casual Worker
-    // shift blocks they currently supervise — never the whole department/company like Manager
-    // gets. A CW's row keeps only the blocks this Employee supervises; blocks they don't
-    // supervise, and every other Manager/Employee/Unassigned row, are dropped entirely.
+    // Employee's Shifts page (read-only) shows the whole department's shift schedule — same
+    // scope as Manager gets — so an Employee can see who else is on that day, not just
+    // themselves. Attendance-record detail (clock in/out times, via arRecordsForCell in
+    // ShiftsView) stays restricted to the Employee's own row plus any Casual Worker they
+    // currently supervise; that privacy gating happens client-side since it's a display concern,
+    // not a data-scope one — the shift schedule itself is fine to share within the department.
     if (viewer?.role === 'Employee' && viewer.user_id) {
-      const viewerId = viewer.user_id
-      rows = rows
-        .map(row => {
-          if (row.user_id === viewerId) return row
-          if (row.role !== 'Casual Worker') return null
-          const shifts = row.shifts.filter(block => block.supervisor_employee_id === viewerId)
-          return shifts.length > 0 ? { ...row, shifts } : null
-        })
-        .filter((row): row is TimelineRow => row !== null)
+      const viewerDeptId = members.find(m => m.id === viewer.user_id)?.department_id ?? null
+      rows = rows.filter(row => row.department_id === viewerDeptId)
     }
 
     return rows
