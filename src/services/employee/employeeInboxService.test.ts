@@ -41,7 +41,7 @@ describe('employeeInboxService — Communication (UC61)', () => {
 
     it('resolves the internal user id first, then fetches contacts', async () => {
       vi.mocked(employeeInboxRepository.findUserByAuthIdOrInternalId).mockResolvedValue({ id: 'employee-1' })
-      const contacts = [{ id: 'mgr-1', full_name: 'Manager One', role: 'Manager', email_address: 'm1@example.com' }]
+      const contacts = [{ id: 'mgr-1', full_name: 'Manager One', role: 'Manager', email_address: 'm1@example.com', profile_photo_url: null }]
       vi.mocked(employeeInboxRepository.getEmployeeContacts).mockResolvedValue(contacts)
 
       const result = await employeeInboxService.getContacts('auth-1')

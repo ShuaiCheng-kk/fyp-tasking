@@ -177,9 +177,15 @@ export const aiTaskAssignService = {
     // department(s), forced — skips the AI's department guess entirely, since there's nothing to
     // guess between. Omitted for Owner/Partner, who pick from every company department.
     department_ids?: string[]
-    // Which tier to recommend a candidate from — 'Employee' for a Manager viewer (assignment is
-    // strictly one level down), 'Manager' (default) for Owner/Partner.
-    candidate_role?: 'Manager' | 'Employee'
+    // Which tier to recommend a candidate from — 'Employee' for a Manager viewer, 'Casual Worker'
+    // for an Employee viewer (assignment is strictly one level down), 'Manager' (default) for
+    // Owner/Partner.
+    candidate_role?: 'Manager' | 'Employee' | 'Casual Worker'
+    // Pre-resolved candidate pool (resolved server-side in the route, e.g. from
+    // employeeDashboardService.getSupervisedTaskScope) — used as-is instead of querying by
+    // department. Required for candidate_role: 'Casual Worker', since "the Casual Workers this
+    // Employee supervises today" isn't a department-membership query like the other two tiers.
+    candidate_pool?: { id: string; full_name: string }[]
   }): Promise<AiAssignSuggestion> {
     if (!input.title.trim()) throw new Error('title is required')
 
@@ -201,10 +207,12 @@ export const aiTaskAssignService = {
     const candidateRole = input.candidate_role ?? 'Manager'
     // Task assignment is independent of shift scheduling (see taskService.assignTask/editTask) —
     // every candidate in the department is real regardless of whether they have a shift on the
-    // task's date.
-    const candidatePool = candidateRole === 'Employee'
-      ? await taskRepository.getEmployeesByDepartment(input.company_id, department.id)
-      : await companyService.getManagersByDepartment(input.company_id, department.id)
+    // task's date. Casual Worker candidates come pre-resolved instead (see candidate_pool above).
+    const candidatePool = input.candidate_pool
+      ? input.candidate_pool
+      : candidateRole === 'Employee'
+        ? await taskRepository.getEmployeesByDepartment(input.company_id, department.id)
+        : await companyService.getManagersByDepartment(input.company_id, department.id)
 
     let candidates: AiAssignSuggestion['candidates'] = []
     if (candidatePool.length > 0) {
@@ -219,7 +227,7 @@ export const aiTaskAssignService = {
     }
 
     const recommended = candidates[0] ?? null
-    const roleLabel = candidateRole === 'Employee' ? 'employees' : 'managers'
+    const roleLabel = candidateRole === 'Employee' ? 'employees' : candidateRole === 'Casual Worker' ? 'casual workers' : 'managers'
     // A Manager viewer's department was forced, not chosen by the AI — draft.reason would be
     // justifying a "decision" that was never actually made, so it's dropped; only the
     // workload-based candidate pick is explained.

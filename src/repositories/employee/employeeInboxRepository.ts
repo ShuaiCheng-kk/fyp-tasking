@@ -7,6 +7,7 @@ export const employeeInboxRepository = {
     full_name: string
     role: string
     email_address: string
+    profile_photo_url: string | null
   }[]> {
     const { data: empDept } = await supabase
       .from('employee_departments')
@@ -16,26 +17,24 @@ export const employeeInboxRepository = {
     if (!empDept?.department_id) return []
 
     const { department_id } = empDept
-    const contacts: { id: string; full_name: string; role: string; email_address: string }[] = []
+    const contacts: { id: string; full_name: string; role: string; email_address: string; profile_photo_url: string | null }[] = []
 
-    const { data: mgrDept } = await supabase
+    const { data: mgrDepts } = await supabase
       .from('manager_departments')
       .select('manager_id')
       .eq('department_id', department_id)
-      .limit(1)
-      .single()
-    if (mgrDept?.manager_id) {
-      const { data: mgrUser } = await supabase
+    const managerIds = [...new Set((mgrDepts ?? []).map((row: { manager_id: string }) => row.manager_id))]
+    if (managerIds.length > 0) {
+      const { data: mgrUsers } = await supabase
         .from('users')
-        .select('id, full_name, role, email_address')
-        .eq('id', mgrDept.manager_id)
-        .single()
-      if (mgrUser) contacts.push(mgrUser as any)
+        .select('id, full_name, role, email_address, profile_photo_url')
+        .in('id', managerIds)
+      for (const u of (mgrUsers ?? []) as any[]) contacts.push(u)
     }
 
     const { data: teammates } = await supabase
       .from('employee_departments')
-      .select('employee_id, users!inner(id, full_name, role, email_address)')
+      .select('employee_id, users!inner(id, full_name, role, email_address, profile_photo_url)')
       .eq('department_id', department_id)
       .neq('employee_id', user_id)
 
@@ -55,7 +54,7 @@ export const employeeInboxRepository = {
     if (cwIds.length > 0) {
       const { data: cwUsers } = await supabase
         .from('users')
-        .select('id, full_name, role, email_address')
+        .select('id, full_name, role, email_address, profile_photo_url')
         .in('id', cwIds)
       for (const u of (cwUsers ?? []) as any[]) contacts.push(u)
     }

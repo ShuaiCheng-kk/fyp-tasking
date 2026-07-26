@@ -40,4 +40,19 @@ export const employeeDashboardService = {
       supervised_workers: supervisedWorkers,
     }
   },
+
+  // AI Assign scope for an Employee viewer (UC20, extended to Employee 2026-07-27): forces the
+  // department to the Employee's own, and the candidate pool to only the Casual Workers they
+  // supervise TODAY — never a whole department, mirroring getManagerTeamScope for the Manager tier.
+  async getSupervisedTaskScope(
+    employee_id: string,
+    company_id: string
+  ): Promise<{ department_id: string; candidates: { id: string; full_name: string }[] }> {
+    const dashboard = await employeeDashboardRepository.getEmployeeDashboard(employee_id)
+    const workers = await employeeDashboardRepository.getSupervisedWorkersToday(employee_id, company_id)
+    return {
+      department_id: dashboard?.department_id ?? '',
+      candidates: workers.map(w => ({ id: w.id, full_name: w.full_name })),
+    }
+  },
 }
