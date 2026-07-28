@@ -10,8 +10,6 @@ export interface Company {
   postal_code: string | null
   industry: string | null
   size: string | null
-  logo_url: string | null
-  website: string | null
   stripe_customer_id: string | null
   stripe_subscription_id: string | null
   plan_started_at: string | null

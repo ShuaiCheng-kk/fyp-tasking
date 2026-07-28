@@ -25,17 +25,6 @@ const MAX_CONSECUTIVE_DAYS = 3
 
 export const DEFAULT_SCHEDULING_RULES: SchedulingRule[] = [
   {
-    key: 'approved_leave_block',
-    name: 'Approved leave cannot be scheduled',
-    description: 'Employees and managers with approved leave must not receive a shift on the approved leave date.',
-    rule_type: 'Hard Rule',
-    value_type: 'text',
-    value: 'Always enforced',
-    editable: false,
-    active: true,
-    system_protected: true,
-  },
-  {
     key: 'fixed_off_day_block',
     name: 'Weekly day off cannot be scheduled',
     description: 'Employees and managers must not be scheduled on their weekly day off.',
@@ -131,21 +120,6 @@ export const schedulingRuleService = {
     throw new Error('Scheduling rules are system-protected and cannot be edited')
   },
 
-  async getStaffHours(company_id: string, user_id: string) {
-    await this.assertOwner(user_id, company_id)
-    const users = await schedulingRuleRepository.getCompanyUsers(company_id)
-    return users
-      .filter(u => u.role === 'Manager' || u.role === 'Employee')
-      .map(u => ({
-        id: u.id,
-        full_name: u.full_name,
-        role: u.role,
-        weekly_working_hours: u.weekly_working_hours ?? null,
-        max_weekly_hours: u.max_weekly_hours ?? null,
-        contracted_weekly_hours: u.contracted_weekly_hours ?? null,
-      }))
-  },
-
   async validateSchedule(input: {
     company_id: string
     date_from: string
@@ -155,10 +129,9 @@ export const schedulingRuleService = {
     if (!input.company_id || !input.date_from || !input.date_to) {
       throw new Error('company_id, date_from, and date_to are required')
     }
-    const [rules, users, approvedTimeOff, fixedOffDays] = await Promise.all([
+    const [rules, users, fixedOffDays] = await Promise.all([
       this.getRules(input.company_id),
       schedulingRuleRepository.getCompanyUsers(input.company_id),
-      schedulingRuleRepository.getApprovedTimeOffByCompany(input.company_id),
       schedulingRuleRepository.getOffDayRequests(input.company_id, input.date_from, input.date_to),
     ])
     const items = input.items ?? await schedulingRuleRepository.getPublishedOrDraftScheduleItems(
@@ -166,7 +139,7 @@ export const schedulingRuleService = {
       input.date_from,
       input.date_to,
     )
-    return validateItems({ rules, users, approvedTimeOff, fixedOffDays, items })
+    return validateItems({ rules, users, fixedOffDays, items })
   },
 
   async getScheduleContext(input: {
@@ -181,18 +154,17 @@ export const schedulingRuleService = {
 
     const previousFrom = addDaysToDateKey(input.date_from, -28)
     const previousTo = addDaysToDateKey(input.date_from, -1)
-    const [rules, users, fixedOffDays, timeOffRequests, existingSchedule, previousSchedule] = await Promise.all([
+    const [rules, users, fixedOffDays, existingSchedule, previousSchedule] = await Promise.all([
       this.getRules(input.company_id),
       schedulingRuleRepository.getCompanyUsers(input.company_id),
       schedulingRuleRepository.getOffDayRequests(input.company_id, input.date_from, input.date_to),
-      schedulingRuleRepository.getTimeOffRequestsByCompany(input.company_id),
       schedulingRuleRepository.getPublishedOrDraftScheduleItems(input.company_id, input.date_from, input.date_to),
       schedulingRuleRepository.getPublishedOrDraftScheduleItems(input.company_id, previousFrom, previousTo),
     ])
 
     const fixedOffByUser = new Map<string, string[]>()
     for (const row of fixedOffDays) {
-      fixedOffByUser.set(row.user_id, [...(fixedOffByUser.get(row.user_id) ?? []), row.request_date])
+      fixedOffByUser.set(row.user_id, [...(fixedOffByUser.get(row.user_id) ?? []), row.requested_date])
     }
 
     const existingHoursByUser = new Map<string, number>()
@@ -238,14 +210,6 @@ export const schedulingRuleService = {
         previous_off_days: Math.max(0, 28 - (previous?.working_days.size ?? 0)),
         previous_weekend_duties: previous?.weekend_duties ?? 0,
         previous_working_hours: Number((previous?.working_hours ?? 0).toFixed(1)),
-        leave_requests: timeOffRequests
-          .filter(request => request.requester_id === user.id)
-          .map(request => ({
-            id: request.id,
-            date: request.shifts?.shift_date ?? null,
-            leave_type: request.request_type,
-            status: request.status,
-          })),
       }
     })
 
@@ -253,13 +217,6 @@ export const schedulingRuleService = {
       rules,
       staff,
       fixed_off_days: fixedOffDays,
-      leave_requests: timeOffRequests.map(request => ({
-        id: request.id,
-        requester_id: request.requester_id,
-        date: request.shifts?.shift_date ?? null,
-        leave_type: request.request_type,
-        status: request.status,
-      })),
       existing_schedule_items: existingSchedule,
       previous_schedule_period: { date_from: previousFrom, date_to: previousTo },
     }
@@ -308,7 +265,6 @@ export const schedulingRuleService = {
       date_to: input.date_to,
       rules: activeRules,
       department_staff: deptStaff,
-      leave_requests: context.leave_requests,
       fixed_off_days: context.fixed_off_days,
       shiftTypes: input.shiftTypes,
     })
@@ -374,7 +330,6 @@ export const schedulingRuleService = {
       hardRuleCount: hardRules.length,
       staffCount: eligibleStaff.length,
       fixedOffCount: context.fixed_off_days.length,
-      leaveCount: context.leave_requests.filter(r => r.status === 'approved' || r.status === 'pending').length,
       previousPeriod: `${context.previous_schedule_period.date_from} to ${context.previous_schedule_period.date_to}`,
     }
 
@@ -428,7 +383,6 @@ export const schedulingRuleService = {
       hardRuleCount: hardRules.length,
       staffCount: eligibleStaff.length,
       fixedOffCount: context.fixed_off_days.length,
-      leaveCount: context.leave_requests.filter(r => r.status === 'approved' || r.status === 'pending').length,
       previousPeriod: `${context.previous_schedule_period.date_from} to ${context.previous_schedule_period.date_to}`,
     }
 
@@ -437,7 +391,6 @@ export const schedulingRuleService = {
       date_to: input.date_to,
       rules: activeRules,
       department_staff: deptStaff,
-      leave_requests: context.leave_requests,
       fixed_off_days: context.fixed_off_days,
       shiftTypes: input.shiftTypes,
     })
@@ -563,7 +516,6 @@ export const schedulingRuleService = {
 function validateItems(input: {
   rules: SchedulingRule[]
   users: Awaited<ReturnType<typeof schedulingRuleRepository.getCompanyUsers>>
-  approvedTimeOff: Awaited<ReturnType<typeof schedulingRuleRepository.getApprovedTimeOffByCompany>>
   fixedOffDays: Awaited<ReturnType<typeof schedulingRuleRepository.getOffDayRequests>>
   items: ScheduleValidationItem[]
 }): ScheduleValidationResult {
@@ -572,7 +524,7 @@ function validateItems(input: {
   const fixedOffByUser = new Map<string, Set<string>>()
   for (const row of input.fixedOffDays) {
     if (!fixedOffByUser.has(row.user_id)) fixedOffByUser.set(row.user_id, new Set())
-    fixedOffByUser.get(row.user_id)!.add(row.request_date)
+    fixedOffByUser.get(row.user_id)!.add(row.requested_date)
   }
 
   const violations: ScheduleRuleViolation[] = []
@@ -595,19 +547,10 @@ function validateItems(input: {
     if (fixedOffByUser.get(item.user_id)?.has(item.shift_date)) {
       push('fixed_off_day_block', 'Worker is assigned on a weekly day off.', item)
     }
-
-    const approvedOnDate = input.approvedTimeOff.some(request => (
-      request.requester_id === item.user_id &&
-      request.request_type === 'time_off' &&
-      request.shifts?.shift_date === item.shift_date
-    ))
-    if (approvedOnDate) {
-      push('approved_leave_block', 'Worker has approved leave on this shift date.', item)
-    }
   }
 
   validateDepartmentMinimums(input.items, usersById, ruleMap, push)
-  validateWeeklyHours(input.items, usersById, push)
+  validateWeeklyHours(input.items, push)
   validateConsecutiveDays(input.items, ruleMap, push)
   validateWeekendFairness(input.items, ruleMap, push)
   validateWorkloadFairness(input.items, ruleMap, push)
@@ -650,7 +593,6 @@ function validateDepartmentMinimums(
 
 function validateWeeklyHours(
   items: ScheduleValidationItem[],
-  usersById: Map<string, { weekly_working_hours?: number | null; max_weekly_hours?: number | null; contracted_weekly_hours?: number | null }>,
   push: (ruleKey: SchedulingRuleKey, message: string, item?: Partial<ScheduleValidationItem>) => void,
 ) {
   const byUserWeek = new Map<string, { hours: number; sample: ScheduleValidationItem }>()
@@ -661,8 +603,7 @@ function validateWeeklyHours(
     current.hours += shiftHours(item)
     byUserWeek.set(weekKey, current)
   }
-  for (const [key, value] of byUserWeek) {
-    const userId = key.split('_')[0]
+  for (const value of byUserWeek.values()) {
     const limit = MAX_WEEKLY_HOURS
     if (value.hours > limit) {
       push('weekly_hours_limit', `Worker is assigned ${value.hours.toFixed(1)} hours, above weekly limit ${limit}.`, value.sample)
@@ -826,7 +767,6 @@ type AiContextSummaryData = {
   hardRuleCount: number
   staffCount: number
   fixedOffCount: number
-  leaveCount: number
   previousPeriod: string
 }
 
@@ -842,7 +782,6 @@ type AiStaffContext = {
   weekend_duties_in_period: number
   previous_working_days: number
   previous_weekend_duties: number
-  leave_requests: Array<{ date: string | null; leave_type: string; status: string }>
 }
 
 type NormalizerState = {
@@ -969,11 +908,6 @@ function pickStaffForSlot(input: {
     .filter(staff => staff.role === input.role)
     .filter(staff => !input.usedInWindow.has(staff.id))
     .filter(staff => !staff.fixed_off_days.includes(input.shiftDate))
-    .filter(staff => !staff.leave_requests.some(request => (
-      request.date === input.shiftDate &&
-      request.leave_type === 'time_off' &&
-      request.status === 'approved'
-    )))
     .filter(staff => (staff.remaining_weekly_hours - (input.state.assignedHours.get(staff.id) ?? 0)) >= shiftLength)
 
   if (candidates.length === 0) return null
@@ -984,11 +918,6 @@ function pickStaffForSlot(input: {
     const assignedHours = (staff.scheduled_hours_in_period ?? 0) + (input.state.assignedHours.get(staff.id) ?? 0)
     const weekendDuties = input.state.weekendDuties.get(staff.id) ?? 0
     const softStreakPenalty = wouldExceedConsecutiveDays(input.state.assignedDates.get(staff.id), input.shiftDate) ? 1000 : 0
-    const pendingLeavePenalty = staff.leave_requests.some(request => (
-      request.date === input.shiftDate &&
-      request.leave_type === 'time_off' &&
-      request.status === 'pending'
-    )) ? 300 : 0
     return {
       staff,
       // assignedDates dominates the score so the current generation run always rotates evenly
@@ -996,7 +925,6 @@ function pickStaffForSlot(input: {
       // candidates have been assigned the same number of times so far in this run.
       score:
         softStreakPenalty +
-        pendingLeavePenalty +
         assignedDates * 1000 +
         (weekend ? (weekendDuties + staff.previous_weekend_duties) * 100 : 0) +
         assignedHours * 2 +
@@ -1075,10 +1003,8 @@ function buildAiSchedulePrompt(input: {
     remaining_weekly_hours: number
     previous_working_days: number
     previous_weekend_duties: number
-    leave_requests: Array<{ date: string | null; leave_type: string; status: string }>
   }> }>
-  leave_requests: Array<{ requester_id: string; date: string | null; leave_type: string; status: string }>
-  fixed_off_days: Array<{ user_id: string; request_date: string }>
+  fixed_off_days: Array<{ user_id: string; requested_date: string }>
   shiftTypes: ShiftTypeInput[]
 }): string {
   const rulesText = input.rules
@@ -1088,11 +1014,7 @@ function buildAiSchedulePrompt(input: {
   const deptText = input.department_staff.map(dept => {
     const staffLines = dept.staff.map(s => {
       const offDays = s.fixed_off_days.join(', ') || 'none'
-      const leaves = s.leave_requests.filter(l => l.status === 'approved' || l.status === 'pending')
-      const leaveText = leaves.length > 0
-        ? leaves.map(l => `${l.date ?? 'unknown date'} (${l.leave_type}, ${l.status})`).join(', ')
-        : 'none'
-      return `  - id=${s.id} name="${s.full_name}" role=${s.role} maxWeeklyHours=${s.max_weekly_hours} remainingHours=${s.remaining_weekly_hours} fixedOffDays=[${offDays}] leaves=[${leaveText}] prevWorkDays=${s.previous_working_days} prevWeekendDuties=${s.previous_weekend_duties}`
+      return `  - id=${s.id} name="${s.full_name}" role=${s.role} maxWeeklyHours=${s.max_weekly_hours} remainingHours=${s.remaining_weekly_hours} fixedOffDays=[${offDays}] prevWorkDays=${s.previous_working_days} prevWeekendDuties=${s.previous_weekend_duties}`
     }).join('\n')
     return `Department id=${dept.department_id}:\n${staffLines || '  (no eligible staff)'}`
   }).join('\n\n')
@@ -1141,13 +1063,13 @@ INSTRUCTIONS:
 1. For each department x date, produce one schedule block. You must cover all departments listed above, not just the first one.
 2. Inside each block, for every shift type, create one slot PER PERSON who is on duty during that shift type's time window. Do not invent morning/evening/break shifts beyond what was listed.
 3. Assign each slot to one eligible staff member.
-4. Obey ALL Hard Rules: never schedule anyone on their fixed off day, approved leave, or when they exceed weekly hours.
+4. Obey ALL Hard Rules: never schedule anyone on their fixed off day, or when they exceed weekly hours.
 5. MANDATORY (Hard Rule, not optional): for every department, for every date, for every shift type's time window, there MUST be at least ${MIN_MANAGERS_PER_DAY} manager AND at least ${MIN_EMPLOYEES_PER_DAY} employee on duty AT THE SAME TIME — this means at least ${minSlotsPerShiftType} separate slots (one per person) for that shift type, not one slot total. Only set "warning" on the block if truly no eligible staff exist to fill this.
 6. Max consecutive working days is ${MAX_CONSECUTIVE_DAYS}.
 7. Weekend rotation has higher priority than workload fairness.
 8. Rotate weekend duties fairly using previous_weekend_duties.
 9. Distribute workload fairly using previous_work_days and remaining_weekly_hours after weekend rotation.
-10. FAIR ROTATION WITHIN THE PERIOD (Soft Rule, but apply it actively): when a department has multiple eligible people for the same role (e.g. 2 managers, 2 employees), spread shifts across ALL of them over the date range instead of repeatedly picking the same 1-2 people every day. Do not let one person work every day while another eligible person of the same role gets zero shifts for the whole period, unless their fixed off days / leave / remaining hours leave no other choice. Cycle through eligible staff of the same role in rotation.
+10. FAIR ROTATION WITHIN THE PERIOD (Soft Rule, but apply it actively): when a department has multiple eligible people for the same role (e.g. 2 managers, 2 employees), spread shifts across ALL of them over the date range instead of repeatedly picking the same 1-2 people every day. Do not let one person work every day while another eligible person of the same role gets zero shifts for the whole period, unless their fixed off days / remaining hours leave no other choice. Cycle through eligible staff of the same role in rotation.
 11. If no eligible person exists for a required slot, still create the slot with assigned_user_id set to null and reason "no_eligible_staff", and set the block's "warning" field.
 12. For "reason", output ONLY one short code from this list (no sentences, no punctuation):
    fair_rotation | least_hours | only_eligible | weekend_rotation | manager_requirement | employee_requirement | no_eligible_staff

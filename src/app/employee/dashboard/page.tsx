@@ -13,6 +13,7 @@ import {
   fmtShiftTime, fmtShiftTimeMinusMinutes, fmtClockStamp,
   ClockFlowButton, ClockFlowConnector,
 } from '@/components/dashboard/ClockFlow'
+import { sgtTodayKey } from '@/lib/singaporeTime'
 import EmployeeMyTasksBoard from '@/components/employee/EmployeeMyTasksBoard'
 import EmployeeChatbox from '@/components/employee/EmployeeChatbox'
 
@@ -23,13 +24,13 @@ const ACCENT = '#F97316'
 type MyShiftRecord = { id: string; clock_in_time: string | null; clock_out_time: string | null; break_in_time: string | null; break_out_time: string | null; status: string }
 type MyShift = {
   assignment: { id: string; user_id: string }
-  shift: { id: string; title: string | null; shift_date: string; start_time: string; end_time: string; is_open_ended: boolean }
+  shift: { id: string; shift_date: string; start_time: string; end_time: string; is_open_ended: boolean }
   record: MyShiftRecord | null
 }
 
 type ClockOutReleaseItem = {
   id: string
-  casual_worker_id: string
+  user_id: string
   worker_name: string
   clock_in_time: string | null
   shift_title: string | null
@@ -166,15 +167,11 @@ export default function EmployeeDashboard() {
   }
 
   const title = "Today's Overview"
-  // Shift dates are UTC-nominal (see casualAttendanceService's Clock In window), but between
-  // local midnight and the local UTC offset the local and UTC calendar days disagree — matching
-  // either key (not just the local one) keeps a genuinely-today shift from vanishing then.
-  const myTodayShifts = myShifts.filter(s => {
-    const now = new Date()
-    const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-    const utcTodayKey = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-${String(now.getUTCDate()).padStart(2, '0')}`
-    return s.shift.shift_date === todayKey || s.shift.shift_date === utcTodayKey
-  })
+  // Shift dates are Singapore-nominal (see ClockFlow's sgtInstant) — "today" must be the
+  // Singapore calendar day, not the machine's own local timezone or true UTC, or a shift that's
+  // "today" only by one of those would either vanish or double up against a genuinely different
+  // day's shift (see project memory module5-clockin-timezone-bug).
+  const myTodayShifts = myShifts.filter(s => s.shift.shift_date === sgtTodayKey())
   // Earliest start time first, so the grid fills left-to-right in shift order.
   const sortedSupervisedWorkers = [...supervisedWorkers].sort((a, b) => a.start_time.localeCompare(b.start_time))
 
@@ -293,7 +290,7 @@ export default function EmployeeDashboard() {
                 ) : (
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))', gap: 12 }}>
                     {sortedSupervisedWorkers.map(w => {
-                      const release = releaseQueue.find(r => r.casual_worker_id === w.id)
+                      const release = releaseQueue.find(r => r.user_id === w.id)
                       return (
                         <div key={w.shift_assignment_id} style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 12, borderRadius: 12, border: '1px solid #E5E7EB', minWidth: 0 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>

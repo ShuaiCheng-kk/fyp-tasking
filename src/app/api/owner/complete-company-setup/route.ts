@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
     user_id, full_name, email_address, phone_number, date_of_birth, profile_photo_url,
     company_name, company_description,
     company_location, company_address, company_postal_code,
-    company_industry, company_size, company_website, company_logo_url,
+    company_industry, company_size,
     departments, plan,
   } = body as Record<string, unknown>
 
@@ -26,15 +26,24 @@ export async function POST(req: NextRequest) {
   if (!company_name || typeof company_name !== 'string') {
     return NextResponse.json({ success: false, message: 'company_name is required' }, { status: 400 })
   }
+  if (!phone_number || typeof phone_number !== 'string' || !phone_number.trim()) {
+    return NextResponse.json({ success: false, message: 'phone_number is required' }, { status: 400 })
+  }
+  if (!date_of_birth || typeof date_of_birth !== 'string') {
+    return NextResponse.json({ success: false, message: 'date_of_birth is required' }, { status: 400 })
+  }
+  if (!profile_photo_url || typeof profile_photo_url !== 'string') {
+    return NextResponse.json({ success: false, message: 'profile_photo_url is required' }, { status: 400 })
+  }
 
   try {
     const result = await authService.completeCompanySetup({
       user_id,
       full_name: typeof full_name === 'string' ? full_name : '',
       email_address: typeof email_address === 'string' ? email_address : '',
-      phone_number: typeof phone_number === 'string' ? phone_number : null,
-      date_of_birth: typeof date_of_birth === 'string' ? date_of_birth : null,
-      profile_photo_url: typeof profile_photo_url === 'string' ? profile_photo_url : null,
+      phone_number,
+      date_of_birth,
+      profile_photo_url,
       company_name,
       company_description: typeof company_description === 'string' ? company_description : '',
       company_location: typeof company_location === 'string' ? company_location : null,
@@ -42,8 +51,6 @@ export async function POST(req: NextRequest) {
       company_postal_code: typeof company_postal_code === 'string' ? company_postal_code : null,
       company_industry: typeof company_industry === 'string' ? company_industry : null,
       company_size: typeof company_size === 'string' ? company_size : null,
-      company_website: typeof company_website === 'string' ? company_website : null,
-      company_logo_url: typeof company_logo_url === 'string' ? company_logo_url : null,
       departments: Array.isArray(departments) ? departments as string[] : [],
       plan: typeof plan === 'string' ? plan : 'Free',
     })

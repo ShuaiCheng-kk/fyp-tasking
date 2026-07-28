@@ -5,7 +5,7 @@ import { recruitmentRepository } from '@/repositories/owner/recruitmentRepositor
 import { workerApplicationRepository } from '@/repositories/guest/workerApplicationRepository'
 import { emailService } from '@/services/email/emailService'
 import { assertWorkerEligibleForJob } from '@/services/shared/workerEligibility'
-import { CasualWorkerStatus, JobApplicant, JobPosting, JobPostingInput, JobPostingPendingApproval, JobPostingSummary, PoolInviteResult, PoolWorker } from '@/types/Recruitment'
+import { JobApplicant, JobPosting, JobPostingInput, JobPostingPendingApproval, JobPostingSummary, PoolInviteResult, PoolWorker } from '@/types/Recruitment'
 
 // A "confirmed" hire needs both sides: the Owner accepted the application AND the worker
 // confirmed the invitation. Accepted-but-not-yet-confirmed sits in a separate "awaiting" bucket
@@ -139,7 +139,7 @@ export const recruitmentService = {
     await recruitmentRepository.cancelAcceptedInvitationByApplicant(input.applicant_id)
     // NOT "rejected" — the worker WAS hired and then cancelled on; the record must say so.
     await recruitmentRepository.setApplicantStatus(input.applicant_id, 'cancelled_by_employer')
-    await recruitmentRepository.insertRecruitmentCancellation({
+    await recruitmentRepository.insertJobCancellation({
       job_id: input.job_id,
       applicant_id: input.applicant_id,
       cancelled_by: input.removed_by,
@@ -260,7 +260,7 @@ export const recruitmentService = {
   async editJobPosting(id: string, input: Partial<JobPostingInput>, actor_id?: string): Promise<JobPosting> {
     if (!id) throw new Error('job_id is required')
     if (input.title !== undefined && !input.title.trim()) throw new Error('title is required')
-    if (input.description !== undefined && !input.description.trim()) throw new Error('description is required')
+    if (input.responsibilities !== undefined && !input.responsibilities.trim()) throw new Error('responsibilities is required')
     if (input.minimum_age !== undefined) validateMinimumAge(input.minimum_age)
     if (input.openings !== undefined) validateOpenings(input.openings)
 
@@ -373,25 +373,20 @@ export const recruitmentService = {
       department_id: original.department_id,
       created_by,
       title: `${original.title} (copy)`,
-      description: original.description,
-      requirements: original.requirements,
-      location: original.location,
-      employment_type: original.employment_type,
-      company_name: original.company_name,
+      responsibilities: original.responsibilities,
+      skills: original.skills,
       salary_amount: original.salary_amount,
       urgency: original.urgency,
       estimated_hours: original.estimated_hours,
-      is_recurring: original.is_recurring,
-      shift_date: original.shift_date,
-      shift_start_time: original.shift_start_time,
-      shift_end_time: original.shift_end_time,
+      job_date: original.job_date,
+      job_start_time: original.job_start_time,
+      job_end_time: original.job_end_time,
       break_start_time: original.break_start_time,
       break_end_time: original.break_end_time,
       assigned_employee_id: original.assigned_employee_id,
       experience_required: original.experience_required,
       minimum_age: original.minimum_age,
       openings: original.openings,
-      uniform_required: original.uniform_required,
       uniform_type: original.uniform_type,
       uniform_details: original.uniform_details,
     })
@@ -535,9 +530,9 @@ export const recruitmentService = {
           const created = await recruitmentRepository.createDirectApplicant({
             job_id: input.job_id,
             user_id,
-            resume_url: profile.resume_url,
-            skills_snapshot: profile.skills,
-            certificates_snapshot: certificates.map(cert => ({ name: cert.name, file_url: cert.file_url })),
+            resume: profile.resume_url,
+            skills: profile.skills,
+            certificates: certificates.map(cert => ({ name: cert.name, file_url: cert.certificate_url })),
           })
           applicantId = created.id
         }
@@ -576,26 +571,6 @@ export const recruitmentService = {
     return results
   },
 
-  async getCasualWorkers(company_id: string): Promise<CasualWorkerStatus[]> {
-    if (!company_id) throw new Error('company_id is required')
-    return recruitmentRepository.getCasualWorkersByCompany(company_id)
-  },
-
-  async getAcceptedCasualWorkersForEmployee(company_id: string, employee_id: string): Promise<CasualWorkerStatus[]> {
-    if (!company_id || !employee_id) throw new Error('company_id and employee_id are required')
-    return recruitmentRepository.getAcceptedCasualWorkersByAssignedEmployee(company_id, employee_id)
-  },
-
-  async updateCasualWorkerStatus(input: {
-    user_id: string
-    worker_status: 'active' | 'inactive' | 'blocked'
-  }): Promise<void> {
-    if (!input.user_id) throw new Error('user_id is required')
-    if (!['active', 'inactive', 'blocked'].includes(input.worker_status)) {
-      throw new Error('worker_status must be active, inactive, or blocked')
-    }
-    await recruitmentRepository.updateCasualWorkerStatus(input.user_id, input.worker_status)
-  },
 }
 
 function validateJobPostingInput(input: JobPostingInput): void {
@@ -603,16 +578,16 @@ function validateJobPostingInput(input: JobPostingInput): void {
   if (!input.company_id || !input.created_by || !input.title?.trim()) {
     throw new Error('company_id, created_by, and title are required')
   }
-  if (!isDraft && !input.description?.trim()) {
-    throw new Error('description is required to publish a job')
+  if (!isDraft && !input.responsibilities?.trim()) {
+    throw new Error('responsibilities is required to publish a job')
   }
   if (input.salary_amount !== undefined && input.salary_amount !== null && input.salary_amount < 0) {
     throw new Error('salary_amount cannot be negative')
   }
   // One-off jobs have no fixed end time (the worker decides when the task is done), but they
   // still need a start time so UC49's Clock In gating has something to compare against — same
-  // role shift_start_time plays for Shift jobs.
-  if (!isDraft && input.form_type === 'oneoff' && !input.job_start_time) {
+  // role job_start_time plays for Shift jobs.
+  if (!isDraft && input.job_type === 'oneoff' && !input.job_start_time) {
     throw new Error('job_start_time is required to publish a one-off job')
   }
   // Every published casual-worker posting must name a responsible employee: the on-site contact
@@ -645,9 +620,9 @@ function validateOpenings(openings: number | null | undefined): void {
 async function assertPublishable(id: string): Promise<JobPosting> {
   const posting = await recruitmentRepository.getJobPostingById(id)
   if (!posting) throw new Error('Job posting not found')
-  if (!posting.description?.trim()) throw new Error('description is required to publish a job')
+  if (!posting.responsibilities?.trim()) throw new Error('responsibilities is required to publish a job')
   if (!posting.assigned_employee_id) throw new Error('A responsible employee is required to publish a job')
-  if (posting.form_type === 'oneoff' && !posting.job_start_time) {
+  if (posting.job_type === 'oneoff' && !posting.job_start_time) {
     throw new Error('job_start_time is required to publish a one-off job')
   }
   await assertWithinSupervisorShift(posting)
@@ -661,16 +636,15 @@ async function assertPublishable(id: string): Promise<JobPosting> {
 // supervisors already scheduled that day, so this only happens for data created outside the UI.
 async function assertWithinSupervisorShift(posting: {
   company_id: string
-  form_type?: string | null
+  job_type?: string | null
   assigned_employee_id?: string | null
-  shift_date?: string | null
-  shift_start_time?: string | null
-  shift_end_time?: string | null
+  job_date?: string | null
   job_start_time?: string | null
+  job_end_time?: string | null
 }): Promise<void> {
-  if (!posting.assigned_employee_id || !posting.shift_date) return
+  if (!posting.assigned_employee_id || !posting.job_date) return
   const supervisorShift = await recruitmentRepository.getEmployeeShiftOnDate(
-    posting.assigned_employee_id, posting.company_id, posting.shift_date,
+    posting.assigned_employee_id, posting.company_id, posting.job_date,
   )
   if (!supervisorShift) return
   const hm = (t: string) => t.slice(0, 5)
@@ -681,7 +655,7 @@ async function assertWithinSupervisorShift(posting: {
   }
   const supStart = hm(supervisorShift.start_time)
   const supEnd = hm(supervisorShift.end_time)
-  if (posting.form_type === 'oneoff') {
+  if (posting.job_type === 'oneoff') {
     if (posting.job_start_time) {
       const start = hm(posting.job_start_time)
       if (start < supStart || start > supEnd) {
@@ -689,10 +663,10 @@ async function assertWithinSupervisorShift(posting: {
       }
     }
   } else {
-    if (posting.shift_start_time && hm(posting.shift_start_time) < supStart) {
+    if (posting.job_start_time && hm(posting.job_start_time) < supStart) {
       throw new Error(`Start time cannot be earlier than the supervisor's shift start (${fmt12(supStart)})`)
     }
-    if (posting.shift_end_time && hm(posting.shift_end_time) > supEnd) {
+    if (posting.job_end_time && hm(posting.job_end_time) > supEnd) {
       throw new Error(`End time cannot be later than the supervisor's shift end (${fmt12(supEnd)})`)
     }
   }

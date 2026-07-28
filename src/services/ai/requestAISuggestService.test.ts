@@ -44,17 +44,17 @@ function mockOffDayRowsForWeek(week: string, rows: unknown[]) {
   )
 }
 
-function offDayRow(overrides: Partial<{ user_id: string; request_date: string; status: string }> = {}) {
+function offDayRow(overrides: Partial<{ user_id: string; requested_date: string; status: string }> = {}) {
   return {
     id: `row-${Math.random()}`,
     company_id: 'company-1',
-    week_start: '2026-07-13',
+    requested_week: '2026-07-13',
     source: 'submitted',
     reviewed_by: null,
     reviewed_at: null,
     created_at: '2026-01-01',
     user_id: 'other-user',
-    request_date: '2026-07-13',
+    requested_date: '2026-07-13',
     status: 'approved',
     ...overrides,
   }
@@ -81,7 +81,7 @@ describe('requestAISuggestService.suggestFixedOffDayGroup', () => {
     await requestAISuggestService.suggestFixedOffDayGroup({
       requester_name: 'Manager One',
       requester_role: 'Manager',
-      request_dates: ['2026-07-13'],
+      requested_dates: ['2026-07-13'],
       department_id: 'dept-ops',
       company_id: 'company-1',
       user_id: 'mgr-1',
@@ -101,7 +101,7 @@ describe('requestAISuggestService.suggestFixedOffDayGroup', () => {
     const result = await requestAISuggestService.suggestFixedOffDayGroup({
       requester_name: 'Manager One',
       requester_role: 'Manager',
-      request_dates: ['2026-07-13'],
+      requested_dates: ['2026-07-13'],
       department_id: 'dept-ops',
       company_id: 'company-1',
       user_id: 'mgr-1',
@@ -119,7 +119,7 @@ describe('requestAISuggestService.suggestFixedOffDayGroup', () => {
     const result = await requestAISuggestService.suggestFixedOffDayGroup({
       requester_name: 'Manager One',
       requester_role: 'Manager',
-      request_dates: ['2026-07-13'],
+      requested_dates: ['2026-07-13'],
       department_id: 'dept-ops',
       company_id: 'company-1',
       user_id: 'mgr-1',
@@ -134,13 +134,13 @@ describe('requestAISuggestService.suggestFixedOffDayGroup', () => {
       { id: 'mgr-2', full_name: 'Manager Two' },
     ])
     mockOffDayRowsForWeek('2026-07-13', [
-      offDayRow({ user_id: 'mgr-2', request_date: '2026-07-13', status: 'approved' }),
+      offDayRow({ user_id: 'mgr-2', requested_date: '2026-07-13', status: 'approved' }),
     ])
 
     await requestAISuggestService.suggestFixedOffDayGroup({
       requester_name: 'Manager One',
       requester_role: 'Manager',
-      request_dates: ['2026-07-13'],
+      requested_dates: ['2026-07-13'],
       department_id: 'dept-ops',
       company_id: 'company-1',
       user_id: 'mgr-1',
@@ -161,7 +161,7 @@ describe('requestAISuggestService.suggestFixedOffDayGroup', () => {
     await requestAISuggestService.suggestFixedOffDayGroup({
       requester_name: 'Manager One',
       requester_role: 'Manager',
-      request_dates: ['2026-07-13', '2026-07-15'],
+      requested_dates: ['2026-07-13', '2026-07-15'],
       department_id: 'dept-ops',
       company_id: 'company-1',
       user_id: 'mgr-1',
@@ -179,13 +179,13 @@ describe('requestAISuggestService.suggestFixedOffDayGroup', () => {
       { id: 'mgr-2', full_name: 'Manager Two' },
     ])
     mockOffDayRowsForWeek('2026-07-13', [
-      offDayRow({ user_id: 'mgr-2', request_date: '2026-07-15', status: 'approved' }),
+      offDayRow({ user_id: 'mgr-2', requested_date: '2026-07-15', status: 'approved' }),
     ])
 
     await requestAISuggestService.suggestFixedOffDayGroup({
       requester_name: 'Manager One',
       requester_role: 'Manager',
-      request_dates: ['2026-07-13', '2026-07-15'],
+      requested_dates: ['2026-07-13', '2026-07-15'],
       department_id: 'dept-ops',
       company_id: 'company-1',
       user_id: 'mgr-1',
@@ -201,13 +201,13 @@ describe('requestAISuggestService.suggestFixedOffDayGroup', () => {
 
   it('excludes the requester\'s own other-date rows from "others already off" for a given date', async () => {
     mockOffDayRowsForWeek('2026-07-13', [
-      offDayRow({ user_id: 'mgr-1', request_date: '2026-07-14', status: 'pending' }),
+      offDayRow({ user_id: 'mgr-1', requested_date: '2026-07-14', status: 'pending' }),
     ])
 
     await requestAISuggestService.suggestFixedOffDayGroup({
       requester_name: 'Manager One',
       requester_role: 'Manager',
-      request_dates: ['2026-07-13'],
+      requested_dates: ['2026-07-13'],
       department_id: 'dept-ops',
       company_id: 'company-1',
       user_id: 'mgr-1',
@@ -223,13 +223,13 @@ describe('requestAISuggestService.suggestFixedOffDayGroup', () => {
       { id: 'mgr-2', full_name: 'Manager Two' },
     ])
     mockOffDayRowsForWeek('2026-07-13', [
-      offDayRow({ user_id: 'mgr-2', request_date: '2026-07-13', status: 'rejected' }),
+      offDayRow({ user_id: 'mgr-2', requested_date: '2026-07-13', status: 'rejected' }),
     ])
 
     await requestAISuggestService.suggestFixedOffDayGroup({
       requester_name: 'Manager One',
       requester_role: 'Manager',
-      request_dates: ['2026-07-13'],
+      requested_dates: ['2026-07-13'],
       department_id: 'dept-ops',
       company_id: 'company-1',
       user_id: 'mgr-1',
@@ -250,13 +250,13 @@ describe('requestAISuggestService.suggestFixedOffDayGroup', () => {
       { id: 'mgr-2', full_name: 'Manager Two' },
     ])
     mockOffDayRowsForWeek('2026-07-13', [
-      offDayRow({ user_id: 'mgr-2', request_date: '2026-07-13', status: 'pending' }),
+      offDayRow({ user_id: 'mgr-2', requested_date: '2026-07-13', status: 'pending' }),
     ])
 
     await requestAISuggestService.suggestFixedOffDayGroup({
       requester_name: 'Manager One',
       requester_role: 'Manager',
-      request_dates: ['2026-07-13'],
+      requested_dates: ['2026-07-13'],
       department_id: 'dept-ops',
       company_id: 'company-1',
       user_id: 'mgr-1',
@@ -274,13 +274,13 @@ describe('requestAISuggestService.suggestFixedOffDayGroup', () => {
     ])
     // Department is tight on 2026-07-14 (Tue) because mgr-2 is already off then.
     mockOffDayRowsForWeek('2026-07-13', [
-      offDayRow({ user_id: 'mgr-2', request_date: '2026-07-14', status: 'approved' }),
+      offDayRow({ user_id: 'mgr-2', requested_date: '2026-07-14', status: 'approved' }),
     ])
 
     await requestAISuggestService.suggestFixedOffDayGroup({
       requester_name: 'Manager One',
       requester_role: 'Manager',
-      request_dates: ['2026-07-13'],
+      requested_dates: ['2026-07-13'],
       department_id: 'dept-ops',
       company_id: 'company-1',
       user_id: 'mgr-1',
@@ -300,18 +300,18 @@ describe('requestAISuggestService.suggestFixedOffDayGroup', () => {
       { id: 'mgr-2', full_name: 'Manager Two' },
     ])
     mockOffDayRowsForWeek('2026-07-13', [
-      offDayRow({ user_id: 'mgr-2', request_date: '2026-07-14', status: 'approved' }),
-      offDayRow({ user_id: 'mgr-2', request_date: '2026-07-15', status: 'approved' }),
-      offDayRow({ user_id: 'mgr-2', request_date: '2026-07-16', status: 'approved' }),
-      offDayRow({ user_id: 'mgr-2', request_date: '2026-07-17', status: 'approved' }),
-      offDayRow({ user_id: 'mgr-2', request_date: '2026-07-18', status: 'approved' }),
-      offDayRow({ user_id: 'mgr-2', request_date: '2026-07-19', status: 'approved' }),
+      offDayRow({ user_id: 'mgr-2', requested_date: '2026-07-14', status: 'approved' }),
+      offDayRow({ user_id: 'mgr-2', requested_date: '2026-07-15', status: 'approved' }),
+      offDayRow({ user_id: 'mgr-2', requested_date: '2026-07-16', status: 'approved' }),
+      offDayRow({ user_id: 'mgr-2', requested_date: '2026-07-17', status: 'approved' }),
+      offDayRow({ user_id: 'mgr-2', requested_date: '2026-07-18', status: 'approved' }),
+      offDayRow({ user_id: 'mgr-2', requested_date: '2026-07-19', status: 'approved' }),
     ])
 
     await requestAISuggestService.suggestFixedOffDayGroup({
       requester_name: 'Manager One',
       requester_role: 'Manager',
-      request_dates: ['2026-07-13'],
+      requested_dates: ['2026-07-13'],
       department_id: 'dept-ops',
       company_id: 'company-1',
       user_id: 'mgr-1',
@@ -327,7 +327,7 @@ describe('requestAISuggestService.suggestFixedOffDayGroup', () => {
     await requestAISuggestService.suggestFixedOffDayGroup({
       requester_name: 'Employee One',
       requester_role: 'Employee',
-      request_dates: ['2026-07-13'],
+      requested_dates: ['2026-07-13'],
       department_id: null,
       company_id: 'company-1',
       user_id: 'emp-1',
@@ -342,19 +342,19 @@ describe('requestAISuggestService.suggestFixedOffDayGroup', () => {
 // Rows as the queue analysis receives them — FixedOffDayRequestView shape (base row + the
 // requester_name/requester_role/department_id the Owner view resolves).
 function queueRow(overrides: Partial<{
-  id: string; user_id: string; request_date: string; week_start: string; status: string
+  id: string; user_id: string; requested_date: string; requested_week: string; status: string
   created_at: string; requester_name: string; requester_role: string; department_id: string | null
 }> = {}) {
   return {
     id: `row-${Math.random()}`,
     company_id: 'company-1',
-    week_start: '2026-07-13',
+    requested_week: '2026-07-13',
     source: 'submitted',
     reviewed_by: null,
     reviewed_at: null,
     created_at: '2026-07-08T01:00:00Z',
     user_id: 'mgr-1',
-    request_date: '2026-07-13',
+    requested_date: '2026-07-13',
     status: 'pending',
     requester_name: 'Manager One',
     requester_role: 'Manager',
@@ -383,8 +383,8 @@ describe('requestAISuggestService.suggestFixedOffDayQueue', () => {
     const result = await requestAISuggestService.suggestFixedOffDayQueue({
       company_id: 'company-1',
       rows: [
-        queueRow({ user_id: 'mgr-1', requester_name: 'Manager One', request_date: '2026-07-14', created_at: '2026-07-08T01:00:00Z' }),
-        queueRow({ user_id: 'mgr-2', requester_name: 'Manager Two', request_date: '2026-07-14', created_at: '2026-07-08T02:00:00Z' }),
+        queueRow({ user_id: 'mgr-1', requester_name: 'Manager One', requested_date: '2026-07-14', created_at: '2026-07-08T01:00:00Z' }),
+        queueRow({ user_id: 'mgr-2', requester_name: 'Manager Two', requested_date: '2026-07-14', created_at: '2026-07-08T02:00:00Z' }),
       ],
     })
 
@@ -406,8 +406,8 @@ describe('requestAISuggestService.suggestFixedOffDayQueue', () => {
     const result = await requestAISuggestService.suggestFixedOffDayQueue({
       company_id: 'company-1',
       rows: [
-        queueRow({ user_id: 'mgr-1', request_date: '2026-07-14', created_at: '2026-07-08T02:00:00Z' }),
-        queueRow({ user_id: 'mgr-2', requester_name: 'Manager Two', request_date: '2026-07-14', created_at: '2026-07-08T01:00:00Z' }),
+        queueRow({ user_id: 'mgr-1', requested_date: '2026-07-14', created_at: '2026-07-08T02:00:00Z' }),
+        queueRow({ user_id: 'mgr-2', requester_name: 'Manager Two', requested_date: '2026-07-14', created_at: '2026-07-08T01:00:00Z' }),
       ],
     })
 
@@ -424,10 +424,10 @@ describe('requestAISuggestService.suggestFixedOffDayQueue', () => {
     const result = await requestAISuggestService.suggestFixedOffDayQueue({
       company_id: 'company-1',
       rows: [
-        queueRow({ id: 'a1', user_id: 'mgr-1', request_date: '2026-07-14', created_at: '2026-07-08T01:00:00Z' }),
-        queueRow({ id: 'b1', user_id: 'mgr-2', requester_name: 'Manager Two', request_date: '2026-07-14', created_at: '2026-07-08T02:00:00Z' }),
-        queueRow({ id: 'b2', user_id: 'mgr-2', requester_name: 'Manager Two', request_date: '2026-07-15', created_at: '2026-07-08T02:00:00Z' }),
-        queueRow({ id: 'c1', user_id: 'emp-1', requester_name: 'Employee One', requester_role: 'Employee', request_date: '2026-07-15', created_at: '2026-07-08T03:00:00Z' }),
+        queueRow({ id: 'a1', user_id: 'mgr-1', requested_date: '2026-07-14', created_at: '2026-07-08T01:00:00Z' }),
+        queueRow({ id: 'b1', user_id: 'mgr-2', requester_name: 'Manager Two', requested_date: '2026-07-14', created_at: '2026-07-08T02:00:00Z' }),
+        queueRow({ id: 'b2', user_id: 'mgr-2', requester_name: 'Manager Two', requested_date: '2026-07-15', created_at: '2026-07-08T02:00:00Z' }),
+        queueRow({ id: 'c1', user_id: 'emp-1', requester_name: 'Employee One', requester_role: 'Employee', requested_date: '2026-07-15', created_at: '2026-07-08T03:00:00Z' }),
       ],
     })
 
@@ -446,8 +446,8 @@ describe('requestAISuggestService.suggestFixedOffDayQueue', () => {
     const result = await requestAISuggestService.suggestFixedOffDayQueue({
       company_id: 'company-1',
       rows: [
-        queueRow({ user_id: 'mgr-2', request_date: '2026-07-14', status: 'approved' }),
-        queueRow({ user_id: 'mgr-1', request_date: '2026-07-14', created_at: '2026-07-08T01:00:00Z' }),
+        queueRow({ user_id: 'mgr-2', requested_date: '2026-07-14', status: 'approved' }),
+        queueRow({ user_id: 'mgr-1', requested_date: '2026-07-14', created_at: '2026-07-08T01:00:00Z' }),
       ],
     })
 

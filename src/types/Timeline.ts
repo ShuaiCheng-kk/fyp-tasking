@@ -4,8 +4,6 @@ export interface TimelineShiftBlock {
   shift_date: string
   start_time: string
   end_time: string
-  title: string | null
-  instruction: string | null
   department_id: string
   department_name: string
   status: string
@@ -14,7 +12,6 @@ export interface TimelineShiftBlock {
   recurrence_rule: 'daily' | 'weekly' | 'custom' | null
   source_shift_id: string | null
   split_group_id: string | null
-  assignment_status: string | null
   template_id: string | null
   // Casual Worker one-off/shift jobs only — the Employee who supervises this specific shift
   // block, used to scope an Employee viewer's Shifts page to just the CWs they supervise.

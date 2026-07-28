@@ -50,11 +50,6 @@ export const taskService = {
       throw new Error('A task must be assigned to a user')
     }
     await validateTaskAssignment(input)
-    if (input.percentage_complete !== undefined) {
-      if (input.percentage_complete < 0 || input.percentage_complete > 100) {
-        throw new Error('percentage_complete must be between 0 and 100')
-      }
-    }
     // Adding a sub-task to an existing task is an operation on that task, so only the
     // person who originally assigned the parent may add to it.
     if (input.parent_task_id) {
@@ -96,7 +91,6 @@ export const taskService = {
         assigned_user_id: subTasks[i].assigned_user_id ?? mainTask.assigned_user_id,
         assigned_by: mainTask.assigned_by,
         status: 'Assigned',
-        percentage_complete: 0,
         task_date: mainTask.task_date,
         priority: mainTask.priority,
         due_at: subTasks[i].due_at ?? mainTask.due_at,
@@ -130,11 +124,6 @@ export const taskService = {
     await validateTaskAssignment(mergedInput)
     if (input.status && !VALID_STATUSES.includes(input.status as typeof VALID_STATUSES[number])) {
       throw new Error(`status must be one of: ${VALID_STATUSES.join(', ')}`)
-    }
-    if (input.percentage_complete !== undefined) {
-      if (input.percentage_complete < 0 || input.percentage_complete > 100) {
-        throw new Error('percentage_complete must be between 0 and 100')
-      }
     }
     const updated = await taskRepository.updateTask(id, input, actingUserId)
     // A new deadline is a new delay window — un-dismiss the Task Delay Alert for every viewer
@@ -210,7 +199,6 @@ export const taskService = {
       description: original.description,
       assigned_user_id: original.assigned_user_id,
       status: 'Assigned',
-      percentage_complete: 0,
       priority: original.priority,
       due_at: original.due_at,
       task_date: original.task_date,
@@ -230,7 +218,6 @@ export const taskService = {
         assigned_user_id: subTask.assigned_user_id,
         assigned_by: assigned_by ?? subTask.assigned_by,
         status: 'Assigned',
-        percentage_complete: 0,
         priority: subTask.priority,
         due_at: subTask.due_at,
         task_date: subTask.task_date,
@@ -321,7 +308,6 @@ export const taskService = {
         assigned_user_id: occurrenceAssigneeId,
         assigned_by: input.assigned_by ?? original.assigned_by,
         status: 'Assigned',
-        percentage_complete: 0,
         priority: original.priority,
         due_at,
         task_date: nextDate,
@@ -343,7 +329,6 @@ export const taskService = {
           assigned_user_id: occurrenceAssigneeId,
           assigned_by: input.assigned_by ?? subTask.assigned_by,
           status: 'Assigned',
-          percentage_complete: 0,
           priority: subTask.priority,
           due_at: subTask.due_at ? moveIsoDate(subTask.due_at, nextDate) : null,
           task_date: subTask.task_date ? nextDate : null,
@@ -431,13 +416,9 @@ export const taskService = {
   async updateTaskStatus(
     id: string,
     status: Task['status'],
-    percentage_complete: number,
   ): Promise<Task> {
     if (!VALID_STATUSES.includes(status)) {
       throw new Error(`status must be one of: ${VALID_STATUSES.join(', ')}`)
-    }
-    if (percentage_complete < 0 || percentage_complete > 100) {
-      throw new Error('percentage_complete must be between 0 and 100')
     }
     // Review is the assigner's checkpoint: once the assignee submits work there, the only ways
     // out are approveTask (→ Complete) or rejectTask (→ In Progress with a reason). The drag
@@ -449,7 +430,7 @@ export const taskService = {
     if (status === 'Complete') {
       throw new Error('Tasks reach Complete only when the user who assigned them approves the review')
     }
-    return taskRepository.updateTask(id, { status, percentage_complete })
+    return taskRepository.updateTask(id, { status })
   },
 
   // Sign-off on a task the assignee submitted for Review — the only way a task reaches Complete.
@@ -463,13 +444,12 @@ export const taskService = {
     if (task.status !== 'Review') throw new Error('Only tasks in Review can be approved')
     const updated = await taskRepository.updateTask(id, {
       status: 'Complete',
-      percentage_complete: 100,
       rejection_reason: null,
       rejected_at: null,
       completed_at: new Date().toISOString(),
       reviewed_by: actingUserId,
     })
-    await taskRepository.updateSubTasksByParent(id, { status: 'Complete', percentage_complete: 100 })
+    await taskRepository.updateSubTasksByParent(id, { status: 'Complete' })
     return updated
   },
 
@@ -483,11 +463,10 @@ export const taskService = {
     if (task.status !== 'Review') throw new Error('Only tasks in Review can be rejected')
     const updated = await taskRepository.updateTask(id, {
       status: 'In Progress',
-      percentage_complete: 33,
       rejection_reason: reason.trim(),
       rejected_at: new Date().toISOString(),
     })
-    await taskRepository.updateSubTasksByParent(id, { status: 'In Progress', percentage_complete: 33 })
+    await taskRepository.updateSubTasksByParent(id, { status: 'In Progress' })
     return updated
   },
 
@@ -522,8 +501,8 @@ export const taskService = {
     const allComplete = ordered.every((t, i) => i === index ? true : t.is_completed)
     if (!allComplete) return [updatedSubTask, parent]
 
-    const updatedParent = await taskRepository.updateTask(parent.id, { status: 'Review', percentage_complete: 66 })
-    await taskRepository.updateSubTasksByParent(parent.id, { status: 'Review', percentage_complete: 66 })
+    const updatedParent = await taskRepository.updateTask(parent.id, { status: 'Review' })
+    await taskRepository.updateSubTasksByParent(parent.id, { status: 'Review' })
     return [updatedSubTask, updatedParent]
   },
 

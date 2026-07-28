@@ -24,8 +24,6 @@ export const shiftRepository = {
         shift_date: input.shift_date,
         start_time: input.start_time,
         end_time: input.end_time,
-        title: input.title ?? null,
-        instruction: input.instruction ?? null,
         created_by: input.created_by,
         publication_status: input.publication_status ?? 'draft',
         recurrence_group_id: input.recurrence_group_id ?? null,
@@ -35,6 +33,7 @@ export const shiftRepository = {
         template_id: input.template_id ?? null,
         source_job_posting_id: input.source_job_posting_id ?? null,
         is_open_ended: input.is_open_ended ?? false,
+        hourly_rate: input.hourly_rate ?? null,
       })
       .select()
       .single()
@@ -179,7 +178,7 @@ export const shiftRepository = {
 
   async updateShift(
     id: string,
-    fields: Partial<Omit<Shift, 'id' | 'company_id' | 'created_by' | 'created_at'>>,
+    fields: Partial<Omit<Shift, 'id' | 'company_id' | 'created_by'>>,
   ): Promise<Shift> {
     const { data, error } = await supabase
       .from('shifts')

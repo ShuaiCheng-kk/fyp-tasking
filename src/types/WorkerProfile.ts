@@ -2,7 +2,7 @@ export interface WorkerCertificate {
   id: string
   user_id: string
   name: string
-  file_url: string | null
+  certificate_url: string | null
   created_at: string
 }
 
@@ -10,9 +10,9 @@ export interface WorkerProfile {
   id: string
   full_name: string
   email_address: string
-  phone_number: string | null
-  date_of_birth: string | null
-  profile_photo_url: string | null
+  phone_number: string
+  date_of_birth: string
+  profile_photo_url: string
   role: string
   supabase_auth_id: string
   skills: string | null

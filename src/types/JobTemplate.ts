@@ -1,17 +1,15 @@
 export interface JobTemplate {
   id: string
   company_id: string
-  name: string
   title: string
-  description: string | null
-  requirements: string | null
-  employment_type: string | null
-  form_type: string | null
+  responsibilities: string | null
+  skills: string | null
+  job_type: string | null
   department_id: string | null
   salary_amount: number | null
-  salary_type: string | null
-  uniform_required: boolean
-  uniform_type: string | null
+  // 'company' = employer provides uniform. 'dress_code' = no uniform, but a specific dress code
+  // applies (see uniform_details). 'none' = no requirement.
+  uniform_type: string
   uniform_details: string | null
   experience_required: string | null
   minimum_age: number | null
@@ -24,17 +22,13 @@ export interface JobTemplate {
 
 export interface JobTemplateInput {
   company_id: string
-  name: string
   title: string
-  description?: string | null
-  requirements?: string | null
-  employment_type?: string | null
-  form_type?: string | null
+  responsibilities?: string | null
+  skills?: string | null
+  job_type?: string | null
   department_id?: string | null
   salary_amount?: number | null
-  salary_type?: string | null
-  uniform_required?: boolean
-  uniform_type?: string | null
+  uniform_type?: string
   uniform_details?: string | null
   experience_required?: string | null
   minimum_age?: number | null
@@ -51,17 +45,13 @@ export interface JobTemplateUsageStats {
 }
 
 export interface JobTemplateUpdateInput {
-  name?: string
   title?: string
-  description?: string | null
-  requirements?: string | null
-  employment_type?: string | null
-  form_type?: string | null
+  responsibilities?: string | null
+  skills?: string | null
+  job_type?: string | null
   department_id?: string | null
   salary_amount?: number | null
-  salary_type?: string | null
-  uniform_required?: boolean
-  uniform_type?: string | null
+  uniform_type?: string
   uniform_details?: string | null
   experience_required?: string | null
   minimum_age?: number | null

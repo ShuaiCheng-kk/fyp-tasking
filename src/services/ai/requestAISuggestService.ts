@@ -8,21 +8,21 @@ import { MIN_MANAGERS_PER_DAY, MIN_EMPLOYEES_PER_DAY, weekStart } from '@/lib/sc
 import { FixedOffDayRequestView } from '@/types/Attendance'
 
 // One pending weekly submission's verdict inside a whole-queue analysis. `key` matches the
-// frontend's group key convention (`${user_id}_${week_start}`, see groupFixedOff) so results can
+// frontend's group key convention (`${user_id}_${requested_week}`, see groupFixedOff) so results can
 // be mapped straight back onto the Requests-queue cards.
 export interface FixedOffDayQueueItemVerdict {
   key: string
   user_id: string
   requester_name: string
-  week_start: string
+  requested_week: string
   ids: string[]
-  request_dates: string[]
+  requested_dates: string[]
   verdict: 'safe' | 'flagged'
   problem_dates: string[]
   problem_reasons: Record<string, string>
   // The recommended full replacement day set: safe requested days kept as-is, each flagged day
   // swapped for the next staffing-safe day (same week first, then the following week). For a safe
-  // item this is simply request_dates. Pre-seeds the Owner's Modify picker.
+  // item this is simply requested_dates. Pre-seeds the Owner's Modify picker.
   suggested_dates: string[]
 }
 
@@ -38,7 +38,7 @@ export interface RequestAISuggestion {
   reason: string
   concerns: string[]
   alternatives: string[]
-  // Which of the requester's OWN request_dates actually need a replacement — the rest of the group
+  // Which of the requester's OWN requested_dates actually need a replacement — the rest of the group
   // is staffing-safe as requested and should just be approved as-is, not forced into a swap too.
   problem_dates: string[]
   // The specific reason for each date in problem_dates, keyed by date — shown under that date's own
@@ -92,18 +92,18 @@ export const requestAISuggestService = {
   async suggestFixedOffDayGroup(request: {
     requester_name: string
     requester_role: string
-    request_dates: string[]
+    requested_dates: string[]
     department_id: string | null
     company_id: string
     user_id: string
   }): Promise<RequestAISuggestion> {
     const role: 'Manager' | 'Employee' = request.requester_role === 'Manager' ? 'Manager' : 'Employee'
     const departmentId = request.department_id
-    const weekStarts = [...new Set(request.request_dates.map(weekStart))]
+    const weekStarts = [...new Set(request.requested_dates.map(weekStart))]
     // Fallback weeks — only actually offered as alternatives when the requested week itself has no
     // safe day left (see safeAlternativeDates below), e.g. the whole week is short-staffed already.
     const nextWeekStarts = weekStarts.map(ws => addDaysToDateKey(ws, 7))
-    const requestedSet = new Set(request.request_dates)
+    const requestedSet = new Set(request.requested_dates)
     const sameWeekDates = [...new Set(weekStarts.flatMap(ws => Array.from({ length: 7 }, (_, i) => addDaysToDateKey(ws, i))))]
     const nextWeekDates = [...new Set(nextWeekStarts.flatMap(ws => Array.from({ length: 7 }, (_, i) => addDaysToDateKey(ws, i))))]
 
@@ -136,7 +136,7 @@ export const requestAISuggestService = {
       let managers = 0
       let employees = 0
       for (const row of weekRows) {
-        if (row.request_date !== date || row.user_id === request.user_id) continue
+        if (row.requested_date !== date || row.user_id === request.user_id) continue
         if (row.status !== 'approved' && row.status !== 'modified') continue
         if (deptManagerIds.has(row.user_id)) managers++
         else if (deptEmployeeIds.has(row.user_id)) employees++
@@ -159,7 +159,7 @@ export const requestAISuggestService = {
       return c.managerShort || c.employeeShort
     }
 
-    const perDate = request.request_dates.map(date => {
+    const perDate = request.requested_dates.map(date => {
       const c = staffingCheck(date)
       return {
         date,
@@ -185,12 +185,12 @@ export const requestAISuggestService = {
       for (const date of sameWeekDates) {
         if (requestedSet.has(date)) continue
         if (!wouldBeUnderstaffed(date)) safeAlternativeDates.push(date)
-        if (safeAlternativeDates.length >= request.request_dates.length) break
+        if (safeAlternativeDates.length >= request.requested_dates.length) break
       }
-      if (safeAlternativeDates.length < request.request_dates.length) {
+      if (safeAlternativeDates.length < request.requested_dates.length) {
         for (const date of nextWeekDates) {
           if (!wouldBeUnderstaffed(date)) safeAlternativeDates.push(date)
-          if (safeAlternativeDates.length >= request.request_dates.length) break
+          if (safeAlternativeDates.length >= request.requested_dates.length) break
         }
       }
     }
@@ -273,23 +273,23 @@ export const requestAISuggestService = {
       requester_name: string
       requester_role: string
       department_id: string | null
-      week_start: string
+      requested_week: string
       created_at: string
       ids: string[]
-      request_dates: string[]
+      requested_dates: string[]
     }>()
     for (const row of pendingRows) {
-      const key = `${row.user_id}_${row.week_start}`
+      const key = `${row.user_id}_${row.requested_week}`
       const existing = groups.get(key)
       if (existing) {
         existing.ids.push(row.id)
-        existing.request_dates.push(row.request_date)
+        existing.requested_dates.push(row.requested_date)
         if (new Date(row.created_at ?? 0).getTime() < new Date(existing.created_at ?? 0).getTime()) existing.created_at = row.created_at
       } else {
         groups.set(key, {
           key, user_id: row.user_id, requester_name: row.requester_name, requester_role: row.requester_role,
-          department_id: row.department_id, week_start: row.week_start, created_at: row.created_at,
-          ids: [row.id], request_dates: [row.request_date],
+          department_id: row.department_id, requested_week: row.requested_week, created_at: row.created_at,
+          ids: [row.id], requested_dates: [row.requested_date],
         })
       }
     }
@@ -319,7 +319,7 @@ export const requestAISuggestService = {
       let employees = 0
       if (!roster) return { managers, employees }
       for (const row of decidedRows) {
-        if (row.request_date !== date || row.user_id === selfId) continue
+        if (row.requested_date !== date || row.user_id === selfId) continue
         if (roster.managerIds.has(row.user_id)) managers++
         else if (roster.employeeIds.has(row.user_id)) employees++
       }
@@ -347,34 +347,34 @@ export const requestAISuggestService = {
         const flags = staffingFlags(date)
         return flags.managerShort || flags.employeeShort
       }
-      const perDate = group.request_dates.map(date => ({ date, ...staffingFlags(date) }))
+      const perDate = group.requested_dates.map(date => ({ date, ...staffingFlags(date) }))
       const problems = perDate.filter(d => d.managerShort || d.employeeShort)
       if (problems.length === 0) {
         if (departmentId) {
-          for (const date of group.request_dates) {
+          for (const date of group.requested_dates) {
             simulated.push({ department_id: departmentId, date, user_id: group.user_id, isManager: role === 'Manager' })
           }
         }
         items.push({
           key: group.key, user_id: group.user_id, requester_name: group.requester_name,
-          week_start: group.week_start, ids: group.ids, request_dates: group.request_dates,
+          requested_week: group.requested_week, ids: group.ids, requested_dates: group.requested_dates,
           verdict: 'safe', problem_dates: [], problem_reasons: {},
-          suggested_dates: group.request_dates,
+          suggested_dates: group.requested_dates,
         })
       } else {
         // Recommended replacement set: keep the safe requested days, and swap each flagged day
         // for the next staffing-safe day — same week first, spilling into the following week.
         const problemDates = problems.map(p => p.date)
-        const suggested = group.request_dates.filter(d => !problemDates.includes(d))
-        const candidateDates = Array.from({ length: 14 }, (_, i) => addDaysToDateKey(group.week_start, i))
+        const suggested = group.requested_dates.filter(d => !problemDates.includes(d))
+        const candidateDates = Array.from({ length: 14 }, (_, i) => addDaysToDateKey(group.requested_week, i))
         for (let n = 0; n < problemDates.length; n++) {
           const pick = candidateDates.find(date =>
-            !group.request_dates.includes(date) && !suggested.includes(date) && !wouldBeUnderstaffed(date))
+            !group.requested_dates.includes(date) && !suggested.includes(date) && !wouldBeUnderstaffed(date))
           if (pick) suggested.push(pick)
         }
         items.push({
           key: group.key, user_id: group.user_id, requester_name: group.requester_name,
-          week_start: group.week_start, ids: group.ids, request_dates: group.request_dates,
+          requested_week: group.requested_week, ids: group.ids, requested_dates: group.requested_dates,
           verdict: 'flagged',
           problem_dates: problemDates,
           problem_reasons: Object.fromEntries(problems.map(p => [p.date, buildDateReason(p)])),

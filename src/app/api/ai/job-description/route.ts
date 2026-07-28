@@ -24,7 +24,6 @@ export async function POST(req: NextRequest) {
       company_name: (b.company_name as string | null) ?? null,
       department_name: (b.department_name as string | null) ?? null,
       location: (b.location as string | null) ?? null,
-      employment_type: (b.employment_type as string | null) ?? null,
       pay: (b.pay as string | null) ?? null,
       notes: (b.notes as string | null) ?? null,
     })

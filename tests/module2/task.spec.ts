@@ -52,7 +52,7 @@ async function createManager(label: string): Promise<SeededMember> {
 
   const { error: managerDeptError } = await admin
     .from('manager_departments')
-    .insert({ manager_id: user.id, company_id: seeded.companyId, department_id: departmentId, assigned_by: seeded.ownerId })
+    .insert({ manager_id: user.id, company_id: seeded.companyId, department_id: departmentId })
   if (managerDeptError) throw new Error(`Failed to assign manager department: ${managerDeptError.message}`)
 
   return { authUserId: authData.user.id, userId: user.id as string }
@@ -251,12 +251,11 @@ test('UC13 edits a task', async ({ request }) => {
       id: taskId,
       assigned_by: seeded.ownerId,
       title: 'Prep closing checklist',
-      percentage_complete: 25,
     },
   })
   expect(res.status()).toBe(200)
   const body = await res.json()
-  expect(body.task).toMatchObject({ id: taskId, title: 'Prep closing checklist', percentage_complete: 25 })
+  expect(body.task).toMatchObject({ id: taskId, title: 'Prep closing checklist' })
 })
 
 test('UC16 duplicates a task', async ({ request }) => {
@@ -265,7 +264,7 @@ test('UC16 duplicates a task', async ({ request }) => {
   })
   expect(res.status()).toBe(201)
   const body = await res.json()
-  expect(body.task).toMatchObject({ title: 'Prep closing checklist (copy)', status: 'Assigned', percentage_complete: 0 })
+  expect(body.task).toMatchObject({ title: 'Prep closing checklist (copy)', status: 'Assigned' })
 })
 
 test('UC17 creates recurring task copies', async ({ request }) => {
@@ -894,7 +893,7 @@ test('completes sub-tasks in order while In Progress, and auto-promotes the pare
   expect(tooEarly.status()).toBe(400)
 
   const moveToInProgress = await request.patch('/api/task', {
-    data: { id: parent.id, status: 'In Progress', percentage_complete: 33 },
+    data: { id: parent.id, status: 'In Progress' },
   })
   expect(moveToInProgress.status()).toBe(200)
 
@@ -994,14 +993,14 @@ test('review flow: work submitted to Review can only leave via the assigner\'s A
   const task = await createTask(request, { title: 'Review flow task', shift_id: null })
 
   // Assignee works the task forward: Assigned -> In Progress -> Review (the drag path).
-  for (const step of [{ status: 'In Progress', percentage_complete: 33 }, { status: 'Review', percentage_complete: 66 }]) {
+  for (const step of [{ status: 'In Progress' }, { status: 'Review' }]) {
     const res = await request.patch('/api/task', { data: { id: task.id, ...step } })
     expect(res.status()).toBe(200)
   }
 
   // Once in Review the drag path is locked — no plain status move can touch it.
   const dragOutOfReview = await request.patch('/api/task', {
-    data: { id: task.id, status: 'Complete', percentage_complete: 100 },
+    data: { id: task.id, status: 'Complete' },
   })
   expect(dragOutOfReview.status()).toBe(400)
 
@@ -1032,7 +1031,7 @@ test('review flow: work submitted to Review can only leave via the assigner\'s A
   // Assignee re-submits, and only the assigner may approve — approval completes the task
   // and clears the old rejection reason.
   const resubmit = await request.patch('/api/task', {
-    data: { id: task.id, status: 'Review', percentage_complete: 66 },
+    data: { id: task.id, status: 'Review' },
   })
   expect(resubmit.status()).toBe(200)
   const approveWrongUser = await request.patch('/api/task', {
@@ -1044,7 +1043,7 @@ test('review flow: work submitted to Review can only leave via the assigner\'s A
   })
   expect(approveRes.status()).toBe(200)
   const approveBody = await approveRes.json()
-  expect(approveBody.task).toMatchObject({ status: 'Complete', percentage_complete: 100, rejection_reason: null })
+  expect(approveBody.task).toMatchObject({ status: 'Complete', rejection_reason: null })
   // Approval stamps the Completed Time shown in the task's Details.
   expect(approveBody.task.completed_at).toEqual(expect.any(String))
 

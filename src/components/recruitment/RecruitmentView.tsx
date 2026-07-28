@@ -94,22 +94,23 @@ const fmt12Time = (t: string) => {
 // shows the total (the Owner is deciding budget), while Active/Closed/Archived pass false —
 // their detail body is a preview of the public Job Board post, which only shows the plain rate.
 function buildPayLabel(p: {
-  is_recurring: boolean
+  job_type: string | null
   salary_amount: number | null
-  shift_start_time: string | null
-  shift_end_time: string | null
+  job_start_time: string | null
+  job_end_time: string | null
   break_start_time: string | null
   break_end_time: string | null
   openings: number | null
 }, withTotal: boolean = true): string | null {
   if (p.salary_amount == null) return null
-  if (!withTotal) return p.is_recurring ? `$${p.salary_amount}/hr` : `$${p.salary_amount} flat rate`
+  const isShift = p.job_type === 'shift'
+  if (!withTotal) return isShift ? `$${p.salary_amount}/hr` : `$${p.salary_amount} flat rate`
   const positions = Math.max(1, p.openings ?? 1)
   const fmtAmt = (n: number) => (n % 1 === 0 ? n.toFixed(0) : n.toFixed(2))
-  if (p.is_recurring) {
-    if (!p.shift_start_time || !p.shift_end_time) return `$${p.salary_amount}/hr`
+  if (isShift) {
+    if (!p.job_start_time || !p.job_end_time) return `$${p.salary_amount}/hr`
     const toMins = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + m }
-    let worked = toMins(p.shift_end_time) - toMins(p.shift_start_time)
+    let worked = toMins(p.job_end_time) - toMins(p.job_start_time)
     if (p.break_start_time && p.break_end_time) worked -= (toMins(p.break_end_time) - toMins(p.break_start_time))
     if (worked <= 0) return `$${p.salary_amount}/hr`
     const perPerson = Math.round(p.salary_amount * (worked / 60) * 100) / 100
@@ -278,7 +279,7 @@ function ApplicantCard({ applicant, actions, onOpenDetail, children, dateLabel =
 // Full applicant profile in a modal — opened from the compact card's avatar. Certificate and
 // resume names are links the Owner clicks to open the uploaded file.
 function ApplicantDetailModal({ applicant, onClose }: { applicant: JobApplicant; onClose: () => void }) {
-  const certs = applicant.certificates_snapshot ?? []
+  const certs = applicant.certificates ?? []
   const rowLabel: React.CSSProperties = { ...modalLabelStyle, margin: '0 0 4px' }
   const rowValue: React.CSSProperties = { margin: 0, fontSize: '0.9rem', color: '#111827', lineHeight: 1.5 }
   // Same size/weight as the plain text rows — just orange + underlined to signal "clickable".
@@ -305,7 +306,7 @@ function ApplicantDetailModal({ applicant, onClose }: { applicant: JobApplicant;
           </div>
           <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 14 }}>
             <p style={rowLabel}>Skills</p>
-            <p style={rowValue}>{applicant.skills_snapshot || '—'}</p>
+            <p style={rowValue}>{applicant.skills || '—'}</p>
           </div>
           {certs.length > 0 && (
             <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 14 }}>
@@ -319,10 +320,10 @@ function ApplicantDetailModal({ applicant, onClose }: { applicant: JobApplicant;
               </div>
             </div>
           )}
-          {applicant.resume_url && (
+          {applicant.resume && (
             <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 14 }}>
               <p style={rowLabel}>Resume</p>
-              <a href={applicant.resume_url} target="_blank" rel="noreferrer" style={linkStyle}>View Resume</a>
+              <a href={applicant.resume} target="_blank" rel="noreferrer" style={linkStyle}>View Resume</a>
             </div>
           )}
           {applicant.additional_note && (
@@ -370,12 +371,9 @@ const UNIFORM_TYPE_OPTIONS = [
   { value: 'dress_code', label: 'Specific Dress Code' },
 ]
 type UniformType = 'none' | 'company' | 'dress_code'
-// Legacy rows predate uniform_type: uniform_required=true was company-provided attire. A row with
-// neither set (uniform_type null, uniform_required false) has genuinely never had uniform chosen —
-// that must stay '' (unset), not silently become 'none' ("Not Required" is an explicit choice).
-function uniformTypeOf(row: { uniform_type?: string | null; uniform_required?: boolean | null }): UniformType | '' {
+function uniformTypeOf(row: { uniform_type?: string | null }): UniformType | '' {
   if (row.uniform_type === 'company' || row.uniform_type === 'dress_code' || row.uniform_type === 'none') return row.uniform_type
-  return row.uniform_required ? 'company' : ''
+  return ''
 }
 
 // Local calendar-date key (not UTC) — used to hydrate the deadline date input from a stored
@@ -896,19 +894,16 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
   const [formTemplateId, setFormTemplateId] = useState('')
   const [formTitle, setFormTitle] = useState('')
   const [formDeptId, setFormDeptId] = useState('')
-  const [formEmpType, setFormEmpType] = useState('casual')
-  const [formLocation, setFormLocation] = useState('')
   const [formSalaryAmt, setFormSalaryAmt] = useState('')
   const [formSalaryType, setFormSalaryType] = useState('per hour')
-  const [formDescription, setFormDescription] = useState('')
-  const [formRequirements, setFormRequirements] = useState('')
+  const [formResponsibilities, setFormResponsibilities] = useState('')
+  const [formSkills, setFormSkills] = useState('')
   const [formExperienceRequired, setFormExperienceRequired] = useState('')
   const [formMinimumAge, setFormMinimumAge] = useState('')
   // '' = not chosen yet — the Uniform dropdown must be an explicit choice, never defaulted
   const [formUniformType, setFormUniformType] = useState<UniformType | ''>('')
   const [formUniformDetails, setFormUniformDetails] = useState('')
   const [formIndustry, setFormIndustry] = useState('')
-  const [formCompanyName, setFormCompanyName] = useState('')
   const [formBenefits, setFormBenefits] = useState('')
   const [formOpenings, setFormOpenings] = useState('')
   // Deadline is a mandatory choice: '' = not chosen yet, 'never' = open until filled, 'date' = expires at a set date/time
@@ -916,29 +911,28 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
   const [formExpiresAt, setFormExpiresAt] = useState('')
   const [formDeadlineTime, setFormDeadlineTime] = useState('23:59')
   // shift-specific
-  const [formShiftStart, setFormShiftStart] = useState('09:00')
-  const [formShiftEnd, setFormShiftEnd] = useState('17:00')
+  const [formJobStart, setFormJobStart] = useState('09:00')
+  const [formJobEnd, setFormJobEnd] = useState('17:00')
   const [formBreakStart, setFormBreakStart] = useState('12:00')
   const [formBreakEnd, setFormBreakEnd] = useState('13:00')
   const [formShiftDays, setFormShiftDays] = useState<string[]>([])
   const [formIsRecurring, setFormIsRecurring] = useState(false)
   const [formRecurInterval, setFormRecurInterval] = useState(1)
   const [formRecurUnit, setFormRecurUnit] = useState('week')
-  const [formShiftDate, setFormShiftDate] = useState('')
+  const [formJobDate, setFormJobDate] = useState('')
   const [formAssignedEmployeeId, setFormAssignedEmployeeId] = useState('')
   // shift cascade data
   const [shiftDeptEmployees, setShiftDeptEmployees] = useState<{ id: string; full_name: string; shift_start: string; shift_end: string }[]>([])
   const [shiftAvailableDates, setShiftAvailableDates] = useState<{ date: string; start_time: string; end_time: string }[]>([])
   const [shiftDateEmployees, setShiftDateEmployees] = useState<{ id: string; full_name: string; shift_start: string; shift_end: string }[]>([])
   // oneoff-specific
-  const [formJobDate, setFormJobDate] = useState('')
   const [formJobEndDate, setFormJobEndDate] = useState('')
   const [formJobStartTime, setFormJobStartTime] = useState('09:00')
   const [formEstHours, setFormEstHours] = useState('')
   const [formUrgency, setFormUrgency] = useState('normal')
   // AI builder
   const [aiPrompt, setAiPrompt] = useState('')
-  const [aiPreview, setAiPreview] = useState<null | { title: string; description: string; requirements: string }>(null)
+  const [aiPreview, setAiPreview] = useState<null | { title: string; responsibilities: string; skills: string }>(null)
   const [formError, setFormError] = useState('')
 
   // job templates (UC36)
@@ -964,10 +958,10 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
   // Save as Template shows a saved state instead of creating a duplicate.
   const [savedTplSnapshot, setSavedTplSnapshot] = useState('')
   const [newTemplateModalOpen, setNewTemplateModalOpen] = useState(false)
-  const [tplFormType, setTplFormType] = useState<'shift' | 'oneoff' | ''>('')
+  const [tplJobType, setTplJobType] = useState<'shift' | 'oneoff' | ''>('')
   const [tplTitle, setTplTitle] = useState('')
-  const [tplDescription, setTplDescription] = useState('')
-  const [tplRequirements, setTplRequirements] = useState('')
+  const [tplResponsibilities, setTplResponsibilities] = useState('')
+  const [tplSkills, setTplSkills] = useState('')
   const [tplUniformType, setTplUniformType] = useState<UniformType | ''>('')
   const [tplUniformDetails, setTplUniformDetails] = useState('')
   const [tplUsage, setTplUsage] = useState<JobTemplateUsageStats | null>(null)
@@ -983,10 +977,10 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
   // the Edit Template panel) so opening "New Template" while a template is being edited can't
   // clobber the in-progress edit sitting behind the modal.
   const [ntplStep, setNtplStep] = useState<1 | 2>(1)
-  const [ntplFormType, setNtplFormType] = useState<'shift' | 'oneoff' | ''>('')
+  const [ntplJobType, setNtplJobType] = useState<'shift' | 'oneoff' | ''>('')
   const [ntplTitle, setNtplTitle] = useState('')
-  const [ntplDescription, setNtplDescription] = useState('')
-  const [ntplRequirements, setNtplRequirements] = useState('')
+  const [ntplResponsibilities, setNtplResponsibilities] = useState('')
+  const [ntplSkills, setNtplSkills] = useState('')
   const [ntplUniformType, setNtplUniformType] = useState<UniformType | ''>('')
   const [ntplUniformDetails, setNtplUniformDetails] = useState('')
   const [ntplExperienceRequired, setNtplExperienceRequired] = useState('')
@@ -1237,17 +1231,17 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
     // loadDeptShiftOptions immediately (see below) since there's no RDrop onChange to do it for
     // Manager anymore — Available Shift would otherwise stay empty for the whole wizard session.
     const managerDeptId = scopeToManagerDepartments ? (managerDeptIds[0] ?? '') : ''
-    setFormTitle(''); setFormDeptId(managerDeptId); setFormEmpType('casual')
-    setFormLocation(''); setFormSalaryAmt(''); setFormSalaryType('per hour')
-    setFormDescription(''); setFormRequirements(''); setFormIndustry('')
+    setFormTitle(''); setFormDeptId(managerDeptId)
+    setFormSalaryAmt(''); setFormSalaryType('per hour')
+    setFormResponsibilities(''); setFormSkills(''); setFormIndustry('')
     setFormExperienceRequired(''); setFormMinimumAge(''); setFormUniformType(''); setFormUniformDetails('')
-    setFormCompanyName(''); setFormBenefits(''); setFormOpenings('')
+    setFormBenefits(''); setFormOpenings('')
     setFormDeadlineChoice(''); setFormExpiresAt(''); setFormDeadlineTime('23:59')
-    setFormShiftStart('09:00'); setFormShiftEnd('17:00'); setFormBreakStart('12:00'); setFormBreakEnd('13:00'); setFormShiftDays([])
+    setFormJobStart('09:00'); setFormJobEnd('17:00'); setFormBreakStart('12:00'); setFormBreakEnd('13:00'); setFormShiftDays([])
     setFormIsRecurring(false); setFormRecurInterval(1); setFormRecurUnit('week')
-    setFormShiftDate(''); setFormAssignedEmployeeId('')
+    setFormJobDate(''); setFormAssignedEmployeeId('')
     setShiftDeptEmployees([]); setShiftAvailableDates([]); setShiftDateEmployees([])
-    setFormJobDate(''); setFormJobEndDate(''); setFormEstHours(''); setFormUrgency('normal'); setFormJobStartTime('09:00')
+    setFormJobEndDate(''); setFormEstHours(''); setFormUrgency('normal'); setFormJobStartTime('09:00')
     setAiPrompt(''); setAiPreview(null); setFormError('')
     setCreateStep(3); setDraftId(''); setScheduleSeen(false); setSavedTplSnapshot('')
     if (managerDeptId) void loadDeptShiftOptions(managerDeptId)
@@ -1263,20 +1257,19 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
     // A draft saved from the wizard's first step has no schedule data yet — leaving scheduleSeen
     // false keeps buildBody() from persisting the untouched 9–5 defaults on the next Save Draft.
     setScheduleSeen(!!(p.department_id || p.salary_amount != null || p.openings != null
-      || raw.shift_date || raw.assigned_employee_id || raw.expires_at))
+      || raw.job_date || raw.assigned_employee_id || raw.expires_at))
     setFormTemplateId(p.template_id ?? '')
-    const isShift = p.is_recurring
+    const isShift = p.job_type === 'shift'
     setFormJobType(isShift ? 'shift' : 'oneoff')
     // Self-heals a pre-existing draft that was saved before its department was ever set (the bug
     // this fix closes) — reopening it now fills in the manager's own department instead of leaving
     // it blank again.
     setFormTitle(p.title); setFormDeptId(p.department_id ?? (scopeToManagerDepartments ? (managerDeptIds[0] ?? '') : ''))
-    setFormEmpType(p.employment_type ?? 'casual'); setFormLocation('')
     setFormSalaryAmt(p.salary_amount?.toString() ?? ''); setFormSalaryType(isShift ? 'per hour' : 'flat rate')
-    setFormDescription(p.description); setFormRequirements(p.requirements ?? '')
+    setFormResponsibilities(p.responsibilities); setFormSkills(p.skills ?? '')
     setFormExperienceRequired(p.experience_required ?? ''); setFormMinimumAge(p.minimum_age != null ? String(p.minimum_age) : '')
     setFormUniformType(uniformTypeOf(p)); setFormUniformDetails(p.uniform_details ?? '')
-    setFormIndustry(''); setFormCompanyName(companyName); setFormBenefits('')
+    setFormIndustry(''); setFormBenefits('')
     setFormOpenings(p.openings != null ? String(p.openings) : '')
     const savedExpiresAt = typeof raw.expires_at === 'string' && raw.expires_at ? new Date(raw.expires_at) : null
     // A draft with no expiry simply hasn't chosen a deadline yet — don't imply "No Deadline"
@@ -1286,15 +1279,17 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
     setFormIsRecurring(false); setFormRecurInterval(1); setFormRecurUnit('week')
     setFormJobDate(''); setFormJobEndDate('')
     setAiPrompt(''); setAiPreview(null); setFormError('')
-    const savedShiftDate = typeof raw.shift_date === 'string' ? raw.shift_date : ''
-    const savedShiftStart = typeof raw.shift_start_time === 'string' ? raw.shift_start_time.slice(0, 5) : '09:00'
-    const savedShiftEnd = typeof raw.shift_end_time === 'string' ? raw.shift_end_time.slice(0, 5) : '17:00'
+    const savedJobDate = typeof raw.job_date === 'string' ? raw.job_date : ''
+    const savedJobStart = typeof raw.job_start_time === 'string' ? raw.job_start_time.slice(0, 5) : '09:00'
+    const savedJobEnd = typeof raw.job_end_time === 'string' ? raw.job_end_time.slice(0, 5) : '17:00'
     const savedBreakStart = typeof raw.break_start_time === 'string' ? raw.break_start_time.slice(0, 5) : '12:00'
     const savedBreakEnd = typeof raw.break_end_time === 'string' ? raw.break_end_time.slice(0, 5) : '13:00'
     const savedEmployeeId = typeof raw.assigned_employee_id === 'string' ? raw.assigned_employee_id : ''
     const savedEstHours = typeof raw.estimated_hours === 'string' ? raw.estimated_hours : ''
     const savedUrgency = typeof raw.urgency === 'string' ? raw.urgency : 'normal'
-    const savedJobStartTime = typeof raw.job_start_time === 'string' ? raw.job_start_time.slice(0, 5) : '09:00'
+    // job_start_time was merged into shift_start_time (job_type alone disambiguates which
+    // reading applies) — savedJobStart above already holds this same raw value.
+    const savedJobStartTime = savedJobStart
     setFormEstHours(savedEstHours)
     setFormUrgency(savedUrgency)
     setFormJobStartTime(savedJobStartTime)
@@ -1311,15 +1306,15 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
           (emp.shifts ?? []).forEach((s) => { if (!dateMap.has(s.shift_date)) dateMap.set(s.shift_date, { start_time: s.start_time, end_time: s.end_time }) })
         })
         // Ensure the saved shift date is always an option even if the shift no longer exists
-        if (savedShiftDate && !dateMap.has(savedShiftDate)) {
-          dateMap.set(savedShiftDate, { start_time: savedShiftStart, end_time: savedShiftEnd })
+        if (savedJobDate && !dateMap.has(savedJobDate)) {
+          dateMap.set(savedJobDate, { start_time: savedJobStart, end_time: savedJobEnd })
         }
         setShiftAvailableDates(Array.from(dateMap.entries()).sort(([a], [b]) => a.localeCompare(b)).filter(([date]) => date >= new Date().toISOString().slice(0, 10)).map(([date, t]) => ({ date, start_time: t.start_time, end_time: t.end_time })))
 
-        setFormShiftDate(savedShiftDate)
-        if (savedShiftDate) {
+        setFormJobDate(savedJobDate)
+        if (savedJobDate) {
           let dateEmps = employees.filter((emp: { shifts?: { shift_date: string }[] }) =>
-            emp.shifts?.some((s: { shift_date: string }) => s.shift_date === savedShiftDate)
+            emp.shifts?.some((s: { shift_date: string }) => s.shift_date === savedJobDate)
           )
           // If saved employee isn't in the filtered list, inject them from dept employees or as a placeholder
           if (savedEmployeeId && !dateEmps.some((e: { id: string }) => e.id === savedEmployeeId)) {
@@ -1329,14 +1324,14 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
           setShiftDateEmployees(dateEmps)
         }
       }
-      setFormShiftStart(isShift ? savedShiftStart : '09:00')
-      setFormShiftEnd(isShift ? savedShiftEnd : '17:00')
+      setFormJobStart(isShift ? savedJobStart : '09:00')
+      setFormJobEnd(isShift ? savedJobEnd : '17:00')
       setFormBreakStart(isShift ? savedBreakStart : '12:00')
       setFormBreakEnd(isShift ? savedBreakEnd : '13:00')
       setFormAssignedEmployeeId(savedEmployeeId)
     } else {
-      setFormShiftStart('09:00'); setFormShiftEnd('17:00'); setFormBreakStart('12:00'); setFormBreakEnd('13:00')
-      setFormShiftDate(''); setFormAssignedEmployeeId('')
+      setFormJobStart('09:00'); setFormJobEnd('17:00'); setFormBreakStart('12:00'); setFormBreakEnd('13:00')
+      setFormJobDate(''); setFormAssignedEmployeeId('')
       setShiftDeptEmployees([]); setShiftAvailableDates([]); setShiftDateEmployees([])
     }
     setFormShiftDays([])
@@ -1365,31 +1360,29 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
         : (scheduleReached ? (formDeptId || null) : null),
       created_by: internalUserId,
       title: formTitle,
-      description: formDescription,
-      requirements: formRequirements || null,
+      responsibilities: formResponsibilities,
+      skills: formSkills || null,
       experience_required: formExperienceRequired || null,
       minimum_age: formMinimumAge ? Number(formMinimumAge) : null,
       openings: scheduleReached && formOpenings ? Math.max(1, parseInt(formOpenings, 10) || 1) : null,
-      uniform_required: formUniformType === 'company' || formUniformType === 'dress_code',
-      uniform_type: formUniformType || null,
+      uniform_type: formUniformType || 'none',
       uniform_details: formUniformType === 'dress_code' ? (formUniformDetails || null) : null,
-      location: formLocation || null,
-      employment_type: formEmpType || null,
-      company_name: formCompanyName || companyName || null,
       salary_amount: scheduleReached && formSalaryAmt ? Number(formSalaryAmt) : null,
       urgency: formJobType === 'oneoff' ? (formUrgency || 'normal') : null,
       estimated_hours: formJobType === 'oneoff' ? (formEstHours || null) : null,
-      is_recurring: formJobType === 'shift',
-      formType: formJobType,
-      shift_date: scheduleReached ? (formShiftDate || null) : null,
+      jobType: formJobType,
+      job_date: scheduleReached ? (formJobDate || null) : null,
       // Shift/break times follow the chosen supervisor's own shift — never send them until a
       // supervisor is actually picked, or the wizard's UI-default times (e.g. 9–5) get persisted
       // as if the user had chosen them.
-      shift_start_time: scheduleReached && formJobType === 'shift' && formAssignedEmployeeId ? (formShiftStart || null) : null,
-      shift_end_time: scheduleReached && formJobType === 'shift' && formAssignedEmployeeId ? (formShiftEnd || null) : null,
+      // One-off jobs have no end/break — job_start_time alone carries their start time instead
+      // (job_type on the read side decides which reading applies; no separate column for it).
+      job_start_time: scheduleReached && formAssignedEmployeeId
+        ? (formJobType === 'shift' ? (formJobStart || null) : formJobType === 'oneoff' ? (formJobStartTime || null) : null)
+        : null,
+      job_end_time: scheduleReached && formJobType === 'shift' && formAssignedEmployeeId ? (formJobEnd || null) : null,
       break_start_time: scheduleReached && formJobType === 'shift' && formAssignedEmployeeId ? (formBreakStart || null) : null,
       break_end_time: scheduleReached && formJobType === 'shift' && formAssignedEmployeeId ? (formBreakEnd || null) : null,
-      job_start_time: scheduleReached && formJobType === 'oneoff' && formAssignedEmployeeId ? (formJobStartTime || null) : null,
       assigned_employee_id: scheduleReached ? (formAssignedEmployeeId || null) : null,
       expires_at: scheduleReached && formDeadlineChoice === 'date' && formExpiresAt && formDeadlineTime
         ? new Date(`${formExpiresAt}T${formDeadlineTime}:00`).toISOString()
@@ -1449,11 +1442,10 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
 
   const applyTemplate = (t: JobTemplate) => {
     setFormTemplateId(t.id)
-    setFormJobType(t.form_type === 'shift' ? 'shift' : 'oneoff')
-    setFormEmpType(t.employment_type ?? 'casual')
+    setFormJobType(t.job_type === 'shift' ? 'shift' : 'oneoff')
     setFormTitle(t.title)
-    setFormDescription(t.description ?? '')
-    setFormRequirements(t.requirements ?? '')
+    setFormResponsibilities(t.responsibilities ?? '')
+    setFormSkills(t.skills ?? '')
     setFormExperienceRequired(t.experience_required ?? '')
     setFormMinimumAge(t.minimum_age != null ? String(t.minimum_age) : '')
     setFormUniformType(uniformTypeOf(t))
@@ -1479,7 +1471,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
   // Loads the shift dates + employees selectable for a department in the posting form,
   // clearing any date/employee picked under the previous department.
   const loadDeptShiftOptions = async (deptId: string) => {
-    setFormShiftDate(''); setFormAssignedEmployeeId('')
+    setFormJobDate(''); setFormAssignedEmployeeId('')
     setShiftDeptEmployees([]); setShiftAvailableDates([]); setShiftDateEmployees([])
     if (!deptId) return
     setShiftOptionsLoading(true)
@@ -1501,13 +1493,11 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
   }
 
   const buildTemplateBody = () => ({
-    company_id: companyId, created_by: internalUserId, name: formTitle.trim(),
-    title: formTitle, description: formDescription || null, requirements: formRequirements || null,
-    employment_type: formEmpType || null, form_type: formJobType,
+    company_id: companyId, created_by: internalUserId,
+    title: formTitle, responsibilities: formResponsibilities || null, skills: formSkills || null,
+    job_type: formJobType,
     department_id: formDeptId || null,
     salary_amount: formSalaryAmt ? Number(formSalaryAmt) : null,
-    salary_type: formJobType === 'shift' ? 'per hour' : 'flat rate',
-    uniform_required: formUniformType === 'company' || formUniformType === 'dress_code',
     uniform_type: formUniformType || 'none',
     uniform_details: formUniformType === 'dress_code' ? (formUniformDetails || null) : null,
     experience_required: formExperienceRequired || null,
@@ -1519,8 +1509,8 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
   const saveAsTemplate = async () => {
     if (!companyId || !internalUserId) return
     if (!formTitle.trim()) { setFormError('Job title is required to save a template'); return }
-    if (!formDescription.trim()) { setFormError('Description is required to save a template'); return }
-    if (!formRequirements.trim()) { setFormError('Requirements are required to save a template'); return }
+    if (!formResponsibilities.trim()) { setFormError('Responsibilities are required to save a template'); return }
+    if (!formSkills.trim()) { setFormError('Requirements are required to save a template'); return }
     if (formJobType === 'oneoff' && !formEstHours) { setFormError('Estimated hours are required to save a template'); return }
     if (formUniformType === 'dress_code' && !formUniformDetails.trim()) { setFormError('Dress code details are required to save a template'); return }
     if (!formExperienceRequired) { setFormError('Experience requirement is required to save a template'); return }
@@ -1549,7 +1539,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
 
   const resetNewTemplateForm = () => {
     setNtplStep(1)
-    setNtplFormType(''); setNtplTitle(''); setNtplDescription(''); setNtplRequirements('')
+    setNtplJobType(''); setNtplTitle(''); setNtplResponsibilities(''); setNtplSkills('')
     setNtplUniformType(''); setNtplUniformDetails(''); setNtplExperienceRequired(''); setNtplMinimumAge('')
     setNtplEstimatedHours(''); setNtplUrgency('normal')
     // Manager only ever has one department — pre-filled and locked (see the disabled RDrop below),
@@ -1559,11 +1549,11 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
 
   const createTemplateFromScratch = async () => {
     if (!companyId || !internalUserId) return
-    if (!ntplFormType) { setNtplError('Job type is required'); return }
+    if (!ntplJobType) { setNtplError('Job type is required'); return }
     if (!ntplTitle.trim()) { setNtplError('Job title is required'); return }
-    if (!ntplDescription.trim()) { setNtplError('Responsibilities are required'); return }
-    if (!ntplRequirements.trim()) { setNtplError('Skills & qualifications are required'); return }
-    if (ntplFormType === 'oneoff' && !ntplEstimatedHours) { setNtplError('Estimated hours are required'); return }
+    if (!ntplResponsibilities.trim()) { setNtplError('Responsibilities are required'); return }
+    if (!ntplSkills.trim()) { setNtplError('Skills & qualifications are required'); return }
+    if (ntplJobType === 'oneoff' && !ntplEstimatedHours) { setNtplError('Estimated hours are required'); return }
     if (!ntplUniformType) { setNtplError('Uniform requirement is required'); return }
     if (ntplUniformType === 'dress_code' && !ntplUniformDetails.trim()) { setNtplError('Dress code details are required'); return }
     if (!ntplExperienceRequired) { setNtplError('Experience requirement is required'); return }
@@ -1581,19 +1571,17 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          company_id: companyId, created_by: internalUserId, name: ntplTitle.trim(),
-          title: ntplTitle.trim(), description: ntplDescription || null, requirements: ntplRequirements || null,
-          employment_type: ntplFormType === 'shift' ? 'part-time' : 'casual', form_type: ntplFormType,
+          company_id: companyId, created_by: internalUserId,
+          title: ntplTitle.trim(), responsibilities: ntplResponsibilities || null, skills: ntplSkills || null,
+          job_type: ntplJobType,
           department_id: effectiveDeptId || null,
           salary_amount: ntplSalaryAmt ? Number(ntplSalaryAmt) : null,
-          salary_type: ntplFormType === 'shift' ? 'per hour' : 'flat rate',
-          uniform_required: ntplUniformType === 'company' || ntplUniformType === 'dress_code',
           uniform_type: ntplUniformType || 'none',
           uniform_details: ntplUniformType === 'dress_code' ? (ntplUniformDetails || null) : null,
           experience_required: ntplExperienceRequired || null,
           minimum_age: ntplMinimumAge || null,
-          estimated_hours: ntplFormType === 'oneoff' ? (ntplEstimatedHours || null) : null,
-          urgency: ntplFormType === 'oneoff' ? (ntplUrgency || 'normal') : null,
+          estimated_hours: ntplJobType === 'oneoff' ? (ntplEstimatedHours || null) : null,
+          urgency: ntplJobType === 'oneoff' ? (ntplUrgency || 'normal') : null,
         }),
       })
       const data = await res.json()
@@ -1612,10 +1600,10 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
   // uses the tpl* form state, kept separate from the New Template modal's ntpl* state above.
   const openTemplateDetail = (t: JobTemplate) => {
     setSelectedTemplateId(t.id)
-    setTplFormType(t.form_type === 'shift' ? 'shift' : 'oneoff')
+    setTplJobType(t.job_type === 'shift' ? 'shift' : 'oneoff')
     setTplTitle(t.title)
-    setTplDescription(t.description ?? '')
-    setTplRequirements(t.requirements ?? '')
+    setTplResponsibilities(t.responsibilities ?? '')
+    setTplSkills(t.skills ?? '')
     setTplUniformType(uniformTypeOf(t))
     setTplUniformDetails(t.uniform_details ?? '')
     setTplExperienceRequired(t.experience_required ?? '')
@@ -1640,11 +1628,11 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
 
   const saveTemplateEdits = async () => {
     if (!selectedTemplateId) return
-    if (!tplFormType) { setTplError('Job type is required'); return }
+    if (!tplJobType) { setTplError('Job type is required'); return }
     if (!tplTitle.trim()) { setTplError('Job title is required'); return }
-    if (!tplDescription.trim()) { setTplError('Job scope is required'); return }
-    if (!tplRequirements.trim()) { setTplError('Skills & qualifications are required'); return }
-    if (tplFormType === 'oneoff' && !tplEstimatedHours) { setTplError('Estimated hours are required'); return }
+    if (!tplResponsibilities.trim()) { setTplError('Job scope is required'); return }
+    if (!tplSkills.trim()) { setTplError('Skills & qualifications are required'); return }
+    if (tplJobType === 'oneoff' && !tplEstimatedHours) { setTplError('Estimated hours are required'); return }
     if (tplUniformType === 'dress_code' && !tplUniformDetails.trim()) { setTplError('Dress code details are required'); return }
     if (!tplExperienceRequired) { setTplError('Experience requirement is required'); return }
     if (!tplMinimumAge) { setTplError('Minimum age is required'); return }
@@ -1660,19 +1648,17 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          name: tplTitle.trim(), title: tplTitle.trim(),
-          description: tplDescription || null, requirements: tplRequirements || null,
-          employment_type: tplFormType === 'shift' ? 'part-time' : 'casual', form_type: tplFormType,
+          title: tplTitle.trim(),
+          responsibilities: tplResponsibilities || null, skills: tplSkills || null,
+          job_type: tplJobType,
           department_id: effectiveTplDeptId || null,
           salary_amount: tplSalaryAmt ? Number(tplSalaryAmt) : null,
-          salary_type: tplFormType === 'shift' ? 'per hour' : 'flat rate',
-          uniform_required: tplUniformType === 'company' || tplUniformType === 'dress_code',
           uniform_type: tplUniformType || 'none',
           uniform_details: tplUniformType === 'dress_code' ? (tplUniformDetails || null) : null,
           experience_required: tplExperienceRequired || null,
           minimum_age: tplMinimumAge || null,
-          estimated_hours: tplFormType === 'oneoff' ? (tplEstimatedHours || null) : null,
-          urgency: tplFormType === 'oneoff' ? (tplUrgency || 'normal') : null,
+          estimated_hours: tplJobType === 'oneoff' ? (tplEstimatedHours || null) : null,
+          urgency: tplJobType === 'oneoff' ? (tplUrgency || 'normal') : null,
         }),
       })
       const data = await res.json()
@@ -1706,8 +1692,8 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
     if (!companyId || !internalUserId) return
     if (!formTitle.trim()) { setFormError('Title is required'); return }
     if (status === 'open') {
-      if (!formDescription.trim()) { setFormError('Description is required to publish'); return }
-      if (!formRequirements.trim()) { setFormError('Requirements are required to publish'); return }
+      if (!formResponsibilities.trim()) { setFormError('Responsibilities are required to publish'); return }
+      if (!formSkills.trim()) { setFormError('Skills & qualifications are required to publish'); return }
       if (!formExperienceRequired) { setFormError('Experience requirement is required to publish'); return }
       if (!formMinimumAge) { setFormError('Minimum age is required to publish'); return }
       if (!formUniformType) { setFormError('Uniform requirement is required to publish'); return }
@@ -1715,9 +1701,9 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
       if (formJobType === 'oneoff' && !formEstHours) { setFormError('Estimated hours are required to publish'); return }
       if (formJobType === 'oneoff' && !formJobStartTime) { setFormError('Start time is required to publish'); return }
       if (!formDeptId) { setFormError('Department is required to publish'); return }
-      if (!formShiftDate) { setFormError('Available shift is required to publish'); return }
+      if (!formJobDate) { setFormError('Available shift is required to publish'); return }
       if (!formAssignedEmployeeId) { setFormError('Supervisor is required to publish'); return }
-      if (formJobType === 'shift' && (!formShiftStart || !formShiftEnd)) { setFormError('Shift start and end times are required to publish'); return }
+      if (formJobType === 'shift' && (!formJobStart || !formJobEnd)) { setFormError('Shift start and end times are required to publish'); return }
       if (formJobType === 'shift' && (!formBreakStart || !formBreakEnd)) { setFormError('Break start and end times are required to publish'); return }
       if (!formSalaryAmt || Number(formSalaryAmt) <= 0) { setFormError('Pay amount is required to publish'); return }
       if (!formOpenings || Number(formOpenings) < 1) { setFormError('Number of positions is required to publish'); return }
@@ -1726,15 +1712,15 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
     if (formDeadlineChoice === 'date' && (!formExpiresAt || !formDeadlineTime)) { setFormError('Please set a full deadline date and time'); return }
     // A casual worker must never be on site outside the supervising employee's own shift —
     // start no earlier than the supervisor starts, end no later than the supervisor ends.
-    if (status === 'open' && formAssignedEmployeeId && formShiftDate) {
+    if (status === 'open' && formAssignedEmployeeId && formJobDate) {
       const supEmp = shiftDeptEmployees.find(em => em.id === formAssignedEmployeeId) as unknown as { shifts?: { shift_date: string; start_time: string; end_time: string }[] } | undefined
-      const supShift = supEmp?.shifts?.find(s => s.shift_date === formShiftDate)
+      const supShift = supEmp?.shifts?.find(s => s.shift_date === formJobDate)
       if (supShift) {
         const supStart = supShift.start_time.slice(0, 5)
         const supEnd = supShift.end_time.slice(0, 5)
         if (formJobType === 'shift') {
-          if (formShiftStart && formShiftStart.slice(0, 5) < supStart) { setFormError(`Start time cannot be earlier than the supervisor's shift start (${fmt12Time(supStart)})`); return }
-          if (formShiftEnd && formShiftEnd.slice(0, 5) > supEnd) { setFormError(`End time cannot be later than the supervisor's shift end (${fmt12Time(supEnd)})`); return }
+          if (formJobStart && formJobStart.slice(0, 5) < supStart) { setFormError(`Start time cannot be earlier than the supervisor's shift start (${fmt12Time(supStart)})`); return }
+          if (formJobEnd && formJobEnd.slice(0, 5) > supEnd) { setFormError(`End time cannot be later than the supervisor's shift end (${fmt12Time(supEnd)})`); return }
         } else if (formJobStartTime) {
           const start = formJobStartTime.slice(0, 5)
           if (start < supStart || start > supEnd) { setFormError(`Start time must be within the supervisor's shift (${fmt12Time(supStart)} – ${fmt12Time(supEnd)})`); return }
@@ -1811,17 +1797,17 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           title: formTitle, company_name: companyName, department_name: deptName,
-          location: formLocation, employment_type: formEmpType,
+          location: companyLocation,
           pay: formSalaryAmt ? `${formSalaryAmt} ${formSalaryType}` : null,
-          notes: formRequirements || formDescription || null,
+          notes: formSkills || formResponsibilities || null,
         }),
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'Failed to generate description')
       const draft = data.draft
       setFormTitle(draft.title || formTitle)
-      setFormDescription(draft.description || formDescription)
-      setFormRequirements([
+      setFormResponsibilities(draft.description || formResponsibilities)
+      setFormSkills([
         ...(draft.requirements ?? []),
         ...(draft.responsibilities ?? []).map((i: string) => `Responsibility: ${i}`),
         ...(draft.screening_questions ?? []).map((i: string) => `Screening: ${i}`),
@@ -2135,7 +2121,6 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
 
   const openPostings    = useMemo(() => livePostings.filter(p => p.status === 'open'),     [livePostings])
   const closedPostings  = useMemo(() => livePostings.filter(p => p.status === 'closed'),   [livePostings])
-  const expiredPostings = useMemo(() => livePostings.filter(p => p.status === 'expired'),  [livePostings])
   // "Active Jobs" = still hiring (open); "Closed" = filled and taken off the board. Both reuse
   // the same list+detail layout, sourced from whichever tab is active.
   const jobsPostings    = useMemo(() => activeTab === 'closed' ? closedPostings : openPostings, [activeTab, openPostings, closedPostings])
@@ -2390,7 +2375,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
                           {!scopeToManagerDepartments && <DepartmentBadge departmentId={p.department_id} departmentName={p.department_name} />}
-                          {p.is_recurring
+                          {(p.job_type === 'shift')
                             ? <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#FFF7ED', color: '#C2410C', border: '1px solid #FED7AA', whiteSpace: 'nowrap', flexShrink: 0 }}>Shift Job</span>
                             : <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#F5F3FF', color: '#7C3AED', border: '1px solid #DDD6FE', whiteSpace: 'nowrap', flexShrink: 0 }}>One-Off Job</span>
                           }
@@ -2494,10 +2479,10 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                   {/* Job details body — mirrors the Template Preview design, plus a Schedule section */}
                   {(() => {
                     const p = selectedLive
-                    const isShiftJob = p.is_recurring
+                    const isShiftJob = (p.job_type === 'shift')
                     const fmt12 = (t: string) => { const [h, m] = t.split(':').map(Number); const ap = h < 12 ? 'AM' : 'PM'; const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h; return `${h12}:${String(m).padStart(2, '0')} ${ap}` }
                     const payLabel = buildPayLabel(p, false)
-                    const uniformLabel = p.uniform_type === 'dress_code' ? 'Specific Dress Code' : (p.uniform_type === 'company' || p.uniform_required) ? 'Company Uniform Provided' : null
+                    const uniformLabel = p.uniform_type === 'dress_code' ? 'Specific Dress Code' : p.uniform_type === 'company' ? 'Company Uniform Provided' : null
                     const metaRow: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 10 }
                     const metaText: React.CSSProperties = { fontSize: '0.875rem', color: '#374151' }
                     const metaIcon: React.CSSProperties = { flexShrink: 0 }
@@ -2621,11 +2606,11 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                           <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 20 }}>
                             <p style={{ ...modalLabelStyle, margin: '0 0 8px' }}>Schedule</p>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                              {p.shift_date && (
-                                <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Date:</span> {new Date(p.shift_date).toLocaleDateString('en-SG', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
+                              {p.job_date && (
+                                <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Date:</span> {new Date(p.job_date).toLocaleDateString('en-SG', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
                               )}
-                              {isShiftJob && (p.shift_start_time || p.shift_end_time) && (
-                                <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Working Hours:</span> {p.shift_start_time ? fmt12(p.shift_start_time) : '—'} – {p.shift_end_time ? fmt12(p.shift_end_time) : '—'}</p>
+                              {isShiftJob && (p.job_start_time || p.job_end_time) && (
+                                <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Working Hours:</span> {p.job_start_time ? fmt12(p.job_start_time) : '—'} – {p.job_end_time ? fmt12(p.job_end_time) : '—'}</p>
                               )}
                               {isShiftJob && (p.break_start_time || p.break_end_time) && (
                                 <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Break Time:</span> {p.break_start_time ? fmt12(p.break_start_time) : '—'} – {p.break_end_time ? fmt12(p.break_end_time) : '—'}</p>
@@ -2641,11 +2626,11 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
 
                           <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 20 }}>
                             <p style={{ ...modalLabelStyle, margin: '0 0 8px' }}>Responsibilities</p>
-                            <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0, whiteSpace: 'pre-line' }}>{p.description || '—'}</p>
+                            <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0, whiteSpace: 'pre-line' }}>{p.responsibilities || '—'}</p>
                           </div>
                           <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 20 }}>
                             <p style={{ ...modalLabelStyle, margin: '0 0 8px' }}>Skills &amp; Qualifications</p>
-                            <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0, whiteSpace: 'pre-line' }}>{p.requirements || '—'}</p>
+                            <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0, whiteSpace: 'pre-line' }}>{p.skills || '—'}</p>
                           </div>
                           {uniformLabel && p.uniform_details && (
                             <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 20 }}>
@@ -2929,7 +2914,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, minWidth: 0 }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
                                 {!scopeToManagerDepartments && <DepartmentBadge departmentId={p.department_id} departmentName={p.department_name} />}
-                                {p.is_recurring
+                                {(p.job_type === 'shift')
                                   ? <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#FFF7ED', color: '#C2410C', border: '1px solid #FED7AA', whiteSpace: 'nowrap', flexShrink: 0 }}>Shift Job</span>
                                   : <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#F5F3FF', color: '#7C3AED', border: '1px solid #DDD6FE', whiteSpace: 'nowrap', flexShrink: 0 }}>One-Off Job</span>
                                 }
@@ -2986,7 +2971,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
                                   {!scopeToManagerDepartments && p.department_id && <DepartmentBadge departmentId={p.department_id} departmentName={p.department_name} />}
-                                  {p.is_recurring
+                                  {(p.job_type === 'shift')
                                     ? <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#FFF7ED', color: '#C2410C', border: '1px solid #FED7AA', whiteSpace: 'nowrap', flexShrink: 0 }}>Shift Job</span>
                                     : <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#F5F3FF', color: '#7C3AED', border: '1px solid #DDD6FE', whiteSpace: 'nowrap', flexShrink: 0 }}>One-Off Job</span>
                                   }
@@ -3047,7 +3032,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
                                   <DepartmentBadge departmentId={p.department_id} departmentName={p.department_name} />
-                                  {p.is_recurring
+                                  {(p.job_type === 'shift')
                                     ? <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#FFF7ED', color: '#C2410C', border: '1px solid #FED7AA', whiteSpace: 'nowrap', flexShrink: 0 }}>Shift Job</span>
                                     : <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#F5F3FF', color: '#7C3AED', border: '1px solid #DDD6FE', whiteSpace: 'nowrap', flexShrink: 0 }}>One-Off Job</span>
                                   }
@@ -3111,7 +3096,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
                             {!scopeToManagerDepartments && <DepartmentBadge departmentId={t.department_id} departmentName={departments.find(d => d.id === t.department_id)?.name} />}
-                            {t.form_type === 'shift'
+                            {t.job_type === 'shift'
                               ? <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#FFF7ED', color: '#C2410C', border: '1px solid #FED7AA', whiteSpace: 'nowrap', flexShrink: 0 }}>Shift Job</span>
                               : <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#F5F3FF', color: '#7C3AED', border: '1px solid #DDD6FE', whiteSpace: 'nowrap', flexShrink: 0 }}>One-Off Job</span>
                             }
@@ -3253,10 +3238,10 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                     posting fields, so a Manager's submission should read exactly like the Owner's own). */}
                 {(() => {
                   const p = selectedPending
-                  const isShiftJob = p.is_recurring
+                  const isShiftJob = (p.job_type === 'shift')
                   const fmt12 = (t: string) => { const [h, m] = t.split(':').map(Number); const ap = h < 12 ? 'AM' : 'PM'; const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h; return `${h12}:${String(m).padStart(2, '0')} ${ap}` }
                   const payLabel = buildPayLabel(p)
-                  const uniformLabel = p.uniform_type === 'dress_code' ? 'Specific Dress Code' : (p.uniform_type === 'company' || p.uniform_required) ? 'Company Uniform Provided' : null
+                  const uniformLabel = p.uniform_type === 'dress_code' ? 'Specific Dress Code' : p.uniform_type === 'company' ? 'Company Uniform Provided' : null
                   const metaRow: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 10 }
                   const metaText: React.CSSProperties = { fontSize: '0.875rem', color: '#374151' }
                   const metaIcon: React.CSSProperties = { flexShrink: 0 }
@@ -3340,11 +3325,11 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                         <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 20 }}>
                           <p style={{ ...modalLabelStyle, margin: '0 0 8px' }}>Schedule</p>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                            {p.shift_date && (
-                              <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Date:</span> {new Date(p.shift_date).toLocaleDateString('en-SG', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
+                            {p.job_date && (
+                              <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Date:</span> {new Date(p.job_date).toLocaleDateString('en-SG', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
                             )}
-                            {isShiftJob && (p.shift_start_time || p.shift_end_time) && (
-                              <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Working Hours:</span> {p.shift_start_time ? fmt12(p.shift_start_time) : '—'} – {p.shift_end_time ? fmt12(p.shift_end_time) : '—'}</p>
+                            {isShiftJob && (p.job_start_time || p.job_end_time) && (
+                              <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Working Hours:</span> {p.job_start_time ? fmt12(p.job_start_time) : '—'} – {p.job_end_time ? fmt12(p.job_end_time) : '—'}</p>
                             )}
                             {isShiftJob && (p.break_start_time || p.break_end_time) && (
                               <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Break Time:</span> {p.break_start_time ? fmt12(p.break_start_time) : '—'} – {p.break_end_time ? fmt12(p.break_end_time) : '—'}</p>
@@ -3360,11 +3345,11 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
 
                         <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 20 }}>
                           <p style={{ ...modalLabelStyle, margin: '0 0 8px' }}>Responsibilities</p>
-                          <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0, whiteSpace: 'pre-line' }}>{p.description || '—'}</p>
+                          <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0, whiteSpace: 'pre-line' }}>{p.responsibilities || '—'}</p>
                         </div>
                         <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 20 }}>
                           <p style={{ ...modalLabelStyle, margin: '0 0 8px' }}>Skills &amp; Qualifications</p>
-                          <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0, whiteSpace: 'pre-line' }}>{p.requirements || '—'}</p>
+                          <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0, whiteSpace: 'pre-line' }}>{p.skills || '—'}</p>
                         </div>
                         {uniformLabel && p.uniform_details && (
                           <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 20 }}>
@@ -3410,10 +3395,10 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                           for the posting-only facts a template never has (date, hours, break) */}
                       {(() => {
                         const p = selectedArchived
-                        const isShiftJob = p.is_recurring
+                        const isShiftJob = (p.job_type === 'shift')
                         const fmt12 = (t: string) => { const [h, m] = t.split(':').map(Number); const ap = h < 12 ? 'AM' : 'PM'; const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h; return `${h12}:${String(m).padStart(2, '0')} ${ap}` }
                         const payLabel = buildPayLabel(p, false)
-                        const uniformLabel = p.uniform_type === 'dress_code' ? 'Specific Dress Code' : (p.uniform_type === 'company' || p.uniform_required) ? 'Company Uniform Provided' : null
+                        const uniformLabel = p.uniform_type === 'dress_code' ? 'Specific Dress Code' : p.uniform_type === 'company' ? 'Company Uniform Provided' : null
                         const metaRow: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 10 }
                         const metaText: React.CSSProperties = { fontSize: '0.875rem', color: '#374151' }
                         const metaIcon: React.CSSProperties = { flexShrink: 0 }
@@ -3498,11 +3483,11 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                               <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 20 }}>
                                 <p style={{ ...modalLabelStyle, margin: '0 0 8px' }}>Schedule</p>
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                                  {p.shift_date && (
-                                    <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Date:</span> {new Date(p.shift_date).toLocaleDateString('en-SG', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
+                                  {p.job_date && (
+                                    <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Date:</span> {new Date(p.job_date).toLocaleDateString('en-SG', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
                                   )}
-                                  {isShiftJob && (p.shift_start_time || p.shift_end_time) && (
-                                    <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Working Hours:</span> {p.shift_start_time ? fmt12(p.shift_start_time) : '—'} – {p.shift_end_time ? fmt12(p.shift_end_time) : '—'}</p>
+                                  {isShiftJob && (p.job_start_time || p.job_end_time) && (
+                                    <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Working Hours:</span> {p.job_start_time ? fmt12(p.job_start_time) : '—'} – {p.job_end_time ? fmt12(p.job_end_time) : '—'}</p>
                                   )}
                                   {isShiftJob && (p.break_start_time || p.break_end_time) && (
                                     <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Break Time:</span> {p.break_start_time ? fmt12(p.break_start_time) : '—'} – {p.break_end_time ? fmt12(p.break_end_time) : '—'}</p>
@@ -3518,11 +3503,11 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
 
                               <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 20 }}>
                                 <p style={{ ...modalLabelStyle, margin: '0 0 8px' }}>Responsibilities</p>
-                                <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0, whiteSpace: 'pre-line' }}>{p.description || '—'}</p>
+                                <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0, whiteSpace: 'pre-line' }}>{p.responsibilities || '—'}</p>
                               </div>
                               <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 20 }}>
                                 <p style={{ ...modalLabelStyle, margin: '0 0 8px' }}>Skills &amp; Qualifications</p>
-                                <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0, whiteSpace: 'pre-line' }}>{p.requirements || '—'}</p>
+                                <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0, whiteSpace: 'pre-line' }}>{p.skills || '—'}</p>
                               </div>
                               {uniformLabel && p.uniform_details && (
                                 <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 20 }}>
@@ -3618,10 +3603,10 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                         <div style={{ minWidth: 0 }}>
                           <label style={modalLabelStyle}>Job Type</label>
                           <RDrop
-                            value={tplFormType}
+                            value={tplJobType}
                             placeholder="Select job type"
                             options={[{ value: 'shift', label: 'Shift' }, { value: 'oneoff', label: 'One-Off' }]}
-                            onChange={v => setTplFormType(v === 'shift' ? 'shift' : 'oneoff')}
+                            onChange={v => setTplJobType(v === 'shift' ? 'shift' : 'oneoff')}
                           />
                         </div>
                         <div style={{ minWidth: 0 }}>
@@ -3639,8 +3624,8 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                       <div>
                         <label style={modalLabelStyle}>Responsibilities</label>
                         <textarea
-                          value={tplDescription}
-                          onChange={e => setTplDescription(e.target.value)}
+                          value={tplResponsibilities}
+                          onChange={e => setTplResponsibilities(e.target.value)}
                           onKeyDown={handleListKeyDown}
                           rows={3}
                           placeholder="e.g. Serve customers, prep orders"
@@ -3652,8 +3637,8 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                       <div>
                         <label style={modalLabelStyle}>Skills &amp; Qualifications</label>
                         <textarea
-                          value={tplRequirements}
-                          onChange={e => setTplRequirements(e.target.value)}
+                          value={tplSkills}
+                          onChange={e => setTplSkills(e.target.value)}
                           onKeyDown={handleListKeyDown}
                           rows={2}
                           placeholder="e.g. Valid driver's license, basic Excel skills"
@@ -3662,7 +3647,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                           onBlur={e => { e.currentTarget.style.borderColor = '#E5E7EB' }}
                         />
                       </div>
-                      {tplFormType === 'oneoff' && (
+                      {tplJobType === 'oneoff' && (
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                           <div style={{ minWidth: 0 }}>
                             <label style={modalLabelStyle}>Est. Hours</label>
@@ -3728,7 +3713,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                             onChange={setTplDepartmentId} disabled={scopeToManagerDepartments} />
                         </div>
                         <div style={{ minWidth: 0 }}>
-                          <label style={modalLabelStyle}>{tplFormType === 'shift' ? 'Hourly Rate' : 'Flat Rate'}</label>
+                          <label style={modalLabelStyle}>{tplJobType === 'shift' ? 'Hourly Rate' : 'Flat Rate'}</label>
                           <div style={{ position: 'relative' }}>
                             <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: '#6B7280', fontSize: '0.9375rem', pointerEvents: 'none' }}>$</span>
                             <input type="number" min={0} step={0.5} onKeyDown={blockNonNumericKeys} value={tplSalaryAmt} onChange={e => setTplSalaryAmt(e.target.value)} placeholder="0.00" style={{ ...modalInputStyle, paddingLeft: 26 }} />
@@ -3743,8 +3728,8 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                       <button
                         type="button"
                         onClick={() => void saveTemplateEdits()}
-                        disabled={templateActionLoading || !tplTitle.trim() || !tplFormType}
-                        style={modalPrimaryButtonStyle(templateActionLoading || !tplTitle.trim() || !tplFormType)}
+                        disabled={templateActionLoading || !tplTitle.trim() || !tplJobType}
+                        style={modalPrimaryButtonStyle(templateActionLoading || !tplTitle.trim() || !tplJobType)}
                       >
                         {templateActionLoading ? <Spinner size={13} /> : <Check size={13} />} Save Changes
                       </button>
@@ -3764,7 +3749,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                       {/* Job Board card look-alike */}
                       <div style={{ background: '#FFFFFF', border: '1.5px solid #EDE9E3', borderRadius: 16, padding: 20, display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 16 }}>
                         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                          {tplFormType === 'oneoff' && (tplUrgency === 'high' || tplUrgency === 'urgent') && (
+                          {tplJobType === 'oneoff' && (tplUrgency === 'high' || tplUrgency === 'urgent') && (
                             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#FFF1F2', color: '#E11D48', fontSize: '0.75rem', fontWeight: 800, padding: '4px 10px', borderRadius: 999 }}>
                               <Zap size={12} />{tplUrgency === 'urgent' ? 'Urgent' : 'High'}
                             </span>
@@ -3797,9 +3782,9 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                             </span>
                           )}
                           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.75rem', fontWeight: 800, color: '#065F46', background: '#ECFDF5', borderRadius: 999, padding: '4px 10px' }}>
-                            ${tplSalaryAmt || '0'}{tplFormType === 'shift' ? '/hr' : ''}
+                            ${tplSalaryAmt || '0'}{tplJobType === 'shift' ? '/hr' : ''}
                           </span>
-                          {tplFormType === 'oneoff' && tplEstimatedHours && (
+                          {tplJobType === 'oneoff' && tplEstimatedHours && (
                             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.75rem', fontWeight: 800, color: '#1D4ED8', background: '#EFF6FF', borderRadius: 999, padding: '4px 10px' }}>
                               <Clock size={12} />{tplEstimatedHours}h
                             </span>
@@ -3837,7 +3822,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                                 <span style={{ fontSize: '0.875rem', color: '#374151' }}>{tplUniformType === 'company' ? 'Company Uniform Provided' : 'Specific Dress Code'}</span>
                               </div>
                             )}
-                            {tplFormType === 'oneoff' && tplEstimatedHours && (
+                            {tplJobType === 'oneoff' && tplEstimatedHours && (
                               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                                 <Clock size={14} color="#F97316" strokeWidth={2} style={{ flexShrink: 0 }} />
                                 <span style={{ fontSize: '0.875rem', color: '#374151' }}>Est. {tplEstimatedHours} hours</span>
@@ -3845,19 +3830,19 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                             )}
                             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                               <DollarSign size={14} color="#F97316" strokeWidth={2} style={{ flexShrink: 0 }} />
-                              <span style={{ fontSize: '0.875rem', fontWeight: 600, color: '#059669' }}>${tplSalaryAmt || '0'}{tplFormType === 'shift' ? '/hr' : ' flat rate'}</span>
+                              <span style={{ fontSize: '0.875rem', fontWeight: 600, color: '#059669' }}>${tplSalaryAmt || '0'}{tplJobType === 'shift' ? '/hr' : ' flat rate'}</span>
                             </div>
                           </div>
                         </div>
 
                         <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 20 }}>
                           <p style={{ ...modalLabelStyle, margin: '0 0 8px' }}>Responsibilities</p>
-                          <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0, whiteSpace: 'pre-line' }}>{tplDescription || '—'}</p>
+                          <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0, whiteSpace: 'pre-line' }}>{tplResponsibilities || '—'}</p>
                         </div>
 
                         <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 20 }}>
                           <p style={{ ...modalLabelStyle, margin: '0 0 8px' }}>Skills &amp; Qualifications</p>
-                          <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0, whiteSpace: 'pre-line' }}>{tplRequirements || '—'}</p>
+                          <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0, whiteSpace: 'pre-line' }}>{tplSkills || '—'}</p>
                         </div>
 
                         {tplUniformType === 'dress_code' && (
@@ -3888,8 +3873,8 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                           <p style={{ margin: 0, fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{departments.find(d => d.id === tplDepartmentId)?.name ?? '—'}</p>
                         </div>
                         <div style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: '12px 14px', background: '#FFFFFF', minWidth: 0 }}>
-                          <p style={{ ...modalLabelStyle, margin: '0 0 6px' }}>{tplFormType === 'shift' ? 'Hourly Rate' : 'Flat Rate'}</p>
-                          <p style={{ margin: 0, fontSize: '0.875rem', fontWeight: 600, color: '#059669' }}>${tplSalaryAmt || '0'}{tplFormType === 'shift' ? '/hr' : ''}</p>
+                          <p style={{ ...modalLabelStyle, margin: '0 0 6px' }}>{tplJobType === 'shift' ? 'Hourly Rate' : 'Flat Rate'}</p>
+                          <p style={{ margin: 0, fontSize: '0.875rem', fontWeight: 600, color: '#059669' }}>${tplSalaryAmt || '0'}{tplJobType === 'shift' ? '/hr' : ''}</p>
                         </div>
                       </div>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
@@ -3919,10 +3904,10 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                         // glance what posting will still ask for.
                         const toFill: { label: string; hint: string }[] = []
                         if (!tplDepartmentId) toFill.push({ label: 'Department', hint: 'Select department' })
-                        if (!tplSalaryAmt || Number(tplSalaryAmt) <= 0) toFill.push({ label: tplFormType === 'shift' ? 'Hourly Rate' : 'Flat Rate', hint: '$ 0.00' })
+                        if (!tplSalaryAmt || Number(tplSalaryAmt) <= 0) toFill.push({ label: tplJobType === 'shift' ? 'Hourly Rate' : 'Flat Rate', hint: '$ 0.00' })
                         if (tplUniformType === 'dress_code' && !tplUniformDetails.trim()) toFill.push({ label: 'Dress Code', hint: 'e.g. Black shirt, black pants, black shoes' })
-                        if (tplFormType === 'oneoff' && !tplEstimatedHours) toFill.push({ label: 'Est. Hours', hint: 'e.g. 5' })
-                        if (tplFormType === 'shift') {
+                        if (tplJobType === 'oneoff' && !tplEstimatedHours) toFill.push({ label: 'Est. Hours', hint: 'e.g. 5' })
+                        if (tplJobType === 'shift') {
                           toFill.push(
                             { label: 'Available Shift', hint: 'Select shift' },
                             { label: 'Supervisor', hint: 'Select supervisor' },
@@ -4186,10 +4171,10 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                       <label style={modalLabelStyle}>Job Type</label>
                       <RDrop
                         autoFocus
-                        value={ntplFormType}
+                        value={ntplJobType}
                         placeholder="Select job type"
                         options={[{ value: 'shift', label: 'Shift' }, { value: 'oneoff', label: 'One-Off' }]}
-                        onChange={v => setNtplFormType(v === 'shift' ? 'shift' : 'oneoff')}
+                        onChange={v => setNtplJobType(v === 'shift' ? 'shift' : 'oneoff')}
                       />
                     </div>
                     <div style={{ minWidth: 0 }}>
@@ -4207,8 +4192,8 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                   <div>
                     <label style={modalLabelStyle}>Responsibilities</label>
                     <textarea
-                      value={ntplDescription}
-                      onChange={e => setNtplDescription(e.target.value)}
+                      value={ntplResponsibilities}
+                      onChange={e => setNtplResponsibilities(e.target.value)}
                       onKeyDown={handleListKeyDown}
                       rows={3}
                       placeholder="e.g. Serve customers, prep orders"
@@ -4220,8 +4205,8 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                   <div>
                     <label style={modalLabelStyle}>Skills &amp; Qualifications</label>
                     <textarea
-                      value={ntplRequirements}
-                      onChange={e => setNtplRequirements(e.target.value)}
+                      value={ntplSkills}
+                      onChange={e => setNtplSkills(e.target.value)}
                       onKeyDown={handleListKeyDown}
                       rows={2}
                       placeholder="e.g. Valid driver's license, basic Excel skills"
@@ -4230,7 +4215,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                       onBlur={e => { e.currentTarget.style.borderColor = '#E5E7EB' }}
                     />
                   </div>
-                  {ntplFormType === 'oneoff' && (
+                  {ntplJobType === 'oneoff' && (
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                       <div style={{ minWidth: 0 }}>
                         <label style={modalLabelStyle}>Est. Hours</label>
@@ -4310,7 +4295,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                       />
                     </div>
                     <div style={{ minWidth: 0 }}>
-                      <label style={modalLabelStyle}>{ntplFormType === 'shift' ? 'Hourly Rate' : 'Flat Rate'}</label>
+                      <label style={modalLabelStyle}>{ntplJobType === 'shift' ? 'Hourly Rate' : 'Flat Rate'}</label>
                       <div style={{ position: 'relative' }}>
                         <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: '#6B7280', fontSize: '0.9375rem', pointerEvents: 'none' }}>$</span>
                         <input type="number" min={0} step={0.5} onKeyDown={blockNonNumericKeys} value={ntplSalaryAmt} onChange={e => setNtplSalaryAmt(e.target.value)} placeholder="0.00" style={{ ...modalInputStyle, paddingLeft: 26 }} />
@@ -4324,7 +4309,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', padding: '20px 24px' }}>
               {ntplStep === 1 ? (
                 (() => {
-                  const step1Incomplete = !ntplFormType || !ntplTitle.trim() || !ntplDescription.trim() || !ntplRequirements.trim() || (ntplFormType === 'oneoff' && !ntplEstimatedHours)
+                  const step1Incomplete = !ntplJobType || !ntplTitle.trim() || !ntplResponsibilities.trim() || !ntplSkills.trim() || (ntplJobType === 'oneoff' && !ntplEstimatedHours)
                   return (
                     <button
                       onClick={() => { setNtplError(''); setNtplStep(2) }}
@@ -4386,7 +4371,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
         // start no earlier, end no later. Feeds the time pickers' min/max so out-of-window
         // slots can't even be picked (the service enforces the same rule server-side).
         const supEmp = shiftDeptEmployees.find(e => e.id === formAssignedEmployeeId) as unknown as { shifts?: { shift_date: string; start_time: string; end_time: string }[] } | undefined
-        const supShift = supEmp?.shifts?.find(s => s.shift_date === formShiftDate)
+        const supShift = supEmp?.shifts?.find(s => s.shift_date === formJobDate)
         const supWindowStart = supShift ? supShift.start_time.slice(0, 5) : undefined
         const supWindowEnd = supShift ? supShift.end_time.slice(0, 5) : undefined
 
@@ -4405,8 +4390,8 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
               // Responsibilities feed the Responsibilities field; Skills & Qualifications only take requirements
               setAiPreview({
                 title: draft.title || aiPrompt,
-                description: [draft.description || '', ...(draft.responsibilities ?? []).map((i: string) => `• ${i}`)].filter(Boolean).join('\n'),
-                requirements: (draft.requirements ?? []).join('\n'),
+                responsibilities: [draft.description || '', ...(draft.responsibilities ?? []).map((i: string) => `• ${i}`)].filter(Boolean).join('\n'),
+                skills: (draft.requirements ?? []).join('\n'),
               })
             } else {
               setFormError(data.message || 'Failed to generate job description')
@@ -4420,8 +4405,8 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
         const handleUseAIDraft = () => {
           if (!aiPreview) return
           setFormTitle(aiPreview.title)
-          setFormDescription(aiPreview.description)
-          setFormRequirements(aiPreview.requirements)
+          setFormResponsibilities(aiPreview.responsibilities)
+          setFormSkills(aiPreview.skills)
           setAiPreview(null)
           setCreateStep(3)
           setWizardStep('form')
@@ -4431,12 +4416,12 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
         const lStyle: React.CSSProperties = modalLabelStyle
 
         // Apply Template: Post stays disabled until every field is filled — mirrors saveForm's publish validation
-        const applyReady = !!(formTitle.trim() && formDescription.trim() && formRequirements.trim()
+        const applyReady = !!(formTitle.trim() && formResponsibilities.trim() && formSkills.trim()
           && formExperienceRequired && formMinimumAge
           && (formUniformType !== 'dress_code' || formUniformDetails.trim())
           && formDeptId && formSalaryAmt && Number(formSalaryAmt) > 0
-          && formShiftDate && formAssignedEmployeeId
-          && (formJobType !== 'shift' || (formShiftStart && formShiftEnd && formBreakStart && formBreakEnd))
+          && formJobDate && formAssignedEmployeeId
+          && (formJobType !== 'shift' || (formJobStart && formJobEnd && formBreakStart && formBreakEnd))
           && (formJobType !== 'oneoff' || (formEstHours && formJobStartTime))
           && Number(formOpenings) >= 1
           && formDeadlineChoice && (formDeadlineChoice !== 'date' || (formExpiresAt && formDeadlineTime)))
@@ -4444,7 +4429,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
         const postDisabled = actionLoading || (!editingId && !applyReady)
         // Save as Template appears in the create wizard once every field a template stores is filled
         // (department + pay live on the last step, so it only ever lights up there)
-        const templateReady = !!(formTitle.trim() && formDescription.trim() && formRequirements.trim()
+        const templateReady = !!(formTitle.trim() && formResponsibilities.trim() && formSkills.trim()
           && (formUniformType !== 'dress_code' || formUniformDetails.trim())
           && formExperienceRequired && formMinimumAge && formDeptId
           && formSalaryAmt && Number(formSalaryAmt) > 0
@@ -4527,7 +4512,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                 {/* ── Step 1: Job Type ── */}
                 {wizardStep === 'type' && (
                   <>
-                    <button onClick={() => { setFormJobType('shift'); setFormEmpType('part-time'); setFormSalaryType('per hour'); setWizardStep('ai') }}
+                    <button onClick={() => { setFormJobType('shift'); setFormSalaryType('per hour'); setWizardStep('ai') }}
                       style={{ padding: '14px 16px', border: '1.5px solid #E5E7EB', borderRadius: 12, background: '#FFFFFF', cursor: 'pointer', textAlign: 'left' }}
                       onMouseEnter={e => { e.currentTarget.style.borderColor = accent }}
                       onMouseLeave={e => { e.currentTarget.style.borderColor = '#E5E7EB' }}>
@@ -4541,7 +4526,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                         </div>
                       </div>
                     </button>
-                    <button onClick={() => { setFormJobType('oneoff'); setFormEmpType('casual'); setFormSalaryType('flat rate'); setWizardStep('ai') }}
+                    <button onClick={() => { setFormJobType('oneoff'); setFormSalaryType('flat rate'); setWizardStep('ai') }}
                       style={{ padding: '14px 16px', border: '1.5px solid #E5E7EB', borderRadius: 12, background: '#FFFFFF', cursor: 'pointer', textAlign: 'left' }}
                       onMouseEnter={e => { e.currentTarget.style.borderColor = accent }}
                       onMouseLeave={e => { e.currentTarget.style.borderColor = '#E5E7EB' }}>
@@ -4569,13 +4554,13 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                         </div>
                         <div>
                           <label style={lStyle}>Responsibilities</label>
-                          <textarea value={aiPreview.description} onChange={e => setAiPreview(p => p && ({ ...p, description: e.target.value }))} onKeyDown={handleListKeyDown}
+                          <textarea value={aiPreview.responsibilities} onChange={e => setAiPreview(p => p && ({ ...p, responsibilities: e.target.value }))} onKeyDown={handleListKeyDown}
                             ref={el => { if (el) { el.style.height = 'auto'; el.style.height = `${el.scrollHeight + 3}px` } }}
                             rows={3} style={{ ...iStyle, resize: 'none', overflow: 'hidden', lineHeight: 1.6, verticalAlign: 'top' }} />
                         </div>
                         <div>
                           <label style={lStyle}>Skills &amp; Qualifications</label>
-                          <textarea value={aiPreview.requirements} onChange={e => setAiPreview(p => p && ({ ...p, requirements: e.target.value }))} onKeyDown={handleListKeyDown}
+                          <textarea value={aiPreview.skills} onChange={e => setAiPreview(p => p && ({ ...p, skills: e.target.value }))} onKeyDown={handleListKeyDown}
                             ref={el => { if (el) { el.style.height = 'auto'; el.style.height = `${el.scrollHeight + 3}px` } }}
                             rows={3} style={{ ...iStyle, resize: 'none', overflow: 'hidden', lineHeight: 1.6, verticalAlign: 'top' }} />
                         </div>
@@ -4660,11 +4645,11 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                         </div>
                         <div>
                           <label style={lStyle}>Responsibilities</label>
-                          <textarea value={formDescription} onChange={e => setFormDescription(e.target.value)} onKeyDown={handleListKeyDown} rows={3} style={{ ...iStyle, resize: 'vertical', lineHeight: 1.55, verticalAlign: 'top' }} placeholder="e.g. Serve customers, prep orders" />
+                          <textarea value={formResponsibilities} onChange={e => setFormResponsibilities(e.target.value)} onKeyDown={handleListKeyDown} rows={3} style={{ ...iStyle, resize: 'vertical', lineHeight: 1.55, verticalAlign: 'top' }} placeholder="e.g. Serve customers, prep orders" />
                         </div>
                         <div>
                           <label style={lStyle}>Skills &amp; Qualifications</label>
-                          <textarea value={formRequirements} onChange={e => setFormRequirements(e.target.value)} onKeyDown={handleListKeyDown} rows={2} style={{ ...iStyle, resize: 'vertical', lineHeight: 1.55, verticalAlign: 'top' }} placeholder="e.g. Valid driver's license, basic Excel skills" />
+                          <textarea value={formSkills} onChange={e => setFormSkills(e.target.value)} onKeyDown={handleListKeyDown} rows={2} style={{ ...iStyle, resize: 'vertical', lineHeight: 1.55, verticalAlign: 'top' }} placeholder="e.g. Valid driver's license, basic Excel skills" />
                         </div>
                         {formJobType === 'oneoff' && (
                           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
@@ -4739,14 +4724,14 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                             {shiftOptionsLoading ? (
                               <div style={{ ...iStyle, color: '#94A3B8', background: '#F8FAFC', display: 'flex', alignItems: 'center', gap: 8 }}><Spinner size={13} dark /> Loading shifts…</div>
                             ) : shiftAvailableDates.length > 0 ? (
-                              <RDrop value={formShiftDate} placeholder="Select shift"
+                              <RDrop value={formJobDate} placeholder="Select shift"
                                 options={shiftAvailableDates.map(({ date }) => ({
                                   // date only — shift times vary per employee, so they come from the chosen supervisor
                                   value: date,
                                   label: new Date(date).toLocaleDateString('en-SG', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }),
                                 }))}
                                 onChange={(date) => {
-                                  setFormShiftDate(date); setFormAssignedEmployeeId('')
+                                  setFormJobDate(date); setFormAssignedEmployeeId('')
                                   setShiftDateEmployees(shiftDeptEmployees.filter(emp =>
                                     (emp as unknown as { shifts?: { shift_date: string }[] }).shifts?.some((s: { shift_date: string }) => s.shift_date === date)
                                   ))
@@ -4757,7 +4742,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                           </div>
                           <div style={{ minWidth: 0 }}>
                             <label style={lStyle}>Supervisor</label>
-                            {!formShiftDate ? (
+                            {!formJobDate ? (
                               <RDrop value="" placeholder="Select supervisor" options={[]} onChange={() => {}} disabled />
                             ) : shiftDateEmployees.length > 0 ? (
                               <RDrop value={formAssignedEmployeeId} placeholder="Select supervisor"
@@ -4765,10 +4750,10 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                                 onChange={(empId) => {
                                   setFormAssignedEmployeeId(empId)
                                   const emp = shiftDeptEmployees.find(em => em.id === empId) as unknown as { shifts?: { shift_date: string; start_time: string; end_time: string }[] } | undefined
-                                  const shift = emp?.shifts?.find((s: { shift_date: string }) => s.shift_date === formShiftDate)
+                                  const shift = emp?.shifts?.find((s: { shift_date: string }) => s.shift_date === formJobDate)
                                   if (shift) {
                                     // Worker times follow the chosen supervisor's own shift that day
-                                    if (formJobType === 'shift') { setFormShiftStart(shift.start_time.slice(0, 5)); setFormShiftEnd(shift.end_time.slice(0, 5)) }
+                                    if (formJobType === 'shift') { setFormJobStart(shift.start_time.slice(0, 5)); setFormJobEnd(shift.end_time.slice(0, 5)) }
                                     else setFormJobStartTime(shift.start_time.slice(0, 5))
                                   }
                                 }} />
@@ -4782,21 +4767,21 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                               <div style={{ minWidth: 0 }}>
                                 <label style={lStyle}>Start Time</label>
-                                <RTimePicker value={formShiftStart || '09:00'} onChange={setFormShiftStart} min={supWindowStart} max={supWindowEnd} />
+                                <RTimePicker value={formJobStart || '09:00'} onChange={setFormJobStart} min={supWindowStart} max={supWindowEnd} />
                               </div>
                               <div style={{ minWidth: 0 }}>
                                 <label style={lStyle}>End Time</label>
-                                <RTimePicker value={formShiftEnd || '17:00'} onChange={setFormShiftEnd} min={supWindowStart} max={supWindowEnd} />
+                                <RTimePicker value={formJobEnd || '17:00'} onChange={setFormJobEnd} min={supWindowStart} max={supWindowEnd} />
                               </div>
                             </div>
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                               <div style={{ minWidth: 0 }}>
                                 <label style={lStyle}>Break Start</label>
-                                <RTimePicker value={formBreakStart || '12:00'} onChange={setFormBreakStart} min={formShiftStart || supWindowStart} max={formShiftEnd || supWindowEnd} />
+                                <RTimePicker value={formBreakStart || '12:00'} onChange={setFormBreakStart} min={formJobStart || supWindowStart} max={formJobEnd || supWindowEnd} />
                               </div>
                               <div style={{ minWidth: 0 }}>
                                 <label style={lStyle}>Break End</label>
-                                <RTimePicker value={formBreakEnd || '13:00'} onChange={setFormBreakEnd} min={formShiftStart || supWindowStart} max={formShiftEnd || supWindowEnd} />
+                                <RTimePicker value={formBreakEnd || '13:00'} onChange={setFormBreakEnd} min={formJobStart || supWindowStart} max={formJobEnd || supWindowEnd} />
                               </div>
                             </div>
                           </>
@@ -4847,9 +4832,9 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                         {/* Pay estimate — shift only, and only once a shift + supervisor are chosen (times are real, not defaults).
                             The rate is per person, so the total scales with Number of Positions — hiring 3 people at
                             $200 each costs $600, not $200. */}
-                        {formJobType === 'shift' && formShiftDate && formAssignedEmployeeId && (() => {
+                        {formJobType === 'shift' && formJobDate && formAssignedEmployeeId && (() => {
                           const toMins = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0) }
-                          const workMins = toMins(formShiftEnd) - toMins(formShiftStart)
+                          const workMins = toMins(formJobEnd) - toMins(formJobStart)
                           const breakMins = toMins(formBreakEnd) - toMins(formBreakStart)
                           const netMins = workMins - (breakMins > 0 ? breakMins : 0)
                           const rate = parseFloat(formSalaryAmt)
@@ -4895,12 +4880,12 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                     <div>
                       <label style={lStyle}>Responsibilities</label>
                       {/* Content was already reviewed in the AI step — keep these compact and scrollable */}
-                      <textarea value={formDescription} onChange={e => setFormDescription(e.target.value)} onKeyDown={handleListKeyDown}
+                      <textarea value={formResponsibilities} onChange={e => setFormResponsibilities(e.target.value)} onKeyDown={handleListKeyDown}
                         rows={4} style={{ ...iStyle, resize: 'vertical', overflowY: 'auto', lineHeight: 1.55, verticalAlign: 'top' }} placeholder="e.g. Serve customers, prep orders" />
                     </div>
                     <div>
                       <label style={lStyle}>Skills &amp; Qualifications</label>
-                      <textarea value={formRequirements} onChange={e => setFormRequirements(e.target.value)} onKeyDown={handleListKeyDown}
+                      <textarea value={formSkills} onChange={e => setFormSkills(e.target.value)} onKeyDown={handleListKeyDown}
                         rows={3} style={{ ...iStyle, resize: 'vertical', overflowY: 'auto', lineHeight: 1.55, verticalAlign: 'top' }} placeholder="e.g. Valid driver's license, basic Excel skills" />
                     </div>
                     {formJobType === 'oneoff' && (
@@ -4984,14 +4969,14 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                           {shiftOptionsLoading ? (
                             <div style={{ ...iStyle, color: '#94A3B8', background: '#F8FAFC', display: 'flex', alignItems: 'center', gap: 8 }}><Spinner size={13} dark /> Loading shifts…</div>
                           ) : shiftAvailableDates.length > 0 ? (
-                            <RDrop value={formShiftDate} placeholder="Select shift"
+                            <RDrop value={formJobDate} placeholder="Select shift"
                               options={shiftAvailableDates.map(({ date }) => ({
                                 // date only — shift times vary per employee, so they come from the chosen supervisor
                                 value: date,
                                 label: new Date(date).toLocaleDateString('en-SG', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }),
                               }))}
                               onChange={(date) => {
-                                setFormShiftDate(date); setFormAssignedEmployeeId('')
+                                setFormJobDate(date); setFormAssignedEmployeeId('')
                                 setShiftDateEmployees(shiftDeptEmployees.filter(emp =>
                                   (emp as unknown as { shifts?: { shift_date: string }[] }).shifts?.some((s: { shift_date: string }) => s.shift_date === date)
                                 ))
@@ -5002,7 +4987,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                         </div>
                         <div style={{ minWidth: 0 }}>
                           <label style={lStyle}>Supervisor</label>
-                          {!(formShiftDate || editingId) ? (
+                          {!(formJobDate || editingId) ? (
                             <RDrop value="" placeholder="Select supervisor" options={[]} onChange={() => {}} disabled />
                           ) : shiftDateEmployees.length > 0 ? (
                             <RDrop value={formAssignedEmployeeId} placeholder="Select supervisor"
@@ -5010,10 +4995,10 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                               onChange={(empId) => {
                                 setFormAssignedEmployeeId(empId)
                                 const emp = shiftDeptEmployees.find(em => em.id === empId) as unknown as { shifts?: { shift_date: string; start_time: string; end_time: string }[] } | undefined
-                                const shift = emp?.shifts?.find((s: { shift_date: string }) => s.shift_date === formShiftDate)
+                                const shift = emp?.shifts?.find((s: { shift_date: string }) => s.shift_date === formJobDate)
                                 if (shift) {
                                   // Worker times follow the chosen supervisor's own shift that day
-                                  if (formJobType === 'shift') { setFormShiftStart(shift.start_time.slice(0, 5)); setFormShiftEnd(shift.end_time.slice(0, 5)) }
+                                  if (formJobType === 'shift') { setFormJobStart(shift.start_time.slice(0, 5)); setFormJobEnd(shift.end_time.slice(0, 5)) }
                                   else setFormJobStartTime(shift.start_time.slice(0, 5))
                                 }
                               }} />
@@ -5028,11 +5013,11 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                           <div style={{ minWidth: 0 }}>
                             <label style={lStyle}>Start Time</label>
-                            <RTimePicker value={formShiftStart || '09:00'} onChange={setFormShiftStart} />
+                            <RTimePicker value={formJobStart || '09:00'} onChange={setFormJobStart} />
                           </div>
                           <div style={{ minWidth: 0 }}>
                             <label style={lStyle}>End Time</label>
-                            <RTimePicker value={formShiftEnd || '17:00'} onChange={setFormShiftEnd} />
+                            <RTimePicker value={formJobEnd || '17:00'} onChange={setFormJobEnd} />
                           </div>
                         </div>
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
@@ -5099,9 +5084,9 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                     {/* Pay estimate — shift only, and only once a shift + supervisor are chosen (times are real, not defaults).
                         The rate is per person, so the total scales with Number of Positions — hiring 3 people at
                         $200 each costs $600, not $200. */}
-                    {formJobType === 'shift' && (formShiftDate || editingId) && (formAssignedEmployeeId || editingId) && (() => {
+                    {formJobType === 'shift' && (formJobDate || editingId) && (formAssignedEmployeeId || editingId) && (() => {
                       const toMins = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0) }
-                      const workMins = toMins(formShiftEnd) - toMins(formShiftStart)
+                      const workMins = toMins(formJobEnd) - toMins(formJobStart)
                       const breakMins = toMins(formBreakEnd) - toMins(formBreakStart)
                       const netMins = workMins - (breakMins > 0 ? breakMins : 0)
                       const rate = parseFloat(formSalaryAmt)
@@ -5156,7 +5141,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                   {isTemplateMode && applyStep < 3 ? (
                     (() => {
                       const nextDisabled = applyStep === 1
-                        ? (!formTitle.trim() || !formDescription.trim() || !formRequirements.trim() || (formJobType === 'oneoff' && !formEstHours))
+                        ? (!formTitle.trim() || !formResponsibilities.trim() || !formSkills.trim() || (formJobType === 'oneoff' && !formEstHours))
                         : (!formUniformType || (formUniformType === 'dress_code' && !formUniformDetails.trim()) || !formExperienceRequired || !formMinimumAge)
                       return (
                         <button
@@ -5169,7 +5154,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                     })()
                   ) : !editingId && !isTemplateMode && createStep === 3 ? (
                     (() => {
-                      const nextDisabled = !formTitle.trim() || !formDescription.trim() || !formRequirements.trim()
+                      const nextDisabled = !formTitle.trim() || !formResponsibilities.trim() || !formSkills.trim()
                         || (formJobType === 'oneoff' && !formEstHours)
                         || !formUniformType || (formUniformType === 'dress_code' && !formUniformDetails.trim())
                         || !formExperienceRequired || !formMinimumAge

@@ -14,10 +14,6 @@ vi.mock('@/repositories/owner/ownerInboxRepository', () => ({
     insertMessage: vi.fn(),
     countUnreadMessages: vi.fn(),
     countUnreadAnnouncements: vi.fn(),
-    countPendingInvitations: vi.fn(),
-    getInvitesByRecipient: vi.fn(),
-    getInboxItemById: vi.fn(),
-    updateInboxStatus: vi.fn(),
     findUserById: vi.fn(),
     findCompanyById: vi.fn(),
   },
@@ -148,20 +144,18 @@ describe('ownerInboxService — Communication (UC61)', () => {
   })
 
   describe('getUnreadCount', () => {
-    it('combines unread messages, pending invitations, and unread announcements', async () => {
+    it('combines unread messages and unread announcements', async () => {
       vi.mocked(ownerInboxRepository.countUnreadMessages).mockResolvedValue(2)
       vi.mocked(ownerInboxRepository.countUnreadAnnouncements).mockResolvedValue(3)
-      vi.mocked(ownerInboxRepository.countPendingInvitations).mockResolvedValue(1)
 
       const result = await ownerInboxService.getUnreadCount('owner-1', 'company-1', '2026-06-01T00:00:00Z')
 
       expect(ownerInboxRepository.countUnreadAnnouncements).toHaveBeenCalledWith('company-1', '2026-06-01T00:00:00Z')
-      expect(result).toEqual({ unread_messages: 3, unread_announcements: 3, count: 6 })
+      expect(result).toEqual({ unread_messages: 2, unread_announcements: 3, count: 5 })
     })
 
     it('skips the announcement count when there is no company', async () => {
       vi.mocked(ownerInboxRepository.countUnreadMessages).mockResolvedValue(1)
-      vi.mocked(ownerInboxRepository.countPendingInvitations).mockResolvedValue(0)
 
       const result = await ownerInboxService.getUnreadCount('owner-1', null)
 
@@ -174,13 +168,6 @@ describe('ownerInboxService — Communication (UC61)', () => {
     it('delegates to the repository', async () => {
       await ownerInboxService.deleteConversation('owner-1', 'mgr-1')
       expect(ownerInboxRepository.deleteConversation).toHaveBeenCalledWith('owner-1', 'mgr-1')
-    })
-  })
-
-  describe('updateInboxStatus', () => {
-    it('delegates to the repository', async () => {
-      await ownerInboxService.updateInboxStatus('inbox-1', 'accepted')
-      expect(ownerInboxRepository.updateInboxStatus).toHaveBeenCalledWith('inbox-1', 'accepted')
     })
   })
 })

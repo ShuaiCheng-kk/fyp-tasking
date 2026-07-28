@@ -11,7 +11,7 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url)
     const company_id = searchParams.get('company_id')
     const role = searchParams.get('role') ?? 'owner'
-    const department_id = searchParams.get('department_id')
+    const department_id = searchParams.get('audience_department_id')
     const user_id = searchParams.get('user_id')
     if (!company_id) {
       return NextResponse.json({ success: false, error: 'Missing company_id' }, { status: 400 })
@@ -40,7 +40,7 @@ export async function DELETE(req: NextRequest) {
 export async function PATCH(req: NextRequest) {
   try {
     const body = await req.json()
-    const { announcement_id, requesting_user_id, title, content, department_id } = body
+    const { announcement_id, requesting_user_id, title, content, audience_department_id: department_id } = body
     if (!announcement_id || !requesting_user_id || !title || !content) {
       return NextResponse.json({ success: false, error: 'Missing required fields' }, { status: 400 })
     }
@@ -61,14 +61,14 @@ export async function PATCH(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
-    const { from_user_id, company_id, department_id, title, content } = body
-    if (!from_user_id || !company_id || !title || !content) {
+    const { user_id, company_id, audience_department_id, title, content } = body
+    if (!user_id || !company_id || !title || !content) {
       return NextResponse.json({ success: false, error: 'Missing required fields' }, { status: 400 })
     }
     const announcement = await ownerAnnouncementService.postAnnouncement(
-      from_user_id,
+      user_id,
       company_id,
-      department_id ?? null,
+      audience_department_id ?? null,
       title,
       content
     )

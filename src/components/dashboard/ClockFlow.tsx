@@ -2,6 +2,7 @@
 
 import { ReactNode } from 'react'
 import { ArrowRight } from 'lucide-react'
+import { sgtInstant } from '@/lib/singaporeTime'
 
 // Shared personal clock in/out stepper — Manager's "My Shift Today" (DashboardView) and
 // Employee's Dashboard both render the exact same Clock In → Break In → Break Out → Clock Out
@@ -10,13 +11,13 @@ import { ArrowRight } from 'lucide-react'
 export const CLOCK_IN_WINDOW_MINUTES_BEFORE = 30
 
 export function canClockIn(shift: { shift_date: string; start_time: string }): boolean {
-  const shiftStart = new Date(`${shift.shift_date}T${shift.start_time}Z`)
+  const shiftStart = sgtInstant(shift.shift_date, shift.start_time)
   return Date.now() >= shiftStart.getTime() - CLOCK_IN_WINDOW_MINUTES_BEFORE * 60000
 }
 
 export function canClockOut(shift: { shift_date: string; end_time: string; is_open_ended: boolean }): boolean {
   if (shift.is_open_ended) return true
-  return Date.now() >= new Date(`${shift.shift_date}T${shift.end_time}Z`).getTime()
+  return Date.now() >= sgtInstant(shift.shift_date, shift.end_time).getTime()
 }
 
 export function fmtShiftTime(hhmmss: string): string {

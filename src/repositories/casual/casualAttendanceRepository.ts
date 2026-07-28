@@ -6,10 +6,10 @@ import { ShiftAssignment } from '@/types/ShiftAssignment'
 type AssignmentWithShift = ShiftAssignment & { shifts: Shift | null }
 
 export const casualAttendanceRepository = {
-  async getUserByAuthId(authId: string): Promise<{ id: string; full_name: string; role: string; hourly_rate: number | null } | null> {
+  async getUserByAuthId(authId: string): Promise<{ id: string; full_name: string; role: string } | null> {
     const { data, error } = await supabase
       .from('users')
-      .select('id, full_name, role, hourly_rate')
+      .select('id, full_name, role')
       .or(`supabase_auth_id.eq.${authId},id.eq.${authId}`)
       .eq('role', 'Casual Worker')
       .maybeSingle()
@@ -25,18 +25,17 @@ export const casualAttendanceRepository = {
     supervisor_employee_id: string | null
     shift: {
       id: string
-      title: string | null
       shift_date: string
       start_time: string
       end_time: string
       is_open_ended: boolean
-      flat_rate: number | null
       source_job_posting_id: string | null
+      hourly_rate: number | null
     }
   }[]> {
     const { data, error } = await supabase
       .from('shift_assignments')
-      .select('id, supervisor_employee_id, shifts!inner(id, title, shift_date, start_time, end_time, is_open_ended, flat_rate, source_job_posting_id)')
+      .select('id, supervisor_employee_id, shifts!inner(id, shift_date, start_time, end_time, is_open_ended, source_job_posting_id, hourly_rate)')
       .eq('user_id', userId)
       .order('shift_date', { referencedTable: 'shifts', ascending: false })
     if (error) throw new Error(error.message)
@@ -46,11 +45,15 @@ export const casualAttendanceRepository = {
     })
   },
 
-  async getJobPostingsByIds(ids: string[]): Promise<{ id: string; company_name: string | null; location: string | null; created_by: string | null }[]> {
+  async getJobPostingsByIds(ids: string[]): Promise<{ id: string; title: string; company_name: string | null; location: string | null; created_by: string | null }[]> {
     if (ids.length === 0) return []
-    const { data, error } = await supabase.from('job_postings').select('id, company_name, location, created_by').in('id', ids)
+    const { data, error } = await supabase.from('job_postings').select('id, title, location, created_by, companies(name)').in('id', ids)
     if (error) throw new Error(error.message)
-    return data ?? []
+    return (data ?? []).map((row: any) => {
+      const { companies, ...rest } = row
+      const co = Array.isArray(companies) ? companies[0] : companies
+      return { ...rest, company_name: co?.name ?? null }
+    })
   },
 
   async getUsersByIds(ids: string[]): Promise<{ id: string; full_name: string; role: string; phone_number: string | null; email_address: string | null; profile_photo_url: string | null }[]> {
@@ -119,18 +122,16 @@ export const casualAttendanceRepository = {
       .from('attendance_records')
       .select('*')
       .in('shift_assignment_id', assignmentIds)
-      .order('created_at', { ascending: false })
     if (error) throw new Error(error.message)
     return (data ?? []) as AttendanceRecord[]
   },
 
+  // shift_assignment_id is unique on attendance_records, so at most one row can ever match.
   async getAttendanceRecordByAssignmentId(assignmentId: string): Promise<AttendanceRecord | null> {
     const { data, error } = await supabase
       .from('attendance_records')
       .select('*')
       .eq('shift_assignment_id', assignmentId)
-      .order('created_at', { ascending: false })
-      .limit(1)
       .maybeSingle()
     if (error) throw new Error(error.message)
     return (data as AttendanceRecord | null) ?? null
@@ -141,15 +142,9 @@ export const casualAttendanceRepository = {
       .from('attendance_records')
       .insert({
         shift_assignment_id: input.shift_assignment_id,
-        casual_worker_id: input.casual_worker_id,
+        user_id: input.user_id,
         clock_in_time: input.clock_in_time,
         clock_out_time: input.clock_out_time ?? null,
-        confirmed_by_employee_id: input.confirmed_by_employee_id,
-        submitted_by_employee_id: input.submitted_by_employee_id,
-        status: input.status,
-        employee_notes: input.employee_notes ?? null,
-        manager_notes: input.manager_notes ?? null,
-        owner_status: input.owner_status ?? 'pending',
       })
       .select()
       .single()

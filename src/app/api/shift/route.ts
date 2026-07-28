@@ -43,8 +43,6 @@ export async function POST(req: NextRequest) {
   const {
     company_id,
     department_id,
-    title,
-    instruction,
     shift_date,
     start_time,
     end_time,
@@ -72,8 +70,6 @@ export async function POST(req: NextRequest) {
   const input: ShiftInput = {
     company_id,
     department_id,
-    title: typeof title === 'string' && title ? title : null,
-    instruction: typeof instruction === 'string' && instruction ? instruction : null,
     shift_date,
     start_time,
     end_time,

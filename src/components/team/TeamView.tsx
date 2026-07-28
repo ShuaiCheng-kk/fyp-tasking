@@ -998,7 +998,7 @@ function formatLongDateTime(value: string | null | undefined, empty = '—') {
   }).format(date)
 }
 
-type ActivityLogEntry = { id: string; actor_id: string | null; action: string; target_id: string | null; target_name: string | null; detail: string | null; is_read: boolean; created_at: string }
+type ActivityLogEntry = { id: string; actor_id: string | null; action: string; target_id: string | null; target_name: string | null; detail: string | null; created_at: string }
 
 const ACTIVITY_LOG_CLICK_ACTIONS = new Set(['set_active', 'set_inactive', 'change_department'])
 
@@ -1027,7 +1027,6 @@ function describeActivityLog(log: ActivityLogEntry): { icon: React.ReactNode; me
 
 type OwnedCompany = { id: string; name: string }
 type Department = { id: string; name: string; color?: string | null }
-type Manager = { id: string; full_name: string }
 type CWPreviewCard = {
   id: string
   name: string
@@ -1059,8 +1058,8 @@ type TeamMember = {
   casual_worker_verified_at?: string | null
   // Non-null once this company has banned (set "inactive") the worker — per company, so it drives
   // the Active/Inactive badge here instead of the global users.worker_status.
-  casual_worker_blocked_at?: string | null
-  casual_worker_blocked_reason?: string | null
+  casual_worker_inactive_at?: string | null
+  casual_worker_inactive_reason?: string | null
   // Profile fields carried through from the recruitment application — shown on the CW detail card.
   skills?: string | null
   resume_url?: string | null
@@ -1211,11 +1210,6 @@ export default function TeamView({ sidebar, basePath, permissions }: {
   // Department picker
   const [inviteDeptId, setInviteDeptId] = useState('')
   const [departments, setDepartments] = useState<Department[]>([])
-
-  // Manager picker
-  const [inviteManagerId, setInviteManagerId] = useState('')
-  const [managers, setManagers] = useState<Manager[]>([])
-  const [managersLoading, setManagersLoading] = useState(false)
 
   const [inviteLoading, setInviteLoading] = useState(false)
   const [inviteError, setInviteError] = useState('')
@@ -1524,8 +1518,6 @@ export default function TeamView({ sidebar, basePath, permissions }: {
     setOwnedCompanies([])
     setInviteDeptId('')
     setDepartments([])
-    setInviteManagerId('')
-    setManagers([])
     setInviteError('')
     setInviteSuccess('')
     setInviteSuccessToast('')
@@ -1767,8 +1759,6 @@ export default function TeamView({ sidebar, basePath, permissions }: {
           postal_code: postal,
           industry: editProfileIndustry === 'Other' ? (editProfileIndustryOther.trim() || null) : (industry || null),
           size,
-          website: null,
-          logo_url: null,
         }),
       })
       const data = await res.json()
@@ -1801,7 +1791,6 @@ export default function TeamView({ sidebar, basePath, permissions }: {
     if (currentUserRole === 'Manager') {
       setInviteRole('Employee')
       setInviteDeptId(userDeptId)
-      if (companyId && userDeptId) fetchManagers(companyId, userDeptId)
     }
     setInviteOpen(true)
   }
@@ -1809,8 +1798,6 @@ export default function TeamView({ sidebar, basePath, permissions }: {
   const fetchDepts = async (companyId: string) => {
     setDepartments([])
     setInviteDeptId('')
-    setManagers([])
-    setInviteManagerId('')
     try {
       const res = await fetch(`/api/company/departments?company_id=${companyId}`)
       const data = await res.json()
@@ -1818,24 +1805,10 @@ export default function TeamView({ sidebar, basePath, permissions }: {
     } catch {}
   }
 
-  const fetchManagers = async (companyId: string, deptId: string) => {
-    setManagersLoading(true)
-    setManagers([])
-    setInviteManagerId('')
-    try {
-      const res = await fetch(`/api/company/managers?company_id=${companyId}&department_id=${deptId}`)
-      const data = await res.json()
-      if (data.success) setManagers(data.managers)
-    } catch {}
-    finally { setManagersLoading(false) }
-  }
-
   const handleCompanyChange = (companyId: string) => {
     setSelectedCompanyId(companyId)
     setInviteDeptId('')
     setDepartments([])
-    setManagers([])
-    setInviteManagerId('')
     if (companyId && (inviteRole === 'Manager' || inviteRole === 'Employee')) {
       fetchDepts(companyId)
     }
@@ -1845,8 +1818,6 @@ export default function TeamView({ sidebar, basePath, permissions }: {
     setInviteRole(role)
     setInviteDeptId('')
     setDepartments([])
-    setManagers([])
-    setInviteManagerId('')
     if (companyId && (role === 'Manager' || role === 'Employee')) {
       fetchDepts(companyId)
     }
@@ -1854,16 +1825,9 @@ export default function TeamView({ sidebar, basePath, permissions }: {
 
   const handleDeptChange = (deptId: string) => {
     setInviteDeptId(deptId)
-    setInviteManagerId('')
-    setManagers([])
-    if (inviteRole === 'Employee' && deptId && selectedCompanyId) {
-      fetchManagers(selectedCompanyId, deptId)
-    }
   }
 
-  const noManagersInDept = inviteRole === 'Employee' && !!inviteDeptId && !managersLoading && managers.length === 0
   const showDept = (inviteRole === 'Manager' || inviteRole === 'Employee') && !!companyId
-  const showReportingManager = inviteRole === 'Employee' && !!inviteDeptId
 
   const handleSendInvite = async () => {
     const email = inviteEmail.trim()
@@ -1900,7 +1864,6 @@ export default function TeamView({ sidebar, basePath, permissions }: {
           company_id: selectedCompanyId,
           department_id: inviteRole === 'partner' ? null : (inviteDeptId || null),
           invited_by: userId,
-          reporting_manager_id: inviteRole === 'Employee' ? (inviteManagerId || null) : null,
         }),
       })
       const data = await res.json()
@@ -2049,7 +2012,7 @@ export default function TeamView({ sidebar, basePath, permissions }: {
           fetch('/api/manager/departments', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ manager_id: member.id, company_id: companyId, department_id: dept_id, assigned_by: internalUserId }),
+            body: JSON.stringify({ manager_id: member.id, company_id: companyId, department_id: dept_id }),
           })
         ),
         ...toRemove.map(dept_id =>
@@ -2116,7 +2079,7 @@ export default function TeamView({ sidebar, basePath, permissions }: {
           fetch('/api/manager/departments', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ manager_id: member.id, company_id: companyId, department_id: dept_id, assigned_by: internalUserId }),
+            body: JSON.stringify({ manager_id: member.id, company_id: companyId, department_id: dept_id }),
           })
         ),
         // Department access removals
@@ -2295,12 +2258,12 @@ export default function TeamView({ sidebar, basePath, permissions }: {
   const casualWorkers = teamMembers
     .filter(m => m.role === 'Casual Worker' && m.casual_worker_verified_at)
     .sort((a, b) => {
-      // Inactive = banned by THIS company (per-company blocked_at), not the global worker_status.
-      const aActive = a.casual_worker_blocked_at ? 1 : 0
-      const bActive = b.casual_worker_blocked_at ? 1 : 0
+      // Inactive = banned by THIS company (per-company inactive_at), not the global worker_status.
+      const aActive = a.casual_worker_inactive_at ? 1 : 0
+      const bActive = b.casual_worker_inactive_at ? 1 : 0
       return aActive - bActive
     })
-  const cwActiveCount = casualWorkers.filter(w => !w.casual_worker_blocked_at).length
+  const cwActiveCount = casualWorkers.filter(w => !w.casual_worker_inactive_at).length
   const cwInactiveCount = casualWorkers.length - cwActiveCount
   const partnerMembers = teamMembers.filter(m => m.role === 'Partner')
   const managerMembers = teamMembers.filter(m => m.role === 'Manager')
@@ -2336,8 +2299,8 @@ export default function TeamView({ sidebar, basePath, permissions }: {
         name: member.full_name,
         lastShift: '—',
         totalVisits: 0,
-        status: member.casual_worker_blocked_at ? 'Inactive' : 'Active',
-        inactiveReason: member.casual_worker_blocked_reason || null,
+        status: member.casual_worker_inactive_at ? 'Inactive' : 'Active',
+        inactiveReason: member.casual_worker_inactive_reason || null,
         email: member.email_address || null,
         dateOfBirth: member.date_of_birth || null,
         phoneNumber: member.phone_number || null,
@@ -2659,7 +2622,7 @@ export default function TeamView({ sidebar, basePath, permissions }: {
                   style={{ display: 'flex', gap: 12, overflowX: 'auto', paddingBottom: 16, paddingTop: 6, marginTop: -6, paddingRight: 4, scrollBehavior: 'auto' }}
                 >
                   {casualWorkers.map(worker => {
-                    const rawStatus = worker.casual_worker_blocked_at ? 'inactive' : 'active'
+                    const rawStatus = worker.casual_worker_inactive_at ? 'inactive' : 'active'
                     const displayStatus = rawStatus === 'active' ? 'Active' : 'Inactive'
                     const matchesSearch = normalizedCwSearch.length === 0 || worker.full_name.toLowerCase().includes(normalizedCwSearch)
                     return (
@@ -2679,7 +2642,7 @@ export default function TeamView({ sidebar, basePath, permissions }: {
                             lastShift: '—',
                             totalVisits: 0,
                             status: displayStatus,
-                            inactiveReason: worker.casual_worker_blocked_reason || null,
+                            inactiveReason: worker.casual_worker_inactive_reason || null,
                             email: worker.email_address || null,
                             dateOfBirth: worker.date_of_birth || null,
                             phoneNumber: worker.phone_number || null,
@@ -3142,8 +3105,8 @@ export default function TeamView({ sidebar, basePath, permissions }: {
             const casualWorkers = teamMembers
               .filter(m => m.role === 'Casual Worker' && m.casual_worker_verified_at)
               .sort((a, b) => {
-                const aActive = a.casual_worker_blocked_at ? 1 : 0
-                const bActive = b.casual_worker_blocked_at ? 1 : 0
+                const aActive = a.casual_worker_inactive_at ? 1 : 0
+                const bActive = b.casual_worker_inactive_at ? 1 : 0
                 return aActive - bActive
               })
             const partnerMembers = teamMembers.filter(m => m.role === 'Partner')
@@ -3170,7 +3133,7 @@ export default function TeamView({ sidebar, basePath, permissions }: {
                 emptyText: 'No employees have joined yet',
               },
             ] as const
-            const cwActiveCount = casualWorkers.filter(w => !w.casual_worker_blocked_at).length
+            const cwActiveCount = casualWorkers.filter(w => !w.casual_worker_inactive_at).length
             const cwInactiveCount = casualWorkers.length - cwActiveCount
 
             return (
@@ -3400,7 +3363,7 @@ export default function TeamView({ sidebar, basePath, permissions }: {
                             style={{ display: 'flex', gap: 12, overflowX: 'auto', paddingBottom: 16, paddingTop: 6, marginTop: -6, paddingRight: 4, scrollBehavior: 'auto' }}
                           >
                             {casualWorkers.map(worker => {
-                              const rawStatus = worker.casual_worker_blocked_at ? 'inactive' : 'active'
+                              const rawStatus = worker.casual_worker_inactive_at ? 'inactive' : 'active'
                               const displayStatus = rawStatus === 'active' ? 'Active' : 'Inactive'
                               const matchesSearch = normalizedCwSearch.length === 0 || worker.full_name.toLowerCase().includes(normalizedCwSearch)
                               return (
@@ -3420,7 +3383,7 @@ export default function TeamView({ sidebar, basePath, permissions }: {
                                       lastShift: '—',
                                       totalVisits: 0,
                                       status: displayStatus,
-                                      inactiveReason: worker.casual_worker_blocked_reason || null,
+                                      inactiveReason: worker.casual_worker_inactive_reason || null,
                                       email: worker.email_address || null,
                                       dateOfBirth: worker.date_of_birth || null,
                                       phoneNumber: worker.phone_number || null,
@@ -4161,8 +4124,8 @@ export default function TeamView({ sidebar, basePath, permissions }: {
                   <label style={{ ...modalLabelStyle, marginBottom: 4 }}>Certificates</label>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                     {cwCertificates.map(cert => (
-                      cert.file_url
-                        ? <a key={cert.id} href={cert.file_url} target="_blank" rel="noreferrer" style={{ fontSize: '0.9375rem', color: '#EA580C', textDecoration: 'underline' }}>{cert.name}</a>
+                      cert.certificate_url
+                        ? <a key={cert.id} href={cert.certificate_url} target="_blank" rel="noreferrer" style={{ fontSize: '0.9375rem', color: '#EA580C', textDecoration: 'underline' }}>{cert.name}</a>
                         : <p key={cert.id} style={{ fontSize: '0.9375rem', color: '#111827', margin: 0 }}>{cert.name}</p>
                     ))}
                   </div>
@@ -4200,7 +4163,7 @@ export default function TeamView({ sidebar, basePath, permissions }: {
                       })
                       const data = await res.json()
                       if (data.success) {
-                        setTeamMembers(prev => prev.map(m => m.id === current.id ? { ...m, worker_status: 'active', inactivate_reason: null, casual_worker_blocked_at: null, casual_worker_blocked_reason: null } : m))
+                        setTeamMembers(prev => prev.map(m => m.id === current.id ? { ...m, worker_status: 'active', inactivate_reason: null, casual_worker_inactive_at: null, casual_worker_inactive_reason: null } : m))
                         setSelectedCWPreview(null)
                         setCWStatusError('')
                         showCWDetailSuccess(`${current.name} has been set to Active.`)
@@ -4298,7 +4261,7 @@ export default function TeamView({ sidebar, basePath, permissions }: {
                     const data = await res.json()
                     if (data.success) {
                       const name = cwInactiveReasonModal.name
-                      setTeamMembers(prev => prev.map(m => m.id === cwInactiveReasonModal.id ? { ...m, worker_status: 'inactive', inactivate_reason: cwInactiveReason || null, casual_worker_blocked_at: new Date().toISOString(), casual_worker_blocked_reason: cwInactiveReason || null } : m))
+                      setTeamMembers(prev => prev.map(m => m.id === cwInactiveReasonModal.id ? { ...m, worker_status: 'inactive', inactivate_reason: cwInactiveReason || null, casual_worker_inactive_at: new Date().toISOString(), casual_worker_inactive_reason: cwInactiveReason || null } : m))
                       setCWInactiveReasonModal(null)
                       setCWInactiveReason('')
                       setSelectedCWPreview(null)
@@ -4496,7 +4459,6 @@ export default function TeamView({ sidebar, basePath, permissions }: {
               </div>
             ) : (
               <div
-                title={noManagersInDept ? 'Add a manager to this department first' : undefined}
                 style={{ padding: '0 24px 20px', display: 'flex', justifyContent: 'flex-end', gap: 8 }}
               >
                 <button

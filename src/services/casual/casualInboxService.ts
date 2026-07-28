@@ -4,6 +4,7 @@
 import { casualInboxRepository } from '@/repositories/casual/casualInboxRepository'
 import { findCurrentAssignment } from '@/services/casual/casualDashboardService'
 import { CLOCK_IN_WINDOW_MINUTES_BEFORE } from '@/services/casual/casualAttendanceService'
+import { sgtInstant } from '@/lib/singaporeTime'
 
 export const casualInboxService = {
   // A Casual Worker can only message the Employee supervising their current job — the caller
@@ -35,7 +36,7 @@ export const casualInboxService = {
 
     const shift = current.assignment.shift
     const windowOpensAt =
-      new Date(`${shift.shift_date}T${shift.start_time}Z`).getTime() - CLOCK_IN_WINDOW_MINUTES_BEFORE * 60000
+      sgtInstant(shift.shift_date, shift.start_time).getTime() - CLOCK_IN_WINDOW_MINUTES_BEFORE * 60000
     if (Date.now() < windowOpensAt) {
       throw new Error('Messaging opens 30 minutes before your job starts')
     }

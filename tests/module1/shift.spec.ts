@@ -83,7 +83,7 @@ test.beforeAll(async () => {
 
   const { error: managerDeptLinkError } = await admin
     .from('manager_departments')
-    .insert({ manager_id: managerId, company_id: seeded.companyId, department_id: departmentId, assigned_by: seeded.ownerId })
+    .insert({ manager_id: managerId, company_id: seeded.companyId, department_id: departmentId })
   if (managerDeptLinkError) throw new Error(`Failed to assign manager department: ${managerDeptLinkError.message}`)
 })
 

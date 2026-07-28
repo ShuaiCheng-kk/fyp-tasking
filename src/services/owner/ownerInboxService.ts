@@ -95,28 +95,15 @@ export const ownerInboxService = {
   },
 
   async getUnreadCount(userId: string, companyId: string | null, lastAnnouncementReadAt?: string | null) {
-    const [unreadMessages, unreadAnnouncements, pendingInvitations] = await Promise.all([
+    const [unreadMessages, unreadAnnouncements] = await Promise.all([
       ownerInboxRepository.countUnreadMessages(userId),
       companyId ? ownerInboxRepository.countUnreadAnnouncements(companyId, lastAnnouncementReadAt ?? null) : Promise.resolve(0),
-      ownerInboxRepository.countPendingInvitations(userId),
     ])
     return {
-      unread_messages: Number(unreadMessages) + Number(pendingInvitations),
+      unread_messages: Number(unreadMessages),
       unread_announcements: Number(unreadAnnouncements),
-      count: Number(unreadMessages) + Number(pendingInvitations) + Number(unreadAnnouncements),
+      count: Number(unreadMessages) + Number(unreadAnnouncements),
     }
-  },
-
-  async getInvitesByRecipient(user_id: string) {
-    return ownerInboxRepository.getInvitesByRecipient(user_id)
-  },
-
-  async getInboxItemById(inbox_id: string) {
-    return ownerInboxRepository.getInboxItemById(inbox_id)
-  },
-
-  async updateInboxStatus(inbox_id: string, status: string) {
-    await ownerInboxRepository.updateInboxStatus(inbox_id, status)
   },
 
   async markMessagesAsRead(userId: string, otherUserId: string) {

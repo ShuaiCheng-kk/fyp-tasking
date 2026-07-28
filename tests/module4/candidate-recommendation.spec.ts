@@ -111,10 +111,9 @@ test('UC44: applicant list returns the apply-time snapshot fields', async ({ req
     job_id: jobId,
     user_id: userId,
     status: 'pending',
-    relevant_experience: 'more_than_2',
     additional_note: 'Weekend availability.',
-    skills_snapshot: 'Cash handling, Customer service',
-    certificates_snapshot: [{ name: 'Food Hygiene Certificate', file_url: null }],
+    skills: 'Cash handling, Customer service',
+    certificates: [{ name: 'Food Hygiene Certificate', file_url: null }],
   })
 
   const res = await request.get(`/api/recruitment?resource=applicants&job_id=${jobId}&viewer_id=${seeded.ownerId}`)
@@ -123,9 +122,8 @@ test('UC44: applicant list returns the apply-time snapshot fields', async ({ req
   const applicant = applicants.find((a: { user_id: string }) => a.user_id === userId)
   expect(applicant).toBeTruthy()
   expect(applicant.full_name).toBe('AI Rec snapshot')
-  expect(applicant.skills_snapshot).toBe('Cash handling, Customer service')
-  expect(applicant.certificates_snapshot).toEqual([{ name: 'Food Hygiene Certificate', file_url: null }])
-  expect(applicant.relevant_experience).toBe('more_than_2')
+  expect(applicant.skills).toBe('Cash handling, Customer service')
+  expect(applicant.certificates).toEqual([{ name: 'Food Hygiene Certificate', file_url: null }])
 })
 
 test('UC48: cached AI results are served without recomputation, insufficient profiles are flagged', async ({ request }) => {
@@ -139,8 +137,7 @@ test('UC48: cached AI results are served without recomputation, insufficient pro
     job_id: jobId,
     user_id: cachedUserId,
     status: 'pending',
-    skills_snapshot: 'Barista',
-    relevant_experience: '1_to_2',
+    skills: 'Barista',
     ai_computed_at: new Date().toISOString(),
   }).select('id').single()
   cachedRec.applicant_id = cachedApp!.id

@@ -3,6 +3,7 @@
 
 import { casualDashboardRepository } from '@/repositories/casual/casualDashboardRepository'
 import { casualAttendanceRepository } from '@/repositories/casual/casualAttendanceRepository'
+import { sgtTodayKey, sgtDateKeyPlusDays } from '@/lib/singaporeTime'
 import { AttendanceRecord } from '@/types/Attendance'
 
 export interface CurrentJobView {
@@ -43,7 +44,7 @@ export interface CurrentJobView {
   clock_out_time: string | null
   break_in_time: string | null
   break_out_time: string | null
-  clock_out_released_at: string | null
+  clock_out_released: boolean
 }
 
 type UpcomingAssignment = Awaited<ReturnType<typeof casualDashboardRepository.getUpcomingAssignments>>[number]
@@ -51,34 +52,24 @@ type UpcomingAssignment = Awaited<ReturnType<typeof casualDashboardRepository.ge
 // How many days ahead (inclusive of today) the dashboard's Upcoming Jobs timeline covers.
 const UPCOMING_WINDOW_DAYS = 7
 
-function localDateKey(date: Date): string {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
-}
-
-// Shift dates are UTC-nominal by design (see casualAttendanceService's Clock In window, which
-// parses `${shift_date}T${start_time}Z` as UTC) — findCurrentAssignment's "from today onward"
-// filter must use that same UTC calendar day, or the two disagree for 8.5 hours a day in any
-// timezone ahead of UTC (a same-day shift can fail to appear on the dashboard at all even though
-// Clock In would otherwise accept it once it's visible). Only this lookup changes; the 7-day
-// timeline's upper bound below is untouched — this fixes the concrete "job doesn't show up"
-// symptom without touching the rest of Module 5's date handling.
-function utcDateKey(date: Date): string {
-  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`
-}
-
 // A Casual Worker only ever works one job at a time — the earliest assignment from today onward
 // that hasn't been clocked out of yet IS the current job. Once they clock out, it drops out and
 // the next chronological assignment becomes current. Shared by the dashboard (job card) and by
 // work-action gates that must resolve the same current job (e.g. messaging the supervisor).
 // `all` is the full sorted upcoming list (with attendance records) — the dashboard builds its
 // 7-day timeline from it, so the current-job pick and the timeline can never disagree.
+//
+// Shift dates are Singapore-nominal by design (see attendanceGrace/casualAttendanceService,
+// which parse shift date+time via sgtInstant) — this "from today onward" filter must use that
+// same Singapore calendar day, or the two disagree for ~8 hours a day (a same-day shift can fail
+// to appear on the dashboard at all even though Clock In would otherwise accept it once it's
+// visible). See project memory module5-clockin-timezone-bug.
 export async function findCurrentAssignment(userId: string): Promise<{
   assignment: UpcomingAssignment
   record: AttendanceRecord | null
   all: { assignment: UpcomingAssignment; record: AttendanceRecord | null }[]
 } | null> {
-  const today = new Date()
-  const todayKey = utcDateKey(today)
+  const todayKey = sgtTodayKey()
   const unsortedAssignments = await casualDashboardRepository.getUpcomingAssignments(userId, todayKey)
 
   // Earliest first — sorted here rather than trusted from the repository, since ordering across
@@ -122,9 +113,7 @@ export const casualDashboardService = {
     // a job is clocked out, it moves to Attendance History instead of lingering here greyed out.
     // The current job is always included even when it starts beyond the window — otherwise a
     // worker whose only job is next week would see an empty dashboard.
-    const windowEnd = new Date()
-    windowEnd.setDate(windowEnd.getDate() + (UPCOMING_WINDOW_DAYS - 1))
-    const windowEndKey = localDateKey(windowEnd)
+    const windowEndKey = sgtDateKeyPlusDays(UPCOMING_WINDOW_DAYS - 1)
     const timeline = current.all.filter(entry =>
       !entry.record?.clock_out_time &&
       (entry.assignment.shift.shift_date <= windowEndKey || entry.assignment.id === current.assignment.id)
@@ -148,7 +137,7 @@ export const casualDashboardService = {
         shift_id: assignment.shift.id,
         company_id: assignment.shift.company_id,
         department_id: assignment.shift.department_id,
-        title: assignment.shift.title,
+        title: job?.title ?? '',
         shift_date: assignment.shift.shift_date,
         start_time: assignment.shift.start_time,
         end_time: assignment.shift.end_time,
@@ -166,7 +155,7 @@ export const casualDashboardService = {
         clock_out_time: record?.clock_out_time ?? null,
         break_in_time: record?.break_in_time ?? null,
         break_out_time: record?.break_out_time ?? null,
-        clock_out_released_at: record?.clock_out_released_at ?? null,
+        clock_out_released: record?.clock_out_released ?? false,
       }
     })
 

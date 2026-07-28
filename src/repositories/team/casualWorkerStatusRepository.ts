@@ -4,42 +4,17 @@
 import { supabase } from '@/lib/supabase'
 
 export const casualWorkerStatusRepository = {
-  // Mirror of the ban onto the global users.worker_status column, kept so display surfaces that
-  // still read worker_status (e.g. the attendance review badge) stay roughly in sync. The
-  // authoritative, per-company ban lives on casualworker_departments (setCompanyBlock below).
-  async updateStatus(
-    user_id: string,
-    worker_status: string,
-    inactivate_reason: string | null
-  ) {
-    const { data, error } = await supabase
-      .from('users')
-      .update({
-        worker_status,
-        inactivate_reason,
-      })
-      .eq('id', user_id)
-      .select()
-      .single()
-
-    if (error) {
-      throw new Error(`Failed to update casual worker status: ${error.message}`)
-    }
-
-    return data
-  },
-
-  // Per-company ban: stamp (or clear) blocked_at on every casualworker_departments row this worker
+  // Per-company ban: stamp (or clear) inactive_at on every casualworker_departments row this worker
   // holds in the company, so the ban is scoped to this company only.
   async setCompanyBlock(
     casual_worker_id: string,
     company_id: string,
-    blocked_at: string | null,
-    blocked_reason: string | null
+    inactive_at: string | null,
+    inactive_reason: string | null
   ): Promise<void> {
     const { error } = await supabase
       .from('casualworker_departments')
-      .update({ blocked_at, blocked_reason })
+      .update({ inactive_at, inactive_reason })
       .eq('casual_worker_id', casual_worker_id)
       .eq('company_id', company_id)
     if (error) throw new Error(`Failed to update company ban: ${error.message}`)

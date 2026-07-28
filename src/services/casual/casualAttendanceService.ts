@@ -1,15 +1,12 @@
 import { casualAttendanceRepository } from '@/repositories/casual/casualAttendanceRepository'
 import { applyClockInGracePeriod } from '@/services/shared/attendanceGrace'
+import { sgtInstant, sgtTodayKey } from '@/lib/singaporeTime'
 import { AttendanceRecord, CasualAttendanceOverview } from '@/types/Attendance'
 
 // UC49: the Clock In button only appears starting 30 minutes before the shift's scheduled
 // start; Clock Out never appears early — only once the shift has actually reached its end time.
 // Exported because the same moment also unlocks the other work actions (messaging, task board).
 export const CLOCK_IN_WINDOW_MINUTES_BEFORE = 30
-
-function todayIsoDate(): string {
-  return new Date().toISOString().slice(0, 10)
-}
 
 export interface AttendanceHistoryEntry {
   id: string
@@ -39,9 +36,7 @@ export interface AttendanceHistoryEntry {
   break_out_time: string | null
   hours: number | null
   hourly_rate: number | null
-  flat_rate: number | null
   pay: number | null
-  notes: string | null
   // Titles of the tasks this worker completed on this shift — shown in the record detail.
   completed_tasks: string[]
 }
@@ -101,21 +96,18 @@ export const casualAttendanceService = {
           ? hoursBetween({ clock_in_time: record.clock_in_time, clock_out_time: record.clock_out_time, break_in_time: record.break_in_time, break_out_time: record.break_out_time })
           : null
 
-        // Pay is only earned once the shift is completed (clocked out). Flat rate wins when the
-        // shift has one (one-off jobs); otherwise hourly_rate x actual hours worked. Mirrors the
-        // exact formula reportService uses for labor costing.
+        // Pay is only earned once the shift is completed (clocked out) — hourly_rate x actual
+        // hours worked. Mirrors the exact formula reportService uses for labor costing. Rate
+        // comes from the shift itself (set from job_postings.salary_amount at shift-creation
+        // time) — pay is decided by the job, not a fixed rate on the worker.
         let pay: number | null = null
-        if (record.clock_out_time) {
-          if (a.shift.flat_rate !== null && a.shift.flat_rate !== undefined) {
-            pay = a.shift.flat_rate
-          } else if (user.hourly_rate !== null && user.hourly_rate !== undefined && hours !== null) {
-            pay = Math.round(user.hourly_rate * hours * 100) / 100
-          }
+        if (record.clock_out_time && a.shift.hourly_rate !== null && a.shift.hourly_rate !== undefined && hours !== null) {
+          pay = Math.round(a.shift.hourly_rate * hours * 100) / 100
         }
 
         return {
           id: a.id,
-          title: a.shift.title,
+          title: job?.title ?? null,
           job_posting_id: a.shift.source_job_posting_id,
           company_name: job?.company_name ?? null,
           location: job?.location ?? null,
@@ -138,10 +130,8 @@ export const casualAttendanceService = {
           break_in_time: record.break_in_time,
           break_out_time: record.break_out_time,
           hours,
-          hourly_rate: user.hourly_rate ?? null,
-          flat_rate: a.shift.flat_rate ?? null,
+          hourly_rate: a.shift.hourly_rate ?? null,
           pay,
-          notes: record.employee_notes ?? null,
           completed_tasks: tasksByShift.get(a.shift.id) ?? [],
         }
       })
@@ -161,7 +151,7 @@ export const casualAttendanceService = {
       throw new Error('Casual worker not found')
     }
 
-    const assignments = await casualAttendanceRepository.getUpcomingAssignments(user.id, todayIsoDate())
+    const assignments = await casualAttendanceRepository.getUpcomingAssignments(user.id, sgtTodayKey())
     const records = await casualAttendanceRepository.getAttendanceRecordsByAssignmentIds(assignments.map(assignment => assignment.id))
     const recordsByAssignment = new Map(records.map(record => [record.shift_assignment_id, record]))
     const shifts = assignments
@@ -179,7 +169,7 @@ export const casualAttendanceService = {
     }
   },
 
-  async clockIn(input: { authId: string; shift_assignment_id: string; clock_time?: string; notes?: string | null }): Promise<AttendanceRecord> {
+  async clockIn(input: { authId: string; shift_assignment_id: string; clock_time?: string }): Promise<AttendanceRecord> {
     const user = await casualAttendanceRepository.getUserByAuthId(input.authId)
     if (!user) throw new Error('Casual worker not found')
 
@@ -193,8 +183,8 @@ export const casualAttendanceService = {
     if (existing?.clock_in_time) throw new Error('Already clocked in for this shift')
 
     const rawNow = input.clock_time ?? new Date().toISOString()
-    const shiftStart = new Date(`${assignment.shifts.shift_date}T${assignment.shifts.start_time}Z`)
-    const shiftEnd = new Date(`${assignment.shifts.shift_date}T${assignment.shifts.end_time}Z`)
+    const shiftStart = sgtInstant(assignment.shifts.shift_date, assignment.shifts.start_time)
+    const shiftEnd = sgtInstant(assignment.shifts.shift_date, assignment.shifts.end_time)
     const earliestClockIn = new Date(shiftStart.getTime() - CLOCK_IN_WINDOW_MINUTES_BEFORE * 60000)
     if (new Date(rawNow).getTime() < earliestClockIn.getTime()) {
       throw new Error('Too early to clock in for this shift')
@@ -206,21 +196,13 @@ export const casualAttendanceService = {
     if (existing) {
       return casualAttendanceRepository.updateAttendanceRecord(existing.id, {
         clock_in_time: now,
-        confirmed_by_employee_id: user.id,
-        status: 'clocked_in',
-        employee_notes: input.notes ?? existing.employee_notes,
       })
     }
 
     return casualAttendanceRepository.createAttendanceRecord({
       shift_assignment_id: input.shift_assignment_id,
-      casual_worker_id: user.id,
+      user_id: user.id,
       clock_in_time: now,
-      confirmed_by_employee_id: user.id,
-      submitted_by_employee_id: user.id,
-      status: 'clocked_in',
-      employee_notes: input.notes ?? null,
-      owner_status: 'pending',
     })
   },
 
@@ -264,7 +246,7 @@ export const casualAttendanceService = {
     })
   },
 
-  async clockOut(input: { authId: string; shift_assignment_id: string; clock_time?: string; notes?: string | null }): Promise<AttendanceRecord> {
+  async clockOut(input: { authId: string; shift_assignment_id: string; clock_time?: string }): Promise<AttendanceRecord> {
     const user = await casualAttendanceRepository.getUserByAuthId(input.authId)
     if (!user) throw new Error('Casual worker not found')
 
@@ -285,19 +267,16 @@ export const casualAttendanceService = {
     // worker first — otherwise a worker could clock in and immediately clock out unchecked.
     if (!assignment.shifts.is_open_ended) {
       const rawNow = input.clock_time ?? new Date().toISOString()
-      const shiftEnd = new Date(`${assignment.shifts.shift_date}T${assignment.shifts.end_time}Z`)
+      const shiftEnd = sgtInstant(assignment.shifts.shift_date, assignment.shifts.end_time)
       if (new Date(rawNow).getTime() < shiftEnd.getTime()) {
         throw new Error('Too early to clock out — wait until the shift ends')
       }
-    } else if (!existing.clock_out_released_at) {
+    } else if (!existing.clock_out_released) {
       throw new Error('Waiting for your supervisor to review your work before you can clock out')
     }
 
     const record = await casualAttendanceRepository.updateAttendanceRecord(existing.id, {
       clock_out_time: input.clock_time ?? new Date().toISOString(),
-      submitted_by_employee_id: user.id,
-      employee_notes: input.notes ?? existing.employee_notes,
-      status: 'submitted',
     })
 
     // Proof of a completed shift is what promotes this worker into the company's verified Casual

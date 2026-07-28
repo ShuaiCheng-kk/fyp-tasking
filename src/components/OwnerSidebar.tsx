@@ -280,15 +280,15 @@ export default function OwnerSidebar({
                   if (raw) seen = new Set(JSON.parse(raw))
                 } catch {}
                 const swaps = (data.success ? data.swaps ?? [] : []) as Array<{ id: string; requester_id: string; counterpart_id: string; counterpart_status: string; status: string }>
-                const fixedOff = (data.success ? data.fixed_off ?? [] : []) as Array<{ week_start: string; source: string; status: string; reviewed_at?: string | null; created_at?: string | null }>
+                const fixedOff = (data.success ? data.fixed_off ?? [] : []) as Array<{ requested_week: string; source: string; status: string; reviewed_at?: string | null; created_at?: string | null }>
                 const swapResponseCount = swaps.filter(s => s.counterpart_id === internalId && s.counterpart_status === 'pending' && s.status === 'pending').length
                 const swapUpdateCount = swaps.filter(s => s.requester_id === internalId && s.counterpart_status !== 'pending' && !seen.has(`swap-${s.id}`)).length
                 const fixedOffGroupsByWeek = new Map<string, typeof fixedOff>()
                 fixedOff.forEach(req => {
                   if (req.source !== 'submitted' || req.status === 'pending') return
-                  const group = fixedOffGroupsByWeek.get(req.week_start) ?? []
+                  const group = fixedOffGroupsByWeek.get(req.requested_week) ?? []
                   group.push(req)
-                  fixedOffGroupsByWeek.set(req.week_start, group)
+                  fixedOffGroupsByWeek.set(req.requested_week, group)
                 })
                 const fixedOffUpdateKeys = new Set<string>()
                 fixedOffGroupsByWeek.forEach((group, weekStart) => {
@@ -361,8 +361,8 @@ export default function OwnerSidebar({
           .then(data => {
             if (data.success) {
               // Own posts are never "unread" — matches CommunicationView's unreadAnnCount rule.
-              const unread = (data.announcements as { id: string; from_user_id: string; created_at: string; updated_at?: string | null }[])
-                .filter(a => a.from_user_id !== internalId && !readIds.has(`${a.id}:${a.updated_at ?? a.created_at}`)).length
+              const unread = (data.announcements as { id: string; user_id: string; created_at: string; updated_at?: string | null }[])
+                .filter(a => a.user_id !== internalId && !readIds.has(`${a.id}:${a.updated_at ?? a.created_at}`)).length
               setAnnCount(unread)
             }
           })
@@ -393,8 +393,8 @@ export default function OwnerSidebar({
             .then(r => r.json())
             .then(data => {
               if (data.success) {
-                setAnnCount((data.announcements as { id: string; from_user_id: string; created_at: string; updated_at?: string | null }[])
-                  .filter(a => a.from_user_id !== internalId && !rids.has(`${a.id}:${a.updated_at ?? a.created_at}`)).length)
+                setAnnCount((data.announcements as { id: string; user_id: string; created_at: string; updated_at?: string | null }[])
+                  .filter(a => a.user_id !== internalId && !rids.has(`${a.id}:${a.updated_at ?? a.created_at}`)).length)
               }
             }).catch(() => {})
         }
@@ -415,7 +415,7 @@ export default function OwnerSidebar({
 
         const offDayChannel = supabase
           .channel('owner-sidebar-off-day')
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'employee_off_day_requests', filter: `company_id=eq.${cid}` },
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'off_day_requests', filter: `company_id=eq.${cid}` },
             refreshAttendanceCount)
           .subscribe()
 

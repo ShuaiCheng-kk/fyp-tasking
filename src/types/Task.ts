@@ -10,7 +10,6 @@ export interface Task {
   assigned_user_id: string | null
   assigned_by: string | null
   status: 'Assigned' | 'In Progress' | 'Review' | 'Complete'
-  percentage_complete: number
   priority: string | null
   due_at: string | null
   task_date: string | null
@@ -55,7 +54,6 @@ export interface TaskInput {
   assigned_user_id?: string | null
   assigned_by?: string | null
   status?: 'Assigned' | 'In Progress' | 'Review' | 'Complete'
-  percentage_complete?: number
   priority?: string | null
   due_at?: string | null
   task_date?: string | null
@@ -85,7 +83,6 @@ export interface TaskStatItem {
   title: string
   status: string
   priority?: string | null
-  percentage_complete?: number
   assignee_name?: string
   assigned_user_id?: string | null
   created_at?: string

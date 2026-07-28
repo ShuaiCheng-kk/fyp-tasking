@@ -26,9 +26,9 @@ const baseUser = {
   id: 'user-1',
   full_name: 'John Tan',
   email_address: 'john@example.com',
-  phone_number: null,
+  phone_number: '+65 8123 4567',
   date_of_birth: '2004-05-01',
-  profile_photo_url: null,
+  profile_photo_url: 'https://cdn/photo.jpg',
   role: 'Guest User',
   supabase_auth_id: 'auth-1',
   skills: null,
@@ -50,7 +50,7 @@ describe('workerProfileService — Worker Profile', () => {
   describe('getProfile', () => {
     it('returns the user merged with their certificates', async () => {
       vi.mocked(workerProfileRepository.getCertificatesByUserId).mockResolvedValue([
-        { id: 'cert-1', user_id: 'user-1', name: 'Food Hygiene Certificate', file_url: null, created_at: '2026-07-01T00:00:00Z' },
+        { id: 'cert-1', user_id: 'user-1', name: 'Food Hygiene Certificate', certificate_url: null, created_at: '2026-07-01T00:00:00Z' },
       ])
 
       const profile = await workerProfileService.getProfile('auth-1')
@@ -133,22 +133,22 @@ describe('workerProfileService — Worker Profile', () => {
   describe('addCertificate', () => {
     it('adds a text-only certificate without any upload', async () => {
       vi.mocked(workerProfileRepository.addCertificate).mockResolvedValue({
-        id: 'cert-1', user_id: 'user-1', name: 'First Aid Certificate (CPR + AED)', file_url: null, created_at: '2026-07-11T00:00:00Z',
+        id: 'cert-1', user_id: 'user-1', name: 'First Aid Certificate (CPR + AED)', certificate_url: null, created_at: '2026-07-11T00:00:00Z',
       })
 
       const cert = await workerProfileService.addCertificate('auth-1', '  First Aid Certificate (CPR + AED) ', null)
 
       expect(workerProfileRepository.uploadProfileFile).not.toHaveBeenCalled()
       expect(workerProfileRepository.addCertificate).toHaveBeenCalledWith({
-        user_id: 'user-1', name: 'First Aid Certificate (CPR + AED)', file_url: null,
+        user_id: 'user-1', name: 'First Aid Certificate (CPR + AED)', certificate_url: null,
       })
-      expect(cert.file_url).toBeNull()
+      expect(cert.certificate_url).toBeNull()
     })
 
     it('uploads the optional proof file and stores its URL', async () => {
       vi.mocked(workerProfileRepository.uploadProfileFile).mockResolvedValue('https://cdn/cert.jpg')
       vi.mocked(workerProfileRepository.addCertificate).mockResolvedValue({
-        id: 'cert-2', user_id: 'user-1', name: 'Forklift Licence', file_url: 'https://cdn/cert.jpg', created_at: '2026-07-11T00:00:00Z',
+        id: 'cert-2', user_id: 'user-1', name: 'Forklift Licence', certificate_url: 'https://cdn/cert.jpg', created_at: '2026-07-11T00:00:00Z',
       })
 
       await workerProfileService.addCertificate('auth-1', 'Forklift Licence', makeFile('licence.jpg', 'image/jpeg'))
@@ -158,7 +158,7 @@ describe('workerProfileService — Worker Profile', () => {
         expect.stringMatching(/^profiles\/user-1\/certificates\/\d+-licence\.jpg$/),
       )
       expect(workerProfileRepository.addCertificate).toHaveBeenCalledWith(
-        expect.objectContaining({ file_url: 'https://cdn/cert.jpg' }),
+        expect.objectContaining({ certificate_url: 'https://cdn/cert.jpg' }),
       )
     })
 
@@ -177,7 +177,7 @@ describe('workerProfileService — Worker Profile', () => {
     it('uploads the new file and updates the certificate scoped to the resolved user', async () => {
       vi.mocked(workerProfileRepository.uploadProfileFile).mockResolvedValue('https://cdn/cert-v2.pdf')
       vi.mocked(workerProfileRepository.updateCertificateFileUrl).mockResolvedValue({
-        id: 'cert-1', user_id: 'user-1', name: 'Food Hygiene Certificate', file_url: 'https://cdn/cert-v2.pdf', created_at: '2026-07-01T00:00:00Z',
+        id: 'cert-1', user_id: 'user-1', name: 'Food Hygiene Certificate', certificate_url: 'https://cdn/cert-v2.pdf', created_at: '2026-07-01T00:00:00Z',
       })
 
       const cert = await workerProfileService.replaceCertificateFile('auth-1', 'cert-1', makeFile('cert-v2.pdf', 'application/pdf'))
@@ -187,7 +187,7 @@ describe('workerProfileService — Worker Profile', () => {
         expect.stringMatching(/^profiles\/user-1\/certificates\/\d+-cert-v2\.pdf$/),
       )
       expect(workerProfileRepository.updateCertificateFileUrl).toHaveBeenCalledWith('cert-1', 'user-1', 'https://cdn/cert-v2.pdf')
-      expect(cert.file_url).toBe('https://cdn/cert-v2.pdf')
+      expect(cert.certificate_url).toBe('https://cdn/cert-v2.pdf')
     })
 
     it('rejects unsupported file types', async () => {

@@ -69,57 +69,13 @@ export const ownerInboxRepository = {
       .from('announcements')
       .select('*', { count: 'exact', head: true })
       .eq('company_id', companyId)
-      .is('department_id', null)
+      .is('audience_department_id', null)
     if (lastReadAt) {
       query = query.gt('created_at', lastReadAt)
     }
     const { count, error } = await query
     if (error) throw error
     return count ?? 0
-  },
-
-  async countPendingInvitations(userId: string) {
-    const { count, error } = await supabase
-      .from('inbox')
-      .select('*', { count: 'exact', head: true })
-      .eq('recipient_user_id', userId)
-      .eq('status', 'pending')
-    if (error) throw error
-    return count ?? 0
-  },
-
-  async getInvitesByRecipient(recipient_user_id: string) {
-    const { data, error } = await supabase
-      .from('inbox')
-      .select(`*, sender:users!inbox_sender_user_id_fkey(full_name), companies(name)`)
-      .eq('recipient_user_id', recipient_user_id)
-      .eq('type', 'company_invite')
-      .eq('status', 'pending')
-      .order('created_at', { ascending: false })
-    if (error) throw new Error(`Failed to fetch invites: ${error.message}`)
-    return (data ?? []).map((row: any) => ({
-      ...row,
-      sender_name: row.sender?.full_name ?? 'Unknown',
-      company_name: row.companies?.name ?? 'Unknown',
-    }))
-  },
-
-  async getInboxItemById(inbox_id: string) {
-    const { data, error } = await supabase
-      .from('inbox')
-      .select('*')
-      .eq('id', inbox_id)
-      .single()
-    if (error || !data) throw new Error('Inbox record not found')
-    return data
-  },
-
-  async updateInboxStatus(inbox_id: string, status: string) {
-    const { error } = await supabase
-      .from('inbox')
-      .update({ status })
-      .eq('id', inbox_id)
-    if (error) throw new Error(`Failed to update inbox status: ${error.message}`)
   },
 
   async findUserById(id: string) {

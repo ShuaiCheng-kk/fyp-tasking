@@ -16,6 +16,7 @@ vi.mock('@/repositories/employee/employeeAttendanceRepository', () => ({
     createAttendanceRecord: vi.fn(),
     updateAttendanceRecord: vi.fn(),
     getPendingClockOutReleases: vi.fn(),
+    getJobPostingsByIds: vi.fn(),
     getAttendanceRecordWithSupervisor: vi.fn(),
     releaseClockOut: vi.fn(),
     getUsersByIds: vi.fn(),
@@ -36,7 +37,7 @@ describe('employeeAttendanceService — Review Attendance Record (UC50)', () => 
 
   describe('getAttendanceRecords', () => {
     it('delegates straight to the repository', async () => {
-      const records = [{ id: 'record-1', status: 'submitted' }] as any
+      const records = [{ id: 'record-1' }] as any
       vi.mocked(employeeAttendanceRepository.getAttendanceRecords).mockResolvedValue(records)
 
       const result = await employeeAttendanceService.getAttendanceRecords('auth-1')
@@ -79,7 +80,7 @@ describe('employeeAttendanceService — Clock In / Clock Out (UC49, shared with 
       vi.mocked(employeeAttendanceRepository.getAssignmentById).mockResolvedValue(assignment)
       vi.mocked(employeeAttendanceRepository.getAttendanceRecordByAssignmentId).mockResolvedValue(null)
       await expect(employeeAttendanceService.clockIn({
-        authId: 'auth-1', shift_assignment_id: 'assignment-1', clock_time: '2026-07-01T07:00:00Z',
+        authId: 'auth-1', shift_assignment_id: 'assignment-1', clock_time: '2026-07-01T07:00:00+08:00',
       })).rejects.toThrow('Too early to clock in for this shift')
     })
 
@@ -89,10 +90,10 @@ describe('employeeAttendanceService — Clock In / Clock Out (UC49, shared with 
       vi.mocked(employeeAttendanceRepository.getAttendanceRecordByAssignmentId).mockResolvedValue(null)
       vi.mocked(employeeAttendanceRepository.createAttendanceRecord).mockResolvedValue({ id: 'record-1' } as any)
 
-      await employeeAttendanceService.clockIn({ authId: 'auth-1', shift_assignment_id: 'assignment-1', clock_time: '2026-07-01T08:07:00Z' })
+      await employeeAttendanceService.clockIn({ authId: 'auth-1', shift_assignment_id: 'assignment-1', clock_time: '2026-07-01T08:07:00+08:00' })
 
       expect(employeeAttendanceRepository.createAttendanceRecord).toHaveBeenCalledWith(
-        expect.objectContaining({ clock_in_time: '2026-07-01T08:00:00.000Z', confirmed_by_employee_id: 'emp-1' })
+        expect.objectContaining({ clock_in_time: '2026-07-01T00:00:00.000Z', user_id: 'emp-1' })
       )
     })
 
@@ -102,10 +103,10 @@ describe('employeeAttendanceService — Clock In / Clock Out (UC49, shared with 
       vi.mocked(employeeAttendanceRepository.getAttendanceRecordByAssignmentId).mockResolvedValue(null)
       vi.mocked(employeeAttendanceRepository.createAttendanceRecord).mockResolvedValue({ id: 'record-1' } as any)
 
-      await employeeAttendanceService.clockIn({ authId: 'auth-1', shift_assignment_id: 'assignment-1', clock_time: '2026-07-01T08:20:00Z' })
+      await employeeAttendanceService.clockIn({ authId: 'auth-1', shift_assignment_id: 'assignment-1', clock_time: '2026-07-01T08:20:00+08:00' })
 
       expect(employeeAttendanceRepository.createAttendanceRecord).toHaveBeenCalledWith(
-        expect.objectContaining({ clock_in_time: '2026-07-01T08:20:00.000Z' })
+        expect.objectContaining({ clock_in_time: '2026-07-01T00:20:00.000Z' })
       )
     })
   })
@@ -123,11 +124,11 @@ describe('employeeAttendanceService — Clock In / Clock Out (UC49, shared with 
       vi.mocked(employeeAttendanceRepository.getUserByAuthId).mockResolvedValue(user)
       vi.mocked(employeeAttendanceRepository.getAssignmentById).mockResolvedValue(assignment)
       vi.mocked(employeeAttendanceRepository.getAttendanceRecordByAssignmentId).mockResolvedValue({
-        id: 'record-1', clock_in_time: '2026-07-01T08:00:00Z', clock_out_time: null, employee_notes: null,
+        id: 'record-1', clock_in_time: '2026-07-01T08:00:00Z', clock_out_time: null,
       } as any)
 
       await expect(employeeAttendanceService.clockOut({
-        authId: 'auth-1', shift_assignment_id: 'assignment-1', clock_time: '2026-07-01T15:00:00Z',
+        authId: 'auth-1', shift_assignment_id: 'assignment-1', clock_time: '2026-07-01T15:00:00+08:00',
       })).rejects.toThrow('Too early to clock out — wait until the shift ends')
     })
 
@@ -135,17 +136,14 @@ describe('employeeAttendanceService — Clock In / Clock Out (UC49, shared with 
       vi.mocked(employeeAttendanceRepository.getUserByAuthId).mockResolvedValue(user)
       vi.mocked(employeeAttendanceRepository.getAssignmentById).mockResolvedValue(assignment)
       vi.mocked(employeeAttendanceRepository.getAttendanceRecordByAssignmentId).mockResolvedValue({
-        id: 'record-1', clock_in_time: '2026-07-01T08:00:00Z', clock_out_time: null, employee_notes: null,
+        id: 'record-1', clock_in_time: '2026-07-01T08:00:00Z', clock_out_time: null,
       } as any)
       vi.mocked(employeeAttendanceRepository.updateAttendanceRecord).mockResolvedValue({ id: 'record-1' } as any)
 
-      await employeeAttendanceService.clockOut({ authId: 'auth-1', shift_assignment_id: 'assignment-1', clock_time: '2026-07-01T16:00:00Z', notes: 'Done' })
+      await employeeAttendanceService.clockOut({ authId: 'auth-1', shift_assignment_id: 'assignment-1', clock_time: '2026-07-01T16:00:00Z' })
 
       expect(employeeAttendanceRepository.updateAttendanceRecord).toHaveBeenCalledWith('record-1', {
         clock_out_time: '2026-07-01T16:00:00Z',
-        submitted_by_employee_id: 'emp-1',
-        employee_notes: 'Done',
-        status: 'submitted',
       })
     })
   })
@@ -230,14 +228,15 @@ describe('employeeAttendanceService — Casual Worker Clock-Out Release (one-off
     it('attaches the worker name to each pending release', async () => {
       vi.mocked(employeeAttendanceRepository.getUserByAuthId).mockResolvedValue(user)
       vi.mocked(employeeAttendanceRepository.getPendingClockOutReleases).mockResolvedValue([
-        { id: 'ar-1', casual_worker_id: 'cw-1', clock_in_time: '2026-07-01T08:00:00Z', shift_title: 'Event Setup', shift_date: '2026-07-01', start_time: '08:00' },
+        { id: 'ar-1', user_id: 'cw-1', clock_in_time: '2026-07-01T08:00:00Z', source_job_posting_id: 'job-1', shift_date: '2026-07-01', start_time: '08:00' },
       ])
       vi.mocked(employeeAttendanceRepository.getUsersByIds).mockResolvedValue([{ id: 'cw-1', full_name: 'Wei Jie Lim' }])
+      vi.mocked(employeeAttendanceRepository.getJobPostingsByIds).mockResolvedValue([{ id: 'job-1', title: 'Event Setup' }])
 
       const result = await employeeAttendanceService.getClockOutReleaseQueue('auth-1')
 
       expect(result).toEqual([{
-        id: 'ar-1', casual_worker_id: 'cw-1', clock_in_time: '2026-07-01T08:00:00Z',
+        id: 'ar-1', user_id: 'cw-1', clock_in_time: '2026-07-01T08:00:00Z',
         shift_title: 'Event Setup', shift_date: '2026-07-01', start_time: '08:00',
         worker_name: 'Wei Jie Lim',
       }])
@@ -246,7 +245,7 @@ describe('employeeAttendanceService — Casual Worker Clock-Out Release (one-off
 
   describe('releaseClockOut', () => {
     const supervisedRecord = {
-      id: 'ar-1', clock_in_time: '2026-07-01T08:00:00Z', clock_out_time: null, clock_out_released_at: null,
+      id: 'ar-1', clock_in_time: '2026-07-01T08:00:00Z', clock_out_time: null, clock_out_released: false,
       shift_assignments: { supervisor_employee_id: 'emp-1', shifts: { is_open_ended: true } },
     } as any
 
@@ -273,7 +272,7 @@ describe('employeeAttendanceService — Casual Worker Clock-Out Release (one-off
     it('throws when already released', async () => {
       vi.mocked(employeeAttendanceRepository.getUserByAuthId).mockResolvedValue(user)
       vi.mocked(employeeAttendanceRepository.getAttendanceRecordWithSupervisor).mockResolvedValue({
-        ...supervisedRecord, clock_out_released_at: '2026-07-01T09:00:00Z',
+        ...supervisedRecord, clock_out_released: true,
       })
 
       await expect(employeeAttendanceService.releaseClockOut('auth-1', 'ar-1'))
@@ -287,7 +286,7 @@ describe('employeeAttendanceService — Casual Worker Clock-Out Release (one-off
 
       await employeeAttendanceService.releaseClockOut('auth-1', 'ar-1')
 
-      expect(employeeAttendanceRepository.releaseClockOut).toHaveBeenCalledWith('ar-1', 'emp-1')
+      expect(employeeAttendanceRepository.releaseClockOut).toHaveBeenCalledWith('ar-1')
     })
   })
 })

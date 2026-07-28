@@ -3,5 +3,4 @@ export interface Department {
   name: string
   company_id: string
   color: string | null
-  created_at: string
 }

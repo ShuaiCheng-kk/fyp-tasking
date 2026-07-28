@@ -24,8 +24,6 @@ type Company = {
   location: string | null
   industry: string | null
   size: string | null
-  logo_url: string | null
-  website: string | null
 }
 
 function InlineError({ message }: { message: string }) {
@@ -268,8 +266,6 @@ export default function CompanySettingsView({ sidebar, dashboardPath }: { sideba
           location: editLocation,
           industry: editIndustry,
           size: editSize,
-          website: null,
-          logo_url: null,
         }),
       })
       const data = await res.json()
@@ -308,8 +304,6 @@ export default function CompanySettingsView({ sidebar, dashboardPath }: { sideba
           location: addLocation,
           industry: addIndustry,
           size: addSize,
-          website: null,
-          logo_url: null,
           departments: addDepts.filter((d) => d.trim()),
         }),
       })

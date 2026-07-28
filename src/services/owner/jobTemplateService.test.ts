@@ -22,17 +22,13 @@ import { jobTemplateRepository } from '@/repositories/owner/jobTemplateRepositor
 const baseTemplate = {
   id: 'template-1',
   company_id: 'company-1',
-  name: 'Weekend Cashier',
   title: 'Cashier',
-  description: 'Run the front register',
-  requirements: 'Available weekends',
-  employment_type: 'casual',
-  form_type: 'shift',
+  responsibilities: 'Run the front register',
+  skills: 'Available weekends',
+  job_type: 'shift',
   department_id: null,
   salary_amount: null,
-  salary_type: null,
-  uniform_required: false,
-  uniform_type: null,
+  uniform_type: 'none',
   uniform_details: null,
   experience_required: null,
   minimum_age: null,
@@ -54,23 +50,19 @@ describe('jobTemplateService — Job Template', () => {
 
       const result = await jobTemplateService.createTemplate({
         company_id: 'company-1',
-        name: 'Weekend Cashier',
         title: 'Cashier',
-        description: 'Run the front register',
-        requirements: 'Available weekends',
-        employment_type: 'casual',
-        form_type: 'shift',
+        responsibilities: 'Run the front register',
+        skills: 'Available weekends',
+        job_type: 'shift',
         created_by: 'owner-1',
       })
 
       expect(jobTemplateRepository.createTemplate).toHaveBeenCalledWith({
         company_id: 'company-1',
-        name: 'Weekend Cashier',
         title: 'Cashier',
-        description: 'Run the front register',
-        requirements: 'Available weekends',
-        employment_type: 'casual',
-        form_type: 'shift',
+        responsibilities: 'Run the front register',
+        skills: 'Available weekends',
+        job_type: 'shift',
         created_by: 'owner-1',
       })
       expect(result).toEqual(baseTemplate)
@@ -79,17 +71,15 @@ describe('jobTemplateService — Job Template', () => {
     it('throws when required fields are missing', async () => {
       await expect(jobTemplateService.createTemplate({
         company_id: '',
-        name: 'Weekend Cashier',
         title: 'Cashier',
         created_by: 'owner-1',
       })).rejects.toThrow('Missing required job template fields')
     })
 
-    it('throws when name is blank', async () => {
+    it('throws when title is blank', async () => {
       await expect(jobTemplateService.createTemplate({
         company_id: 'company-1',
-        name: '   ',
-        title: 'Cashier',
+        title: '   ',
         created_by: 'owner-1',
       })).rejects.toThrow('Missing required job template fields')
     })
@@ -136,26 +126,22 @@ describe('jobTemplateService — Job Template', () => {
   })
 
   describe('updateTemplate', () => {
-    it('updates name, title, description, requirements, employment_type, and form_type', async () => {
+    it('updates title, responsibilities, skills, and job_type', async () => {
       vi.mocked(jobTemplateRepository.getTemplateById).mockResolvedValue(baseTemplate)
       vi.mocked(jobTemplateRepository.updateTemplate).mockResolvedValue({
         ...baseTemplate,
-        name: 'Renamed',
+        title: 'Renamed',
       })
 
-      const result = await jobTemplateService.updateTemplate('template-1', { name: 'Renamed' })
+      const result = await jobTemplateService.updateTemplate('template-1', { title: 'Renamed' })
 
       expect(jobTemplateRepository.updateTemplate).toHaveBeenCalledWith('template-1', {
-        name: 'Renamed',
-        title: baseTemplate.title,
-        description: baseTemplate.description,
-        requirements: baseTemplate.requirements,
-        employment_type: baseTemplate.employment_type,
-        form_type: baseTemplate.form_type,
+        title: 'Renamed',
+        responsibilities: baseTemplate.responsibilities,
+        skills: baseTemplate.skills,
+        job_type: baseTemplate.job_type,
         department_id: baseTemplate.department_id,
         salary_amount: baseTemplate.salary_amount,
-        salary_type: baseTemplate.salary_type,
-        uniform_required: baseTemplate.uniform_required,
         uniform_type: baseTemplate.uniform_type,
         uniform_details: baseTemplate.uniform_details,
         experience_required: baseTemplate.experience_required,
@@ -163,21 +149,21 @@ describe('jobTemplateService — Job Template', () => {
         estimated_hours: baseTemplate.estimated_hours,
         urgency: baseTemplate.urgency,
       })
-      expect(result.name).toBe('Renamed')
+      expect(result.title).toBe('Renamed')
     })
 
-    it('updates uniform_required, uniform_type, uniform_details, experience_required, and minimum_age', async () => {
+    it('updates uniform_type, uniform_details, experience_required, and minimum_age', async () => {
       vi.mocked(jobTemplateRepository.getTemplateById).mockResolvedValue(baseTemplate)
       vi.mocked(jobTemplateRepository.updateTemplate).mockResolvedValue({
-        ...baseTemplate, uniform_required: true, uniform_type: 'company', uniform_details: 'Black polo + apron', experience_required: '1+ Year', minimum_age: 18,
+        ...baseTemplate, uniform_type: 'company', uniform_details: 'Black polo + apron', experience_required: '1+ Year', minimum_age: 18,
       })
 
       await jobTemplateService.updateTemplate('template-1', {
-        uniform_required: true, uniform_type: 'company', uniform_details: 'Black polo + apron', experience_required: '1+ Year', minimum_age: 18,
+        uniform_type: 'company', uniform_details: 'Black polo + apron', experience_required: '1+ Year', minimum_age: 18,
       })
 
       expect(jobTemplateRepository.updateTemplate).toHaveBeenCalledWith('template-1', expect.objectContaining({
-        uniform_required: true, uniform_type: 'company', uniform_details: 'Black polo + apron', experience_required: '1+ Year', minimum_age: 18,
+        uniform_type: 'company', uniform_details: 'Black polo + apron', experience_required: '1+ Year', minimum_age: 18,
       }))
     })
 
@@ -197,13 +183,7 @@ describe('jobTemplateService — Job Template', () => {
     it('throws when the template does not exist', async () => {
       vi.mocked(jobTemplateRepository.getTemplateById).mockResolvedValue(null)
 
-      await expect(jobTemplateService.updateTemplate('missing', { name: 'X' })).rejects.toThrow('Template not found')
-    })
-
-    it('throws when name is blank', async () => {
-      vi.mocked(jobTemplateRepository.getTemplateById).mockResolvedValue(baseTemplate)
-
-      await expect(jobTemplateService.updateTemplate('template-1', { name: '   ' })).rejects.toThrow('Please name this template.')
+      await expect(jobTemplateService.updateTemplate('missing', { title: 'X' })).rejects.toThrow('Template not found')
     })
 
     it('throws when title is blank', async () => {

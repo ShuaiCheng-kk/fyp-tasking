@@ -9,6 +9,7 @@ import { taskService } from '@/services/owner/taskService'
 import { recruitmentService } from '@/services/owner/recruitmentService'
 import { userService } from '@/services/auth/userService'
 import { Task } from '@/types/Task'
+import { sgtInstant } from '@/lib/singaporeTime'
 import {
   AttendanceDepartmentGroup,
   AttendanceOverview,
@@ -50,8 +51,10 @@ function daysBetween(fromKey: string, toKey: string): number {
   return Math.round((to.getTime() - from.getTime()) / 86_400_000)
 }
 
+// shift start_time is Singapore-nominal wall-clock (see src/lib/singaporeTime) — sgtInstant
+// resolves the real instant it represents, comparable to the already-UTC clock_in_time.
 function combineDateTime(date: string, time: string): Date {
-  return new Date(`${date}T${time}Z`)
+  return sgtInstant(date, time)
 }
 
 function formatWeekLabel(weekStartKey: string): string {
@@ -78,8 +81,7 @@ async function buildWaitingOnYou(company_id: string, owner_id: string, scope: De
 
   // 1. Review Shift Swap Requests — getShiftSwapRequests already scopes to the Owner's queue
   // (hides awaiting-counterpart and Employee-requester rows), so every pending row it returns
-  // is waiting on the Owner. requires_owner_review only marks rule-violation escalations under
-  // auto-approval mode — filtering on it would miss every manual-approval-mode request.
+  // is waiting on the Owner.
   const scopedSwaps = scope ? swaps.filter(s => s.department_name != null && scope.names.has(s.department_name)) : swaps
   const pendingSwaps = scopedSwaps.filter(s => s.status === 'pending')
   const swapOldest = pendingSwaps.length > 0
@@ -281,7 +283,7 @@ async function buildTeamOverview(company_id: string, scope: DeptScope): Promise<
   return {
     managers: scoped.filter(m => m.role === 'Manager').length,
     employees: scoped.filter(m => m.role === 'Employee').length,
-    casual_worker_pool: scoped.filter(m => m.role === 'Casual Worker' && !!m.casual_worker_verified_at && !m.casual_worker_blocked_at).length,
+    casual_worker_pool: scoped.filter(m => m.role === 'Casual Worker' && !!m.casual_worker_verified_at && !m.casual_worker_inactive_at).length,
   }
 }
 
@@ -320,7 +322,7 @@ function classifyAttendance(
       const clockIn = row.record?.clock_in_time ? new Date(row.record.clock_in_time) : null
       const scheduled = combineDateTime(row.shift.shift_date, row.shift.start_time)
       person.clock_in_label = clockIn
-        ? clockIn.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'UTC' })
+        ? clockIn.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Singapore' })
         : null
       person.minutes_late = clockIn ? Math.max(0, Math.round((clockIn.getTime() - scheduled.getTime()) / 60_000)) : null
       dept.late.push(person)
@@ -331,7 +333,7 @@ function classifyAttendance(
       continue
     }
     person.clock_in_label = new Date(row.record.clock_in_time)
-      .toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'UTC' })
+      .toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Singapore' })
     dept.present.push(person)
   }
 
@@ -364,8 +366,8 @@ async function buildRecruitmentOverview(company_id: string, scope: DeptScope): P
 
   const startingSoon = open
     .filter(p => {
-      if (!p.shift_date) return false
-      const days = daysBetween(todayKey, p.shift_date)
+      if (!p.job_date) return false
+      const days = daysBetween(todayKey, p.job_date)
       return days >= 0 && days <= STARTING_SOON_DAYS && p.confirmed_count < (p.openings ?? 0)
     })
     .map(p => ({
@@ -373,8 +375,8 @@ async function buildRecruitmentOverview(company_id: string, scope: DeptScope): P
       title: p.title,
       confirmed_count: p.confirmed_count,
       openings: p.openings ?? 0,
-      shift_date: p.shift_date!,
-      days_until_start: daysBetween(todayKey, p.shift_date!),
+      job_date: p.job_date!,
+      days_until_start: daysBetween(todayKey, p.job_date!),
     }))
 
   return { deadline_today: deadlineToday, starting_soon: startingSoon }

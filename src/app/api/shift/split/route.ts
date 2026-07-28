@@ -16,8 +16,6 @@ export async function POST(req: NextRequest) {
   const {
     company_id,
     department_id,
-    title,
-    instruction,
     shift_date,
     blocks,
     created_by,
@@ -46,8 +44,6 @@ export async function POST(req: NextRequest) {
     const result = await shiftService.createSplitShift({
       company_id,
       department_id,
-      title: typeof title === 'string' && title ? title : null,
-      instruction: typeof instruction === 'string' && instruction ? instruction : null,
       shift_date,
       blocks: cleanedBlocks,
       created_by,

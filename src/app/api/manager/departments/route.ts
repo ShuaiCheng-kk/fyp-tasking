@@ -22,20 +22,20 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  let body: { manager_id?: string; company_id?: string; department_id?: string; assigned_by?: string }
+  let body: { manager_id?: string; company_id?: string; department_id?: string }
   try {
     body = await req.json()
   } catch {
     return NextResponse.json({ success: false, message: 'Invalid JSON' }, { status: 400 })
   }
 
-  const { manager_id, company_id, department_id, assigned_by } = body
-  if (!manager_id || !company_id || !department_id || !assigned_by) {
-    return NextResponse.json({ success: false, message: 'manager_id, company_id, department_id, and assigned_by are required' }, { status: 400 })
+  const { manager_id, company_id, department_id } = body
+  if (!manager_id || !company_id || !department_id) {
+    return NextResponse.json({ success: false, message: 'manager_id, company_id, and department_id are required' }, { status: 400 })
   }
 
   try {
-    await teamService.assignManagerToDepartment(manager_id, company_id, department_id, assigned_by)
+    await teamService.assignManagerToDepartment(manager_id, company_id, department_id)
     return NextResponse.json({ success: true }, { status: 201 })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to assign department'

@@ -21,7 +21,6 @@ vi.mock('@/repositories/owner/ownerTeamRepository', () => ({
     findUserById: vi.fn(),
     findUserByAuthIdOrInternalId: vi.fn(),
     deleteUserById: vi.fn(),
-    deleteInboxByUserId: vi.fn(),
     deleteMessagesByUserId: vi.fn(),
     deleteManagerDepartmentsByUserId: vi.fn(),
     deleteEmployeeDepartmentsByUserId: vi.fn(),
@@ -50,14 +49,12 @@ const makeUser = (overrides: Partial<User> = {}): User => ({
   supabase_auth_id: 'auth-1',
   full_name: 'Test User',
   email_address: 'test@example.com',
-  phone_number: null,
-  date_of_birth: null,
-  profile_photo_url: null,
+  phone_number: '+65 9123 4567',
+  date_of_birth: '1990-01-01',
+  profile_photo_url: 'https://cdn/photo.jpg',
   role: 'Employee',
   company_id: 'company-1',
   created_at: '2026-01-01',
-  payment_method: null,
-  payment_account: null,
   ...overrides,
 })
 
@@ -192,7 +189,6 @@ describe('ownerTeamService', () => {
 
       const result = await ownerTeamService.removeMember('company-1', 'user-2', 'owner-1')
 
-      expect(ownerTeamRepository.deleteInboxByUserId).toHaveBeenCalledWith('user-2')
       expect(ownerTeamRepository.deleteMessagesByUserId).toHaveBeenCalledWith('user-2')
       expect(ownerTeamRepository.cleanupUserOperationalReferences).toHaveBeenCalledWith('user-2', 'owner-1')
       expect(ownerTeamRepository.deleteManagerDepartmentsByUserId).toHaveBeenCalledWith('user-2')
@@ -227,21 +223,21 @@ describe('ownerTeamService', () => {
     it('throws when the manager is not found in the company', async () => {
       vi.mocked(ownerTeamRepository.findUserById).mockResolvedValue(null)
       await expect(ownerTeamService.setDepartmentManager({
-        manager_id: 'mgr-1', company_id: 'company-1', department_id: 'dept-1', assigned_by: 'owner-1',
+        manager_id: 'mgr-1', company_id: 'company-1', department_id: 'dept-1',
       })).rejects.toThrow('Manager not found in this company')
     })
 
     it('throws when the user is not a Manager', async () => {
       vi.mocked(ownerTeamRepository.findUserById).mockResolvedValue(makeUser({ id: 'mgr-1', role: 'Employee' }))
       await expect(ownerTeamService.setDepartmentManager({
-        manager_id: 'mgr-1', company_id: 'company-1', department_id: 'dept-1', assigned_by: 'owner-1',
+        manager_id: 'mgr-1', company_id: 'company-1', department_id: 'dept-1',
       })).rejects.toThrow('Manager not found in this company')
     })
 
     it('throws when the manager belongs to a different company', async () => {
       vi.mocked(ownerTeamRepository.findUserById).mockResolvedValue(makeUser({ id: 'mgr-1', role: 'Manager', company_id: 'other-company' }))
       await expect(ownerTeamService.setDepartmentManager({
-        manager_id: 'mgr-1', company_id: 'company-1', department_id: 'dept-1', assigned_by: 'owner-1',
+        manager_id: 'mgr-1', company_id: 'company-1', department_id: 'dept-1',
       })).rejects.toThrow('Manager not found in this company')
     })
 
@@ -249,27 +245,27 @@ describe('ownerTeamService', () => {
       vi.mocked(ownerTeamRepository.findUserById).mockResolvedValue(makeUser({ id: 'mgr-1', role: 'Manager', company_id: 'company-1' }))
 
       await ownerTeamService.setDepartmentManager({
-        manager_id: 'mgr-1', company_id: 'company-1', department_id: 'dept-1', assigned_by: 'owner-1',
+        manager_id: 'mgr-1', company_id: 'company-1', department_id: 'dept-1',
       })
 
       expect(ownerTeamRepository.removeManagerDepartmentsByCompany).toHaveBeenCalledWith('mgr-1', 'company-1')
-      expect(ownerTeamRepository.assignManagerDepartment).toHaveBeenCalledWith('mgr-1', 'company-1', 'dept-1', 'owner-1')
+      expect(ownerTeamRepository.assignManagerDepartment).toHaveBeenCalledWith('mgr-1', 'company-1', 'dept-1')
     })
   })
 
   describe('assignManagerToDepartment', () => {
     it('throws when the manager is not found in the company', async () => {
       vi.mocked(ownerTeamRepository.findUserById).mockResolvedValue(null)
-      await expect(ownerTeamService.assignManagerToDepartment('mgr-1', 'company-1', 'dept-1', 'owner-1'))
+      await expect(ownerTeamService.assignManagerToDepartment('mgr-1', 'company-1', 'dept-1'))
         .rejects.toThrow('Manager not found in this company')
     })
 
     it('assigns the manager once found in the company', async () => {
       vi.mocked(ownerTeamRepository.findUserById).mockResolvedValue(makeUser({ id: 'mgr-1', company_id: 'company-1' }))
 
-      await ownerTeamService.assignManagerToDepartment('mgr-1', 'company-1', 'dept-1', 'owner-1')
+      await ownerTeamService.assignManagerToDepartment('mgr-1', 'company-1', 'dept-1')
 
-      expect(ownerTeamRepository.assignManagerDepartment).toHaveBeenCalledWith('mgr-1', 'company-1', 'dept-1', 'owner-1')
+      expect(ownerTeamRepository.assignManagerDepartment).toHaveBeenCalledWith('mgr-1', 'company-1', 'dept-1')
     })
   })
 

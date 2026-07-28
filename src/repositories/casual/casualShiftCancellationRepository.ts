@@ -92,7 +92,7 @@ export const casualShiftCancellationRepository = {
     cancelled_role: 'worker' | 'employer'
     reason: string | null
   }): Promise<void> {
-    const { error } = await supabase.from('recruitment_cancellations').insert(input)
+    const { error } = await supabase.from('job_cancellations').insert(input)
     if (error) throw new Error(error.message)
   },
 

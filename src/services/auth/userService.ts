@@ -9,16 +9,16 @@ const ROLE_ORDER: Record<string, number> = { Owner: 0, Partner: 1, Manager: 2, E
 type TeamMemberRow = User & {
   department_id: string | null
   casual_worker_verified_at: string | null
-  casual_worker_blocked_at: string | null
-  casual_worker_blocked_reason: string | null
+  casual_worker_inactive_at: string | null
+  casual_worker_inactive_reason: string | null
 }
 
-type CwMeta = { verified_at: string | null; blocked_at: string | null; blocked_reason: string | null }
+type CwMeta = { verified_at: string | null; inactive_at: string | null; inactive_reason: string | null }
 
 function buildCwMeta(rows: any[] | null): Map<string, CwMeta> {
   return new Map((rows ?? []).map((r: any) => [
     r.casual_worker_id as string,
-    { verified_at: r.verified_at ?? null, blocked_at: r.blocked_at ?? null, blocked_reason: r.blocked_reason ?? null },
+    { verified_at: r.verified_at ?? null, inactive_at: r.inactive_at ?? null, inactive_reason: r.inactive_reason ?? null },
   ]))
 }
 
@@ -28,8 +28,8 @@ function mapTeamMemberRow(row: any, cwMeta: Map<string, CwMeta>): TeamMemberRow 
     ...row,
     department_id: row.manager_departments?.[0]?.department_id ?? row.employee_departments?.[0]?.department_id ?? row.casualworker_departments?.[0]?.department_id ?? null,
     casual_worker_verified_at: meta?.verified_at ?? null,
-    casual_worker_blocked_at: meta?.blocked_at ?? null,
-    casual_worker_blocked_reason: meta?.blocked_reason ?? null,
+    casual_worker_inactive_at: meta?.inactive_at ?? null,
+    casual_worker_inactive_reason: meta?.inactive_reason ?? null,
     manager_departments: undefined,
     employee_departments: undefined,
     casualworker_departments: undefined,
@@ -77,7 +77,7 @@ export const userService = {
     // the company_id query (which still covers any CW row that does have company_id set). Every
     // confirmed CW is returned either way — this is a shared "who belongs to this company" lookup
     // used by pickers (e.g. shift-swap replacement) that need to see everyone regardless of pool
-    // status. casual_worker_verified_at (worked a shift) and casual_worker_blocked_at (banned by
+    // status. casual_worker_verified_at (worked a shift) and casual_worker_inactive_at (banned by
     // this company) are exposed so the Team page can filter/flag without re-querying.
     const { data, error } = await supabase
       .from('users')
@@ -87,7 +87,7 @@ export const userService = {
 
     const { data: cwdRows, error: cwdErr } = await supabase
       .from('casualworker_departments')
-      .select('casual_worker_id, verified_at, blocked_at, blocked_reason')
+      .select('casual_worker_id, verified_at, inactive_at, inactive_reason')
       .eq('company_id', company_id)
     if (cwdErr) throw new Error(cwdErr.message)
     const cwMeta = buildCwMeta(cwdRows)
@@ -129,10 +129,10 @@ export const userService = {
 
     // Get CW IDs in this department via casualworker_departments (mirrors employee_departments).
     // Every confirmed CW is included — pickers that reuse this lookup need everyone, not just the
-    // verified pool. verified_at/blocked_at are carried through for callers that filter/flag on them.
+    // verified pool. verified_at/inactive_at are carried through for callers that filter/flag on them.
     const { data: cwdRows, error: cwdErr } = await supabase
       .from('casualworker_departments')
-      .select('casual_worker_id, verified_at, blocked_at, blocked_reason')
+      .select('casual_worker_id, verified_at, inactive_at, inactive_reason')
       .eq('department_id', department_id)
     if (cwdErr) throw new Error(cwdErr.message)
     const cwMeta = buildCwMeta(cwdRows)
@@ -190,7 +190,6 @@ export const userService = {
       return { accountDeleted: false }
     }
 
-    await supabase.from('inbox').delete().or(`recipient_user_id.eq.${user_id},sender_user_id.eq.${user_id}`)
     await supabase.from('messages').delete().or(`from_user_id.eq.${user_id},to_user_id.eq.${user_id}`)
     await supabase.from('manager_departments').delete().eq('manager_id', user_id)
     await authRepository.deleteById(user_id)

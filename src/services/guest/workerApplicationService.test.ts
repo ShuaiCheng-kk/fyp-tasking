@@ -64,13 +64,10 @@ function makeJob(overrides: Partial<JobPosting> = {}): JobPosting {
     company_id: 'company-1',
     status: 'open',
     expires_at: null,
-    form_type: 'shift',
-    is_recurring: false,
-    shift_date: FUTURE_DATE,
-    shift_days: null,
-    shift_start_time: '09:00',
-    shift_end_time: '17:00',
-    job_start_time: null,
+    job_type: 'shift',
+    job_date: FUTURE_DATE,
+    job_start_time: '09:00',
+    job_end_time: '17:00',
     minimum_age: null,
     ...overrides,
   } as JobPosting
@@ -96,7 +93,7 @@ describe('workerApplicationService.submitApplication — apply gates + snapshot'
     vi.mocked(workerApplicationRepository.checkExistingApplication).mockResolvedValue(null)
     vi.mocked(workerApplicationRepository.getApplicantProfile).mockResolvedValue(baseProfile)
     vi.mocked(workerApplicationRepository.getApplicantCertificates).mockResolvedValue([
-      { name: 'Food Hygiene Certificate', file_url: 'https://cdn/cert.pdf' },
+      { name: 'Food Hygiene Certificate', certificate_url: 'https://cdn/cert.pdf' },
     ])
     vi.mocked(workerApplicationRepository.getActiveApplicationJobs).mockResolvedValue([])
     vi.mocked(workerApplicationRepository.getFutureShiftWindows).mockResolvedValue([])
@@ -110,11 +107,10 @@ describe('workerApplicationService.submitApplication — apply gates + snapshot'
     expect(workerApplicationRepository.createApplication).toHaveBeenCalledWith({
       job_id: 'job-1',
       user_id: 'user-1',
-      resume_url: 'https://cdn/resume.pdf',
-      relevant_experience: null,
+      resume: 'https://cdn/resume.pdf',
       additional_note: 'Worked at Starbucks for a year.',
-      skills_snapshot: 'Customer service, Barista',
-      certificates_snapshot: [{ name: 'Food Hygiene Certificate', file_url: 'https://cdn/cert.pdf' }],
+      skills: 'Customer service, Barista',
+      certificates: [{ name: 'Food Hygiene Certificate', file_url: 'https://cdn/cert.pdf' }],
     })
   })
 
@@ -277,8 +273,8 @@ describe('workerApplicationService.submitApplication — apply gates + snapshot'
     it('rejects when another ACTIVE APPLICATION (not yet a shift) occupies the slot', async () => {
       vi.mocked(workerApplicationRepository.getActiveApplicationJobs).mockResolvedValue([
         {
-          form_type: 'shift', is_recurring: false, shift_date: FUTURE_DATE, shift_days: null,
-          shift_start_time: '08:00', shift_end_time: '12:00', job_start_time: null,
+          job_type: 'shift', job_date: FUTURE_DATE,
+          job_start_time: '08:00', job_end_time: '12:00',
         },
       ])
 
@@ -290,12 +286,12 @@ describe('workerApplicationService.submitApplication — apply gates + snapshot'
       // existing one-off application starts 14:00 -> reserved until 23:59;
       // applying to an evening shift the same day must clash.
       vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue(makeJob({
-        shift_start_time: '20:00', shift_end_time: '22:00',
+        job_start_time: '20:00', job_end_time: '22:00',
       }))
       vi.mocked(workerApplicationRepository.getActiveApplicationJobs).mockResolvedValue([
         {
-          form_type: 'oneoff', is_recurring: false, shift_date: FUTURE_DATE, shift_days: null,
-          shift_start_time: null, shift_end_time: null, job_start_time: '14:00',
+          job_type: 'oneoff', job_date: FUTURE_DATE,
+          job_start_time: '14:00', job_end_time: null,
         },
       ])
 
@@ -317,9 +313,9 @@ describe('workerApplicationService.submitApplication — apply gates + snapshot'
 
 const baseJob = {
   id: 'job-1', company_id: 'company-1', department_id: 'dept-1', title: 'Warehouse Assistant',
-  company_name: 'Acme Events', location: '1 Raffles Place', created_by: 'owner-1',
-  form_type: 'shift', is_recurring: false, shift_date: '2030-07-10', shift_days: null,
-  shift_start_time: '09:00', shift_end_time: '17:00', job_start_time: null,
+  company_name: 'Acme Events', company_location: '1 Raffles Place', created_by: 'owner-1',
+  job_type: 'shift', job_date: '2030-07-10',
+  job_start_time: '09:00', job_end_time: '17:00',
   openings: 2, assigned_employee_id: 'emp-1',
 }
 
@@ -389,7 +385,7 @@ describe('workerApplicationService.respondToInvitation — two-way confirm chain
   it('voids an invitation whose shift has already started instead of accepting it', async () => {
     vi.mocked(workerApplicationRepository.getInvitationContext).mockResolvedValue({
       ...baseContext,
-      job: { ...baseJob, shift_date: '2020-01-01' },
+      job: { ...baseJob, job_date: '2020-01-01' },
     } as any)
 
     await expect(workerApplicationService.respondToInvitation('inv-1', 'accepted'))

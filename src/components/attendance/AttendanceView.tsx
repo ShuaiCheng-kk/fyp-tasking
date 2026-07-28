@@ -18,6 +18,7 @@ import { useIsCompactContainer } from '@/hooks/useIsCompactContainer'
 import {
   AttendanceDashboardRecord,
   AttendanceModifiedTimeField,
+  AttendanceRecord,
   AttendanceRequestStatus,
   FixedOffDaySource,
   FixedOffDayRequestView,
@@ -36,20 +37,21 @@ import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { TimelineRow, TimelineShiftBlock } from '@/types/Timeline'
 import { useResourceInvalidation } from '@/components/realtime/RealtimeNotificationsProvider'
+import { sgtInstant, sgtTodayKey } from '@/lib/singaporeTime'
 
 const PANEL_BORDER = '#E2E8F0'
 const TEXT_DARK = '#0F172A'
 
 // Shape returned by POST /api/attendance/ai-suggest for request_type: 'fixed_off_day_queue' —
 // one verdict per pending weekly submission, walked in submission order (first-come-first-served).
-// `key` matches groupFixedOff's `${user_id}_${week_start}` so verdicts map straight onto cards.
+// `key` matches groupFixedOff's `${user_id}_${requested_week}` so verdicts map straight onto cards.
 interface FixedOffDayQueueItemVerdict {
   key: string
   user_id: string
   requester_name: string
-  week_start: string
+  requested_week: string
   ids: string[]
-  request_dates: string[]
+  requested_dates: string[]
   verdict: 'safe' | 'flagged'
   problem_dates: string[]
   problem_reasons: Record<string, string>
@@ -72,7 +74,7 @@ interface FixedOffGroup {
   requester_name: string
   requester_role: string
   department_id: string | null
-  week_start: string
+  requested_week: string
   status: AttendanceRequestStatus
   source: FixedOffDaySource
   created_at: string
@@ -84,7 +86,7 @@ interface FixedOffGroup {
 function groupFixedOff(rows: FixedOffDayRequestView[]): FixedOffGroup[] {
   const byKey = new Map<string, FixedOffGroup>()
   for (const req of rows) {
-    const key = `${req.user_id}_${req.week_start}`
+    const key = `${req.user_id}_${req.requested_week}`
     const existing = byKey.get(key)
     if (existing) {
       existing.requests.push(req)
@@ -96,13 +98,13 @@ function groupFixedOff(rows: FixedOffDayRequestView[]): FixedOffGroup[] {
     } else {
       byKey.set(key, {
         key, user_id: req.user_id, requester_name: req.requester_name, requester_role: req.requester_role,
-        department_id: req.department_id, week_start: req.week_start, status: req.status, source: req.source,
+        department_id: req.department_id, requested_week: req.requested_week, status: req.status, source: req.source,
         created_at: req.created_at, reviewed_at: req.reviewed_at ?? req.created_at, reviewer_name: req.reviewer_name, requests: [req],
       })
     }
   }
   for (const group of byKey.values()) {
-    group.requests.sort((a, b) => a.request_date.localeCompare(b.request_date))
+    group.requests.sort((a, b) => a.requested_date.localeCompare(b.requested_date))
   }
   return [...byKey.values()]
 }
@@ -209,8 +211,8 @@ function formatCompactAt(iso: string): string {
   return `${day} ${month}, ${time}`
 }
 
-// Labels for AttendanceRecord.owner_modified_fields — shown in the "Modified by <Manager>" banner
-// on the Owner/Partner review modal, and as the title of the pill's "M" badge.
+// Labels for the fields getStoredModifiedFields finds changed — shown in the "Modified by
+// <Manager>" banner on the Owner/Partner review modal, and as the title of the pill's "M" badge.
 const OWNER_MODIFIED_FIELD_LABELS: Record<string, string> = {
   clock_in_time: 'Clock In',
   clock_out_time: 'Clock Out',
@@ -220,6 +222,24 @@ const OWNER_MODIFIED_FIELD_LABELS: Record<string, string> = {
 function formatModifiedFieldsLabel(fields: string[] | null | undefined): string {
   if (!fields || fields.length === 0) return 'time'
   return fields.map(f => OWNER_MODIFIED_FIELD_LABELS[f] ?? f).join(', ')
+}
+
+// Which fields differ from their true original (the raw clock_in_time/clock_out_time/
+// break_in_time/break_out_time columns, which are never overwritten) at minute precision —
+// derived live instead of read from a stored flag, since the modified_* columns get rewritten
+// on every save regardless of which field was actually touched.
+function getStoredModifiedFields(record: AttendanceRecord | null | undefined): AttendanceModifiedTimeField[] {
+  if (!record) return []
+  const truncate = (iso: string | null) => iso?.slice(0, 16) ?? null
+  const pairs: [AttendanceModifiedTimeField, string | null, string | null][] = [
+    ['clock_in_time', record.clock_in_time, record.modified_clock_in_time],
+    ['clock_out_time', record.clock_out_time, record.modified_clock_out_time],
+    ['break_in_time', record.break_in_time, record.modified_break_in_time],
+    ['break_out_time', record.break_out_time, record.modified_break_out_time],
+  ]
+  return pairs
+    .filter(([, raw, adjusted]) => adjusted !== null && truncate(raw) !== truncate(adjusted))
+    .map(([field]) => field)
 }
 
 // Day only (no time-of-day) — the "Modified" field in the review modal only needs the date,
@@ -907,13 +927,13 @@ function compareMyShiftsByDateTime(a: MyShift, b: MyShift): number {
 const CLOCK_IN_WINDOW_MINUTES_BEFORE = 30
 
 function canClockIn(shift: MyShift['shift']): boolean {
-  const shiftStart = new Date(`${shift.shift_date}T${shift.start_time}Z`)
+  const shiftStart = sgtInstant(shift.shift_date, shift.start_time)
   return Date.now() >= shiftStart.getTime() - CLOCK_IN_WINDOW_MINUTES_BEFORE * 60000
 }
 
 function canClockOut(shift: MyShift['shift']): boolean {
   if (shift.is_open_ended) return true
-  return Date.now() >= new Date(`${shift.shift_date}T${shift.end_time}Z`).getTime()
+  return Date.now() >= sgtInstant(shift.shift_date, shift.end_time).getTime()
 }
 
 function fmtShiftTime(hhmmss: string): string {
@@ -924,7 +944,7 @@ function fmtShiftTime(hhmmss: string): string {
 
 function fmtClockStamp(iso: string | null): string {
   if (!iso) return '--'
-  return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'UTC' })
+  return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Singapore' })
 }
 
 export default function AttendanceView({ sidebar, basePath, canModifyClockTimes = true, scopeToManagerDepartments = false, showPersonalClock = false, scopeToEmployeeSupervised = false }: {
@@ -1152,14 +1172,12 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
   }, [showPersonalClock, internalUserId, fetchMyShift])
 
   // my_shift returns the coming week's assignments — the strip only cares about today's. Shift
-  // dates are UTC-nominal (see casualAttendanceService's Clock In window), but between local
-  // midnight and the local UTC offset the local and UTC calendar days disagree — matching either
-  // key (not just the local one) keeps a genuinely-today shift from vanishing during that window.
+  // dates are Singapore-nominal (see ClockFlow's sgtInstant), so "today" must be the Singapore
+  // calendar day, not a mix of the machine's own timezone and true UTC (see project memory
+  // module5-clockin-timezone-bug).
   const myTodayShifts = useMemo(() => {
-    const now = new Date()
-    const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-    const utcTodayKey = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-${String(now.getUTCDate()).padStart(2, '0')}`
-    return myShifts.filter(s => s.shift.shift_date === todayKey || s.shift.shift_date === utcTodayKey).sort(compareMyShiftsByDateTime)
+    const today = sgtTodayKey()
+    return myShifts.filter(s => s.shift.shift_date === today).sort(compareMyShiftsByDateTime)
   }, [myShifts])
 
   const runClockAction = async (shift: MyShift, action: 'clock_in' | 'clock_out') => {
@@ -1186,7 +1204,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
 
   // Casual Workers on a one-off job need this Employee to review their work and release them
   // before they can clock out — see casualAttendanceService.clockOut.
-  const [releaseQueue, setReleaseQueue] = useState<{ id: string; casual_worker_id: string; worker_name: string; clock_in_time: string | null; shift_title: string | null; shift_date: string; start_time: string }[]>([])
+  const [releaseQueue, setReleaseQueue] = useState<{ id: string; user_id: string; worker_name: string; clock_in_time: string | null; shift_title: string | null; shift_date: string; start_time: string }[]>([])
   const [releaseBusyId, setReleaseBusyId] = useState('')
 
   const fetchReleaseQueue = useCallback(async (uid: string) => {
@@ -1441,7 +1459,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
   // has been Approved or Modified, so this stays on the oldest week that still has something to
   // decide, and only falls back to the next open-for-submission week once the queue is empty.
   const displayWeekStart = useMemo(
-    () => currentFixedOffItem?.week_start ?? resolveActiveSubmissionWeekStart(deadlineWeekday, deadlineTime),
+    () => currentFixedOffItem?.requested_week ?? resolveActiveSubmissionWeekStart(deadlineWeekday, deadlineTime),
     [currentFixedOffItem, deadlineWeekday, deadlineTime],
   )
 
@@ -2065,8 +2083,8 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
         ? cwIsShiftOnly
           ? ['Date', 'Name', 'Shift Time', 'Clock In', 'Clock Out', 'Total Hours', 'Hourly Rate']
           : cwIsOneOffOnly
-            ? ['Date', 'Name', 'Shift Time', 'Clock In', 'Clock Out', 'Total Hours', 'Flat Rate']
-            : ['Date', 'Name', 'Job Type', 'Shift Time', 'Clock In', 'Clock Out', 'Total Hours', 'Hourly Rate', 'Flat Rate']
+            ? ['Date', 'Name', 'Shift Time', 'Clock In', 'Clock Out', 'Total Hours', 'Hourly Rate']
+            : ['Date', 'Name', 'Job Type', 'Shift Time', 'Clock In', 'Clock Out', 'Total Hours', 'Hourly Rate']
         : hasDeptFilter
           ? ['Date', 'Role', 'Name', 'Shift Time', 'Clock In', 'Clock Out', 'Total Hours']
           : ['Date', 'Department', 'Role', 'Name', 'Shift Time', 'Clock In', 'Clock Out', 'Total Hours']
@@ -2131,7 +2149,6 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
           : 0
         const hourlyRate = rec.assignee_hourly_rate
         const isOneOff = rec.shift.is_open_ended
-        const shiftFlatRate = (rec.shift as any).flat_rate as number | null
         const shiftTime = isOneOff
           ? fmtShiftHour(rec.shift.start_time)
           : `${fmtShiftHour(rec.shift.start_time)} – ${fmtShiftHour(rec.shift.end_time)}`
@@ -2147,7 +2164,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
           if (cwIsShiftOnly) {
             rows.push([...baseRow, hourlyRate != null ? `$${hourlyRate.toFixed(2)}/hr` : '—'])
           } else if (cwIsOneOffOnly) {
-            rows.push([...baseRow, shiftFlatRate != null ? `$${shiftFlatRate.toFixed(2)}` : '—'])
+            rows.push([...baseRow, hourlyRate != null ? `$${hourlyRate.toFixed(2)}/hr` : '—'])
           } else {
             rows.push([
               rec.shift.shift_date,
@@ -2157,8 +2174,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
               fmtTime(rec.record?.clock_in_time),
               fmtTime(rec.record?.clock_out_time),
               fmtDuration(workMs),
-              !isOneOff && hourlyRate != null ? `$${hourlyRate.toFixed(2)}/hr` : '—',
-              isOneOff && shiftFlatRate != null ? `$${shiftFlatRate.toFixed(2)}` : '—',
+              hourlyRate != null ? `$${hourlyRate.toFixed(2)}/hr` : '—',
             ])
           }
         } else if (hasDeptFilter) {
@@ -2257,13 +2273,13 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
   }, [companyId, recordsRole, selectedDeptId, casualJobType, scopeToManagerDepartments, showSuccessToast, showErrorToast])
 
   // ── Absence reason lookups ────────────────────────────────────────────────
-  // Confirmed fixed off: userId+request_date (YYYY-MM-DD) → true. 'modified' counts too — that's
+  // Confirmed fixed off: userId+requested_date (YYYY-MM-DD) → true. 'modified' counts too — that's
   // the status once Owner/Partner moves a request's date instead of approving it as-is; the
   // confirmed date is just as final as 'approved'.
   const fixedOffByUserDate = useMemo(() => {
     const map = new Map<string, boolean>()
     fixedOffDayRequests.forEach(r => {
-      if (r.status === 'approved' || r.status === 'modified') map.set(`${r.user_id}|${r.request_date}`, true)
+      if (r.status === 'approved' || r.status === 'modified') map.set(`${r.user_id}|${r.requested_date}`, true)
     })
     return map
   }, [fixedOffDayRequests])
@@ -2371,7 +2387,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                 return (
                   <div key={shift.assignment.id} style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', minWidth: 0 }}>
                     <span style={{ fontSize: 13.5, fontWeight: 600, color: '#334155', whiteSpace: 'nowrap' }}>
-                      {shift.shift.title || 'Shift'} · {fmtShiftTime(shift.shift.start_time)} – {shift.shift.is_open_ended ? 'Open' : fmtShiftTime(shift.shift.end_time)}
+                      Shift · {fmtShiftTime(shift.shift.start_time)} – {shift.shift.is_open_ended ? 'Open' : fmtShiftTime(shift.shift.end_time)}
                       {clockedIn && <span style={{ color: '#059669' }}> · In {fmtClockStamp(shift.record!.clock_in_time)}</span>}
                       {clockedOut && <span style={{ color: '#64748B' }}> · Out {fmtClockStamp(shift.record!.clock_out_time)}</span>}
                     </span>
@@ -2804,7 +2820,8 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                                         // by a Manager, the Owner, or the Partner (any of the three). Shown on every
                                         // role's Records table, Manager included — a Manager needs to see when
                                         // Owner/Partner corrected their own or their team's records.
-                                        const wasModified = rec.record?.owner_status === 'modified'
+                                        const recordModifiedFields = getStoredModifiedFields(rec.record)
+                                        const wasModified = recordModifiedFields.length > 0
                                         return (
                                           <button
                                             key={ri}
@@ -2827,8 +2844,8 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                                               {(() => {
                                                 // Owner-modified times take precedence over the worker's original
                                                 // clock times — same precedence openReview() uses to pre-fill the modal.
-                                                const inTime = rec.record?.owner_adjusted_clock_in_time ?? rec.record?.clock_in_time
-                                                const outTime = rec.record?.owner_adjusted_clock_out_time ?? rec.record?.clock_out_time
+                                                const inTime = rec.record?.modified_clock_in_time ?? rec.record?.clock_in_time
+                                                const outTime = rec.record?.modified_clock_out_time ?? rec.record?.clock_out_time
                                                 const clockLabel = (scopeToManagerDepartments || scopeToEmployeeSupervised) ? formatRoundedClockHour : formatClockHour
                                                 const shiftLabel = (scopeToManagerDepartments || scopeToEmployeeSupervised) ? formatRoundedShiftHour : formatShiftHour
                                                 return inTime
@@ -2841,7 +2858,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                                             <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                               {wasModified && (
                                                 <span
-                                                  title={`Modified by ${rec.modifier_name ?? 'Unknown'} — changed ${formatModifiedFieldsLabel(rec.record?.owner_modified_fields)}`}
+                                                  title={`Modified by ${rec.modifier_name ?? 'Unknown'} — changed ${formatModifiedFieldsLabel(recordModifiedFields)}`}
                                                   style={{
                                                     width: 16, height: 16, borderRadius: '50%',
                                                     background: '#F97316', color: '#fff',
@@ -3493,9 +3510,9 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                 const upcomingWeekStart = displayWeekStart
                 const fixedOffByDate = new Map<string, FixedOffDayRequestView[]>()
                 fixedOffDayRequests.forEach(req => {
-                  const list = fixedOffByDate.get(req.request_date) ?? []
+                  const list = fixedOffByDate.get(req.requested_date) ?? []
                   list.push(req)
-                  fixedOffByDate.set(req.request_date, list)
+                  fixedOffByDate.set(req.requested_date, list)
                 })
                 const fixedOffStatusTone = (status: string) => {
                   if (status === 'approved') return { bg: '#ECFDF5', text: '#047857', border: '#86EFAC', label: 'Approved' }
@@ -3507,14 +3524,14 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                 const fixedOffDeptNameById = new Map(companyDepartments.map(dept => [dept.id, dept.name]))
                 // The days requested by the card currently selected in the Requests block — these
                 // get a highlight ring in the calendar so the Owner sees where the request lands.
-                const selectedOffDates = new Set(offDayHighlightEnabled ? (currentFixedOffItem?.requests ?? []).map(r => r.request_date) : [])
+                const selectedOffDates = new Set(offDayHighlightEnabled ? (currentFixedOffItem?.requests ?? []).map(r => r.requested_date) : [])
 
                 // Shared day-set picker for the Modify flow — used by the request card and by the
                 // Off Day Details cards. Selection lives in fixedOffModifyDates (one picker open at
                 // a time via modifyingFixedOffKey).
                 const ModifyDaysPicker = ({ group, modifyComplete }: { group: FixedOffGroup; modifyComplete: boolean }) => {
-                  const requestDates = group.requests.map(r => r.request_date)
-                  const weekDates = Array.from({ length: 7 }, (_, i) => toISODate(addDays(new Date(`${group.week_start}T00:00:00`), i)))
+                  const requestDates = group.requests.map(r => r.requested_date)
+                  const weekDates = Array.from({ length: 7 }, (_, i) => toISODate(addDays(new Date(`${group.requested_week}T00:00:00`), i)))
                   const customMinDate = toISODate(addDays(new Date(`${weekDates[6]}T00:00:00`), 1))
                   const toggleModifyDate = (d: string) => {
                     setFixedOffModifyDates(prev => prev.includes(d)
@@ -3645,7 +3662,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                             {group.requests.map(r => (
                               <span key={r.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.76rem', fontWeight: 700, color: '#C2410C', background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: 999, padding: '4px 10px', whiteSpace: 'nowrap' }}>
                                 <Calendar size={11} style={{ flexShrink: 0 }} />
-                                {formatFixedOffRequestDay(r.request_date)}
+                                {formatFixedOffRequestDay(r.requested_date)}
                               </span>
                             ))}
                           </div>
@@ -3909,7 +3926,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                           if (queueAiResult) {
                             for (const item of queueAiResult.items) {
                               if (!pendingKeys.has(item.key)) continue
-                              for (const date of item.request_dates) {
+                              for (const date of item.requested_dates) {
                                 const entry = previewCounts.get(date) ?? { safe: 0, flagged: 0 }
                                 if (item.verdict === 'safe') entry.safe++
                                 else entry.flagged++
@@ -4001,7 +4018,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                         {(() => {
                           const detailRequests = dayOffDetailDate
                             ? fixedOffDayRequests
-                              .filter(r => r.request_date === dayOffDetailDate && r.status !== 'rejected')
+                              .filter(r => r.requested_date === dayOffDetailDate && r.status !== 'rejected')
                               .sort((a, b) => a.requester_name.localeCompare(b.requester_name))
                             : []
                           // "Mon, 06 Jul" — the day picked in the calendar, shown in the block title.
@@ -4013,7 +4030,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                             : null
                           // Each person's full weekly request (not just this one day) gives context —
                           // e.g. someone off Tue AND Wed shows both dates even though only Tue was clicked.
-                          const groupByUserWeek = new Map(fixedOffGroupsAll.map(g => [`${g.user_id}_${g.week_start}`, g]))
+                          const groupByUserWeek = new Map(fixedOffGroupsAll.map(g => [`${g.user_id}_${g.requested_week}`, g]))
                           // Queue-analysis verdict per pending submission (same key shape) — lets each
                           // card carry a Suggest Approve / Review tag after Process has run.
                           const detailVerdictByKey = new Map(queueAiResult?.items.map(item => [item.key, item.verdict]) ?? [])
@@ -4027,11 +4044,11 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                             const deptId = req.department_id ?? person?.department_id ?? null
                             const deptName = deptId ? fixedOffDeptNameById.get(deptId) : null
                             const dc = deptName ? deptColor(deptName) : '#64748B'
-                            const group = groupByUserWeek.get(`${req.user_id}_${req.week_start}`)
+                            const group = groupByUserWeek.get(`${req.user_id}_${req.requested_week}`)
                             const requestedDates = group?.requests ?? [req]
                             const isDecided = req.status === 'approved' || req.status === 'modified'
                             const isAutoAssigned = req.source === 'auto_assigned'
-                            const verdict = req.status === 'pending' ? detailVerdictByKey.get(`${req.user_id}_${req.week_start}`) : undefined
+                            const verdict = req.status === 'pending' ? detailVerdictByKey.get(`${req.user_id}_${req.requested_week}`) : undefined
                             // Clicking a pending card jumps that person's submission into the Next Week
                             // Off Day Requests block — same behavior as picking it from the Requests list,
                             // including opening Modify pre-seeded when the verdict is flagged.
@@ -4051,7 +4068,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                             }
                             // An already-decided request in the upcoming week can still be changed —
                             // same Modify picker as the request card, inline on this person card.
-                            const canModifyDecided = isDecided && !!group && group.week_start === upcomingWeekStart
+                            const canModifyDecided = isDecided && !!group && group.requested_week === upcomingWeekStart
                             const isModifyingThis = !!group && modifyingFixedOffKey === group.key
                             const detailModifyComplete = isModifyingThis && !!group && fixedOffModifyDates.length === group.requests.length
                             return (
@@ -4075,7 +4092,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                                       {requestedDates.map(r => (
                                         <span key={r.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.76rem', fontWeight: 700, color: '#C2410C', background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: 999, padding: '4px 10px', whiteSpace: 'nowrap' }}>
                                           <Calendar size={11} style={{ flexShrink: 0 }} />
-                                          {formatFixedOffRequestDay(r.request_date)}
+                                          {formatFixedOffRequestDay(r.requested_date)}
                                         </span>
                                       ))}
                                       {/* Once every replacement day is picked, Confirm moves down into

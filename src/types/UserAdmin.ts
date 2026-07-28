@@ -6,14 +6,11 @@ export interface UACompany {
   industry: string | null
   size: string | null
   location: string | null
-  website: string | null
   address: string | null
   postal_code: string | null
-  logo_url: string | null
   plan_started_at: string | null
   plan_next_billing_at: string | null
   plan_cancel_at: string | null
-  is_suspended: boolean
   suspended_at: string | null
   suspended_reason: string | null
   created_at: string

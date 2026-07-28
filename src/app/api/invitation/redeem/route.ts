@@ -29,6 +29,12 @@ export async function POST(req: NextRequest) {
   if (!phone_number || typeof phone_number !== 'string' || !phone_number.trim()) {
     return NextResponse.json({ success: false, message: 'phone_number is required' }, { status: 400 })
   }
+  if (!date_of_birth || typeof date_of_birth !== 'string') {
+    return NextResponse.json({ success: false, message: 'date_of_birth is required' }, { status: 400 })
+  }
+  if (!profile_photo_url || typeof profile_photo_url !== 'string') {
+    return NextResponse.json({ success: false, message: 'profile_photo_url is required' }, { status: 400 })
+  }
 
   try {
     const result = await invitationService.redeemCode({
@@ -37,8 +43,8 @@ export async function POST(req: NextRequest) {
       email_address: email,
       password,
       phone_number,
-      date_of_birth: typeof date_of_birth === 'string' ? date_of_birth : null,
-      profile_photo_url: typeof profile_photo_url === 'string' ? profile_photo_url : null,
+      date_of_birth,
+      profile_photo_url,
     })
 
     return NextResponse.json({

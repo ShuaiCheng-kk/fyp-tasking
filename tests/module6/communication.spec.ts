@@ -49,7 +49,7 @@ async function createMember(role: 'Manager' | 'Employee', label: string, departm
   if (role === 'Manager') {
     const { error } = await admin
       .from('manager_departments')
-      .insert({ manager_id: user.id, company_id: seeded.companyId, department_id: departmentId, assigned_by: seeded.ownerId })
+      .insert({ manager_id: user.id, company_id: seeded.companyId, department_id: departmentId })
     if (error) throw new Error(`Failed to assign manager department: ${error.message}`)
   } else {
     const { error } = await admin
@@ -104,37 +104,37 @@ test.describe.configure({ mode: 'serial' })
 test('UC58 posts a company-wide announcement as Owner and a department announcement as Manager', async ({ request }) => {
   const ownerPost = await request.post('/api/inbox/announcements', {
     data: {
-      from_user_id: seeded.ownerId,
+      user_id: seeded.ownerId,
       company_id: seeded.companyId,
-      department_id: null,
+      audience_department_id: null,
       title: 'Company-wide notice',
       content: 'This applies to everyone.',
     },
   })
   expect(ownerPost.status()).toBe(200)
   const ownerBody = await ownerPost.json()
-  expect(ownerBody).toMatchObject({ success: true, announcement: { department_id: null, title: 'Company-wide notice' } })
+  expect(ownerBody).toMatchObject({ success: true, announcement: { audience_department_id: null, title: 'Company-wide notice' } })
 
   const managerPost = await request.post('/api/inbox/announcements', {
     data: {
-      from_user_id: managerOps.userId,
+      user_id: managerOps.userId,
       company_id: seeded.companyId,
-      department_id: departments.ops,
+      audience_department_id: departments.ops,
       title: 'Ops department notice',
       content: 'Ops team only.',
     },
   })
   expect(managerPost.status()).toBe(200)
   const managerBody = await managerPost.json()
-  expect(managerBody).toMatchObject({ success: true, announcement: { department_id: departments.ops, title: 'Ops department notice' } })
+  expect(managerBody).toMatchObject({ success: true, announcement: { audience_department_id: departments.ops, title: 'Ops department notice' } })
 })
 
 test('UC58 rejects an Employee attempting to post an announcement', async ({ request }) => {
   const res = await request.post('/api/inbox/announcements', {
     data: {
-      from_user_id: employeeOps.userId,
+      user_id: employeeOps.userId,
       company_id: seeded.companyId,
-      department_id: null,
+      audience_department_id: null,
       title: 'Should not be allowed',
       content: 'Employees cannot post.',
     },
@@ -147,9 +147,9 @@ test('UC58 rejects an Employee attempting to post an announcement', async ({ req
 test('Manager cannot post a company-wide announcement or target another department', async ({ request }) => {
   const companyWideAttempt = await request.post('/api/inbox/announcements', {
     data: {
-      from_user_id: managerOps.userId,
+      user_id: managerOps.userId,
       company_id: seeded.companyId,
-      department_id: null,
+      audience_department_id: null,
       title: 'Should not be allowed',
       content: 'Managers cannot go company-wide.',
     },
@@ -159,9 +159,9 @@ test('Manager cannot post a company-wide announcement or target another departme
 
   const crossDeptAttempt = await request.post('/api/inbox/announcements', {
     data: {
-      from_user_id: managerOps.userId,
+      user_id: managerOps.userId,
       company_id: seeded.companyId,
-      department_id: departments.marketing,
+      audience_department_id: departments.marketing,
       title: 'Should not be allowed',
       content: 'Managers cannot target another department.',
     },
@@ -223,7 +223,7 @@ test('UC59 edits own announcement but rejects editing someone else\'s', async ({
 })
 
 test('UC60 deletes own announcement and rejects deleting it twice', async ({ request }) => {
-  const list = await request.get(`/api/inbox/announcements?company_id=${seeded.companyId}&role=manager&department_id=${departments.ops}`)
+  const list = await request.get(`/api/inbox/announcements?company_id=${seeded.companyId}&role=manager&audience_department_id=${departments.ops}`)
   expect(list.status()).toBe(200)
   const listBody = await list.json()
   const managerAnnouncement = listBody.announcements.find((a: { title: string }) => a.title === 'Ops department notice')

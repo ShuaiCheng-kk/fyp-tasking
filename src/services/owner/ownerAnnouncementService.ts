@@ -25,7 +25,7 @@ export const ownerAnnouncementService = {
     // Ownership is checked before the department-lock rule so a non-owner edit attempt still
     // fails with "not your own announcement" rather than a confusing department error.
     const existing = await ownerAnnouncementRepository.getAnnouncementOwner(announcementId)
-    if (existing.from_user_id !== requestingUserId) throw new Error('You can only edit your own announcements')
+    if (existing.user_id !== requestingUserId) throw new Error('You can only edit your own announcements')
     const requester = await userService.getUserById(requestingUserId)
     if (requester.role === 'Manager' && (!departmentId || departmentId !== requester.department_id)) {
       throw new Error('Managers can only post announcements to their own department')

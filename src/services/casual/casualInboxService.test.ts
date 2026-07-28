@@ -37,13 +37,14 @@ import { casualAttendanceRepository } from '@/repositories/casual/casualAttendan
 const worker = { id: 'cw-1', full_name: 'Alicia Tan' }
 
 // Builds an assignment whose shift starts at the given offset from real "now", encoded exactly
-// the way the service re-parses it (`${shift_date}T${start_time}Z`), so window math is precise.
+// the way the service re-parses it (sgtInstant, i.e. shift_date/start_time as the Singapore
+// wall-clock reading of that instant), so window math is precise.
 function assignmentStartingIn(minutesFromNow: number, overrides: Partial<{
   id: string
   supervisor_employee_id: string | null
 }> = {}) {
   const start = new Date(Date.now() + minutesFromNow * 60000)
-  const iso = start.toISOString()
+  const iso = new Date(start.getTime() + 8 * 60 * 60 * 1000).toISOString()
   return {
     id: overrides.id ?? 'a-1',
     supervisor_employee_id: overrides.supervisor_employee_id ?? 'emp-1',

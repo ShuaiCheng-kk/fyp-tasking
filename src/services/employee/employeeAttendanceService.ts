@@ -1,13 +1,10 @@
 import { employeeAttendanceRepository } from '@/repositories/employee/employeeAttendanceRepository'
 import { applyClockInGracePeriod } from '@/services/shared/attendanceGrace'
+import { sgtInstant, sgtTodayKey } from '@/lib/singaporeTime'
 
 // UC49: the Clock In button only appears starting 30 minutes before the shift's scheduled
 // start; Clock Out never appears early — only once the shift has actually reached its end time.
 const CLOCK_IN_WINDOW_MINUTES_BEFORE = 30
-
-function todayIsoDate(): string {
-  return new Date().toISOString().slice(0, 10)
-}
 
 export const employeeAttendanceService = {
   async getAttendanceRecords(auth_user_id: string) {
@@ -21,7 +18,7 @@ export const employeeAttendanceService = {
     const user = await employeeAttendanceRepository.getUserByAuthId(authId)
     if (!user) throw new Error('User not found')
 
-    const assignments = await employeeAttendanceRepository.getUpcomingAssignments(user.id, todayIsoDate())
+    const assignments = await employeeAttendanceRepository.getUpcomingAssignments(user.id, sgtTodayKey())
     const records = await employeeAttendanceRepository.getAttendanceRecordsByAssignmentIds(assignments.map(a => a.id))
     const recordsByAssignment = new Map(records.map(record => [record.shift_assignment_id, record]))
     const shifts = assignments
@@ -41,7 +38,7 @@ export const employeeAttendanceService = {
 
   // Shared by Manager and Employee — both are scheduled internal staff who clock in/out
   // against their own shift_assignment the same way (see CLAUDE.md: Manager ⊇ Employee).
-  async clockIn(input: { authId: string; shift_assignment_id: string; clock_time?: string; notes?: string | null }) {
+  async clockIn(input: { authId: string; shift_assignment_id: string; clock_time?: string }) {
     const user = await employeeAttendanceRepository.getUserByAuthId(input.authId)
     if (!user) throw new Error('User not found')
 
@@ -55,8 +52,8 @@ export const employeeAttendanceService = {
     if (existing?.clock_in_time) throw new Error('Already clocked in for this shift')
 
     const rawNow = input.clock_time ?? new Date().toISOString()
-    const shiftStart = new Date(`${assignment.shifts.shift_date}T${assignment.shifts.start_time}Z`)
-    const shiftEnd = new Date(`${assignment.shifts.shift_date}T${assignment.shifts.end_time}Z`)
+    const shiftStart = sgtInstant(assignment.shifts.shift_date, assignment.shifts.start_time)
+    const shiftEnd = sgtInstant(assignment.shifts.shift_date, assignment.shifts.end_time)
     const earliestClockIn = new Date(shiftStart.getTime() - CLOCK_IN_WINDOW_MINUTES_BEFORE * 60000)
     if (new Date(rawNow).getTime() < earliestClockIn.getTime()) {
       throw new Error('Too early to clock in for this shift')
@@ -69,25 +66,17 @@ export const employeeAttendanceService = {
     if (existing) {
       return employeeAttendanceRepository.updateAttendanceRecord(existing.id, {
         clock_in_time: now,
-        confirmed_by_employee_id: user.id,
-        status: 'clocked_in',
-        employee_notes: input.notes ?? existing.employee_notes,
       })
     }
 
     return employeeAttendanceRepository.createAttendanceRecord({
       shift_assignment_id: input.shift_assignment_id,
-      casual_worker_id: user.id,
+      user_id: user.id,
       clock_in_time: now,
-      confirmed_by_employee_id: user.id,
-      submitted_by_employee_id: user.id,
-      status: 'clocked_in',
-      employee_notes: input.notes ?? null,
-      owner_status: 'pending',
     })
   },
 
-  async clockOut(input: { authId: string; shift_assignment_id: string; clock_time?: string; notes?: string | null }) {
+  async clockOut(input: { authId: string; shift_assignment_id: string; clock_time?: string }) {
     const user = await employeeAttendanceRepository.getUserByAuthId(input.authId)
     if (!user) throw new Error('User not found')
 
@@ -103,7 +92,7 @@ export const employeeAttendanceService = {
 
     if (!assignment.shifts.is_open_ended) {
       const rawNow = input.clock_time ?? new Date().toISOString()
-      const shiftEnd = new Date(`${assignment.shifts.shift_date}T${assignment.shifts.end_time}Z`)
+      const shiftEnd = sgtInstant(assignment.shifts.shift_date, assignment.shifts.end_time)
       if (new Date(rawNow).getTime() < shiftEnd.getTime()) {
         throw new Error('Too early to clock out — wait until the shift ends')
       }
@@ -111,9 +100,6 @@ export const employeeAttendanceService = {
 
     return employeeAttendanceRepository.updateAttendanceRecord(existing.id, {
       clock_out_time: input.clock_time ?? new Date().toISOString(),
-      submitted_by_employee_id: user.id,
-      employee_notes: input.notes ?? existing.employee_notes,
-      status: 'submitted',
     })
   },
 
@@ -152,12 +138,16 @@ export const employeeAttendanceService = {
     if (!user) throw new Error('User not found')
 
     const pending = await employeeAttendanceRepository.getPendingClockOutReleases(user.id)
-    const workers = await employeeAttendanceRepository.getUsersByIds(pending.map(p => p.casual_worker_id))
+    const workers = await employeeAttendanceRepository.getUsersByIds(pending.map(p => p.user_id))
     const workersById = new Map(workers.map(w => [w.id, w]))
+    const postingIds = [...new Set(pending.map(p => p.source_job_posting_id).filter((id): id is string => !!id))]
+    const postings = await employeeAttendanceRepository.getJobPostingsByIds(postingIds)
+    const postingsById = new Map(postings.map(j => [j.id, j]))
 
-    return pending.map(p => ({
+    return pending.map(({ source_job_posting_id, ...p }) => ({
       ...p,
-      worker_name: workersById.get(p.casual_worker_id)?.full_name ?? 'Casual Worker',
+      worker_name: workersById.get(p.user_id)?.full_name ?? 'Casual Worker',
+      shift_title: source_job_posting_id ? postingsById.get(source_job_posting_id)?.title ?? null : null,
     }))
   },
 
@@ -175,8 +165,8 @@ export const employeeAttendanceService = {
     }
     if (!record.clock_in_time) throw new Error('This worker has not clocked in yet')
     if (record.clock_out_time) throw new Error('This worker has already clocked out')
-    if (record.clock_out_released_at) throw new Error('Already released')
+    if (record.clock_out_released) throw new Error('Already released')
 
-    return employeeAttendanceRepository.releaseClockOut(attendance_record_id, user.id)
+    return employeeAttendanceRepository.releaseClockOut(attendance_record_id)
   },
 }

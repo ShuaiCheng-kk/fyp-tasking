@@ -30,13 +30,4 @@ export const activityLogRepository = {
     if (error) throw new Error(`Failed to fetch activity logs: ${error.message}`)
     return (data ?? []) as ActivityLog[]
   },
-
-  async markAllRead(company_id: string): Promise<void> {
-    const { error } = await supabase
-      .from('company_activity_logs')
-      .update({ is_read: true })
-      .eq('company_id', company_id)
-      .eq('is_read', false)
-    if (error) throw new Error(`Failed to mark logs as read: ${error.message}`)
-  },
 }

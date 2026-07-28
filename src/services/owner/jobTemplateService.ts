@@ -7,7 +7,7 @@ import { JobTemplate, JobTemplateInput, JobTemplateUpdateInput, JobTemplateUsage
 export const jobTemplateService = {
 
   async createTemplate(input: JobTemplateInput): Promise<JobTemplate> {
-    if (!input.company_id || !input.name?.trim() || !input.title?.trim() || !input.created_by) {
+    if (!input.company_id || !input.title?.trim() || !input.created_by) {
       throw new Error('Missing required job template fields')
     }
     return jobTemplateRepository.createTemplate(input)
@@ -33,18 +33,13 @@ export const jobTemplateService = {
     if (!id) throw new Error('Template id is required')
     const existing = await jobTemplateRepository.getTemplateById(id)
     if (!existing) throw new Error('Template not found')
-    const name = fields.name !== undefined ? fields.name.trim() : existing.name
-    if (!name) throw new Error('Please name this template.')
     const title = fields.title !== undefined ? fields.title.trim() : existing.title
     if (!title) throw new Error('Please give this template a job title.')
-    const description = fields.description !== undefined ? fields.description : existing.description
-    const requirements = fields.requirements !== undefined ? fields.requirements : existing.requirements
-    const employment_type = fields.employment_type !== undefined ? fields.employment_type : existing.employment_type
-    const form_type = fields.form_type !== undefined ? fields.form_type : existing.form_type
+    const responsibilities = fields.responsibilities !== undefined ? fields.responsibilities : existing.responsibilities
+    const skills = fields.skills !== undefined ? fields.skills : existing.skills
+    const job_type = fields.job_type !== undefined ? fields.job_type : existing.job_type
     const department_id = fields.department_id !== undefined ? fields.department_id : existing.department_id
     const salary_amount = fields.salary_amount !== undefined ? fields.salary_amount : existing.salary_amount
-    const salary_type = fields.salary_type !== undefined ? fields.salary_type : existing.salary_type
-    const uniform_required = fields.uniform_required !== undefined ? fields.uniform_required : existing.uniform_required
     const uniform_type = fields.uniform_type !== undefined ? fields.uniform_type : existing.uniform_type
     const uniform_details = fields.uniform_details !== undefined ? fields.uniform_details : existing.uniform_details
     const experience_required = fields.experience_required !== undefined ? fields.experience_required : existing.experience_required
@@ -52,9 +47,9 @@ export const jobTemplateService = {
     const estimated_hours = fields.estimated_hours !== undefined ? fields.estimated_hours : existing.estimated_hours
     const urgency = fields.urgency !== undefined ? fields.urgency : existing.urgency
     return jobTemplateRepository.updateTemplate(id, {
-      name, title, description, requirements, employment_type, form_type,
-      department_id, salary_amount, salary_type,
-      uniform_required, uniform_type, uniform_details, experience_required, minimum_age,
+      title, responsibilities, skills, job_type,
+      department_id, salary_amount,
+      uniform_type, uniform_details, experience_required, minimum_age,
       estimated_hours, urgency,
     })
   },

@@ -7,7 +7,14 @@ import { WorkerCertificate } from '@/types/WorkerProfile'
 const BUCKET_NAME = 'worker-documents'
 
 const PROFILE_COLUMNS =
-  'id, full_name, email_address, phone_number, date_of_birth, profile_photo_url, role, supabase_auth_id, skills, resume_url'
+  'id, full_name, email_address, phone_number, date_of_birth, profile_photo_url, role, supabase_auth_id, casual_worker_profiles(skills, resume_url)'
+
+function flattenProfile(row: any) {
+  if (!row) return row
+  const { casual_worker_profiles, ...rest } = row
+  const profile = Array.isArray(casual_worker_profiles) ? casual_worker_profiles[0] : casual_worker_profiles
+  return { ...rest, skills: profile?.skills ?? null, resume_url: profile?.resume_url ?? null }
+}
 
 export const workerProfileRepository = {
   async getByAuthId(authId: string) {
@@ -18,7 +25,7 @@ export const workerProfileRepository = {
       .maybeSingle()
 
     if (error) throw error
-    return data
+    return flattenProfile(data)
   },
 
   async updateByAuthId(authId: string, values: {
@@ -40,31 +47,47 @@ export const workerProfileRepository = {
       .single()
 
     if (error) throw error
-    return data
+    return flattenProfile(data)
   },
 
   async updateSkillsByAuthId(authId: string, skills: string | null) {
-    const { data, error } = await supabase
-      .from('users')
-      .update({ skills })
-      .eq('supabase_auth_id', authId)
-      .select(PROFILE_COLUMNS)
-      .single()
-
+    const userId = await this.getUserIdByAuthId(authId)
+    const { error } = await supabase
+      .from('casual_worker_profiles')
+      .upsert({ user_id: userId, skills }, { onConflict: 'user_id' })
     if (error) throw error
-    return data
+    const { data, error: readError } = await supabase
+      .from('users')
+      .select(PROFILE_COLUMNS)
+      .eq('supabase_auth_id', authId)
+      .single()
+    if (readError) throw readError
+    return flattenProfile(data)
   },
 
   async updateResumeUrlByAuthId(authId: string, resume_url: string | null) {
+    const userId = await this.getUserIdByAuthId(authId)
+    const { error } = await supabase
+      .from('casual_worker_profiles')
+      .upsert({ user_id: userId, resume_url }, { onConflict: 'user_id' })
+    if (error) throw error
+    const { data, error: readError } = await supabase
+      .from('users')
+      .select(PROFILE_COLUMNS)
+      .eq('supabase_auth_id', authId)
+      .single()
+    if (readError) throw readError
+    return flattenProfile(data)
+  },
+
+  async getUserIdByAuthId(authId: string): Promise<string> {
     const { data, error } = await supabase
       .from('users')
-      .update({ resume_url })
+      .select('id')
       .eq('supabase_auth_id', authId)
-      .select(PROFILE_COLUMNS)
       .single()
-
     if (error) throw error
-    return data
+    return (data as { id: string }).id
   },
 
   async getCertificatesByUserId(userId: string): Promise<WorkerCertificate[]> {
@@ -78,7 +101,7 @@ export const workerProfileRepository = {
     return (data ?? []) as WorkerCertificate[]
   },
 
-  async addCertificate(input: { user_id: string; name: string; file_url: string | null }): Promise<WorkerCertificate> {
+  async addCertificate(input: { user_id: string; name: string; certificate_url: string | null }): Promise<WorkerCertificate> {
     const { data, error } = await supabase
       .from('user_certificates')
       .insert(input)
@@ -90,10 +113,10 @@ export const workerProfileRepository = {
   },
 
   // user_id is part of the filter so a worker can only ever update their own certificate.
-  async updateCertificateFileUrl(certificateId: string, userId: string, fileUrl: string): Promise<WorkerCertificate> {
+  async updateCertificateFileUrl(certificateId: string, userId: string, certificateUrl: string): Promise<WorkerCertificate> {
     const { data, error } = await supabase
       .from('user_certificates')
-      .update({ file_url: fileUrl })
+      .update({ certificate_url: certificateUrl })
       .eq('id', certificateId)
       .eq('user_id', userId)
       .select()

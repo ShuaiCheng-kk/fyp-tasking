@@ -10,7 +10,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, message: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { user_id, full_name, email_address, password, phone_number, date_of_birth, profile_photo_url, home_location } =
+  const { user_id, full_name, email_address, password, phone_number, date_of_birth, profile_photo_url } =
     body as Record<string, unknown>
 
   if (!user_id || typeof user_id !== 'string') {
@@ -25,16 +25,24 @@ export async function POST(req: NextRequest) {
   if (!password || typeof password !== 'string') {
     return NextResponse.json({ success: false, message: 'password is required' }, { status: 400 })
   }
+  if (!phone_number || typeof phone_number !== 'string' || !phone_number.trim()) {
+    return NextResponse.json({ success: false, message: 'phone_number is required' }, { status: 400 })
+  }
+  if (!date_of_birth || typeof date_of_birth !== 'string') {
+    return NextResponse.json({ success: false, message: 'date_of_birth is required' }, { status: 400 })
+  }
+  if (!profile_photo_url || typeof profile_photo_url !== 'string') {
+    return NextResponse.json({ success: false, message: 'profile_photo_url is required' }, { status: 400 })
+  }
 
   try {
     const user = await authService.completeGuestRegistration({
       user_id,
       full_name,
       email_address,
-      phone_number: typeof phone_number === 'string' ? phone_number : null,
-      date_of_birth: typeof date_of_birth === 'string' ? date_of_birth : null,
-      profile_photo_url: typeof profile_photo_url === 'string' ? profile_photo_url : null,
-      home_location: typeof home_location === 'string' ? home_location : null,
+      phone_number,
+      date_of_birth,
+      profile_photo_url,
     })
 
     const signinResult = await authService.signIn(email_address, password)

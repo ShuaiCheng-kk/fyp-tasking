@@ -65,7 +65,7 @@ test('UC79 — POST /api/useradmin/suspend suspends a company', async ({ request
 
   const detail = await request.get(`/api/useradmin/companies/${owner.companyId}`)
   const body = await detail.json()
-  expect(body.company.is_suspended).toBe(true)
+  expect(body.company.suspended_at).toBeTruthy()
   expect(body.company.suspended_reason).toBe('Test suspension')
 })
 
@@ -81,7 +81,7 @@ test('UC79 — POST /api/useradmin/suspend unsuspends a company', async ({ reque
 
   const detail = await request.get(`/api/useradmin/companies/${owner.companyId}`)
   const body = await detail.json()
-  expect(body.company.is_suspended).toBe(false)
+  expect(body.company.suspended_at).toBeNull()
 })
 
 test('UC80 — POST /api/useradmin/suspend suspends a user', async ({ request }) => {

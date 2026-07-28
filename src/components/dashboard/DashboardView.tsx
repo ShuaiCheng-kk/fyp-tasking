@@ -26,6 +26,7 @@ import {
   fmtShiftTime, fmtShiftTimeMinusMinutes, fmtClockStamp,
   ClockFlowButton, ClockFlowConnector,
 } from '@/components/dashboard/ClockFlow'
+import { sgtTodayKey } from '@/lib/singaporeTime'
 
 // ─── Spinner ──────────────────────────────────────────────────────────────────
 
@@ -62,7 +63,7 @@ function SkeletonLine({ width = '100%', height = 14, radius = 999 }: { width?: n
 type MyShiftRecord = { id: string; clock_in_time: string | null; clock_out_time: string | null; break_in_time: string | null; break_out_time: string | null }
 type MyShift = {
   assignment: { id: string; user_id: string }
-  shift: { id: string; title: string | null; shift_date: string; start_time: string; end_time: string; is_open_ended: boolean }
+  shift: { id: string; shift_date: string; start_time: string; end_time: string; is_open_ended: boolean }
   record: MyShiftRecord | null
 }
 
@@ -817,7 +818,7 @@ type DashboardTeamMember = {
   department_id?: string | null
   profile_photo_url?: string | null
   casual_worker_verified_at?: string | null
-  casual_worker_blocked_at?: string | null
+  casual_worker_inactive_at?: string | null
 }
 
 type DashboardTeamDetails = {
@@ -1020,11 +1021,13 @@ export default function DashboardView({ sidebar, basePath, viewerRole }: {
     } catch {}
   }, [])
 
+  // Shift dates are Singapore-nominal (see ClockFlow's sgtInstant) — "today" must be the
+  // Singapore calendar day, not a mix of the machine's own timezone and true UTC, or a shift
+  // that's "today" only by one of those would double up against a genuinely different day's
+  // shift (see project memory module5-clockin-timezone-bug).
   const myTodayShifts = useMemo(() => {
-    const now = new Date()
-    const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-    const utcTodayKey = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-${String(now.getUTCDate()).padStart(2, '0')}`
-    return myShifts.filter(s => s.shift.shift_date === todayKey || s.shift.shift_date === utcTodayKey)
+    const today = sgtTodayKey()
+    return myShifts.filter(s => s.shift.shift_date === today)
   }, [myShifts])
 
   const renderManagerClockChain = (compactLabel = false) => (
@@ -1042,7 +1045,7 @@ export default function DashboardView({ sidebar, basePath, viewerRole }: {
           <div key={shift.assignment.id} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', minWidth: 0 }}>
             {!compactLabel && (
               <span style={{ fontSize: 12.5, fontWeight: 700, color: '#64748B', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {shift.shift.title || 'Shift'} - {fmtShiftTime(shift.shift.start_time)} to {shift.shift.is_open_ended ? 'Open' : fmtShiftTime(shift.shift.end_time)}
+                Shift - {fmtShiftTime(shift.shift.start_time)} to {shift.shift.is_open_ended ? 'Open' : fmtShiftTime(shift.shift.end_time)}
               </span>
             )}
             <div style={{ display: 'flex', alignItems: 'center', gap: 0, flexWrap: 'nowrap' }}>
@@ -1213,7 +1216,7 @@ export default function DashboardView({ sidebar, basePath, viewerRole }: {
         casualWorkers: unique(scopedMembers.filter(member =>
           member.role === 'Casual Worker' &&
           !!member.casual_worker_verified_at &&
-          !member.casual_worker_blocked_at
+          !member.casual_worker_inactive_at
         )),
       })
     } catch {

@@ -9,7 +9,7 @@ export async function GET(
 
   const { data, error } = await supabase
     .from('job_postings')
-    .select('id, title, company_name')
+    .select('id, title, companies(name)')
     .eq('id', jobId)
     .single()
 
@@ -20,5 +20,7 @@ export async function GET(
     )
   }
 
-  return NextResponse.json({ success: true, job: data })
+  const { companies, ...rest } = data as any
+  const co = Array.isArray(companies) ? companies[0] : companies
+  return NextResponse.json({ success: true, job: { ...rest, company_name: co?.name ?? null } })
 }

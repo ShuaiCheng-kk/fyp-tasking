@@ -137,18 +137,17 @@ test('apply snapshots the worker profile (skills, certificates, resume) onto the
   expect(res.status()).toBe(200)
   const { application } = await res.json()
   expect(application.status).toBe('pending')
-  expect(application.relevant_experience).toBeNull()
   expect(application.additional_note).toBe('I worked at Starbucks for one year.')
-  expect(application.skills_snapshot).toBe('Customer service, Barista')
-  expect(application.certificates_snapshot).toEqual([{ name: 'Food Hygiene Certificate', file_url: null }])
+  expect(application.skills).toBe('Customer service, Barista')
+  expect(application.certificates).toEqual([{ name: 'Food Hygiene Certificate', file_url: null }])
 
   // Snapshot property: editing the profile afterwards must NOT change the application.
   await request.patch('/api/guest/profile/skills', {
     data: { user_id: adultAuthId, skills: 'Completely different skills' },
   })
   const { data: frozen } = await admin
-    .from('job_applicants').select('skills_snapshot').eq('id', application.id).single()
-  expect(frozen?.skills_snapshot).toBe('Customer service, Barista')
+    .from('job_applicants').select('skills').eq('id', application.id).single()
+  expect(frozen?.skills).toBe('Customer service, Barista')
 })
 
 test('rejects a duplicate application to the same job', async ({ request }) => {
@@ -617,12 +616,12 @@ test('per-company ban: hides the company from the board, withdraws pending, bloc
   // Per-company block stamped, and the pending application auto-withdrawn.
   const { data: cwd } = await admin
     .from('casualworker_departments')
-    .select('blocked_at, blocked_reason')
+    .select('inactive_at, inactive_reason')
     .eq('casual_worker_id', banned.userId)
     .eq('company_id', seeded.companyId)
     .single()
-  expect(cwd?.blocked_at).toBeTruthy()
-  expect(cwd?.blocked_reason).toBe('Repeated no-shows')
+  expect(cwd?.inactive_at).toBeTruthy()
+  expect(cwd?.inactive_reason).toBe('Repeated no-shows')
   const { data: withdrawn } = await admin
     .from('job_applicants').select('status').eq('id', applicationId).single()
   expect(withdrawn?.status).toBe('withdrawn')
@@ -646,12 +645,12 @@ test('per-company ban: hides the company from the board, withdraws pending, bloc
   expect(unban.status()).toBe(200)
   const { data: cleared } = await admin
     .from('casualworker_departments')
-    .select('blocked_at, blocked_reason')
+    .select('inactive_at, inactive_reason')
     .eq('casual_worker_id', banned.userId)
     .eq('company_id', seeded.companyId)
     .single()
-  expect(cleared?.blocked_at).toBeNull()
-  expect(cleared?.blocked_reason).toBeNull()
+  expect(cleared?.inactive_at).toBeNull()
+  expect(cleared?.inactive_reason).toBeNull()
 
   const boardRestored = await request.get(`/api/jobs/public?user_id=${banned.authId}`)
   const boardRestoredJobs = (await boardRestored.json()).jobs

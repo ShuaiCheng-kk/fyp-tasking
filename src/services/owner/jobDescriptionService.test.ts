@@ -42,7 +42,6 @@ describe('jobDescriptionService.generateDescription (UC47)', () => {
       company_name: 'Acme Retail',
       department_name: 'Operations',
       location: 'Downtown',
-      employment_type: 'casual',
       pay: '15 per hour',
       notes: 'Must be reliable',
     })
@@ -56,7 +55,6 @@ describe('jobDescriptionService.generateDescription (UC47)', () => {
           company_name: 'Acme Retail',
           department_name: 'Operations',
           location: 'Downtown',
-          employment_type: 'casual',
           pay: '15 per hour',
           notes: 'Must be reliable',
         }),

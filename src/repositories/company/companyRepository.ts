@@ -13,8 +13,6 @@ export const companyRepository = {
     postal_code?: string | null
     industry?: string | null
     size?: string | null
-    logo_url?: string | null
-    website?: string | null
   }): Promise<Company> {
     const { data: company, error } = await supabase
       .from('companies')
@@ -69,8 +67,6 @@ export const companyRepository = {
     postal_code?: string | null
     industry?: string | null
     size?: string | null
-    logo_url?: string | null
-    website?: string | null
   }): Promise<Company> {
     const { data: company, error } = await supabase
       .from('companies')
@@ -92,8 +88,6 @@ export const companyRepository = {
     postal_code?: string | null
     industry?: string | null
     size?: string | null
-    logo_url?: string | null
-    website?: string | null
   }): Promise<Company> {
     const { data: company, error } = await supabase
       .from('companies')
@@ -213,11 +207,10 @@ export const companyRepository = {
     manager_id: string,
     company_id: string,
     department_id: string,
-    assigned_by: string,
   ): Promise<void> {
     const { error } = await supabase
       .from('manager_departments')
-      .insert({ manager_id, company_id, department_id, assigned_by })
+      .insert({ manager_id, company_id, department_id })
     if (error) {
       if (error.code === '23505') throw new Error('ALREADY_ASSIGNED')
       throw new Error(error.message)
@@ -230,14 +223,6 @@ export const companyRepository = {
       .delete()
       .eq('manager_id', manager_id)
       .eq('department_id', department_id)
-    if (error) throw new Error(error.message)
-  },
-
-  async deleteInboxByCompanyId(company_id: string): Promise<void> {
-    const { error } = await supabase
-      .from('inbox')
-      .delete()
-      .eq('company_id', company_id)
     if (error) throw new Error(error.message)
   },
 

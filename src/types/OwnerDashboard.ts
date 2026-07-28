@@ -79,7 +79,7 @@ export interface RecruitmentDeadlineRow {
 }
 
 export interface RecruitmentStartingSoonRow extends RecruitmentDeadlineRow {
-  shift_date: string
+  job_date: string
   days_until_start: number
 }
 

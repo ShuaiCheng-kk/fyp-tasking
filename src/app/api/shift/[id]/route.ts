@@ -21,8 +21,6 @@ export async function PATCH(
 
   const {
     department_id,
-    title,
-    instruction,
     shift_date,
     start_time,
     end_time,
@@ -34,10 +32,8 @@ export async function PATCH(
     template_id,
   } = body as Record<string, unknown>
 
-  const fields: Partial<Omit<Shift, 'id' | 'company_id' | 'created_by' | 'created_at'>> = {}
+  const fields: Partial<Omit<Shift, 'id' | 'company_id' | 'created_by'>> = {}
   if (typeof department_id === 'string') fields.department_id = department_id
-  if (typeof title === 'string' || title === null) fields.title = title
-  if (typeof instruction === 'string' || instruction === null) fields.instruction = instruction
   if (typeof shift_date === 'string') fields.shift_date = shift_date
   if (typeof start_time === 'string') fields.start_time = start_time
   if (typeof end_time === 'string') fields.end_time = end_time

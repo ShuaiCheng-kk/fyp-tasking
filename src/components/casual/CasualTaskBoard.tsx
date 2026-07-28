@@ -18,7 +18,6 @@ import { useIsCompactContainer } from '@/hooks/useIsCompactContainer'
 import { useResourceInvalidation } from '@/components/realtime/RealtimeNotificationsProvider'
 
 const COLUMNS: Task['status'][] = ['Assigned', 'In Progress', 'Review', 'Complete']
-const STATUS_PERCENT: Record<Task['status'], number> = { Assigned: 0, 'In Progress': 33, Review: 66, Complete: 100 }
 
 const PRIORITY_COLORS: Record<string, { bg: string; text: string }> = {
   Low: { bg: '#F1F5F9', text: '#475569' },
@@ -90,14 +89,14 @@ export default function CasualTaskBoard({ companyId, shiftId, userId }: Props) {
     const affectedIds = new Set([task.id, ...subTasks.map(t => t.id)])
 
     setTasks(prev => prev.map(t =>
-      affectedIds.has(t.id) ? { ...t, status: targetStatus, percentage_complete: STATUS_PERCENT[targetStatus] } : t
+      affectedIds.has(t.id) ? { ...t, status: targetStatus } : t
     ))
 
     try {
       const results = await Promise.all([...affectedIds].map(id => fetch('/api/task', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, status: targetStatus, percentage_complete: STATUS_PERCENT[targetStatus] }),
+        body: JSON.stringify({ id, status: targetStatus }),
       }).then(r => r.json())))
       if (results.some(r => !r.success)) throw new Error()
     } catch {

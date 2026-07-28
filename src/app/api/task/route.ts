@@ -194,7 +194,6 @@ export async function POST(req: NextRequest) {
     assigned_user_id: (b.assigned_user_id as string) ?? null,
     assigned_by: (b.assigned_by as string) ?? null,
     status: (b.status as TaskInput['status']) ?? 'Assigned',
-    percentage_complete: typeof b.percentage_complete === 'number' ? b.percentage_complete : 0,
     priority: (b.priority as string) ?? null,
     due_at: (b.due_at as string) ?? null,
     task_date: (b.task_date as string) ?? null,
@@ -306,13 +305,12 @@ export async function PATCH(req: NextRequest) {
     }
   }
 
-  // Quick status+percentage update shortcut (only when no other fields are present)
-  if (b.status !== undefined && b.percentage_complete !== undefined && !b.title) {
+  // Quick status update shortcut (only when no other fields are present)
+  if (b.status !== undefined && !b.title) {
     try {
       const task = await taskService.updateTaskStatus(
         b.id,
         b.status as 'Assigned' | 'In Progress' | 'Review' | 'Complete',
-        b.percentage_complete as number,
       )
       return NextResponse.json({ success: true, task })
     } catch (err) {

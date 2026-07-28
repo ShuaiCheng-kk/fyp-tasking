@@ -7,7 +7,7 @@ import { UACompany, UACompanyDetail, UACompanyMember, UAUser, UAReportStats } fr
 export async function getAllCompanies(search?: string): Promise<UACompany[]> {
   let query = supabase
     .from('companies')
-    .select('id,name,description,plan,industry,size,location,website,logo_url,is_suspended,suspended_at,suspended_reason,created_at,owner_id')
+    .select('id,name,description,plan,industry,size,location,suspended_at,suspended_reason,created_at,owner_id')
     .order('created_at', { ascending: false })
 
   if (search) {
@@ -22,7 +22,7 @@ export async function getAllCompanies(search?: string): Promise<UACompany[]> {
 export async function getCompanyDetail(companyId: string): Promise<UACompanyDetail | null> {
   const { data: company, error } = await supabase
     .from('companies')
-    .select('id,name,description,plan,industry,size,location,website,address,postal_code,logo_url,plan_started_at,plan_next_billing_at,plan_cancel_at,is_suspended,suspended_at,suspended_reason,created_at,owner_id')
+    .select('id,name,description,plan,industry,size,location,address,postal_code,plan_started_at,plan_next_billing_at,plan_cancel_at,suspended_at,suspended_reason,created_at,owner_id')
     .eq('id', companyId)
     .single()
 
@@ -96,7 +96,7 @@ export async function getAllUsers(search?: string, roles?: string[], statuses?: 
 export async function suspendCompany(companyId: string, reason: string): Promise<void> {
   const { error } = await supabase
     .from('companies')
-    .update({ is_suspended: true, suspended_at: new Date().toISOString(), suspended_reason: reason })
+    .update({ suspended_at: new Date().toISOString(), suspended_reason: reason })
     .eq('id', companyId)
   if (error) throw new Error(error.message)
 }
@@ -104,7 +104,7 @@ export async function suspendCompany(companyId: string, reason: string): Promise
 export async function unsuspendCompany(companyId: string): Promise<void> {
   const { error } = await supabase
     .from('companies')
-    .update({ is_suspended: false, suspended_at: null, suspended_reason: null })
+    .update({ suspended_at: null, suspended_reason: null })
     .eq('id', companyId)
   if (error) throw new Error(error.message)
 }
@@ -132,7 +132,7 @@ export async function unsuspendUser(userId: string): Promise<void> {
 
 export async function getReportStats(from?: string, to?: string): Promise<UAReportStats> {
   const [{ data: companies, error: ce }, { data: users, error: ue }, { data: invitations, error: ie }] = await Promise.all([
-    supabase.from('companies').select('id,name,plan,industry,size,is_suspended,created_at'),
+    supabase.from('companies').select('id,name,plan,industry,size,suspended_at,created_at'),
     supabase.from('users').select('id,role,company_id,is_suspended,created_at'),
     supabase.from('invitation_code').select('status,used_by'),
   ])
@@ -213,9 +213,9 @@ export async function getReportStats(from?: string, to?: string): Promise<UARepo
   return {
     totalCompanies: cos.length,
     totalUsers: usr.length,
-    activeCompanies: cos.filter((c: { is_suspended: boolean }) => !c.is_suspended).length,
+    activeCompanies: cos.filter((c: { suspended_at: string | null }) => !c.suspended_at).length,
     activeUsers: usr.filter((u: { is_suspended: boolean }) => !u.is_suspended).length,
-    suspendedCompanies: cos.filter((c: { is_suspended: boolean }) => c.is_suspended).length,
+    suspendedCompanies: cos.filter((c: { suspended_at: string | null }) => !!c.suspended_at).length,
     suspendedUsers: usr.filter((u: { is_suspended: boolean }) => u.is_suspended).length,
     newCompaniesLast7Days: cos.filter((c: { created_at: string }) => c.created_at >= ago7).length,
     newUsersLast7Days: usr.filter((u: { created_at: string }) => u.created_at >= ago7).length,

@@ -11,7 +11,6 @@ export const jobDescriptionService = {
     company_name?: string | null
     department_name?: string | null
     location?: string | null
-    employment_type?: string | null
     pay?: string | null
     notes?: string | null
   }): Promise<JobDescriptionDraft> {

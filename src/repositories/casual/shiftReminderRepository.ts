@@ -9,7 +9,6 @@ export const shiftReminderRepository = {
   async getShiftsStartingOn(dateKey: string): Promise<{
     id: string
     company_id: string
-    title: string | null
     shift_date: string
     start_time: string
     supervisor_employee_id: string | null
@@ -18,7 +17,7 @@ export const shiftReminderRepository = {
   }[]> {
     const { data, error } = await supabase
       .from('shifts')
-      .select('id, company_id, title, shift_date, start_time, source_job_posting_id, shift_assignments!inner(user_id, supervisor_employee_id)')
+      .select('id, company_id, shift_date, start_time, source_job_posting_id, shift_assignments!inner(user_id, supervisor_employee_id)')
       .eq('shift_date', dateKey)
       .neq('status', 'cancelled')
       .is('reminder_sent_at', null)
@@ -28,7 +27,6 @@ export const shiftReminderRepository = {
       const r = row as unknown as {
         id: string
         company_id: string
-        title: string | null
         shift_date: string
         start_time: string
         source_job_posting_id: string | null
@@ -37,7 +35,6 @@ export const shiftReminderRepository = {
       return {
         id: r.id,
         company_id: r.company_id,
-        title: r.title,
         shift_date: r.shift_date,
         start_time: r.start_time,
         supervisor_employee_id: r.shift_assignments[0]?.supervisor_employee_id ?? null,

@@ -30,16 +30,12 @@ export async function PATCH(
   try {
     const body = await req.json()
     const template = await jobTemplateService.updateTemplate(id, {
-      name: body.name,
       title: body.title,
-      description: body.description,
-      requirements: body.requirements,
-      employment_type: body.employment_type,
-      form_type: body.form_type,
+      responsibilities: body.responsibilities,
+      skills: body.skills,
+      job_type: body.job_type,
       department_id: body.department_id,
       salary_amount: body.salary_amount,
-      salary_type: body.salary_type,
-      uniform_required: body.uniform_required,
       uniform_type: body.uniform_type,
       uniform_details: body.uniform_details,
       experience_required: body.experience_required,

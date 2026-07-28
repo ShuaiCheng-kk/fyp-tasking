@@ -142,7 +142,6 @@ test.beforeAll(async () => {
     department_id: departmentId,
     title: 'Module 7 Test Task',
     status: 'Complete',
-    percentage_complete: 100,
     due_at: '2026-07-09T17:00:00Z',
     completed_at: '2026-07-08T17:00:00Z',
     task_date: '2026-07-08',

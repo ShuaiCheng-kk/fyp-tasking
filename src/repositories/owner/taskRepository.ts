@@ -23,7 +23,6 @@ export const taskRepository = {
         assigned_user_id: input.assigned_user_id ?? null,
         assigned_by: input.assigned_by ?? null,
         status: input.status ?? 'Assigned',
-        percentage_complete: input.percentage_complete ?? 0,
         priority: input.priority ?? null,
         due_at: input.due_at ?? null,
         task_date: input.task_date ?? null,
@@ -63,7 +62,6 @@ export const taskRepository = {
       .from('task_assignments')
       .select('*')
       .in('task_id', task_ids)
-      .order('created_at', { ascending: true })
     if (error) throw new Error(error.message)
     return (data ?? []) as TaskAssignment[]
   },
@@ -76,7 +74,7 @@ export const taskRepository = {
   async getTasksByCompany(company_id: string, assigned_by?: string | string[], department_ids?: string[], assigned_user_id?: string): Promise<Task[]> {
     let query = supabase
       .from('tasks')
-      .select('id, shift_id, company_id, department_id, parent_task_id, sequence_order, title, description, assigned_user_id, assigned_by, status, percentage_complete, priority, due_at, task_date, recurrence_group_id, source_task_id, is_archived, rejection_reason, rejected_at, completed_at, reviewed_by, created_at, updated_at, shifts(shift_date)')
+      .select('id, shift_id, company_id, department_id, parent_task_id, sequence_order, title, description, assigned_user_id, assigned_by, status, priority, due_at, task_date, recurrence_group_id, source_task_id, is_archived, rejection_reason, rejected_at, completed_at, reviewed_by, created_at, updated_at, shifts(shift_date)')
       .eq('company_id', company_id)
       .eq('is_archived', false)
     if (Array.isArray(assigned_by)) {
@@ -104,7 +102,7 @@ export const taskRepository = {
   async getArchivedTasksByCompany(company_id: string, assigned_by?: string | string[], department_ids?: string[]): Promise<Task[]> {
     let query = supabase
       .from('tasks')
-      .select('id, shift_id, company_id, department_id, parent_task_id, sequence_order, title, description, assigned_user_id, assigned_by, status, percentage_complete, priority, due_at, task_date, recurrence_group_id, source_task_id, is_archived, rejection_reason, rejected_at, completed_at, reviewed_by, created_at, updated_at, shifts(shift_date)')
+      .select('id, shift_id, company_id, department_id, parent_task_id, sequence_order, title, description, assigned_user_id, assigned_by, status, priority, due_at, task_date, recurrence_group_id, source_task_id, is_archived, rejection_reason, rejected_at, completed_at, reviewed_by, created_at, updated_at, shifts(shift_date)')
       .eq('company_id', company_id)
       .eq('is_archived', true)
       // Sub-tasks and recurring sibling occurrences (source_task_id set) archive alongside their
@@ -416,11 +414,11 @@ export const taskRepository = {
     // Fetch tasks whose linked shift is today, or whose due_at falls today (no shift)
     const { data, error } = await supabase
       .from('tasks')
-      .select('id, title, status, priority, percentage_complete, assigned_user_id, created_at, shift_id, due_at, shifts(shift_date)')
+      .select('id, title, status, priority, assigned_user_id, created_at, shift_id, due_at, shifts(shift_date)')
       .eq('company_id', company_id)
       .eq('is_archived', false)
     if (error) throw new Error(error.message)
-    const allRows = (data ?? []) as unknown as { id: string; title: string; status: string; priority: string | null; percentage_complete: number; assigned_user_id: string | null; created_at: string; shift_id: string | null; due_at: string | null; shifts: { shift_date: string }[] | null }[]
+    const allRows = (data ?? []) as unknown as { id: string; title: string; status: string; priority: string | null; assigned_user_id: string | null; created_at: string; shift_id: string | null; due_at: string | null; shifts: { shift_date: string }[] | null }[]
     const rows = allRows.filter(r => {
       if (r.shift_id && r.shifts && r.shifts.length > 0) return r.shifts[0].shift_date === todayStr
       if (r.due_at) {
@@ -443,7 +441,6 @@ export const taskRepository = {
       title: r.title,
       status: r.status,
       priority: r.priority,
-      percentage_complete: r.percentage_complete,
       assigned_user_id: r.assigned_user_id,
       assignee_name: r.assigned_user_id ? (userMap.get(r.assigned_user_id) ?? undefined) : undefined,
       created_at: r.created_at,
@@ -575,7 +572,7 @@ export const taskRepository = {
   async upsertTaskDelayThreshold(company_id: string, threshold_percent: number, updated_by: string | null): Promise<void> {
     const { error } = await supabase
       .from('task_delay_alert_settings')
-      .upsert({ company_id, threshold_percent, updated_by, updated_at: new Date().toISOString() }, { onConflict: 'company_id' })
+      .upsert({ company_id, threshold_percent, updated_by }, { onConflict: 'company_id' })
     if (error) throw new Error(error.message)
   },
 

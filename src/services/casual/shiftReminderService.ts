@@ -4,20 +4,17 @@
 import { shiftReminderRepository } from '@/repositories/casual/shiftReminderRepository'
 import { casualDashboardRepository } from '@/repositories/casual/casualDashboardRepository'
 import { emailService } from '@/services/email/emailService'
-
-// Shift dates are UTC-nominal by design (see casualDashboardService's utcDateKey) — "tomorrow"
-// must be computed on that same UTC calendar day, or a shift just past local midnight in a
-// timezone behind UTC would get skipped a day early (or reminded a day late, ahead of UTC).
-function utcDateKey(date: Date): string {
-  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`
-}
+import { sgtDateKeyPlusDays } from '@/lib/singaporeTime'
 
 export const shiftReminderService = {
   // Sends the day-before reminder email to every Casual Worker assigned to a shift starting
   // tomorrow that hasn't been reminded yet. Called once daily by the Vercel Cron route — never
   // rolls back or throws on a single email/shift failure, so one bad address can't block the rest.
+  // Shift dates are Singapore-nominal by design (see src/lib/singaporeTime) — "tomorrow" must be
+  // computed on that same Singapore calendar day, or a shift could get skipped a day early or
+  // reminded a day late.
   async sendDueShiftReminders(): Promise<{ sent: number; skipped: number }> {
-    const tomorrowKey = utcDateKey(new Date(Date.now() + 24 * 60 * 60 * 1000))
+    const tomorrowKey = sgtDateKeyPlusDays(1)
     const shifts = await shiftReminderRepository.getShiftsStartingOn(tomorrowKey)
     if (shifts.length === 0) return { sent: 0, skipped: 0 }
 
@@ -55,7 +52,7 @@ export const shiftReminderService = {
           await emailService.sendShiftReminderEmail({
             to: worker.email_address,
             fullName: worker.full_name,
-            jobTitle: shift.title ?? 'Job',
+            jobTitle: posting?.title ?? 'Job',
             companyName: posting?.company_name ?? 'the company',
             shiftDate: shift.shift_date,
             startTime: shift.start_time.slice(0, 5),

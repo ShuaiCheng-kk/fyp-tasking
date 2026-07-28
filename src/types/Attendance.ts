@@ -1,49 +1,39 @@
 import { Shift } from './Shift'
 import { ShiftAssignment } from './ShiftAssignment'
 
-export type AttendanceOwnerStatus = 'pending' | 'approved' | 'rejected' | 'modified'
-export type AttendanceExceptionType = 'pending' | 'late' | 'absent' | 'overtime'
+export type AttendanceExceptionType = 'late' | 'absent' | 'overtime'
 export type AttendanceRequestStatus = 'pending' | 'approved' | 'rejected' | 'modified'
-export type TimeOffRequestType = 'break_waiver'
 
 export type AttendanceModifiedTimeField = 'clock_in_time' | 'clock_out_time' | 'break_in_time' | 'break_out_time'
 
 export interface AttendanceRecord {
   id: string
   shift_assignment_id: string
-  casual_worker_id: string
+  // Whoever clocked in for this record — Employee, Manager, or Casual Worker (all three
+  // self-clock the same way). Not Casual-Worker-exclusive despite the name.
+  user_id: string
   clock_in_time: string | null
   clock_out_time: string | null
   break_in_time: string | null
   break_out_time: string | null
-  late_reason: string | null
-  absence_reason: string | null
-  attachment_url: string | null
-  confirmed_by_employee_id: string
-  submitted_by_employee_id: string
-  status: string
-  employee_notes: string | null
-  manager_notes: string | null
-  owner_status: AttendanceOwnerStatus
-  owner_notes: string | null
-  owner_reviewed_by: string | null
-  owner_reviewed_at: string | null
-  owner_adjusted_clock_in_time: string | null
-  owner_adjusted_clock_out_time: string | null
-  // Which of clock_in_time/clock_out_time/break_in_time/break_out_time the most recent 'modified'
-  // decision actually changed — lets the Owner/Partner page show what a Manager's correction
-  // touched (paired with owner_reviewed_by/owner_reviewed_at for who/when).
-  owner_modified_fields: AttendanceModifiedTimeField[] | null
-  // The value each field in owner_modified_fields held immediately before that same decision
-  // overwrote it — lets the UI show "Original: <value>" next to a corrected field.
-  owner_modified_original_values: Partial<Record<AttendanceModifiedTimeField, string | null>> | null
+  // Corrected values if a reviewer edited them. The raw columns above are never overwritten, so
+  // they always hold the true original — comparing each pair at minute precision is how the UI
+  // derives "was this field modified" without a separate stored flag.
+  modified_clock_in_time: string | null
+  modified_clock_out_time: string | null
+  modified_break_in_time: string | null
+  modified_break_out_time: string | null
+  // Reason given when a reviewer corrects a time. Required whenever any modified_* value ends up
+  // differing from its raw counterpart.
+  modified_reason: string | null
+  // Who last corrected this record's times — Owner, Partner, or a Manager (scoped to their own
+  // department's Employee/Casual Worker records) — and when.
+  modified_by: string | null
+  modified_at: string | null
   // Open-ended (one-off) jobs have no scheduled end time, so the supervising Employee must
-  // review the work and release the Casual Worker before Clock Out is allowed. Unused for
-  // fixed-end shifts, which keep the time-based gate instead.
-  clock_out_released_by: string | null
-  clock_out_released_at: string | null
-  created_at: string
-  updated_at: string
+  // review the work and set this true before the Casual Worker is allowed to clock out. Unused
+  // for fixed-end shifts, which keep the time-based gate instead.
+  clock_out_released: boolean
 }
 
 export interface AttendanceRecordUpdate {
@@ -51,42 +41,23 @@ export interface AttendanceRecordUpdate {
   clock_out_time?: string | null
   break_in_time?: string | null
   break_out_time?: string | null
-  late_reason?: string | null
-  absence_reason?: string | null
-  attachment_url?: string | null
-  confirmed_by_employee_id?: string | null
-  submitted_by_employee_id?: string | null
-  owner_status?: AttendanceOwnerStatus
-  owner_notes?: string | null
-  owner_reviewed_by?: string | null
-  owner_reviewed_at?: string | null
-  owner_adjusted_clock_in_time?: string | null
-  owner_adjusted_clock_out_time?: string | null
-  owner_modified_fields?: AttendanceModifiedTimeField[] | null
-  owner_modified_original_values?: Partial<Record<AttendanceModifiedTimeField, string | null>> | null
-  employee_notes?: string | null
-  manager_notes?: string | null
-  status?: string
-  clock_out_released_by?: string | null
-  clock_out_released_at?: string | null
+  modified_clock_in_time?: string | null
+  modified_clock_out_time?: string | null
+  modified_break_in_time?: string | null
+  modified_break_out_time?: string | null
+  modified_reason?: string | null
+  modified_by?: string | null
+  modified_at?: string | null
+  clock_out_released?: boolean
 }
 
 export interface AttendanceRecordCreate {
   shift_assignment_id: string
-  casual_worker_id: string
+  user_id: string
   clock_in_time: string | null
   clock_out_time?: string | null
   break_in_time?: string | null
   break_out_time?: string | null
-  late_reason?: string | null
-  absence_reason?: string | null
-  attachment_url?: string | null
-  confirmed_by_employee_id: string
-  submitted_by_employee_id: string
-  status: string
-  employee_notes?: string | null
-  manager_notes?: string | null
-  owner_status?: AttendanceOwnerStatus
 }
 
 export interface CasualAttendanceShift {
@@ -105,17 +76,13 @@ export interface CasualAttendanceOverview {
   message: string
 }
 
-export interface AttendanceManagerReviewInput {
+// Correcting a clock/break time — the only action a reviewer can take on an attendance record.
+// Whether anything actually changed (and which fields) is derived by comparing the submitted
+// times to each field's true original, not tracked as a separate decision/status.
+export interface AttendanceModifyTimesInput {
   id: string
-  manager_id: string
-  manager_notes: string | null
-}
-
-export interface AttendanceReviewInput {
-  id: string
-  owner_id: string
-  decision: AttendanceOwnerStatus
-  owner_notes?: string | null
+  actor_id: string
+  reason?: string | null
   clock_in_time?: string | null
   clock_out_time?: string | null
   break_in_time?: string | null
@@ -132,10 +99,13 @@ export interface AttendanceDashboardRecord {
   assignee_hourly_rate: number | null
   supervisor_name: string | null
   department_name: string | null
+  // The job posting title for a Casual Worker's shift (source_job_posting_id join) — internal
+  // staff shifts have no posting, so this is always null for them.
+  job_title: string | null
   record: AttendanceRecord | null
   exceptions: AttendanceExceptionType[]
-  // Who last decided record.owner_status (any decision, not just 'modified') — the Owner/Partner
-  // page uses this + record.owner_status === 'modified' to flag a Manager's correction.
+  // Who/when record.modified_by last corrected this record — the Attendance/Shifts pages use
+  // this alongside the live modified-vs-raw diff to flag a correction with the "M" badge.
   modifier_name: string | null
   modifier_role: string | null
 }
@@ -144,9 +114,6 @@ export interface AttendanceDashboard {
   records: AttendanceDashboardRecord[]
   summary: {
     total_assignments: number
-    pending_final_review: number
-    approved: number
-    rejected: number
     late: number
     absent: number
     overtime: number
@@ -170,7 +137,6 @@ export interface ShiftSwapRequest {
   status: ShiftSwapStatus
   reviewed_by: string | null
   reviewed_at: string | null
-  requires_owner_review: boolean
   owner_review_reason: string | null
   created_at: string
   updated_at: string
@@ -305,8 +271,8 @@ export interface FixedOffDayRequest {
   id: string
   user_id: string
   company_id: string
-  request_date: string
-  week_start: string
+  requested_date: string
+  requested_week: string
   status: AttendanceRequestStatus
   source: FixedOffDaySource
   reviewed_by: string | null
@@ -353,8 +319,6 @@ export interface OffDayQuotaSetting {
   user_id: string | null
   max_days_per_week: number
   role: OffDayQuotaDefaultRole | null
-  updated_by: string | null
-  updated_at: string
 }
 
 export interface OffDayQuotaUpsertInput {
@@ -362,41 +326,16 @@ export interface OffDayQuotaUpsertInput {
   user_id: string | null
   max_days_per_week: number
   role: OffDayQuotaDefaultRole | null
-  updated_by: string
 }
 
 export interface OffDaySubmissionDeadline {
   company_id: string
   deadline_weekday: number
   deadline_time: string
-  updated_by: string | null
-  updated_at: string
 }
 
 export interface OffDaySubmissionDeadlineUpsertInput {
   company_id: string
   deadline_weekday: number
   deadline_time: string
-  updated_by: string
-}
-
-// Kept for page.tsx type annotations; leave/time_off functionality has been removed.
-// Pages that import this type will compile but the relevant UI sections will receive no data.
-export interface TimeOffRequestView {
-  id: string
-  company_id: string
-  requester_id: string
-  requester_name: string
-  shift_assignment_id: string | null
-  request_type: string
-  reason: string | null
-  status: AttendanceRequestStatus
-  reviewed_by: string | null
-  reviewed_at: string | null
-  created_at: string
-  updated_at: string
-  shift_title: string | null
-  shift_date: string | null
-  start_time: string | null
-  end_time: string | null
 }

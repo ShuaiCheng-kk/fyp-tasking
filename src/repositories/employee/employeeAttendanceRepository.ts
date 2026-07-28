@@ -35,18 +35,16 @@ export const employeeAttendanceRepository = {
       .from('attendance_records')
       .select('*')
       .in('shift_assignment_id', assignmentIds)
-      .order('created_at', { ascending: false })
     if (error) throw new Error(error.message)
     return (data ?? []) as AttendanceRecord[]
   },
 
+  // shift_assignment_id is unique on attendance_records, so at most one row can ever match.
   async getAttendanceRecordByAssignmentId(assignmentId: string): Promise<AttendanceRecord | null> {
     const { data, error } = await supabase
       .from('attendance_records')
       .select('*')
       .eq('shift_assignment_id', assignmentId)
-      .order('created_at', { ascending: false })
-      .limit(1)
       .maybeSingle()
     if (error) throw new Error(error.message)
     return (data as AttendanceRecord | null) ?? null
@@ -57,20 +55,11 @@ export const employeeAttendanceRepository = {
       .from('attendance_records')
       .insert({
         shift_assignment_id: input.shift_assignment_id,
-        casual_worker_id: input.casual_worker_id,
+        user_id: input.user_id,
         clock_in_time: input.clock_in_time,
         clock_out_time: input.clock_out_time ?? null,
         break_in_time: input.break_in_time ?? null,
         break_out_time: input.break_out_time ?? null,
-        late_reason: input.late_reason ?? null,
-        absence_reason: input.absence_reason ?? null,
-        attachment_url: input.attachment_url ?? null,
-        confirmed_by_employee_id: input.confirmed_by_employee_id,
-        submitted_by_employee_id: input.submitted_by_employee_id,
-        status: input.status,
-        employee_notes: input.employee_notes ?? null,
-        manager_notes: input.manager_notes ?? null,
-        owner_status: input.owner_status ?? 'pending',
       })
       .select()
       .single()
@@ -107,15 +96,11 @@ export const employeeAttendanceRepository = {
         shift_assignment_id,
         clock_in_time,
         clock_out_time,
-        status,
-        employee_notes,
-        manager_notes,
         shift_assignments!inner (
           id,
           user_id,
           shifts!inner (
             id,
-            title,
             shift_date,
             start_time,
             end_time,
@@ -137,15 +122,12 @@ export const employeeAttendanceRepository = {
         id:                  row.id,
         shift_assignment_id: row.shift_assignment_id ?? assignment?.id ?? '',
         shift_id:            shift?.id ?? '',
-        shift_title:         shift?.title ?? 'Shift',
+        shift_title:         'Shift',
         shift_date:          shift?.shift_date ?? '',
         start_time:          shift?.start_time ?? '',
         end_time:            shift?.end_time ?? '',
         clock_in_time:       row.clock_in_time ?? null,
         clock_out_time:      row.clock_out_time ?? null,
-        status:              row.status ?? 'pending',
-        employee_notes:      row.employee_notes ?? null,
-        manager_notes:       row.manager_notes ?? null,
         department_name:     dept?.name ?? null,
       }
     })
@@ -169,29 +151,36 @@ export const employeeAttendanceRepository = {
   // waiting for their clock-out to be released — see casualAttendanceService.clockOut.
   async getPendingClockOutReleases(employeeId: string): Promise<{
     id: string
-    casual_worker_id: string
+    user_id: string
     clock_in_time: string | null
-    shift_title: string | null
+    source_job_posting_id: string | null
     shift_date: string
     start_time: string
   }[]> {
     const { data, error } = await supabase
       .from('attendance_records')
-      .select('id, casual_worker_id, clock_in_time, shift_assignments!inner(supervisor_employee_id, shifts!inner(title, shift_date, start_time, is_open_ended))')
+      .select('id, user_id, clock_in_time, shift_assignments!inner(supervisor_employee_id, shifts!inner(shift_date, start_time, is_open_ended, source_job_posting_id))')
       .eq('shift_assignments.supervisor_employee_id', employeeId)
       .eq('shift_assignments.shifts.is_open_ended', true)
       .not('clock_in_time', 'is', null)
       .is('clock_out_time', null)
-      .is('clock_out_released_at', null)
+      .eq('clock_out_released', false)
     if (error) throw new Error(error.message)
     return (data ?? []).map((row: any) => ({
       id: row.id,
-      casual_worker_id: row.casual_worker_id,
+      user_id: row.user_id,
       clock_in_time: row.clock_in_time,
-      shift_title: row.shift_assignments?.shifts?.title ?? null,
+      source_job_posting_id: row.shift_assignments?.shifts?.source_job_posting_id ?? null,
       shift_date: row.shift_assignments?.shifts?.shift_date ?? '',
       start_time: row.shift_assignments?.shifts?.start_time ?? '',
     }))
+  },
+
+  async getJobPostingsByIds(ids: string[]): Promise<{ id: string; title: string }[]> {
+    if (ids.length === 0) return []
+    const { data, error } = await supabase.from('job_postings').select('id, title').in('id', ids)
+    if (error) throw new Error(error.message)
+    return data ?? []
   },
 
   async getAttendanceRecordWithSupervisor(id: string): Promise<(AttendanceRecord & {
@@ -206,10 +195,9 @@ export const employeeAttendanceRepository = {
     return data as unknown as (AttendanceRecord & { shift_assignments: { supervisor_employee_id: string | null; shifts: { is_open_ended: boolean } | null } | null }) | null
   },
 
-  async releaseClockOut(id: string, employeeId: string): Promise<AttendanceRecord> {
+  async releaseClockOut(id: string): Promise<AttendanceRecord> {
     return this.updateAttendanceRecord(id, {
-      clock_out_released_by: employeeId,
-      clock_out_released_at: new Date().toISOString(),
+      clock_out_released: true,
     })
   },
 

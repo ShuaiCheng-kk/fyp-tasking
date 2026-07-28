@@ -63,7 +63,6 @@ export async function POST(req: NextRequest) {
         authId,
         shift_assignment_id,
         clock_time: typeof b.clock_time === 'string' ? b.clock_time : undefined,
-        notes: typeof b.notes === 'string' ? b.notes : null,
       })
       return NextResponse.json({ success: true, record }, { status: 201 })
     }
@@ -73,7 +72,6 @@ export async function POST(req: NextRequest) {
         authId,
         shift_assignment_id,
         clock_time: typeof b.clock_time === 'string' ? b.clock_time : undefined,
-        notes: typeof b.notes === 'string' ? b.notes : null,
       })
       return NextResponse.json({ success: true, record })
     }

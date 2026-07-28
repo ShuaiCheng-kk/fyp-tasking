@@ -63,13 +63,10 @@ export const workerApplicationService = {
     return await workerApplicationRepository.createApplication({
       job_id: input.job_id,
       user_id: input.user_id,
-      resume_url: profile.resume_url,
-      // No longer collected per application — the experience gate replaced the picker; the
-      // column stays for older applications that did record a level.
-      relevant_experience: null,
+      resume: profile.resume_url,
       additional_note: note,
-      skills_snapshot: profile.skills,
-      certificates_snapshot: certificates.map(cert => ({ name: cert.name, file_url: cert.file_url })),
+      skills: profile.skills,
+      certificates: certificates.map(cert => ({ name: cert.name, file_url: cert.certificate_url })),
     })
   },
 
@@ -198,20 +195,19 @@ export const workerApplicationService = {
     let start_time: string | null = null
     let end_time: string | null = null
     let is_open_ended = false
-    if (job.form_type === 'shift' && job.shift_start_time && job.shift_end_time) {
-      start_time = job.shift_start_time
-      end_time = job.shift_end_time
-    } else if (job.form_type === 'oneoff' && job.job_start_time) {
+    if (job.job_type === 'shift' && job.job_start_time && job.job_end_time) {
+      start_time = job.job_start_time
+      end_time = job.job_end_time
+    } else if (job.job_type === 'oneoff' && job.job_start_time) {
       start_time = job.job_start_time
       end_time = addOneHour(job.job_start_time)
       is_open_ended = true
     }
-    if (job.department_id && job.shift_date && start_time && end_time) {
+    if (job.department_id && job.job_date && start_time && end_time) {
       await shiftService.createShift({
         company_id: job.company_id,
         department_id: job.department_id,
-        title: job.title,
-        shift_date: job.shift_date,
+        shift_date: job.job_date,
         start_time,
         end_time,
         created_by: job.created_by,
@@ -223,6 +219,7 @@ export const workerApplicationService = {
         supervisor_employee_id: job.assigned_employee_id ?? null,
         is_open_ended,
         source_job_posting_id: job.id,
+        hourly_rate: job.salary_amount ?? null,
       })
     }
 
@@ -251,9 +248,9 @@ export const workerApplicationService = {
           fullName: worker.full_name,
           jobTitle: job.title,
           companyName: job.company_name ?? 'the company',
-          shiftDate: job.shift_date,
+          shiftDate: job.job_date,
           startTime: (start_time ?? job.job_start_time)?.slice(0, 5) ?? null,
-          location: job.location,
+          location: job.company_location,
           supervisorName: supervisor?.full_name ?? null,
           supervisorPhone: supervisor?.phone_number ?? null,
           supervisorEmail: supervisor?.email_address ?? null,

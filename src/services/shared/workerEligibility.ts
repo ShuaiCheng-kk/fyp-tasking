@@ -32,13 +32,11 @@ export const HARD_EXPERIENCE_MINIMUMS: Record<string, string> = {
 export type TimeWindow = { date: string; start: number; end: number }
 
 export type ConflictSourceJob = {
-  form_type: string | null
-  is_recurring: boolean | null
-  shift_date: string | null
-  shift_days: string[] | null
-  shift_start_time: string | null
-  shift_end_time: string | null
+  job_type: string | null
+  job_date: string | null
+  // Shift jobs: paired with job_end_time. One-off jobs: used alone as the start time.
   job_start_time: string | null
+  job_end_time: string | null
 }
 
 type EligibilityJob = ConflictSourceJob & {
@@ -75,36 +73,30 @@ export function localDateKey(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
 
-const WEEKDAY_INDEX: Record<string, number> = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 }
-
 // Expands a job posting into the concrete time slots it would occupy on the worker's timeline.
 //   one-off      -> start time to end of day (no fixed finish, reserved conservatively)
 //   single shift -> its date and times
-//   recurring    -> every occurrence (by shift_days weekdays, else weekly from shift_date)
-//                   within RECURRING_HORIZON_DAYS of `from`
+//   recurring    -> every occurrence, weekly on job_date's weekday, within RECURRING_HORIZON_DAYS of `from`
 // Only slots on/after `from`'s date are returned — earlier occurrences can't clash with anything.
 export function jobPostingWindows(job: ConflictSourceJob, from: Date = new Date()): TimeWindow[] {
   const fromKey = localDateKey(from)
 
-  if (job.form_type === 'oneoff') {
-    if (!job.shift_date || !job.job_start_time || job.shift_date < fromKey) return []
-    return [{ date: job.shift_date, start: toMinutes(job.job_start_time), end: DAY_END_MINUTES }]
+  if (job.job_type === 'oneoff') {
+    if (!job.job_date || !job.job_start_time || job.job_date < fromKey) return []
+    return [{ date: job.job_date, start: toMinutes(job.job_start_time), end: DAY_END_MINUTES }]
   }
 
-  if (!job.shift_start_time || !job.shift_end_time) return []
-  const start = toMinutes(job.shift_start_time)
-  let end = toMinutes(job.shift_end_time)
+  if (!job.job_start_time || !job.job_end_time) return []
+  const start = toMinutes(job.job_start_time)
+  let end = toMinutes(job.job_end_time)
   if (end <= start) end = DAY_END_MINUTES
 
-  if (!job.is_recurring) {
-    if (!job.shift_date || job.shift_date < fromKey) return []
-    return [{ date: job.shift_date, start, end }]
+  if (job.job_type !== 'shift') {
+    if (!job.job_date || job.job_date < fromKey) return []
+    return [{ date: job.job_date, start, end }]
   }
 
-  const weekdays = (job.shift_days ?? [])
-    .map(day => WEEKDAY_INDEX[day.toLowerCase().slice(0, 3)])
-    .filter((idx): idx is number => idx !== undefined)
-  const anchor = job.shift_date ? new Date(`${job.shift_date}T00:00:00`) : new Date(from)
+  const anchor = job.job_date ? new Date(`${job.job_date}T00:00:00`) : new Date(from)
   const anchorWeekday = anchor.getDay()
 
   const windows: TimeWindow[] = []
@@ -112,10 +104,7 @@ export function jobPostingWindows(job: ConflictSourceJob, from: Date = new Date(
   cursor.setHours(0, 0, 0, 0)
   if (anchor > cursor) cursor.setTime(anchor.getTime())
   for (let i = 0; i < RECURRING_HORIZON_DAYS; i++) {
-    const matches = weekdays.length > 0
-      ? weekdays.includes(cursor.getDay())
-      : cursor.getDay() === anchorWeekday
-    if (matches) windows.push({ date: localDateKey(cursor), start, end })
+    if (cursor.getDay() === anchorWeekday) windows.push({ date: localDateKey(cursor), start, end })
     cursor.setDate(cursor.getDate() + 1)
   }
   return windows
@@ -132,7 +121,7 @@ export function windowsConflict(a: TimeWindow, b: TimeWindow): boolean {
 // THIS Saturday; once that shift starts unconfirmed, the offer is dead and the employer re-sends
 // for the following week if they still want the worker. Jobs with no schedule never auto-expire.
 export function invitationHasExpired(job: ConflictSourceJob, sentAt: Date): boolean {
-  if (!job.shift_date) return false
+  if (!job.job_date) return false
   const windows = jobPostingWindows(job, sentAt)
 
   const sentKey = localDateKey(sentAt)

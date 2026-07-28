@@ -3,9 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { attendanceService } from '@/services/owner/attendanceService'
-import { timesheetAutoApprovalService } from '@/services/owner/timesheetAutoApprovalService'
-import { availabilityService } from '@/services/user/availabilityService'
-import { AttendanceOwnerStatus, FixedOffDayDecision } from '@/types/Attendance'
+import { FixedOffDayDecision } from '@/types/Attendance'
 
 // CHANGE TYPE: Code only
 
@@ -53,10 +51,6 @@ export async function GET(req: NextRequest) {
       const conflict = await attendanceService.getShiftSwapConflict(company_id, assignment_id)
       return NextResponse.json({ success: true, ...conflict })
     }
-    if (resource === 'time_off') {
-      const requests = await attendanceService.getTimeOffRequests(company_id)
-      return NextResponse.json({ success: true, requests })
-    }
     if (resource === 'fixed_off_days') {
       const requests = await attendanceService.getFixedOffDayRequests(company_id)
       return NextResponse.json({ success: true, requests })
@@ -69,10 +63,6 @@ export async function GET(req: NextRequest) {
       }
       const records = await attendanceService.getAttendanceByDateRange(company_id, from_date, to_date)
       return NextResponse.json({ success: true, records })
-    }
-    if (resource === 'ai_suggestions') {
-      const suggestions = await timesheetAutoApprovalService.reviewTimesheets(company_id)
-      return NextResponse.json({ success: true, suggestions })
     }
     const dashboard = await attendanceService.getAttendanceDashboard(company_id)
     return NextResponse.json({ success: true, dashboard })
@@ -94,27 +84,14 @@ export async function PATCH(req: NextRequest) {
   const action = b.action
 
   try {
-    if (action === 'manager_review') {
-      if (typeof b.id !== 'string' || typeof b.manager_id !== 'string') {
-        return NextResponse.json({ success: false, message: 'id and manager_id are required' }, { status: 400 })
+    if (action === 'modify_times') {
+      if (typeof b.id !== 'string' || typeof b.actor_id !== 'string') {
+        return NextResponse.json({ success: false, message: 'id and actor_id are required' }, { status: 400 })
       }
-      const record = await attendanceService.managerReviewAttendance({
+      const record = await attendanceService.modifyAttendanceTimes({
         id: b.id,
-        manager_id: b.manager_id,
-        manager_notes: (b.manager_notes as string | null) ?? null,
-      })
-      return NextResponse.json({ success: true, record })
-    }
-
-    if (action === 'final_review') {
-      if (typeof b.id !== 'string' || typeof b.owner_id !== 'string' || typeof b.decision !== 'string') {
-        return NextResponse.json({ success: false, message: 'id, owner_id and decision are required' }, { status: 400 })
-      }
-      const record = await attendanceService.finalReviewAttendance({
-        id: b.id,
-        owner_id: b.owner_id,
-        decision: b.decision as AttendanceOwnerStatus,
-        owner_notes: (b.owner_notes as string | null) ?? null,
+        actor_id: b.actor_id,
+        reason: (b.reason as string | null) ?? null,
         clock_in_time: (b.clock_in_time as string | null) ?? null,
         clock_out_time: (b.clock_out_time as string | null) ?? null,
         break_in_time: (b.break_in_time as string | null) ?? null,
@@ -135,18 +112,6 @@ export async function PATCH(req: NextRequest) {
         reviewer_id: b.reviewer_id,
         decision: b.decision as 'approved' | 'rejected',
         reason: typeof b.reason === 'string' ? b.reason.trim() : null,
-      })
-      return NextResponse.json({ success: true, request })
-    }
-
-    if (action === 'decide_time_off') {
-      if (typeof b.id !== 'string' || typeof b.reviewer_id !== 'string' || typeof b.decision !== 'string') {
-        return NextResponse.json({ success: false, message: 'id, reviewer_id and decision are required' }, { status: 400 })
-      }
-      const request = await attendanceService.decideTimeOffRequest({
-        id: b.id,
-        reviewer_id: b.reviewer_id,
-        decision: b.decision as 'approved' | 'rejected',
       })
       return NextResponse.json({ success: true, request })
     }
@@ -212,28 +177,19 @@ export async function PATCH(req: NextRequest) {
       if (
         typeof b.user_id !== 'string' ||
         typeof b.company_id !== 'string' ||
-        typeof b.week_start !== 'string' ||
+        typeof b.requested_week !== 'string' ||
         !Array.isArray(b.dates) ||
         !b.dates.every((d): d is string => typeof d === 'string')
       ) {
-        return NextResponse.json({ success: false, message: 'user_id, company_id, week_start and dates (string[]) are required' }, { status: 400 })
+        return NextResponse.json({ success: false, message: 'user_id, company_id, requested_week and dates (string[]) are required' }, { status: 400 })
       }
       const requests = await attendanceService.editFixedOffDayRequest({
         user_id: b.user_id,
         company_id: b.company_id,
-        week_start: b.week_start,
+        requested_week: b.requested_week,
         dates: b.dates,
       })
       return NextResponse.json({ success: true, requests })
-    }
-
-    if (action === 'apply_ai_approvals') {
-      if (typeof b.company_id !== 'string' || typeof b.owner_id !== 'string') {
-        return NextResponse.json({ success: false, message: 'company_id and owner_id are required' }, { status: 400 })
-      }
-      const min_confidence = typeof b.min_confidence === 'number' ? b.min_confidence : 85
-      const decisions = await timesheetAutoApprovalService.applyAutoApprovals(b.company_id, b.owner_id, min_confidence)
-      return NextResponse.json({ success: true, decisions })
     }
 
     return NextResponse.json({ success: false, message: 'Unsupported attendance action' }, { status: 400 })
@@ -289,24 +245,6 @@ export async function POST(req: NextRequest) {
         user_id: b.user_id,
         company_id: b.company_id,
         dates: b.dates,
-      })
-      return NextResponse.json({ success: true, request })
-    }
-
-    if (action === 'submit_leave_request') {
-      if (
-        typeof b.company_id !== 'string' ||
-        typeof b.requester_id !== 'string' ||
-        typeof b.request_type !== 'string'
-      ) {
-        return NextResponse.json({ success: false, message: 'company_id, requester_id and request_type are required' }, { status: 400 })
-      }
-      const request = await availabilityService.submitBreakWaiverRequest({
-        user_id: b.requester_id,
-        company_id: b.company_id,
-        request_type: b.request_type,
-        reason: (b.reason as string | null) ?? null,
-        shift_assignment_id: (b.shift_assignment_id as string | null) ?? null,
       })
       return NextResponse.json({ success: true, request })
     }

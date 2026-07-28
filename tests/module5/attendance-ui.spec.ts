@@ -156,7 +156,6 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
   await admin.from('attendance_records').delete().eq('shift_assignment_id', assignmentId)
   await admin.from('shift_swap_requests').delete().eq('company_id', seeded.companyId)
-  await admin.from('time_off_requests').delete().eq('company_id', seeded.companyId)
   await admin.from('shift_assignments').delete().eq('id', assignmentId)
   await admin.from('shifts').delete().eq('id', shiftId)
   await admin.from('departments').delete().eq('id', departmentId)

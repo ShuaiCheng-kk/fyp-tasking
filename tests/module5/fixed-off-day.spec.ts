@@ -66,7 +66,7 @@ test.describe('Fixed Day Off — submission, routing, quota, deadline', () => {
     employeeId = await createUser('E1', seeded.companyId, 'Employee')
 
     const { error: mgrDeptErr } = await admin.from('manager_departments').insert({
-      manager_id: managerId, department_id: departmentId, company_id: seeded.companyId, assigned_by: seeded.ownerId,
+      manager_id: managerId, department_id: departmentId, company_id: seeded.companyId,
     })
     if (mgrDeptErr) throw new Error(`manager_departments insert failed: ${mgrDeptErr.message}`)
     const { error: empDeptErr } = await admin.from('employee_departments').insert({
@@ -218,7 +218,7 @@ test.describe('Fixed Day Off — submission, routing, quota, deadline', () => {
     // updated one at a time instead of atomically. See migration 20260724000000.
     const cycleManagerId = await createUser('cycle', seeded.companyId, 'Manager')
     const { error: mgrDeptErr } = await admin.from('manager_departments').insert({
-      manager_id: cycleManagerId, department_id: departmentId, company_id: seeded.companyId, assigned_by: seeded.ownerId,
+      manager_id: cycleManagerId, department_id: departmentId, company_id: seeded.companyId,
     })
     expect(mgrDeptErr).toBeNull()
 
@@ -422,7 +422,7 @@ test.describe('Fixed Day Off — whole-queue AI analysis (first-come-first-serve
 
     for (const managerId of [managerAId, managerBId]) {
       const { error } = await admin.from('manager_departments').insert({
-        manager_id: managerId, department_id: departmentId, company_id: seeded.companyId, assigned_by: seeded.ownerId,
+        manager_id: managerId, department_id: departmentId, company_id: seeded.companyId,
       })
       if (error) throw new Error(`manager_departments insert failed: ${error.message}`)
     }

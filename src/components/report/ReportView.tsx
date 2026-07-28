@@ -833,7 +833,7 @@ export default function ReportView({ sidebar }: { sidebar: React.ReactNode }) {
     date_of_birth?: string | null; phone_number?: string | null; skills?: string | null; resume_url?: string | null
   }
   const [cwDetail, setCwDetail] = useState<CwDetail | null>(null)
-  const [cwCertificates, setCwCertificates] = useState<Array<{ id: string; name: string; file_url: string | null }>>([])
+  const [cwCertificates, setCwCertificates] = useState<Array<{ id: string; name: string; certificate_url: string | null }>>([])
   const [cwCertificatesLoading, setCwCertificatesLoading] = useState(false)
   const teamMembersCacheRef = useRef<Map<string, CwTeamMemberRow> | null>(null)
 
@@ -1562,8 +1562,8 @@ export default function ReportView({ sidebar }: { sidebar: React.ReactNode }) {
                   <label style={{ ...modalLabelStyle, marginBottom: 4 }}>Certificates</label>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                     {cwCertificates.map(cert => (
-                      cert.file_url
-                        ? <a key={cert.id} href={cert.file_url} target="_blank" rel="noreferrer" style={{ fontSize: '0.9375rem', color: '#EA580C', textDecoration: 'underline' }}>{cert.name}</a>
+                      cert.certificate_url
+                        ? <a key={cert.id} href={cert.certificate_url} target="_blank" rel="noreferrer" style={{ fontSize: '0.9375rem', color: '#EA580C', textDecoration: 'underline' }}>{cert.name}</a>
                         : <p key={cert.id} style={{ fontSize: '0.9375rem', color: '#111827', margin: 0 }}>{cert.name}</p>
                     ))}
                   </div>

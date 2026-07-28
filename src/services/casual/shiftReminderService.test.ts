@@ -60,7 +60,6 @@ const SUPERVISOR = {
 const DUE_SHIFT = {
   id: 'shift-1',
   company_id: 'company-1',
-  title: 'Warehouse Assistant',
   shift_date: '2026-07-23',
   start_time: '09:00:00',
   supervisor_employee_id: 'supervisor-1',
@@ -68,7 +67,7 @@ const DUE_SHIFT = {
   assignedUserIds: ['worker-1'],
 }
 
-const POSTING = { id: 'job-1', company_name: 'Acme Events', location: '123 Warehouse Rd', created_by: 'owner-1' }
+const POSTING = { id: 'job-1', title: 'Warehouse Assistant', company_name: 'Acme Events', location: '123 Warehouse Rd', created_by: 'owner-1' }
 
 describe('shiftReminderService.sendDueShiftReminders', () => {
   beforeEach(() => {

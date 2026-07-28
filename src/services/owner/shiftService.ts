@@ -85,8 +85,6 @@ export const shiftService = {
       const shift = await shiftRepository.createShift({
         company_id: input.company_id,
         department_id: input.department_id,
-        title: input.title ?? null,
-        instruction: input.instruction ?? null,
         shift_date: input.shift_date,
         start_time: block.start_time,
         end_time: block.end_time,
@@ -111,7 +109,7 @@ export const shiftService = {
 
   async editShift(
     id: string,
-    fields: Partial<Omit<Shift, 'id' | 'company_id' | 'created_by' | 'created_at'>>,
+    fields: Partial<Omit<Shift, 'id' | 'company_id' | 'created_by'>>,
     assignment?: {
       assigned_user_id: string | null
       assigned_by: string
@@ -288,7 +286,7 @@ export const shiftService = {
 
     for (const item of items) {
       try {
-        const fields: Partial<Omit<Shift, 'id' | 'company_id' | 'created_by' | 'created_at'>> = {}
+        const fields: Partial<Omit<Shift, 'id' | 'company_id' | 'created_by'>> = {}
         if (item.shift_date !== undefined) fields.shift_date = item.shift_date
         if (item.start_time !== undefined) fields.start_time = item.start_time
         if (item.end_time !== undefined) fields.end_time = item.end_time
@@ -389,8 +387,6 @@ export const shiftService = {
     const shift = await shiftRepository.createShift({
       company_id: original.company_id,
       department_id: original.department_id,
-      title: original.title,
-      instruction: original.instruction,
       shift_date: input.shift_date,
       start_time: input.start_time,
       end_time: input.end_time,
@@ -466,8 +462,6 @@ export const shiftService = {
       const shift = await shiftRepository.createShift({
         company_id: original.company_id,
         department_id: original.department_id,
-        title: original.title,
-        instruction: original.instruction,
         shift_date: nextDate,
         start_time: original.start_time,
         end_time: original.end_time,
@@ -537,8 +531,6 @@ export const shiftService = {
         const shift = await shiftRepository.createShift({
           company_id: block.company_id,
           department_id: block.department_id,
-          title: block.title,
-          instruction: block.instruction,
           shift_date: nextDate,
           start_time: block.start_time,
           end_time: block.end_time,
@@ -694,8 +686,6 @@ export const shiftService = {
         const shift = await shiftRepository.createShift({
           company_id,
           department_id: item.department_id,
-          title: item.title ?? null,
-          instruction: item.instruction ?? null,
           shift_date: item.shift_date,
           start_time: item.start_time,
           end_time: item.end_time,
@@ -802,7 +792,6 @@ export const shiftService = {
         shift,
         deptMap.get(shift.department_id) ?? 'Unknown department',
         assignment.id,
-        assignment.assignment_status,
         assignment.supervisor_employee_id,
       ))
     }
@@ -988,7 +977,6 @@ function toTimelineShiftBlock(
   shift: Shift,
   department_name: string,
   assignment_id: string | null,
-  assignment_status: string | null,
   supervisor_employee_id: string | null = null,
 ): TimelineShiftBlock {
   return {
@@ -997,8 +985,6 @@ function toTimelineShiftBlock(
     shift_date: shift.shift_date,
     start_time: shift.start_time,
     end_time: shift.end_time,
-    title: shift.title,
-    instruction: shift.instruction,
     department_id: shift.department_id,
     department_name,
     status: shift.status,
@@ -1007,7 +993,6 @@ function toTimelineShiftBlock(
     recurrence_rule: shift.recurrence_rule,
     source_shift_id: shift.source_shift_id,
     split_group_id: shift.split_group_id,
-    assignment_status,
     template_id: shift.template_id,
     supervisor_employee_id,
   }

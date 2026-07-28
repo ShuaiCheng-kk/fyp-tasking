@@ -25,7 +25,6 @@ export const casualDashboardRepository = {
       id: string
       company_id: string
       department_id: string
-      title: string
       shift_date: string
       start_time: string
       end_time: string
@@ -35,7 +34,7 @@ export const casualDashboardRepository = {
   }[]> {
     const { data, error } = await supabase
       .from('shift_assignments')
-      .select('id, supervisor_employee_id, shifts!inner(id, company_id, department_id, title, shift_date, start_time, end_time, is_open_ended, status, source_job_posting_id)')
+      .select('id, supervisor_employee_id, shifts!inner(id, company_id, department_id, shift_date, start_time, end_time, is_open_ended, status, source_job_posting_id)')
       .eq('user_id', userId)
       .gte('shifts.shift_date', fromDateKey)
       .neq('shifts.status', 'cancelled')
@@ -50,6 +49,7 @@ export const casualDashboardRepository = {
 
   async getJobPostingsByIds(ids: string[]): Promise<{
     id: string
+    title: string
     company_name: string | null
     location: string | null
     created_by: string | null
@@ -57,10 +57,14 @@ export const casualDashboardRepository = {
     if (ids.length === 0) return []
     const { data, error } = await supabase
       .from('job_postings')
-      .select('id, company_name, location, created_by')
+      .select('id, title, location, created_by, companies(name)')
       .in('id', ids)
     if (error) throw new Error(error.message)
-    return data ?? []
+    return (data ?? []).map((row: any) => {
+      const { companies, ...rest } = row
+      const co = Array.isArray(companies) ? companies[0] : companies
+      return { ...rest, company_name: co?.name ?? null }
+    })
   },
 
   async getUsersByIds(ids: string[]): Promise<{

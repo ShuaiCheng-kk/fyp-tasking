@@ -1454,7 +1454,6 @@ export default function GetStartedPage() {
 
   // Guest user form state
   const [guestAccount, setGuestAccount] = useState({ fullName: '', email: '', password: '', confirmPassword: '', phone: '', dateOfBirth: '' });
-  const [guestHomeLocation, setGuestHomeLocation] = useState('');
   const [guestAuthId, setGuestAuthId] = useState('');
 
   // ── Read URL code on mount ────────────────────────────────────────────────
@@ -1721,8 +1720,6 @@ export default function GetStartedPage() {
         company_postal_code: sessionStorage.getItem('company_postal'),
         company_industry: sessionStorage.getItem('company_industry'),
         company_size: sessionStorage.getItem('company_size'),
-        company_website: null,
-        company_logo_url: null,
         departments: JSON.parse(sessionStorage.getItem('departments') || '[]'),
         plan,
         profile_photo_url: sessionStorage.getItem('owner_photo_url') || null,
@@ -1867,7 +1864,6 @@ export default function GetStartedPage() {
     setGuestPhoneError('Phone number must be exactly 8 digits.'); return;
   }
   if (!guestAccount.dateOfBirth) { setError('Date of birth is required.'); return; }
-  if (!guestHomeLocation.trim()) { setError('Home location is required.'); return; }
   if (!profilePhotoUrl) { setError('Please upload a profile photo.'); return; }
 
   setIsLoading(true);
@@ -1882,7 +1878,6 @@ export default function GetStartedPage() {
         password: guestAccount.password,
         phone: guestAccount.phone,
         date_of_birth: guestAccount.dateOfBirth || null,
-        home_location: guestHomeLocation.trim() || null,
         job_id: localStorage.getItem('apply_job_id') || null,
       }),
     });
@@ -1896,7 +1891,6 @@ export default function GetStartedPage() {
     localStorage.setItem('guest_full_name', guestAccount.fullName.trim());
     localStorage.setItem('guest_phone', guestAccount.phone);
     localStorage.setItem('guest_dob', guestAccount.dateOfBirth || '');
-    localStorage.setItem('guest_home_location', guestHomeLocation.trim() || '');
     if (profilePhotoUrl) localStorage.setItem('guest_photo', profilePhotoUrl);
 
     if (registerData.email_confirmed) {
@@ -1923,12 +1917,11 @@ export default function GetStartedPage() {
     const phone_number = localStorage.getItem('guest_phone') || '';
     const date_of_birth = localStorage.getItem('guest_dob') || null;
     const profile_photo_url = localStorage.getItem('guest_photo') || null;
-    const home_location = localStorage.getItem('guest_home_location') || null;
 
     const res = await fetch('/api/auth/complete-guest-registration', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user_id, full_name, email_address, password, phone_number, date_of_birth, profile_photo_url, home_location }),
+      body: JSON.stringify({ user_id, full_name, email_address, password, phone_number, date_of_birth, profile_photo_url }),
     });
     const data = await readJsonSafe(res);
     if (!data.success) throw new Error(data.message);
@@ -1954,7 +1947,7 @@ export default function GetStartedPage() {
     localStorage.setItem('tasking_user_role', data.user.role);
     localStorage.removeItem('tasking_company_id');
 
-    ['guest_user_id', 'guest_email', 'guest_password', 'guest_full_name', 'guest_phone', 'guest_dob', 'guest_photo', 'guest_home_location']
+    ['guest_user_id', 'guest_email', 'guest_password', 'guest_full_name', 'guest_phone', 'guest_dob', 'guest_photo']
       .forEach(k => localStorage.removeItem(k));
 
     setGuestAuthId(data.user.auth_id);
@@ -2585,18 +2578,6 @@ export default function GetStartedPage() {
               profilePhotoUrl={profilePhotoUrl}
               onProfilePhotoChange={handleProfilePhotoChange}
             />
-            {/* Coarse home location (region or postal code) — used later for distance-based job
-                matching; never a full street address. Reuses the shared field styles so it
-                matches the rest of the form exactly. */}
-            <div style={{ marginTop: '18px' }}>
-              <label style={labelStyle}>Home Location</label>
-              <input
-                value={guestHomeLocation}
-                onChange={e => setGuestHomeLocation(e.target.value.replace(/[0-9]/g, ''))}
-                placeholder="e.g. Woodlands, Tampines"
-                style={inputStyle}
-              />
-            </div>
             <div style={{ marginTop: '28px' }}>
               <InlineError message={error} />
               <TermsCheckbox checked={termsAccepted} onChange={setTermsAccepted} />
@@ -2608,7 +2589,6 @@ export default function GetStartedPage() {
                   !!guestAccount.confirmPassword &&
                   guestAccount.phone.length === 8 &&
                   !!guestAccount.dateOfBirth &&
-                  !!guestHomeLocation.trim() &&
                   !!profilePhotoUrl;
                 return (
                   <div style={{ opacity: ok ? 1 : 0.45, pointerEvents: ok ? 'auto' : 'none', transition: 'opacity 0.15s' }}>
