@@ -94,7 +94,6 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
   await admin.from('shift_swap_requests').delete().eq('company_id', seeded.companyId)
-  await admin.from('time_off_requests').delete().eq('company_id', seeded.companyId)
 
   const { data: shiftRows } = await admin.from('shifts').select('id').eq('company_id', seeded.companyId)
   const shiftIds = (shiftRows ?? []).map((shift) => shift.id as string)
@@ -331,75 +330,6 @@ test('UC50/UC51 resource=range scopes records to the given date window, for the 
 
   const missingParams = await request.get(`/api/attendance?company_id=${seeded.companyId}&resource=range`)
   expect(missingParams.status()).toBe(400)
-})
-
-test('submit time off / break waiver requests, all landing as pending', async ({ request }) => {
-  const timeOff = await request.post('/api/user/leave-requests', {
-    data: {
-      user_id: worker.userId,
-      company_id: seeded.companyId,
-      shift_assignment_id: assignmentId,
-      request_type: 'time_off',
-      reason: 'Family appointment.',
-    },
-  })
-  expect(timeOff.status()).toBe(200)
-  expect(await timeOff.json()).toMatchObject({ success: true, request: { request_type: 'time_off', status: 'pending' } })
-
-  const breakWaiver = await request.post('/api/user/leave-requests', {
-    data: {
-      user_id: worker.userId,
-      company_id: seeded.companyId,
-      shift_assignment_id: assignmentId,
-      request_type: 'break_waiver',
-      reason: 'Short event shift.',
-    },
-  })
-  expect(breakWaiver.status()).toBe(200)
-  expect(await breakWaiver.json()).toMatchObject({ success: true, request: { request_type: 'break_waiver', status: 'pending' } })
-
-  // 'leave' was a third request type here (labeled "Leave Request" in the Employee/Manager
-  // Settings UI) — cut along with its option in that dropdown; only time_off/break_waiver remain.
-  const rejected = await request.post('/api/user/leave-requests', {
-    data: {
-      user_id: worker.userId,
-      company_id: seeded.companyId,
-      shift_assignment_id: assignmentId,
-      request_type: 'leave',
-      reason: 'Personal leave.',
-    },
-  })
-  expect(rejected.status()).toBe(500)
-  expect(await rejected.json()).toMatchObject({ success: false })
-
-  const requests = await request.get(`/api/user/leave-requests?user_id=${worker.userId}`)
-  expect(requests.status()).toBe(200)
-  const requestsBody = await requests.json()
-  expect(requestsBody.requests).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({ request_type: 'time_off' }),
-      expect.objectContaining({ request_type: 'break_waiver' }),
-    ]),
-  )
-})
-
-test('approves a time off request', async ({ request }) => {
-  const list = await request.get(`/api/attendance?company_id=${seeded.companyId}&resource=time_off`)
-  expect(list.status()).toBe(200)
-  const listBody = await list.json()
-  const pendingLeave = listBody.requests.find((r: { request_type: string; status: string }) => r.request_type === 'time_off' && r.status === 'pending')
-  expect(pendingLeave).toBeTruthy()
-
-  const decide = await request.patch('/api/attendance', {
-    data: {
-      action: 'decide_time_off',
-      id: pendingLeave.id,
-      reviewer_id: seeded.ownerId,
-      decision: 'approved',
-    },
-  })
-  expect(decide.status()).toBe(200)
-  expect(await decide.json()).toMatchObject({ success: true, request: { status: 'approved' } })
 })
 
 test('UC52 and UC53 submit and approve a shift swap request', async ({ request }) => {

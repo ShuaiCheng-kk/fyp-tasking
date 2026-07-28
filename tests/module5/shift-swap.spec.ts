@@ -77,8 +77,8 @@ test.beforeAll(async () => {
 
   // Assign both managers to the same department
   await admin.from('manager_departments').insert([
-    { manager_id: managerId1, department_id: departmentId, company_id: seeded.companyId, assigned_by: seeded.ownerId },
-    { manager_id: managerId2, department_id: departmentId, company_id: seeded.companyId, assigned_by: seeded.ownerId },
+    { manager_id: managerId1, department_id: departmentId, company_id: seeded.companyId },
+    { manager_id: managerId2, department_id: departmentId, company_id: seeded.companyId },
   ])
 
   // Create shifts on different dates to avoid overlap
@@ -185,8 +185,8 @@ test.describe('Shift swap — same-day restriction', () => {
     mgrA = await createManager('SD-A', seeded2.companyId)
     mgrB = await createManager('SD-B', seeded2.companyId)
     await admin.from('manager_departments').insert([
-      { manager_id: mgrA, department_id: departmentId2, company_id: seeded2.companyId, assigned_by: seeded2.ownerId },
-      { manager_id: mgrB, department_id: departmentId2, company_id: seeded2.companyId, assigned_by: seeded2.ownerId },
+      { manager_id: mgrA, department_id: departmentId2, company_id: seeded2.companyId },
+      { manager_id: mgrB, department_id: departmentId2, company_id: seeded2.companyId },
     ])
 
     const today = new Date().toISOString().slice(0, 10)
@@ -241,8 +241,8 @@ test.describe('Shift swap — approval blocked if a shift becomes today before t
     mgrC = await createManager('ST-C', seeded3.companyId)
     mgrD = await createManager('ST-D', seeded3.companyId)
     await admin.from('manager_departments').insert([
-      { manager_id: mgrC, department_id: departmentId3, company_id: seeded3.companyId, assigned_by: seeded3.ownerId },
-      { manager_id: mgrD, department_id: departmentId3, company_id: seeded3.companyId, assigned_by: seeded3.ownerId },
+      { manager_id: mgrC, department_id: departmentId3, company_id: seeded3.companyId },
+      { manager_id: mgrD, department_id: departmentId3, company_id: seeded3.companyId },
     ])
 
     const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1)
@@ -319,8 +319,8 @@ test.describe('Shift swap — request list auto-rejects a pending swap once a sh
     mgrG = await createManager('EXP-G', seeded5.companyId)
     mgrH = await createManager('EXP-H', seeded5.companyId)
     await admin.from('manager_departments').insert([
-      { manager_id: mgrG, department_id: departmentId5, company_id: seeded5.companyId, assigned_by: seeded5.ownerId },
-      { manager_id: mgrH, department_id: departmentId5, company_id: seeded5.companyId, assigned_by: seeded5.ownerId },
+      { manager_id: mgrG, department_id: departmentId5, company_id: seeded5.companyId },
+      { manager_id: mgrH, department_id: departmentId5, company_id: seeded5.companyId },
     ])
 
     const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1)
@@ -389,8 +389,8 @@ test.describe('Shift swap — approval moves active tasks but leaves Complete ta
     mgrE = await createManager('TK-E', seeded4.companyId)
     mgrF = await createManager('TK-F', seeded4.companyId)
     await admin.from('manager_departments').insert([
-      { manager_id: mgrE, department_id: departmentId4, company_id: seeded4.companyId, assigned_by: seeded4.ownerId },
-      { manager_id: mgrF, department_id: departmentId4, company_id: seeded4.companyId, assigned_by: seeded4.ownerId },
+      { manager_id: mgrE, department_id: departmentId4, company_id: seeded4.companyId },
+      { manager_id: mgrF, department_id: departmentId4, company_id: seeded4.companyId },
     ])
 
     const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1)
@@ -489,7 +489,7 @@ test.describe('Shift swap — Employee<->Employee swaps route to the department 
     empJ = await createUser('RT-J', seeded6.companyId, 'Employee')
     empK = await createUser('RT-K', seeded6.companyId, 'Employee')
     await admin.from('manager_departments').insert({
-      manager_id: mgrI, department_id: departmentId6, company_id: seeded6.companyId, assigned_by: seeded6.ownerId,
+      manager_id: mgrI, department_id: departmentId6, company_id: seeded6.companyId,
     })
     await admin.from('employee_departments').insert([
       { employee_id: empJ, department_id: departmentId6 },
@@ -581,8 +581,8 @@ test.describe('Shift swap — same-department and same-role restrictions', () =>
     mgrM = await createUser('RS-M', seeded7.companyId, 'Manager')
     empN = await createUser('RS-N', seeded7.companyId, 'Employee')
     await admin.from('manager_departments').insert([
-      { manager_id: mgrL, department_id: deptA, company_id: seeded7.companyId, assigned_by: seeded7.ownerId },
-      { manager_id: mgrM, department_id: deptB, company_id: seeded7.companyId, assigned_by: seeded7.ownerId },
+      { manager_id: mgrL, department_id: deptA, company_id: seeded7.companyId },
+      { manager_id: mgrM, department_id: deptB, company_id: seeded7.companyId },
     ])
     await admin.from('employee_departments').insert({ employee_id: empN, department_id: deptA })
 
@@ -655,9 +655,9 @@ test.describe('Shift swap — auto-approval settings', () => {
     mgrQ = await createManager('AA-Q', seeded8.companyId)
     mgrR = await createManager('AA-R', seeded8.companyId)
     await admin.from('manager_departments').insert([
-      { manager_id: mgrP, department_id: departmentId8, company_id: seeded8.companyId, assigned_by: seeded8.ownerId },
-      { manager_id: mgrQ, department_id: departmentId8, company_id: seeded8.companyId, assigned_by: seeded8.ownerId },
-      { manager_id: mgrR, department_id: departmentId8, company_id: seeded8.companyId, assigned_by: seeded8.ownerId },
+      { manager_id: mgrP, department_id: departmentId8, company_id: seeded8.companyId },
+      { manager_id: mgrQ, department_id: departmentId8, company_id: seeded8.companyId },
+      { manager_id: mgrR, department_id: departmentId8, company_id: seeded8.companyId },
     ])
   })
 
@@ -847,8 +847,8 @@ test.describe('Shift swap — auto-approval settings', () => {
     const mgrS = await createManager('AA-S', seeded8.companyId)
     const mgrT = await createManager('AA-T', seeded8.companyId)
     await admin.from('manager_departments').insert([
-      { manager_id: mgrS, department_id: departmentId8, company_id: seeded8.companyId, assigned_by: seeded8.ownerId },
-      { manager_id: mgrT, department_id: departmentId8, company_id: seeded8.companyId, assigned_by: seeded8.ownerId },
+      { manager_id: mgrS, department_id: departmentId8, company_id: seeded8.companyId },
+      { manager_id: mgrT, department_id: departmentId8, company_id: seeded8.companyId },
     ])
 
     // Attempt 1 — counterpart rejects

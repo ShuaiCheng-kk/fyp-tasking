@@ -74,7 +74,7 @@ function setDefaults() {
   vi.mocked(userService.getTeamByCompany).mockResolvedValue([
     { id: 'manager-1', role: 'Manager', department_id: 'dept-1' } as any,
     { id: 'employee-1', role: 'Employee', department_id: 'dept-1' } as any,
-    { id: 'casual-1', role: 'Casual Worker', department_id: 'dept-1', casual_worker_verified_at: '2026-07-01T00:00:00Z', casual_worker_blocked_at: null } as any,
+    { id: 'casual-1', role: 'Casual Worker', department_id: 'dept-1', casual_worker_verified_at: '2026-07-01T00:00:00Z', casual_worker_inactive_at: null } as any,
   ])
 }
 
@@ -92,7 +92,7 @@ describe('ownerDashboardService.getDashboardSummary', () => {
   describe('Waiting On You', () => {
     it('keeps the 5 fixed-priority categories in order when all are pending', async () => {
       vi.mocked(attendanceService.getShiftSwapRequests).mockResolvedValue([
-        { status: 'pending', requires_owner_review: true, created_at: '2026-07-16T01:00:00Z' } as any,
+        { status: 'pending', created_at: '2026-07-16T01:00:00Z' } as any,
       ])
       vi.mocked(taskService.getKanbanTasks).mockResolvedValue({
         ...emptyKanban,
@@ -135,7 +135,7 @@ describe('ownerDashboardService.getDashboardSummary', () => {
 
     it('only fires the off-day deadline item when the most recently closed week still has pending requests', async () => {
       vi.mocked(offDaySettingsService.getDeadline).mockResolvedValue({
-        company_id: 'company-1', deadline_weekday: 1, deadline_time: '09:00', updated_by: null, updated_at: '',
+        company_id: 'company-1', deadline_weekday: 1, deadline_time: '09:00',
       })
       vi.mocked(attendanceRepository.getOffDayRequestsByCompanyAndWeek).mockResolvedValue([
         { id: 'r1', status: 'pending' } as any,
@@ -225,9 +225,9 @@ describe('ownerDashboardService.getDashboardSummary', () => {
 
     it('classifies Late (with clock-in label + minutes), Absent, and Present (with clock-in label)', async () => {
       vi.mocked(attendanceService.getAttendanceByDateRange).mockResolvedValue([
-        { assignment: { user_id: 'm1' }, shift, assignee_name: 'Late Manager', assignee_role: 'Manager', department_name: null, record: { clock_in_time: '2026-07-16T09:20:00Z' }, exceptions: ['late'] } as any,
+        { assignment: { user_id: 'm1' }, shift, assignee_name: 'Late Manager', assignee_role: 'Manager', department_name: null, record: { clock_in_time: '2026-07-16T09:20:00+08:00' }, exceptions: ['late'] } as any,
         { assignment: { user_id: 'm2' }, shift, assignee_name: 'Absent Manager', assignee_role: 'Manager', department_name: null, record: null, exceptions: ['absent'] } as any,
-        { assignment: { user_id: 'm3' }, shift, assignee_name: 'Present Manager', assignee_role: 'Manager', department_name: null, record: { clock_in_time: '2026-07-16T09:00:00Z' }, exceptions: [] } as any,
+        { assignment: { user_id: 'm3' }, shift, assignee_name: 'Present Manager', assignee_role: 'Manager', department_name: null, record: { clock_in_time: '2026-07-16T09:00:00+08:00' }, exceptions: [] } as any,
       ])
 
       const result = await ownerDashboardService.getDashboardSummary('company-1', 'owner-1')
@@ -262,8 +262,8 @@ describe('ownerDashboardService.getDashboardSummary', () => {
   describe('Recruitment Overview', () => {
     it('lists open postings whose application deadline is today', async () => {
       vi.mocked(recruitmentService.getJobPostings).mockResolvedValue([
-        { id: 'p1', title: 'Cleaner', status: 'open', expires_at: '2026-07-16T12:00:00Z', shift_date: null, openings: 3, confirmed_count: 1, pending_count: 0 } as any,
-        { id: 'p2', title: 'Barista', status: 'open', expires_at: '2026-07-20T23:59:00Z', shift_date: null, openings: 2, confirmed_count: 0, pending_count: 0 } as any,
+        { id: 'p1', title: 'Cleaner', status: 'open', expires_at: '2026-07-16T12:00:00Z', job_date: null, openings: 3, confirmed_count: 1, pending_count: 0 } as any,
+        { id: 'p2', title: 'Barista', status: 'open', expires_at: '2026-07-20T23:59:00Z', job_date: null, openings: 2, confirmed_count: 0, pending_count: 0 } as any,
       ])
 
       const result = await ownerDashboardService.getDashboardSummary('company-1', 'owner-1')
@@ -273,9 +273,9 @@ describe('ownerDashboardService.getDashboardSummary', () => {
 
     it('lists postings starting within 2 days only when understaffed, and excludes fully-staffed ones', async () => {
       vi.mocked(recruitmentService.getJobPostings).mockResolvedValue([
-        { id: 'p1', title: 'Server understaffed', status: 'open', expires_at: null, shift_date: '2026-07-17', openings: 2, confirmed_count: 0, pending_count: 0 } as any,
-        { id: 'p2', title: 'Fully staffed', status: 'open', expires_at: null, shift_date: '2026-07-17', openings: 2, confirmed_count: 2, pending_count: 0 } as any,
-        { id: 'p3', title: 'Too far out', status: 'open', expires_at: null, shift_date: '2026-07-25', openings: 1, confirmed_count: 0, pending_count: 0 } as any,
+        { id: 'p1', title: 'Server understaffed', status: 'open', expires_at: null, job_date: '2026-07-17', openings: 2, confirmed_count: 0, pending_count: 0 } as any,
+        { id: 'p2', title: 'Fully staffed', status: 'open', expires_at: null, job_date: '2026-07-17', openings: 2, confirmed_count: 2, pending_count: 0 } as any,
+        { id: 'p3', title: 'Too far out', status: 'open', expires_at: null, job_date: '2026-07-25', openings: 1, confirmed_count: 0, pending_count: 0 } as any,
       ])
 
       const result = await ownerDashboardService.getDashboardSummary('company-1', 'owner-1')
@@ -313,10 +313,10 @@ describe('Manager viewer scope (role scope: own departments only)', () => {
 
   it('marks the manager off-day submission reminder done once the active week has a submitted row', async () => {
     vi.mocked(offDaySettingsService.getDeadline).mockResolvedValue({
-      company_id: 'company-1', deadline_weekday: 1, deadline_time: '09:00', updated_by: null, updated_at: '',
+      company_id: 'company-1', deadline_weekday: 1, deadline_time: '09:00',
     })
     vi.mocked(attendanceRepository.getFixedOffDayRequestsByUserAndWeek).mockResolvedValue([
-      { id: 'fod-1', user_id: 'manager-1', company_id: 'company-1', week_start: '2026-07-20', request_date: '2026-07-21', status: 'pending', source: 'submitted', reviewed_by: null, reviewed_at: null, created_at: '2026-07-16T00:00:00Z' } as any,
+      { id: 'fod-1', user_id: 'manager-1', company_id: 'company-1', requested_week: '2026-07-20', requested_date: '2026-07-21', status: 'pending', source: 'submitted', reviewed_by: null, reviewed_at: null, created_at: '2026-07-16T00:00:00Z' } as any,
     ])
 
     const summary = await ownerDashboardService.getDashboardSummary('company-1', 'manager-1', 'Manager')
@@ -332,8 +332,8 @@ describe('Manager viewer scope (role scope: own departments only)', () => {
       { assignee_role: 'Employee', assignee_name: 'B', department_name: 'Front Desk', shift: { department_id: 'dept-2', shift_date: '2026-07-16', start_time: '09:00:00' }, assignment: { user_id: 'u2' }, record: null, exceptions: [] },
     ] as never)
     vi.mocked(recruitmentService.getJobPostings).mockResolvedValue([
-      { id: 'j1', status: 'open', department_id: 'dept-1', title: 'K', confirmed_count: 0, openings: 1, pending_count: 0, expires_at: '2026-07-16T10:00:00Z', shift_date: null },
-      { id: 'j2', status: 'open', department_id: 'dept-2', title: 'F', confirmed_count: 0, openings: 1, pending_count: 0, expires_at: '2026-07-16T10:00:00Z', shift_date: null },
+      { id: 'j1', status: 'open', department_id: 'dept-1', title: 'K', confirmed_count: 0, openings: 1, pending_count: 0, expires_at: '2026-07-16T10:00:00Z', job_date: null },
+      { id: 'j2', status: 'open', department_id: 'dept-2', title: 'F', confirmed_count: 0, openings: 1, pending_count: 0, expires_at: '2026-07-16T10:00:00Z', job_date: null },
     ] as never)
 
     const summary = await ownerDashboardService.getDashboardSummary('company-1', 'manager-1', 'Manager')

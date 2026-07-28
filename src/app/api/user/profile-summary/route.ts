@@ -13,7 +13,7 @@ export async function GET(req: NextRequest) {
     const [userRow, fixedOffDates] = await Promise.all([
       supabase
         .from('users')
-        .select('id, full_name, role, weekly_working_hours, max_weekly_hours, contracted_weekly_hours')
+        .select('id, full_name, role')
         .eq('id', user_id)
         .single(),
       attendanceService.getUpcomingApprovedOffDates(user_id),
@@ -28,11 +28,7 @@ export async function GET(req: NextRequest) {
         user_id: u.id,
         full_name: u.full_name,
         role: u.role,
-        weekly_working_hours: u.weekly_working_hours ?? null,
-        max_weekly_hours: u.max_weekly_hours ?? null,
-        contracted_weekly_hours: u.contracted_weekly_hours ?? null,
         fixed_off_days: fixedOffDates,
-        leave_requests: [],
       },
     })
   } catch (err) {

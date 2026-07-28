@@ -56,13 +56,27 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useResourceInvalidation } from '@/components/realtime/RealtimeNotificationsProvider'
-import { AttendanceDashboardRecord } from '@/types/Attendance'
+import { AttendanceDashboardRecord, AttendanceRecord } from '@/types/Attendance'
 import { ModalOverlay, ModalBox, ModalHeader } from '@/components/modal'
 import { ARStatus, getARStatus, ARStatusIcon } from '@/components/attendance/ARStatus'
 import EditAttendanceRecordModal from '@/components/attendance/EditAttendanceRecordModal'
 import MyRequestsPanel from '@/components/attendance/MyRequestsPanel'
 import SwapRequestsPanel from '@/components/attendance/SwapRequestsPanel'
 import { CapsuleTabBar } from '@/components/attendance/CapsuleTabBar'
+
+// Whether any of clock_in_time/clock_out_time/break_in_time/break_out_time differs from its
+// modified_* counterpart at minute precision — i.e. a reviewer corrected this record's times.
+function wasAttendanceRecordModified(record: AttendanceRecord | null | undefined): boolean {
+  if (!record) return false
+  const truncate = (iso: string | null) => iso?.slice(0, 16) ?? null
+  const pairs: [string | null, string | null][] = [
+    [record.clock_in_time, record.modified_clock_in_time],
+    [record.clock_out_time, record.modified_clock_out_time],
+    [record.break_in_time, record.modified_break_in_time],
+    [record.break_out_time, record.modified_break_out_time],
+  ]
+  return pairs.some(([raw, adjusted]) => adjusted !== null && truncate(raw) !== truncate(adjusted))
+}
 
 type Department = {
   id: string
@@ -90,11 +104,7 @@ type UserProfileSummary = {
   user_id: string
   full_name: string
   role: string
-  weekly_working_hours: number
-  max_weekly_hours: number
-  contracted_weekly_hours: number
   fixed_off_days: string[]
-  leave_requests: Array<{ id: string; request_type: string; reason: string | null; status: string; created_at: string }>
 }
 
 type DepartmentManagerAssignment = {
@@ -876,7 +886,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
   const [calWeekRows, setCalWeekRows] = useState<TimelineRow[]>([])
   const [calWeekLoading, setCalWeekLoading] = useState(false)
   // approved fixed off days — purple "Off Day" pill on the calendar/timeline (same as Attendance Records)
-  const [fixedOffDayRequests, setFixedOffDayRequests] = useState<{ user_id: string; request_date: string; status: string }[]>([])
+  const [fixedOffDayRequests, setFixedOffDayRequests] = useState<{ user_id: string; requested_date: string; status: string }[]>([])
   const [selectedTimelineUserIds, setSelectedTimelineUserIds] = useState<string[]>([])
   const [timelineBulkDeleting, setTimelineBulkDeleting] = useState(false)
   const [timelineDeleteError, setTimelineDeleteError] = useState('')
@@ -1219,11 +1229,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
     user_id: '',
     full_name: '',
     role: '',
-    weekly_working_hours: 0,
-    max_weekly_hours: 44,
-    contracted_weekly_hours: 44,
     fixed_off_days: [],
-    leave_requests: [],
   }
   const profileSummaryLoading = false
   const setProfileDrawerUserId = (_value: null) => {}
@@ -1533,7 +1539,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
   const fixedOffByUserDate = useMemo(() => {
     const map = new Map<string, boolean>()
     fixedOffDayRequests.forEach(r => {
-      if (r.status === 'approved' || r.status === 'modified') map.set(`${r.user_id}|${r.request_date}`, true)
+      if (r.status === 'approved' || r.status === 'modified') map.set(`${r.user_id}|${r.requested_date}`, true)
     })
     return map
   }, [fixedOffDayRequests])
@@ -2137,8 +2143,6 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
         .filter(({ shift }) => aiShiftSelected.has(shift.key))
         .map(({ block, shift }) => ({
           department_id: block.department_id,
-          title: `${block.department_name} ${shift.shift_label}`,
-          instruction: `${block.department_name} | ${shift.shift_label} | ${shift.reason}`,
           shift_date: block.shift_date,
           start_time: shift.start_time,
           end_time: shift.end_time,
@@ -2586,8 +2590,6 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           department_id: shiftEditForm.department_id,
-          title: '',
-          instruction: null,
           shift_date: shiftEditForm.shift_date,
           start_time: shiftEditForm.start_time,
           end_time: shiftEditForm.end_time,
@@ -3464,9 +3466,9 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                               {sortedAr.map((rec, ri) => {
                                 const st = getARStatus(rec)
                                 const pillBorder = st === 'absent' ? '1.5px solid #EF4444' : st === 'late' ? '1.5px solid #F59E0B' : '1.5px solid #10B981'
-                                const wasModified = rec.record?.owner_status === 'modified'
-                                const inTime = rec.record?.owner_adjusted_clock_in_time ?? rec.record?.clock_in_time
-                                const outTime = rec.record?.owner_adjusted_clock_out_time ?? rec.record?.clock_out_time
+                                const wasModified = wasAttendanceRecordModified(rec.record)
+                                const inTime = rec.record?.modified_clock_in_time ?? rec.record?.clock_in_time
+                                const outTime = rec.record?.modified_clock_out_time ?? rec.record?.clock_out_time
                                 return (
                                   <button
                                     key={ri}
@@ -4393,34 +4395,6 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                 </div>
               ) : profileSummary ? (
                 <>
-                  {/* Weekly Hours */}
-                  <div>
-                    <p style={{ margin: '0 0 8px', fontSize: 11, fontWeight: 800, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Weekly Hours</p>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
-                      {([
-                        { label: 'Used this week', value: profileSummary.weekly_working_hours, color: '#F97316', bg: '#FFF7ED' },
-                        { label: 'Max allowed', value: profileSummary.max_weekly_hours, color: '#2563EB', bg: '#EFF6FF' },
-                        { label: 'Contracted', value: profileSummary.contracted_weekly_hours, color: '#16A34A', bg: '#DCFCE7' },
-                      ] as const).map(card => (
-                        <div key={card.label} style={{ background: card.bg, borderRadius: 8, padding: '10px 8px 8px', textAlign: 'center' }}>
-                          <p style={{ margin: 0, fontSize: 20, fontWeight: 800, color: card.color }}>{card.value != null ? `${card.value}h` : '—'}</p>
-                          <p style={{ margin: '3px 0 0', fontSize: 10, fontWeight: 700, color: card.color, opacity: 0.7, textTransform: 'uppercase', letterSpacing: '0.04em', lineHeight: 1.3 }}>{card.label}</p>
-                        </div>
-                      ))}
-                    </div>
-                    {profileSummary.max_weekly_hours != null && profileSummary.weekly_working_hours != null && (
-                      <div style={{ marginTop: 10 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
-                          <span style={{ fontSize: 11, color: MUTED, fontWeight: 600 }}>Remaining this week</span>
-                          <span style={{ fontSize: 11, fontWeight: 800, color: TEXT_DARK }}>{Math.max(0, profileSummary.max_weekly_hours - profileSummary.weekly_working_hours)}h left</span>
-                        </div>
-                        <div style={{ height: 6, borderRadius: 999, background: '#E2E8F0', overflow: 'hidden' }}>
-                          <div style={{ height: '100%', borderRadius: 999, background: OWNER_ORANGE, width: `${Math.min(100, (profileSummary.weekly_working_hours / profileSummary.max_weekly_hours) * 100)}%` }} />
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
                   {/* Fixed Off Days */}
                   <div>
                     <p style={{ margin: '0 0 8px', fontSize: 11, fontWeight: 800, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Weekly Days Off</p>
@@ -4433,34 +4407,6 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                             {new Date(`${date}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })}
                           </span>
                         ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Leave Requests */}
-                  <div>
-                    <p style={{ margin: '0 0 8px', fontSize: 11, fontWeight: 800, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Leave Requests</p>
-                    {profileSummary.leave_requests.length === 0 ? (
-                      <p style={{ margin: 0, fontSize: 13, color: MUTED }}>No leave requests.</p>
-                    ) : (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                        {profileSummary.leave_requests.map(req => {
-                          const sMap: Record<string, { bg: string; color: string }> = {
-                            pending:  { bg: '#FFFBEB', color: '#B45309' },
-                            approved: { bg: '#ECFDF5', color: '#047857' },
-                            rejected: { bg: '#FEF2F2', color: '#B91C1C' },
-                          }
-                          const s = sMap[req.status] ?? { bg: '#F1F5F9', color: MUTED }
-                          return (
-                            <div key={req.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 10px', borderRadius: 7, background: '#F8FAFC', border: '1px solid #E2E8F0', gap: 8 }}>
-                              <div style={{ minWidth: 0 }}>
-                                <p style={{ margin: 0, fontSize: 12, fontWeight: 700, color: TEXT_DARK, textTransform: 'capitalize' }}>{req.request_type.replace('_', ' ')}</p>
-                                {req.reason && <p style={{ margin: '1px 0 0', fontSize: 11, color: MUTED, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{req.reason}</p>}
-                              </div>
-                              <span style={{ flexShrink: 0, height: 20, padding: '0 8px', borderRadius: 999, fontSize: 10, fontWeight: 800, display: 'inline-flex', alignItems: 'center', background: s.bg, color: s.color, textTransform: 'capitalize' }}>{req.status}</span>
-                            </div>
-                          )
-                        })}
                       </div>
                     )}
                   </div>

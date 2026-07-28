@@ -15,80 +15,6 @@ function getAdminClient() {
 
 export const authService = {
 
-  async registerAuthOnly(data: {
-    email_address: string
-    password: string
-  }): Promise<string> {
-    const { data: authData, error: authError } = await supabase.auth.signUp({
-      email: data.email_address,
-      password: data.password,
-    })
-    if (authError) throw new Error(authError.message)
-    if (!authData.user) throw new Error('Registration failed')
-    return authData.user.id
-  },
-
-  async createUserProfile(data: {
-    user_id: string
-    full_name: string
-    email_address: string
-    phone_number: string | null
-    date_of_birth?: string | null
-    profile_photo_url?: string | null
-    role: User['role']
-    company_id?: string | null
-  }): Promise<void> {
-    await authRepository.createUser({
-      supabase_auth_id: data.user_id,
-      full_name: data.full_name,
-      email_address: data.email_address,
-      phone_number: data.phone_number,
-      date_of_birth: data.date_of_birth ?? null,
-      profile_photo_url: data.profile_photo_url ?? null,
-      role: data.role,
-      company_id: data.company_id ?? null,
-    })
-  },
-
-  async register(data: {
-    full_name: string
-    email_address: string
-    password: string
-    phone_number: string | null
-    date_of_birth?: string | null
-    profile_photo_url?: string | null
-    role: User['role']
-  }): Promise<User> {
-    const admin = getAdminClient()
-
-    const { data: authData, error: authError } =
-      await admin.auth.admin.createUser({
-        email: data.email_address,
-        password: data.password,
-        email_confirm: true,
-      })
-
-    if (authError) throw new Error(authError.message)
-    if (!authData.user) throw new Error('Registration failed')
-
-    const authUserId = authData.user.id
-    try {
-      const user = await authRepository.createUser({
-        supabase_auth_id: authUserId,
-        full_name: data.full_name,
-        email_address: data.email_address,
-        phone_number: data.phone_number,
-        date_of_birth: data.date_of_birth ?? null,
-        profile_photo_url: data.profile_photo_url ?? null,
-        role: data.role,
-      })
-      return user
-    } catch (dbError) {
-      await getAdminClient().auth.admin.deleteUser(authUserId)
-      throw dbError
-    }
-  },
-
   async deleteOrphanedAuthUser(email_address: string): Promise<void> {
     const admin = getAdminClient()
     const { data, error } = await admin.auth.admin.listUsers()
@@ -194,7 +120,6 @@ export const authService = {
     full_name?: string | null
     phone?: string | null
     date_of_birth?: string | null
-    home_location?: string | null
     job_id?: string | null
   }): Promise<{ user_id: string; email_confirmed: boolean }> {
     const { data: authData, error } = await supabase.auth.signUp({
@@ -208,7 +133,6 @@ export const authService = {
           full_name: data.full_name ?? null,
           phone_number: data.phone ?? null,
           date_of_birth: data.date_of_birth ?? null,
-          home_location: data.home_location ?? null,
         },
       },
     })
@@ -224,10 +148,9 @@ export const authService = {
     user_id: string
     full_name: string
     email_address: string
-    phone_number: string | null
-    date_of_birth: string | null
-    profile_photo_url: string | null
-    home_location: string | null
+    phone_number: string
+    date_of_birth: string
+    profile_photo_url: string
   }): Promise<User> {
     // Fall back to the metadata captured at signUp when the client-side values are missing
     // (e.g. the verification link was opened on a different device from registration).
@@ -238,8 +161,8 @@ export const authService = {
       meta = (authUser?.user?.user_metadata as Record<string, unknown>) ?? {}
     } catch { /* metadata is a best-effort backup — never block registration on it */ }
 
-    const pick = (value: string | null, key: string): string | null =>
-      value || (typeof meta[key] === 'string' ? (meta[key] as string) : null)
+    const pick = (value: string, key: string): string =>
+      value || (typeof meta[key] === 'string' ? (meta[key] as string) : value)
 
     const user = await authRepository.createUser({
       supabase_auth_id: data.user_id,
@@ -248,7 +171,6 @@ export const authService = {
       phone_number: pick(data.phone_number, 'phone_number'),
       date_of_birth: pick(data.date_of_birth, 'date_of_birth'),
       profile_photo_url: data.profile_photo_url,
-      home_location: pick(data.home_location, 'home_location'),
       role: 'Guest User',
     })
     return user
@@ -266,9 +188,9 @@ export const authService = {
     user_id: string
     full_name: string
     email_address: string
-    phone_number: string | null
-    date_of_birth?: string | null
-    profile_photo_url?: string | null
+    phone_number: string
+    date_of_birth: string
+    profile_photo_url: string
     company_name: string
     company_description: string
     company_location: string | null
@@ -276,8 +198,6 @@ export const authService = {
     company_postal_code: string | null
     company_industry: string | null
     company_size: string | null
-    company_website: string | null
-    company_logo_url: string | null
     departments: string[]
     plan: string
   }): Promise<{ company_id: string }> {
@@ -288,8 +208,8 @@ export const authService = {
         full_name: data.full_name,
         email_address: data.email_address,
         phone_number: data.phone_number,
-        date_of_birth: data.date_of_birth ?? null,
-        profile_photo_url: data.profile_photo_url ?? null,
+        date_of_birth: data.date_of_birth,
+        profile_photo_url: data.profile_photo_url,
         role: 'Owner',
       })
     }
@@ -306,8 +226,6 @@ export const authService = {
       postal_code: data.company_postal_code,
       industry: data.company_industry,
       size: data.company_size,
-      logo_url: data.company_logo_url,
-      website: data.company_website,
     })
 
     await authRepository.updateCompanyId(user.id, company.id)
@@ -323,101 +241,6 @@ export const authService = {
     }
 
     return { company_id: company.id }
-  },
-
-  async completeOwnerSetup(data: {
-    full_name: string
-    email: string
-    password: string
-    phone: string
-    company_name: string
-    company_description: string
-    company_location: string | null
-    company_address: string | null
-    company_postal_code: string | null
-    company_industry: string | null
-    company_size: string | null
-    company_website: string | null
-    company_logo_url: string | null
-    departments: string[]
-    plan: string
-  }): Promise<{ user_id: string; company_id: string }> {
-    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
-      throw new Error('SUPABASE_SERVICE_ROLE_KEY is not configured')
-    }
-
-    let authUserId: string | null = null
-
-    try {
-      console.log('Step 1: Creating auth user...')
-      const authUser = await authRepository.createAuthUser(data.email, data.password)
-      authUserId = authUser.id
-
-      console.log('Step 2: Creating users record...')
-      const user = await authRepository.createUser({
-        supabase_auth_id: authUser.id,
-        full_name: data.full_name,
-        email_address: data.email,
-        phone_number: data.phone || null,
-        role: 'Owner',
-      })
-      console.log('Step 2 complete: user record created for', authUser.id, '-> public.users.id:', user.id)
-
-      const userCheck = await authRepository.findByAuthId(authUser.id)
-      if (!userCheck) throw new Error('User record not found before company creation - aborting')
-      console.log('Step 2 verified: user exists in users table')
-
-      console.log('Step 3: Creating company...')
-      const company = await companyRepository.createCompany({
-        name: data.company_name,
-        description: data.company_description || null,
-        owner_id: user.id,
-        plan: data.plan === 'Paid' ? 'Paid' : 'Free',
-        location: data.company_location,
-        address: data.company_address,
-        postal_code: data.company_postal_code,
-        industry: data.company_industry,
-        size: data.company_size,
-        logo_url: data.company_logo_url,
-        website: data.company_website,
-      })
-
-      console.log('Step 4: Updating company_id...')
-      await authRepository.updateCompanyId(user.id, company.id)
-
-      console.log('Step 5: Creating departments...')
-      for (const [index, deptName] of data.departments.entries()) {
-        if (deptName && deptName.trim()) {
-          await departmentRepository.createDepartment({
-            name: deptName.trim(),
-            company_id: company.id,
-            color: DEPT_COLORS[index % DEPT_COLORS.length],
-          })
-        }
-      }
-
-      console.log('All steps complete, user_id:', authUser.id)
-      return { user_id: authUser.id, company_id: company.id }
-
-    } catch (error) {
-      console.error('completeOwnerSetup failed, rolling back:', error)
-
-      if (authUserId) {
-        try {
-          await authRepository.deleteBySupabaseAuthId(authUserId)
-        } catch (e) {
-          console.error('Rollback: failed to delete users record:', e)
-        }
-
-        try {
-          await authRepository.deleteAuthUser(authUserId)
-        } catch (e) {
-          console.error('Rollback: failed to delete auth user:', e)
-        }
-      }
-
-      throw error
-    }
   },
 
 }

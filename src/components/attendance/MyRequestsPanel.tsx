@@ -11,6 +11,7 @@ import { ModalOverlay, ModalBox, ModalHeader, modalErrorBoxStyle, modalPrimaryBu
 import { ShiftSwapRequestView, FixedOffDayRequestView } from '@/types/Attendance'
 import { TimelineRow } from '@/types/Timeline'
 import { useResourceInvalidation } from '@/components/realtime/RealtimeNotificationsProvider'
+import { sgtInstant } from '@/lib/singaporeTime'
 
 // Self-contained "My Requests" surface — submit/track a Manager's or Employee's own Shift Swap
 // and Fixed Day Off requests. Extracted out of AttendanceView so it can also be rendered inside
@@ -247,7 +248,7 @@ export default function MyRequestsPanel({
     [deadlineWeekday, deadlineTime],
   )
   const myFixedOffForActiveWeek = useMemo(
-    () => myFixedOff.filter(req => req.week_start === activeSubmissionWeekStart && req.source === 'submitted'),
+    () => myFixedOff.filter(req => req.requested_week === activeSubmissionWeekStart && req.source === 'submitted'),
     [activeSubmissionWeekStart, myFixedOff],
   )
   const hasMyFixedOffForActiveWeek = myFixedOffForActiveWeek.length > 0
@@ -284,7 +285,7 @@ export default function MyRequestsPanel({
     })
   }, [myReqSeenKey])
   const getFixedOffMyReqKey = useCallback((rows: FixedOffDayRequestView[]) => {
-    const weekStart = rows[0]?.week_start ?? ''
+    const weekStart = rows[0]?.requested_week ?? ''
     if (!weekStart) return 'offday-unknown'
     const latestDecisionAt = rows
       .filter(req => req.source === 'submitted' && req.status !== 'pending')
@@ -627,9 +628,9 @@ export default function MyRequestsPanel({
   }
 
   const openEditFixedOff = (group: FixedOffDayRequestView[]) => {
-    const sorted = [...group].sort((a, b) => a.request_date.localeCompare(b.request_date))
+    const sorted = [...group].sort((a, b) => a.requested_date.localeCompare(b.requested_date))
     setEditingFixedOffGroup(sorted)
-    setEditingFixedOffDates(sorted.map(r => r.request_date))
+    setEditingFixedOffDates(sorted.map(r => r.requested_date))
     setEditingFixedOffError('')
   }
 
@@ -648,7 +649,7 @@ export default function MyRequestsPanel({
     }
     setEditingFixedOffSaving(true); setEditingFixedOffError('')
     try {
-      const weekStart = editingFixedOffGroup[0].week_start
+      const weekStart = editingFixedOffGroup[0].requested_week
       const res = await fetch('/api/attendance', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -656,7 +657,7 @@ export default function MyRequestsPanel({
           action: 'edit_fixed_off_day',
           user_id: internalUserId,
           company_id: companyId,
-          week_start: weekStart,
+          requested_week: weekStart,
           dates: [...editingFixedOffDates].sort(),
         }),
       })
@@ -681,9 +682,9 @@ export default function MyRequestsPanel({
     const groupsByWeek = new Map<string, FixedOffDayRequestView[]>()
     myFixedOff.forEach(req => {
       if (req.source !== 'submitted' || req.status === 'pending') return
-      const group = groupsByWeek.get(req.week_start) ?? []
+      const group = groupsByWeek.get(req.requested_week) ?? []
       group.push(req)
-      groupsByWeek.set(req.week_start, group)
+      groupsByWeek.set(req.requested_week, group)
     })
     let count = 0
     groupsByWeek.forEach(group => {
@@ -709,11 +710,11 @@ export default function MyRequestsPanel({
   }
   const offdayGroupsByWeek = new Map<string, FixedOffDayRequestView[]>()
   for (const f of myFixedOff) {
-    const list = offdayGroupsByWeek.get(f.week_start) ?? []
+    const list = offdayGroupsByWeek.get(f.requested_week) ?? []
     list.push(f)
-    offdayGroupsByWeek.set(f.week_start, list)
+    offdayGroupsByWeek.set(f.requested_week, list)
   }
-  for (const list of offdayGroupsByWeek.values()) list.sort((a, b) => a.request_date.localeCompare(b.request_date))
+  for (const list of offdayGroupsByWeek.values()) list.sort((a, b) => a.requested_date.localeCompare(b.requested_date))
   const items: MyReqItem[] = [
     ...mySwaps.map((s): MyReqItem => ({
       key: `swap-${s.id}`, kind: 'swap', status: s.status, createdAt: s.created_at, swap: s,
@@ -749,7 +750,7 @@ export default function MyRequestsPanel({
       return iAmRequester ? `Shift swap with ${otherName}` : `Swap request from ${otherName}`
     }
     const group = i.offdayGroup!
-    const weekStartDate = new Date(`${group[0].week_start}T00:00:00`)
+    const weekStartDate = new Date(`${group[0].requested_week}T00:00:00`)
     const weekEndDate = new Date(weekStartDate); weekEndDate.setDate(weekEndDate.getDate() + 6)
     return `Week of ${fmt(weekStartDate)} - ${fmt(weekEndDate)}`
   }
@@ -790,7 +791,7 @@ export default function MyRequestsPanel({
   const selectedCanEditFixedOff = selected?.kind === 'offday'
     && !!selected.offdayGroup?.length
     && selected.offdayGroup.every(req => req.source === 'submitted' && req.status === 'pending')
-    && selected.offdayGroup[0].week_start === activeSubmissionWeekStart
+    && selected.offdayGroup[0].requested_week === activeSubmissionWeekStart
   const MYREQ_HEADER_HEIGHT = 64
   const filterLabel = myReqFilter === 'swap' ? 'Shift Swap Requests' : myReqFilter === 'offday' ? 'Off Day Requests' : 'My Requests'
 
@@ -842,7 +843,7 @@ export default function MyRequestsPanel({
       swapLimitExceeded = swapsLeftPreview <= 0
     }
     if (swapDeadlineHours != null) {
-      const combineDateTime = (date: string, time: string) => new Date(`${date}T${time}Z`).getTime()
+      const combineDateTime = (date: string, time: string) => sgtInstant(date, time).getTime()
       const earliestStart = Math.min(
         combineDateTime(selectedOwnShift!.shift_date, selectedOwnShift!.start_time),
         combineDateTime(selectedTargetShift!.shift_date, selectedTargetShift!.start_time),
@@ -1181,9 +1182,9 @@ export default function MyRequestsPanel({
               })() : (() => {
                 const group = selected.offdayGroup!
                 const first = group[0]
-                const requestedDates = group.map(f => f.request_date)
-                const weekDates = getWeekDatesFromStart(first.week_start)
-                const isEditingThisFixedOff = !!editingFixedOffGroup?.length && editingFixedOffGroup[0].week_start === first.week_start
+                const requestedDates = group.map(f => f.requested_date)
+                const weekDates = getWeekDatesFromStart(first.requested_week)
+                const isEditingThisFixedOff = !!editingFixedOffGroup?.length && editingFixedOffGroup[0].requested_week === first.requested_week
                 const offDayLabel = first.status === 'pending' ? 'Requested Off Days' : 'Confirmed Off Days'
                 const displaySelectedDates = isEditingThisFixedOff ? editingFixedOffDates : requestedDates
                 const displaySelectedSet = new Set(displaySelectedDates)

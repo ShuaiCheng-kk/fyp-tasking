@@ -31,10 +31,9 @@ import { JobApplicant } from '@/types/Recruitment'
 const jobPosting = {
   id: 'job-1',
   title: 'Weekend Cashier',
-  description: 'Run the front register.',
-  requirements: 'Available weekends',
+  responsibilities: 'Run the front register.',
+  skills: 'Available weekends',
   experience_required: '1+ Year',
-  employment_type: 'casual',
   location: 'Downtown',
   salary_amount: 15,
   salary_type: 'per hour',
@@ -49,14 +48,12 @@ function makeApplicant(overrides: Partial<JobApplicant>): JobApplicant {
     email_address: 'alice@test.com',
     phone_number: null,
     profile_photo_url: null,
-    resume_url: null,
-    cover_letter: null,
+    resume: null,
     status: 'pending',
     applied_at: '2026-01-01',
-    relevant_experience: '1_to_2',
     additional_note: null,
-    skills_snapshot: 'Customer service',
-    certificates_snapshot: null,
+    skills: 'Customer service',
+    certificates: null,
     ai_summary: null,
     ai_computed_at: null,
     ...overrides,
@@ -94,12 +91,12 @@ describe('candidateRecommendationService.recommendCandidates (UC48)', () => {
     expect(openAIService.generateStructuredJson).not.toHaveBeenCalled()
   })
 
-  it('sends the snapshot data (skills, certificates, experience, resume text) to the AI and caches each result', async () => {
+  it('sends the snapshot data (skills, certificates, note, resume text) to the AI and caches each result', async () => {
     vi.mocked(recruitmentRepository.getApplicantsByJob).mockResolvedValue([
       makeApplicant({
         id: 'app-1',
-        resume_url: 'https://cdn/resume.pdf',
-        certificates_snapshot: [{ name: 'Food Hygiene Certificate', file_url: 'https://cdn/cert.jpg' }],
+        resume: 'https://cdn/resume.pdf',
+        certificates: [{ name: 'Food Hygiene Certificate', file_url: 'https://cdn/cert.jpg' }],
         additional_note: 'Worked at Starbucks.',
       }),
     ])
@@ -119,7 +116,6 @@ describe('candidateRecommendationService.recommendCandidates (UC48)', () => {
               applicant_id: 'app-1',
               skills: 'Customer service',
               certificates: [{ name: 'Food Hygiene Certificate', proof_attached: true }],
-              relevant_experience: '1–2 years in this role',
               additional_note: 'Worked at Starbucks.',
               resume_text: 'Parsed resume text',
             }),
@@ -164,8 +160,8 @@ describe('candidateRecommendationService.recommendCandidates (UC48)', () => {
     vi.mocked(recruitmentRepository.getApplicantsByJob).mockResolvedValue([
       makeApplicant({
         id: 'app-empty', full_name: 'Nobody',
-        skills_snapshot: null, certificates_snapshot: null, resume_url: null,
-        additional_note: null, relevant_experience: null,
+        skills: null, certificates: null, resume: null,
+        additional_note: null,
       }),
     ])
 
@@ -180,8 +176,8 @@ describe('candidateRecommendationService.recommendCandidates (UC48)', () => {
     vi.mocked(recruitmentRepository.getApplicantsByJob).mockResolvedValue([
       makeApplicant({
         id: 'app-empty', full_name: 'Nobody',
-        skills_snapshot: null, certificates_snapshot: null, resume_url: null,
-        additional_note: null, relevant_experience: null,
+        skills: null, certificates: null, resume: null,
+        additional_note: null,
       }),
       makeApplicant({ id: 'app-low', full_name: 'Bob' }),
       makeApplicant({ id: 'app-high', full_name: 'Alice' }),

@@ -58,7 +58,6 @@ const baseTask: Task = {
   assigned_user_id: 'manager-1',
   assigned_by: 'owner-1',
   status: 'Assigned',
-  percentage_complete: 0,
   priority: 'Medium',
   due_at: '2026-06-25T17:00:00.000Z',
   task_date: '2026-06-25',
@@ -82,18 +81,6 @@ describe('taskService — Task (UC12-23)', () => {
       await expect(taskService.assignTask({
         company_id: '', department_id: 'dept-1', title: 'x',
       })).rejects.toThrow('company_id, department_id, and title are required')
-    })
-
-    it('rejects percentage_complete outside 0-100', async () => {
-      vi.mocked(taskRepository.getUserById).mockImplementation(async (id: string) => {
-        if (id === 'owner-1') return { id: 'owner-1', role: 'Owner', company_id: 'company-1' } as any
-        if (id === 'manager-1') return { id: 'manager-1', role: 'Manager', company_id: 'company-1' } as any
-        return null
-      })
-      await expect(taskService.assignTask({
-        company_id: 'company-1', department_id: 'dept-1', title: 'Task', percentage_complete: 150,
-        assigned_by: 'owner-1', assigned_user_id: 'manager-1',
-      })).rejects.toThrow('percentage_complete must be between 0 and 100')
     })
 
     it('rejects a top-level task with no assignee', async () => {
@@ -357,12 +344,6 @@ describe('taskService — Task (UC12-23)', () => {
       vi.mocked(taskRepository.getTaskById).mockResolvedValue(unassignedTask)
       await expect(taskService.editTask('task-1', { status: 'Bogus' as any }, 'owner-1'))
         .rejects.toThrow('status must be one of: Assigned, In Progress, Review, Complete')
-    })
-
-    it('rejects percentage_complete outside 0-100', async () => {
-      vi.mocked(taskRepository.getTaskById).mockResolvedValue(unassignedTask)
-      await expect(taskService.editTask('task-1', { percentage_complete: -5 }, 'owner-1'))
-        .rejects.toThrow('percentage_complete must be between 0 and 100')
     })
 
     it('updates the task when valid', async () => {
@@ -649,8 +630,8 @@ describe('taskService — Task (UC12-23)', () => {
       const [updatedSub, parent] = await taskService.completeSubTask('sub-c', 'employee-1')
 
       expect(updatedSub.is_completed).toBe(true)
-      expect(taskRepository.updateTask).toHaveBeenCalledWith('parent-1', { status: 'Review', percentage_complete: 66 })
-      expect(taskRepository.updateSubTasksByParent).toHaveBeenCalledWith('parent-1', { status: 'Review', percentage_complete: 66 })
+      expect(taskRepository.updateTask).toHaveBeenCalledWith('parent-1', { status: 'Review' })
+      expect(taskRepository.updateSubTasksByParent).toHaveBeenCalledWith('parent-1', { status: 'Review' })
       expect(parent.status).toBe('Review')
     })
 
@@ -744,7 +725,7 @@ describe('taskService — Task (UC12-23)', () => {
       expect(result.title).toBe('Stock shelves (copy)')
       expect(taskRepository.createTask).toHaveBeenCalledTimes(2)
       expect(taskRepository.createTask).toHaveBeenNthCalledWith(1, expect.objectContaining({
-        title: 'Stock shelves (copy)', status: 'Assigned', percentage_complete: 0, assigned_by: 'owner-1',
+        title: 'Stock shelves (copy)', status: 'Assigned', assigned_by: 'owner-1',
       }))
     })
 
@@ -1307,31 +1288,31 @@ describe('taskService — Task (UC12-23)', () => {
   describe('updateTaskStatus — review flow guards', () => {
     it('moves a task one step forward on the normal drag path', async () => {
       vi.mocked(taskRepository.getTaskById).mockResolvedValue({ ...baseTask, status: 'In Progress' })
-      vi.mocked(taskRepository.updateTask).mockResolvedValue({ ...baseTask, status: 'Review', percentage_complete: 66 })
+      vi.mocked(taskRepository.updateTask).mockResolvedValue({ ...baseTask, status: 'Review' })
 
-      const result = await taskService.updateTaskStatus('task-1', 'Review', 66)
+      const result = await taskService.updateTaskStatus('task-1', 'Review')
 
       expect(result.status).toBe('Review')
-      expect(taskRepository.updateTask).toHaveBeenCalledWith('task-1', { status: 'Review', percentage_complete: 66 })
+      expect(taskRepository.updateTask).toHaveBeenCalledWith('task-1', { status: 'Review' })
     })
 
     it('blocks moving a task that is already in Review (only approve/reject may)', async () => {
       vi.mocked(taskRepository.getTaskById).mockResolvedValue({ ...baseTask, status: 'Review' })
-      await expect(taskService.updateTaskStatus('task-1', 'Complete', 100))
+      await expect(taskService.updateTaskStatus('task-1', 'Complete'))
         .rejects.toThrow('Tasks in Review can only be approved or rejected by the user who assigned them')
       expect(taskRepository.updateTask).not.toHaveBeenCalled()
     })
 
     it('blocks reaching Complete through the drag path from any status', async () => {
       vi.mocked(taskRepository.getTaskById).mockResolvedValue({ ...baseTask, status: 'In Progress' })
-      await expect(taskService.updateTaskStatus('task-1', 'Complete', 100))
+      await expect(taskService.updateTaskStatus('task-1', 'Complete'))
         .rejects.toThrow('Tasks reach Complete only when the user who assigned them approves the review')
       expect(taskRepository.updateTask).not.toHaveBeenCalled()
     })
   })
 
   describe('approveTask / rejectTask (review sign-off)', () => {
-    const reviewTask: Task = { ...baseTask, status: 'Review', percentage_complete: 66 }
+    const reviewTask: Task = { ...baseTask, status: 'Review' }
 
     it('approve rejects an unrelated user (not the assigner, not a peer)', async () => {
       vi.mocked(taskRepository.getTaskById).mockResolvedValue(reviewTask) // assigned_by: 'owner-1'
@@ -1354,7 +1335,7 @@ describe('taskService — Task (UC12-23)', () => {
       })
       vi.mocked(taskRepository.getManagerDepartmentIds).mockResolvedValue(['dept-1'])
       vi.mocked(taskRepository.getManagersByDepartmentIds).mockResolvedValue([{ id: 'mgr-a' } as any, { id: 'mgr-b' } as any])
-      vi.mocked(taskRepository.updateTask).mockResolvedValue({ ...mgrReviewTask, status: 'Complete', percentage_complete: 100 })
+      vi.mocked(taskRepository.updateTask).mockResolvedValue({ ...mgrReviewTask, status: 'Complete' })
 
       await taskService.approveTask('task-1', 'mgr-b')
 
@@ -1384,16 +1365,16 @@ describe('taskService — Task (UC12-23)', () => {
 
     it('approve completes the task, clears rejection state, and cascades to sub-tasks', async () => {
       vi.mocked(taskRepository.getTaskById).mockResolvedValue({ ...reviewTask, rejection_reason: 'Old reason' })
-      vi.mocked(taskRepository.updateTask).mockResolvedValue({ ...reviewTask, status: 'Complete', percentage_complete: 100, rejection_reason: null })
+      vi.mocked(taskRepository.updateTask).mockResolvedValue({ ...reviewTask, status: 'Complete', rejection_reason: null })
 
       const result = await taskService.approveTask('task-1', 'owner-1')
 
       expect(result.status).toBe('Complete')
       expect(taskRepository.updateTask).toHaveBeenCalledWith('task-1', {
-        status: 'Complete', percentage_complete: 100, rejection_reason: null, rejected_at: null,
+        status: 'Complete', rejection_reason: null, rejected_at: null,
         completed_at: expect.any(String), reviewed_by: 'owner-1',
       })
-      expect(taskRepository.updateSubTasksByParent).toHaveBeenCalledWith('task-1', { status: 'Complete', percentage_complete: 100 })
+      expect(taskRepository.updateSubTasksByParent).toHaveBeenCalledWith('task-1', { status: 'Complete' })
     })
 
     it('records the actual reviewer, not the original assigner, when a peer Partner approves an Owner-assigned task', async () => {
@@ -1403,7 +1384,7 @@ describe('taskService — Task (UC12-23)', () => {
         if (id === 'partner-1') return { id: 'partner-1', role: 'Partner', company_id: 'company-1' } as any
         return null
       })
-      vi.mocked(taskRepository.updateTask).mockResolvedValue({ ...reviewTask, status: 'Complete', percentage_complete: 100, reviewed_by: 'partner-1' })
+      vi.mocked(taskRepository.updateTask).mockResolvedValue({ ...reviewTask, status: 'Complete', reviewed_by: 'partner-1' })
 
       await taskService.approveTask('task-1', 'partner-1')
 
@@ -1436,7 +1417,7 @@ describe('taskService — Task (UC12-23)', () => {
       })
       vi.mocked(taskRepository.getManagerDepartmentIds).mockResolvedValue(['dept-1'])
       vi.mocked(taskRepository.getManagersByDepartmentIds).mockResolvedValue([{ id: 'mgr-a' } as any, { id: 'mgr-b' } as any])
-      vi.mocked(taskRepository.updateTask).mockResolvedValue({ ...mgrReviewTask, status: 'In Progress', percentage_complete: 33, rejection_reason: 'Numbers are off' })
+      vi.mocked(taskRepository.updateTask).mockResolvedValue({ ...mgrReviewTask, status: 'In Progress', rejection_reason: 'Numbers are off' })
 
       await taskService.rejectTask('task-1', 'Numbers are off', 'mgr-b')
 
@@ -1451,16 +1432,16 @@ describe('taskService — Task (UC12-23)', () => {
 
     it('reject sends the task back to In Progress with the reason, cascading to sub-tasks', async () => {
       vi.mocked(taskRepository.getTaskById).mockResolvedValue(reviewTask)
-      vi.mocked(taskRepository.updateTask).mockResolvedValue({ ...reviewTask, status: 'In Progress', percentage_complete: 33, rejection_reason: 'Numbers are off' })
+      vi.mocked(taskRepository.updateTask).mockResolvedValue({ ...reviewTask, status: 'In Progress', rejection_reason: 'Numbers are off' })
 
       const result = await taskService.rejectTask('task-1', '  Numbers are off  ', 'owner-1')
 
       expect(result.status).toBe('In Progress')
       expect(taskRepository.updateTask).toHaveBeenCalledWith('task-1', {
-        status: 'In Progress', percentage_complete: 33,
+        status: 'In Progress',
         rejection_reason: 'Numbers are off', rejected_at: expect.any(String),
       })
-      expect(taskRepository.updateSubTasksByParent).toHaveBeenCalledWith('task-1', { status: 'In Progress', percentage_complete: 33 })
+      expect(taskRepository.updateSubTasksByParent).toHaveBeenCalledWith('task-1', { status: 'In Progress' })
     })
   })
 

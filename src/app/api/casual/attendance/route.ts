@@ -60,7 +60,6 @@ export async function POST(req: Request) {
       authId: b.user_id,
       shift_assignment_id: b.shift_assignment_id,
       clock_time: typeof b.clock_time === 'string' ? b.clock_time : undefined,
-      notes: typeof b.notes === 'string' ? b.notes : null,
     }
 
     if (b.action === 'clock_in') {

@@ -5,7 +5,7 @@ export const ownerAnnouncementRepository = {
   async getAnnouncements(companyId: string, requestingUserId?: string | null, role?: string | null, departmentId?: string | null) {
     const { data, error } = await supabase
       .from('announcements')
-      .select('*, poster:users!announcements_from_user_id_fkey(full_name, role, profile_photo_url, manager_departments!manager_departments_manager_id_fkey(department_id, departments(name)))')
+      .select('*, poster:users!announcements_user_id_fkey(full_name, role, profile_photo_url, manager_departments!manager_departments_manager_id_fkey(department_id, departments(name)))')
       .eq('company_id', companyId)
       .order('created_at', { ascending: false })
     if (error) throw error
@@ -16,7 +16,7 @@ export const ownerAnnouncementRepository = {
     return (data ?? [])
       .filter((row: any) => {
         if (isEmployee) {
-          return !!departmentId && row.department_id === departmentId && row.poster?.role === 'Manager'
+          return !!departmentId && row.audience_department_id === departmentId && row.poster?.role === 'Manager'
         }
         // Owner/Partner never see Manager-posted announcements — those are scoped to that
         // Manager's own department only, visible to Managers/Employees within it.
@@ -25,7 +25,7 @@ export const ownerAnnouncementRepository = {
         }
         // Non-owners only see company-wide or their own department's announcements
         if (departmentId) {
-          return row.department_id === null || row.department_id === departmentId
+          return row.audience_department_id === null || row.audience_department_id === departmentId
         }
         return true
       })
@@ -39,17 +39,17 @@ export const ownerAnnouncementRepository = {
   async insertAnnouncement(fromUserId: string, companyId: string, departmentId: string | null, title: string, content: string) {
     const { data, error } = await supabase
       .from('announcements')
-      .insert({ from_user_id: fromUserId, company_id: companyId, department_id: departmentId ?? null, title, content })
+      .insert({ user_id: fromUserId, company_id: companyId, audience_department_id: departmentId ?? null, title, content })
       .select()
       .single()
     if (error) throw error
     return data
   },
 
-  async getAnnouncementOwner(announcementId: string): Promise<{ from_user_id: string }> {
+  async getAnnouncementOwner(announcementId: string): Promise<{ user_id: string }> {
     const { data, error } = await supabase
       .from('announcements')
-      .select('from_user_id')
+      .select('user_id')
       .eq('id', announcementId)
       .single()
     if (error || !data) throw new Error('Announcement not found')
@@ -59,36 +59,51 @@ export const ownerAnnouncementRepository = {
   async updateAnnouncement(announcementId: string, requestingUserId: string, title: string, content: string, departmentId: string | null) {
     const { data: existing, error: fetchError } = await supabase
       .from('announcements')
-      .select('from_user_id')
+      .select('user_id')
       .eq('id', announcementId)
       .single()
     if (fetchError || !existing) throw new Error('Announcement not found')
-    if (existing.from_user_id !== requestingUserId) throw new Error('You can only edit your own announcements')
+    if (existing.user_id !== requestingUserId) throw new Error('You can only edit your own announcements')
 
     const { data, error } = await supabase
       .from('announcements')
-      .update({ title, content, department_id: departmentId, updated_at: new Date().toISOString() })
+      .update({ title, content, audience_department_id: departmentId, updated_at: new Date().toISOString() })
       .eq('id', announcementId)
       .select()
       .single()
     if (error) throw error
+
+    // Editing changes what everyone needs to (re-)see, so drop the read receipts — the
+    // announcement goes back to unread for everyone who'd already read the old version.
+    const { error: reReadError } = await supabase
+      .from('announcement_reads')
+      .delete()
+      .eq('announcement_id', announcementId)
+    if (reReadError) throw reReadError
+
     return data
   },
 
   async deleteAnnouncement(announcementId: string, requestingUserId: string) {
     const { data: existing, error: fetchError } = await supabase
       .from('announcements')
-      .select('from_user_id')
+      .select('user_id')
       .eq('id', announcementId)
       .single()
     if (fetchError || !existing) throw new Error('Announcement not found')
-    if (existing.from_user_id !== requestingUserId) throw new Error('You can only delete your own announcements')
+    if (existing.user_id !== requestingUserId) throw new Error('You can only delete your own announcements')
 
     const { error } = await supabase
       .from('announcements')
       .delete()
       .eq('id', announcementId)
     if (error) throw error
+
+    const { error: readsError } = await supabase
+      .from('announcement_reads')
+      .delete()
+      .eq('announcement_id', announcementId)
+    if (readsError) throw readsError
   },
 
   async markAnnouncementsRead(userId: string, announcementIds: string[]) {

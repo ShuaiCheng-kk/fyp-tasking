@@ -65,7 +65,7 @@ describe('casualDashboardService.getDashboard — single current-job model', () 
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(casualDashboardRepository.getJobPostingsByIds).mockResolvedValue([
-      { id: 'job-1', company_name: 'Sunrise Hospitality', location: '1 Raffles Place', created_by: 'owner-1' },
+      { id: 'job-1', title: 'Barista', company_name: 'Sunrise Hospitality', location: '1 Raffles Place', created_by: 'owner-1' },
     ])
     vi.mocked(casualDashboardRepository.getUsersByIds).mockResolvedValue([
       { id: 'emp-1', full_name: 'Felix Ng', role: 'Employee', phone_number: '+65 8567 8901', email_address: 'felix@test.com', profile_photo_url: null },

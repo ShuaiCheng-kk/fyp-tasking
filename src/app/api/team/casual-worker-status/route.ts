@@ -37,7 +37,7 @@ export async function PATCH(req: NextRequest) {
       )
     }
 
-    const result = await casualWorkerStatusService.updateStatus({
+    await casualWorkerStatusService.updateStatus({
       user_id,
       company_id,
       worker_status: worker_status.toLowerCase(),
@@ -47,7 +47,6 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({
       success: true,
       message: 'Casual worker status updated successfully',
-      user: result,
     })
   } catch (error) {
     return NextResponse.json(

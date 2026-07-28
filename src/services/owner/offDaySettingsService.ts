@@ -47,7 +47,6 @@ export const offDaySettingsService = {
       user_id: null,
       max_days_per_week: input.max_days_per_week,
       role: input.role,
-      updated_by: input.owner_id,
     }
     return offDaySettingsRepository.upsertQuotaSetting(upsertInput)
   },
@@ -64,7 +63,6 @@ export const offDaySettingsService = {
       user_id: input.user_id,
       max_days_per_week: input.max_days_per_week,
       role: null,
-      updated_by: input.owner_id,
     }
     return offDaySettingsRepository.upsertQuotaSetting(upsertInput)
   },
@@ -100,7 +98,6 @@ export const offDaySettingsService = {
       company_id: input.company_id,
       deadline_weekday: input.deadline_weekday,
       deadline_time: input.deadline_time,
-      updated_by: input.owner_id,
     }
     return offDaySettingsRepository.upsertDeadline(upsertInput)
   },

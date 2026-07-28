@@ -32,18 +32,27 @@ export const workerApplicationRepository = {
   } | null> {
     const { data, error } = await supabase
       .from('users')
-      .select('id, role, date_of_birth, skills, resume_url')
+      .select('id, role, date_of_birth, casual_worker_profiles(skills, resume_url)')
       .eq('id', userId)
       .maybeSingle()
 
     if (error) throw new Error(error.message)
-    return data
+    if (!data) return null
+    const row = data as any
+    const profile = Array.isArray(row.casual_worker_profiles) ? row.casual_worker_profiles[0] : row.casual_worker_profiles
+    return {
+      id: row.id,
+      role: row.role,
+      date_of_birth: row.date_of_birth,
+      skills: profile?.skills ?? null,
+      resume_url: profile?.resume_url ?? null,
+    }
   },
 
-  async getApplicantCertificates(userId: string): Promise<{ name: string; file_url: string | null }[]> {
+  async getApplicantCertificates(userId: string): Promise<{ name: string; certificate_url: string | null }[]> {
     const { data, error } = await supabase
       .from('user_certificates')
-      .select('name, file_url')
+      .select('name, certificate_url')
       .eq('user_id', userId)
       .order('created_at', { ascending: true })
 
@@ -54,17 +63,14 @@ export const workerApplicationRepository = {
   // The worker's other still-active applications (pending, or accepted and awaiting the worker's
   // confirmation) on open jobs — these occupy their timeline for the schedule-conflict gate.
   async getActiveApplicationJobs(userId: string): Promise<{
-    form_type: string | null
-    is_recurring: boolean | null
-    shift_date: string | null
-    shift_days: string[] | null
-    shift_start_time: string | null
-    shift_end_time: string | null
+    job_type: string | null
+    job_date: string | null
     job_start_time: string | null
+    job_end_time: string | null
   }[]> {
     const { data, error } = await supabase
       .from('job_applicants')
-      .select('status, job_postings!inner(status, form_type, is_recurring, shift_date, shift_days, shift_start_time, shift_end_time, job_start_time)')
+      .select('status, job_postings!inner(status, job_type, job_date, job_start_time, job_end_time)')
       .eq('user_id', userId)
       .in('status', ['pending', 'accepted'])
       .eq('job_postings.status', 'open')
@@ -96,22 +102,20 @@ export const workerApplicationRepository = {
   async createApplication(application: {
     job_id: string
     user_id: string
-    resume_url: string | null
-    relevant_experience: string | null
+    resume: string | null
     additional_note: string | null
-    skills_snapshot: string | null
-    certificates_snapshot: ApplicantCertificateSnapshot[]
+    skills: string | null
+    certificates: ApplicantCertificateSnapshot[]
   }) {
     const { data, error } = await supabase
       .from('job_applicants')
       .insert({
         job_id: application.job_id,
         user_id: application.user_id,
-        resume_url: application.resume_url,
-        relevant_experience: application.relevant_experience,
+        resume: application.resume,
         additional_note: application.additional_note,
-        skills_snapshot: application.skills_snapshot,
-        certificates_snapshot: application.certificates_snapshot,
+        skills: application.skills,
+        certificates: application.certificates,
         status: 'pending',
       })
       .select()
@@ -129,9 +133,7 @@ export const workerApplicationRepository = {
         status,
         applied_at,
         decided_at,
-        resume_url,
-        cover_letter,
-        relevant_experience,
+        resume,
         additional_note,
         job_postings (
           *,
@@ -170,7 +172,7 @@ export const workerApplicationRepository = {
       .from('casualworker_departments')
       .select('company_id')
       .eq('casual_worker_id', user.id)
-      .not('blocked_at', 'is', null)
+      .not('inactive_at', 'is', null)
     if (error) throw new Error(error.message)
     return [...new Set((data ?? []).map((row: { company_id: string | null }) => row.company_id).filter((id): id is string => !!id))]
   },
@@ -301,17 +303,15 @@ export const workerApplicationRepository = {
       department_id: string | null
       title: string
       company_name: string | null
-      location: string | null
+      company_location: string | null
       created_by: string
-      form_type: string | null
-      is_recurring: boolean | null
-      shift_date: string | null
-      shift_days: string[] | null
-      shift_start_time: string | null
-      shift_end_time: string | null
+      job_type: string | null
+      job_date: string | null
       job_start_time: string | null
+      job_end_time: string | null
       openings: number | null
       assigned_employee_id: string | null
+      salary_amount: number | null
     }
   } | null> {
     const { data: invitation, error } = await supabase
@@ -328,12 +328,15 @@ export const workerApplicationRepository = {
       .single()
     if (appErr || !applicant) return null
 
-    const { data: job, error: jobErr } = await supabase
+    const { data: jobRow, error: jobErr } = await supabase
       .from('job_postings')
-      .select('id, company_id, department_id, title, company_name, location, created_by, form_type, is_recurring, shift_date, shift_days, shift_start_time, shift_end_time, job_start_time, openings, assigned_employee_id')
+      .select('id, company_id, department_id, title, created_by, job_type, job_date, job_start_time, job_end_time, openings, assigned_employee_id, salary_amount, companies(name, location)')
       .eq('id', applicant.job_id)
       .single()
-    if (jobErr || !job) return null
+    if (jobErr || !jobRow) return null
+    const { companies, ...jobRest } = jobRow as any
+    const co = Array.isArray(companies) ? companies[0] : companies
+    const job = { ...jobRest, company_name: co?.name ?? null, company_location: co?.location ?? null }
 
     return { user_id: applicant.user_id, applicant_id: invitation.applicant_id, sent_at: invitation.sent_at as string, job }
   },
@@ -341,7 +344,7 @@ export const workerApplicationRepository = {
   async promoteGuestToWorker(userId: string): Promise<void> {
     const { error } = await supabase
       .from('users')
-      .update({ role: 'Casual Worker', worker_status: 'active' })
+      .update({ role: 'Casual Worker' })
       .eq('id', userId)
       .eq('role', 'Guest User')
     if (error) throw new Error(error.message)

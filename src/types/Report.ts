@@ -20,10 +20,10 @@ export interface ReportOverview {
   on_time_completion_rate: number | null
   // % of openings on postings created in the period that ended up confirmed (both sides accepted).
   recruitment_fill_rate: number | null
-  // Real labor cost: flat_rate per assignment when the shift has one, else hourly_rate × hours
-  // (casual workers: actual clocked hours; internal staff: scheduled shift hours — they don't clock).
+  // Real labor cost: assignee hourly_rate × hours (casual workers: actual clocked hours;
+  // internal staff: scheduled shift hours — they don't clock).
   labor_cost: number
-  // Assignments that had neither a flat rate nor an assignee hourly rate (surfaced, never guessed).
+  // Assignments that had no assignee hourly rate (surfaced, never guessed).
   uncosted_assignments: number
   total_shifts: number
   total_assignments: number
@@ -158,7 +158,7 @@ export interface CasualReliabilityRow {
   rejected_shifts: number
   late: number
   absent: number
-  // Confirmed jobs this worker cancelled during the period (recruitment_cancellations,
+  // Confirmed jobs this worker cancelled during the period (job_cancellations,
   // cancelled_role='worker' only — employer-side cancels never count against the worker).
   cancellations: number
   // Deadline-in-period tasks the assigner rejected in Review at least once (tasks.rejected_at) —
@@ -219,62 +219,6 @@ export interface CompanyReport {
   // Per-person task load for the current period — see TaskWorkloadRow.
   workload: TaskWorkloadRow[]
   casual: CasualReport
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// LEGACY — old report shape still consumed by the Partner/Manager report pages.
-// Owner has moved to CompanyReport above; delete this block when Partner/Manager
-// inherit the new report page.
-// ─────────────────────────────────────────────────────────────────────────────
-
-export interface DepartmentReportRow {
-  department_id: string | null
-  department_name: string
-  shifts: number
-  assignments: number
-  tasks: number
-  completed_tasks: number
-  attendance_records: number
-  approved_attendance: number
-  rejected_attendance: number
-}
-
-export interface WorkforceAnalyticsReport {
-  summary: {
-    shifts: number
-    assignments: number
-    tasks: number
-    completed_tasks: number
-    task_completion_rate: number
-    attendance_records: number
-    approved_attendance: number
-    rejected_attendance: number
-    pending_attendance: number
-    late_attendance: number
-    absent_count: number
-    overtime_count: number
-  }
-  task_breakdown: {
-    assigned: number
-    in_progress: number
-    review: number
-    complete: number
-  }
-  hr_requests: {
-    time_off_pending: number
-    time_off_approved: number
-    time_off_rejected: number
-    swap_pending: number
-    swap_approved: number
-    swap_rejected: number
-  }
-  departments: DepartmentReportRow[]
-  recent_activity: Array<{
-    type: 'shift' | 'task' | 'attendance'
-    title: string
-    detail: string
-    date: string
-  }>
 }
 
 export interface RecruitmentHistoryRow {

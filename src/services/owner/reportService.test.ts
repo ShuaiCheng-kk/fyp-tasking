@@ -41,43 +41,41 @@ const FILTERS = {
 const inCurrentPeriod = (filters: { date_from: string }) => filters.date_from === FILTERS.date_from
 
 const shifts = [
-  // 8h shift, no flat rate — hourly costing
-  { id: 's1', company_id: 'company-1', department_id: 'd1', shift_date: '2026-07-08', start_time: '09:00:00', end_time: '17:00:00', flat_rate: null },
-  // 4h shift with a flat rate of 100 per assignment
-  { id: 's2', company_id: 'company-1', department_id: 'd1', shift_date: '2026-07-09', start_time: '09:00:00', end_time: '13:00:00', flat_rate: 100 },
+  // 8h shift — hourly costing
+  { id: 's1', company_id: 'company-1', department_id: 'd1', shift_date: '2026-07-08', start_time: '09:00:00', end_time: '17:00:00' },
+  // 4h shift — also hourly costing
+  { id: 's2', company_id: 'company-1', department_id: 'd1', shift_date: '2026-07-09', start_time: '09:00:00', end_time: '13:00:00' },
 ]
 
 const assignments = [
   // cw1 worked s1: on time (within 10-min grace), 09:05→17:00 minus 30-min break
-  { id: 'a1', shift_id: 's1', user_id: 'cw1', assignment_status: 'accepted' },
+  { id: 'a1', shift_id: 's1', user_id: 'cw1' },
   // internal employee on s1: no clocking, costed at scheduled hours
-  { id: 'a2', shift_id: 's1', user_id: 'emp1', assignment_status: 'accepted' },
-  // cw2 worked s2: clocked in 20 min late → late; flat rate applies
-  { id: 'a3', shift_id: 's2', user_id: 'cw2', assignment_status: 'accepted' },
-  // cw1 rejected s2 → counted as a rejected shift, no attendance judgement, no cost
-  { id: 'a4', shift_id: 's2', user_id: 'cw1', assignment_status: 'rejected' },
+  { id: 'a2', shift_id: 's1', user_id: 'emp1' },
+  // cw2 worked s2: clocked in 20 min late → late; hourly rate applies
+  { id: 'a3', shift_id: 's2', user_id: 'cw2' },
   // cw2 never clocked in on s1 (shift already over) → absent, no cost
-  { id: 'a5', shift_id: 's1', user_id: 'cw2', assignment_status: 'accepted' },
+  { id: 'a5', shift_id: 's1', user_id: 'cw2' },
 ]
 
 const attendance = [
   {
-    id: 'r1', shift_assignment_id: 'a1', casual_worker_id: 'cw1',
-    clock_in_time: '2026-07-08T09:05:00Z', clock_out_time: '2026-07-08T17:00:00Z',
-    break_in_time: '2026-07-08T12:00:00Z', break_out_time: '2026-07-08T12:30:00Z',
-    owner_adjusted_clock_in_time: null, owner_adjusted_clock_out_time: null,
+    id: 'r1', shift_assignment_id: 'a1', user_id: 'cw1',
+    clock_in_time: '2026-07-08T09:05:00+08:00', clock_out_time: '2026-07-08T17:00:00+08:00',
+    break_in_time: '2026-07-08T12:00:00+08:00', break_out_time: '2026-07-08T12:30:00+08:00',
+    modified_clock_in_time: null, modified_clock_out_time: null,
   },
   {
-    id: 'r2', shift_assignment_id: 'a3', casual_worker_id: 'cw2',
-    clock_in_time: '2026-07-09T09:20:00Z', clock_out_time: '2026-07-09T13:00:00Z',
+    id: 'r2', shift_assignment_id: 'a3', user_id: 'cw2',
+    clock_in_time: '2026-07-09T09:20:00+08:00', clock_out_time: '2026-07-09T13:00:00+08:00',
     break_in_time: null, break_out_time: null,
-    owner_adjusted_clock_in_time: null, owner_adjusted_clock_out_time: null,
+    modified_clock_in_time: null, modified_clock_out_time: null,
   },
 ]
 
 const users = [
   { id: 'cw1', full_name: 'Casual One', role: 'Casual Worker', hourly_rate: 10, skills: 'Barista, Cashier' },
-  { id: 'cw2', full_name: 'Casual Two', role: 'Casual Worker', hourly_rate: null, skills: 'barista, Waiter' },
+  { id: 'cw2', full_name: 'Casual Two', role: 'Casual Worker', hourly_rate: 12, skills: 'barista, Waiter' },
   { id: 'emp1', full_name: 'Employee One', role: 'Employee', hourly_rate: 20, skills: null },
   { id: 'mgr1', full_name: 'Mandy Manager', role: 'Manager', hourly_rate: null, skills: null },
 ]
@@ -187,9 +185,9 @@ describe('reportService.getCompanyReport', () => {
     vi.clearAllMocks()
   })
 
-  it('judges attendance only for casual workers on ended, non-rejected assignments', async () => {
+  it('judges attendance only for casual workers on ended assignments', async () => {
     const report = await reportService.getCompanyReport(FILTERS)
-    // Countable: a1 (present), a3 (present but late), a5 (absent). a2 is internal, a4 rejected.
+    // Countable: a1 (present), a3 (present but late), a5 (absent). a2 is internal.
     expect(report.overview.attendance_rate).toBe(67) // 2 of 3
     const dept = report.departments.find(d => d.department_id === 'd1')!
     expect(dept.late_count).toBe(1)
@@ -207,14 +205,14 @@ describe('reportService.getCompanyReport', () => {
   it('counts internal attendance by record, not by headcount, and splits present/late/absent on the same denominator', async () => {
     const manyAssignments = [
       ...assignments,
-      { id: 'a6', shift_id: 's2', user_id: 'emp1', assignment_status: 'accepted' },
+      { id: 'a6', shift_id: 's2', user_id: 'emp1' },
     ]
     const manyAttendance = [
       ...attendance,
       // emp1 on s1 (a2): on time
-      { id: 'r3', shift_assignment_id: 'a2', casual_worker_id: 'emp1', clock_in_time: '2026-07-08T09:00:00Z', clock_out_time: '2026-07-08T17:00:00Z', break_in_time: null, break_out_time: null, owner_adjusted_clock_in_time: null, owner_adjusted_clock_out_time: null },
+      { id: 'r3', shift_assignment_id: 'a2', user_id: 'emp1', clock_in_time: '2026-07-08T09:00:00+08:00', clock_out_time: '2026-07-08T17:00:00+08:00', break_in_time: null, break_out_time: null, modified_clock_in_time: null, modified_clock_out_time: null },
       // emp1 on s2 (a6): clocked in 20 min late
-      { id: 'r4', shift_assignment_id: 'a6', casual_worker_id: 'emp1', clock_in_time: '2026-07-09T09:20:00Z', clock_out_time: '2026-07-09T13:00:00Z', break_in_time: null, break_out_time: null, owner_adjusted_clock_in_time: null, owner_adjusted_clock_out_time: null },
+      { id: 'r4', shift_assignment_id: 'a6', user_id: 'emp1', clock_in_time: '2026-07-09T09:20:00+08:00', clock_out_time: '2026-07-09T13:00:00+08:00', break_in_time: null, break_out_time: null, modified_clock_in_time: null, modified_clock_out_time: null },
     ]
     vi.mocked(reportRepository.getAssignmentsByShiftIds).mockImplementation(async ids => (ids.length ? manyAssignments : []) as never)
     vi.mocked(reportRepository.getAttendanceByAssignmentIds).mockImplementation(async ids => (ids.length ? manyAttendance : []) as never)
@@ -240,8 +238,8 @@ describe('reportService.getCompanyReport', () => {
     const dept = report.departments.find(d => d.department_id === 'd1')!
     // Same single internal record (emp1 absent on s1) as the company-wide On-time Attendance test.
     expect(dept.internal_attendance_rate).toBe(0)
-    // a1 (cw1, $74.17) + a3 (cw2, $100 flat) — both Casual Worker, both on d1.
-    expect(dept.casual_labor_cost).toBeCloseTo(174.17, 2)
+    // a1 (cw1, $74.17) + a3 (cw2, $44.00 hourly) — both Casual Worker, both on d1.
+    expect(dept.casual_labor_cost).toBeCloseTo(118.17, 2)
   })
 
   it('builds per-worker reliability rows sorted by problems first', async () => {
@@ -249,42 +247,42 @@ describe('reportService.getCompanyReport', () => {
     const cw2 = report.casual.workers.find(w => w.user_id === 'cw2')!
     expect(cw2).toMatchObject({ worked: 1, late: 1, absent: 1, rejected_shifts: 0 })
     const cw1 = report.casual.workers.find(w => w.user_id === 'cw1')!
-    expect(cw1).toMatchObject({ worked: 1, late: 0, absent: 0, rejected_shifts: 1 })
-    // cw2 (2 problems) ranks above cw1 (1 problem)
+    expect(cw1).toMatchObject({ worked: 1, late: 0, absent: 0, rejected_shifts: 0 })
+    // cw2 (2 problems) ranks above cw1 (0 problems)
     expect(report.casual.workers[0].user_id).toBe('cw2')
   })
 
-  it('computes labor cost from real rates and hours only — no pay for rejected or absent', async () => {
+  it('computes labor cost from real rates and hours only — no pay for absent', async () => {
     const report = await reportService.getCompanyReport(FILTERS)
     // a1: cw1 hourly 10 × (09:05→17:00 − 30min break = 7.4167h) = 74.17
     // a2: emp1 hourly 20 × scheduled 8h = 160
-    // a3: flat rate 100
-    // a4 rejected + a5 absent: nothing owed
-    expect(report.overview.labor_cost).toBeCloseTo(334.17, 2)
-    expect(report.casual.labor_cost).toBeCloseTo(174.17, 2)
-    expect(report.overview.total_casual_worker_cost).toBeCloseTo(174.17, 2)
+    // a3: cw2 hourly 12 × (09:20→13:00 = 3.6667h) = 44.00
+    // a5 absent: nothing owed
+    expect(report.overview.labor_cost).toBeCloseTo(278.17, 2)
+    expect(report.casual.labor_cost).toBeCloseTo(118.17, 2)
+    expect(report.overview.total_casual_worker_cost).toBeCloseTo(118.17, 2)
     expect(report.previous_overview.total_casual_worker_cost).toBe(0)
     expect(report.overview.uncosted_assignments).toBe(0)
     const dept = report.departments.find(d => d.department_id === 'd1')!
-    expect(dept.labor_cost).toBeCloseTo(334.17, 2)
+    expect(dept.labor_cost).toBeCloseTo(278.17, 2)
   })
 
   it('excludes a Casual Worker who clocked in but never completed clock-out from Total Casual Worker Cost', async () => {
     const noCheckoutAssignments = [
       ...assignments,
-      // cw1 clocks in for s2 (flat rate 100) but never clocks out — not "actually attended"
-      { id: 'a6', shift_id: 's2', user_id: 'cw1', assignment_status: 'accepted' },
+      // cw1 clocks in for s2 but never clocks out — not "actually attended"
+      { id: 'a6', shift_id: 's2', user_id: 'cw1' },
     ]
     const noCheckoutAttendance = [
       ...attendance,
-      { id: 'r3', shift_assignment_id: 'a6', casual_worker_id: 'cw1', clock_in_time: '2026-07-09T09:05:00Z', clock_out_time: null, break_in_time: null, break_out_time: null, owner_adjusted_clock_in_time: null, owner_adjusted_clock_out_time: null },
+      { id: 'r3', shift_assignment_id: 'a6', user_id: 'cw1', clock_in_time: '2026-07-09T09:05:00+08:00', clock_out_time: null, break_in_time: null, break_out_time: null, modified_clock_in_time: null, modified_clock_out_time: null },
     ]
     vi.mocked(reportRepository.getAssignmentsByShiftIds).mockImplementation(async ids => (ids.length ? noCheckoutAssignments : []) as never)
     vi.mocked(reportRepository.getAttendanceByAssignmentIds).mockImplementation(async ids => (ids.length ? noCheckoutAttendance : []) as never)
 
     const report = await reportService.getCompanyReport(FILTERS)
-    // a6 would otherwise add another $100 (s2's flat rate) — excluded since clock-out never happened
-    expect(report.casual.labor_cost).toBeCloseTo(174.17, 2)
+    // a6 would otherwise add cw1's hourly cost for s2 — excluded since clock-out never happened
+    expect(report.casual.labor_cost).toBeCloseTo(118.17, 2)
   })
 
   it('counts a payable assignment with no rate as uncosted instead of guessing', async () => {
@@ -293,7 +291,7 @@ describe('reportService.getCompanyReport', () => {
     ) as never)
     const report = await reportService.getCompanyReport(FILTERS)
     expect(report.overview.uncosted_assignments).toBe(1)
-    expect(report.overview.labor_cost).toBeCloseTo(174.17, 2)
+    expect(report.overview.labor_cost).toBeCloseTo(118.17, 2)
   })
 
   it('computes task metrics from top-level, non-archived tasks only', async () => {
@@ -353,7 +351,7 @@ describe('reportService.getCompanyReport', () => {
   })
 
   // ── Casual Worker Pool Analytics — all four KPIs count each worker once ──
-  // Worked this period: cw1 (a1 present on time) and cw2 (a3 late, a5 absent). a4 is rejected.
+  // Worked this period: cw1 (a1 present on time) and cw2 (a3 late, a5 absent).
 
   it('computes Rehire Rate per worker — prior attendance counts, first-timers do not', async () => {
     const report = await reportService.getCompanyReport(FILTERS)
@@ -409,13 +407,13 @@ describe('reportService.getCompanyReport', () => {
     expect(report.previous_overview.casual_on_time_task_completion_rate).toBeNull()
   })
 
-  it('counts every shift assignment as "assigned", including rejected ones and no-shows', async () => {
+  it('counts every shift assignment as "assigned" regardless of attendance outcome', async () => {
     const report = await reportService.getCompanyReport(FILTERS)
-    // cw1: a1 (accepted, s1) + a4 (rejected, s2) → 2 assigned, only 1 rejected.
+    // cw1: a1 (present, s1) → 1 assigned.
     const cw1 = report.casual.workers.find(w => w.user_id === 'cw1')!
-    expect(cw1.assigned_shifts).toBe(2)
-    expect(cw1.rejected_shifts).toBe(1)
-    // cw2: a3 (accepted, worked late) + a5 (accepted, absent) → 2 assigned, 0 rejected.
+    expect(cw1.assigned_shifts).toBe(1)
+    expect(cw1.rejected_shifts).toBe(0)
+    // cw2: a3 (worked late) + a5 (absent) → 2 assigned, 0 rejected.
     const cw2 = report.casual.workers.find(w => w.user_id === 'cw2')!
     expect(cw2.assigned_shifts).toBe(2)
     expect(cw2.rejected_shifts).toBe(0)

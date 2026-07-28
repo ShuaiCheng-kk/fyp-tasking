@@ -374,7 +374,6 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string; 
 const COLUMNS: Task['status'][] = ['Assigned', 'In Progress', 'Review', 'Complete']
 // Manager's My Tasks board drag-to-advance (mirrors CasualTaskBoard.tsx's STATUS_PERCENT) — the
 // same 0/33/66/100 steps handleAdvanceMyTask's button uses, so dragging and the button agree.
-const MY_TASKS_STATUS_PERCENT: Record<Task['status'], number> = { Assigned: 0, 'In Progress': 33, Review: 66, Complete: 100 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -1342,7 +1341,6 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
   const [editAssigneeIds,    setEditAssigneeIds]    = useState<string[]>([])
   const [editShiftId,        setEditShiftId]        = useState('')
   const [editStatus,      setEditStatus]      = useState<Task['status']>('Assigned')
-  const [editPercent,     setEditPercent]     = useState(0)
   const [deleteConfirm,   setDeleteConfirm]   = useState(false)
   const [deleteTaskModal, setDeleteTaskModal] = useState<Task | null>(null)
   // Active Deadline Summary bucket — clicking a count pill filters the Deadline Calendar to
@@ -2013,7 +2011,6 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
     setEditAssigneeIds(task.assigned_user_id ? [task.assigned_user_id] : [])
     setEditShiftId(task.shift_id ?? '')
     setEditStatus(task.status)
-    setEditPercent(task.percentage_complete)
     setPanelError('')
     setDeleteConfirm(false)
     setSubTaskTitle('')
@@ -2060,7 +2057,6 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
         assigned_user_ids: editAssigneeIds,
         shift_id: editShiftId || null,
         status: editStatus,
-        percentage_complete: editPercent,
       }
       const res = await fetch('/api/task', {
         method: 'PATCH',
@@ -2106,7 +2102,6 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
             assigned_user_id: original_.assigned_user_id,
             shift_id: original_.shift_id,
             status: original_.status,
-            percentage_complete: original_.percentage_complete,
           }),
         })
         const renameData = await renameRes.json()
@@ -2126,7 +2121,6 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
             assigned_user_id: editAssigneeIds[0] || null,
             assigned_by: internalUserId || null,
             status: 'Assigned',
-            percentage_complete: 0,
             task_date: editStartDate,
             // priority/due_at are intentionally omitted — the service always inherits them from
             // the parent task whenever parent_task_id is set.
@@ -2333,17 +2327,16 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
 
   // My Tasks (Manager only): the Manager is the assignee here, not the assigner, so the usual
   // isOwner-gated edit form (assertIsTaskOwner, assigner-only) never applies to these cards — this
-  // is the one status-progress action the assignee themselves gets, same percentage steps
-  // (0/33/66/100) as the Employee's own drag-to-advance board. Review stays a hard stop: only the
-  // Owner/Partner who assigned it can approve/reject it back on their own board.
+  // is the one status-progress action the assignee themselves gets, same as the Employee's own
+  // drag-to-advance board. Review stays a hard stop: only the Owner/Partner who assigned it can
+  // approve/reject it back on their own board.
   const handleAdvanceMyTask = async (task: Task, nextStatus: 'In Progress' | 'Review') => {
     setMyTaskActionLoading(true); setPanelError('')
     try {
-      const percentage_complete = MY_TASKS_STATUS_PERCENT[nextStatus]
       const res = await fetch('/api/task', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: task.id, status: nextStatus, percentage_complete }),
+        body: JSON.stringify({ id: task.id, status: nextStatus }),
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
@@ -2371,13 +2364,12 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
     const allTasks = COLUMNS.flatMap(col => myTasksKanban?.[col] ?? [])
     const subTasks = allTasks.filter(t => t.parent_task_id === task.id)
     const affectedIds = new Set([task.id, ...subTasks.map(t => t.id)])
-    const percentage_complete = MY_TASKS_STATUS_PERCENT[targetStatus]
 
     setMyTasksKanban(prev => {
       if (!prev) return prev
       const moved = COLUMNS.flatMap(col => prev[col] ?? [])
         .filter(t => affectedIds.has(t.id))
-        .map(t => ({ ...t, status: targetStatus, percentage_complete }))
+        .map(t => ({ ...t, status: targetStatus }))
       const next = { ...prev } as KanbanGroup
       for (const col of COLUMNS) next[col] = (prev[col] ?? []).filter(t => !affectedIds.has(t.id))
       next[targetStatus] = [...next[targetStatus], ...moved]
@@ -2388,7 +2380,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
       const results = await Promise.all([...affectedIds].map(id => fetch('/api/task', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, status: targetStatus, percentage_complete }),
+        body: JSON.stringify({ id, status: targetStatus }),
       }).then(r => r.json())))
       if (results.some(r => !r.success)) throw new Error()
       showTaskToast(targetStatus === 'Review' ? 'Task submitted for review.' : targetStatus === 'In Progress' ? 'Task started.' : 'Task updated.')
@@ -2725,7 +2717,6 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
         due_at: newRecurringEnabled ? null : new Date(`${newDeadlineDate}T${newDeadlineTime}:00`).toISOString(),
         task_date: newStartDate,
         status: 'Assigned',
-        percentage_complete: 0,
         ...(newSubTaskEnabled && newSubTasks.length > 0 ? { sub_tasks: newSubTasks.map(s => ({ title: s.title })) } : {}),
       }
       const res = await fetch('/api/task', {
@@ -6703,7 +6694,6 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                 assigned_user_id: aiManagerId || null,
                 assigned_by: internalUserId || null,
                 status: 'Assigned',
-                percentage_complete: 0,
                 task_date: aiAssignDate,
                 sub_tasks: subTasks.length > 0 ? subTasks : undefined,
               }),

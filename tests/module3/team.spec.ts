@@ -43,7 +43,7 @@ async function createMember(role: 'Manager' | 'Employee' | 'Partner', label: str
   if (role === 'Manager') {
     const { error } = await admin
       .from('manager_departments')
-      .insert({ manager_id: user.id, company_id: seeded.companyId, department_id: departmentId, assigned_by: seeded.ownerId })
+      .insert({ manager_id: user.id, company_id: seeded.companyId, department_id: departmentId })
     if (error) throw new Error(`Failed to assign manager department: ${error.message}`)
   } else if (role === 'Employee') {
     const { error } = await admin
@@ -133,7 +133,7 @@ test('UC27 sends a direct invitation by email to a new address', async ({ reques
   expect(missingFields.status()).toBe(400)
 })
 
-test('UC27 an existing member of another company gets an inbox invite, not a duplicate invitation code', async ({ request }) => {
+test('UC27 rejects inviting an existing member of another company', async ({ request }) => {
   const outsider = await createMember('Employee', 'outsider-invite', departments.secondary)
   // Move the outsider to a separate company so they're a genuine "existing user elsewhere" case.
   const { data: otherCompany, error: otherCompanyError } = await admin
@@ -153,22 +153,10 @@ test('UC27 an existing member of another company gets an inbox invite, not a dup
       invited_by: seeded.ownerId,
     },
   })
-  expect(res.status()).toBe(200)
-  expect((await res.json()).success).toBe(true)
+  const body = await res.json()
+  expect(body.success).toBe(false)
+  expect(body.message).toBe('This user already has an account with another company and cannot be invited.')
 
-  const { data: inboxRows } = await admin
-    .from('inbox')
-    .select('recipient_user_id, company_id, role, type, status')
-    .eq('recipient_user_id', outsider.userId)
-    .eq('company_id', seeded.companyId)
-  expect(inboxRows).toEqual([
-    expect.objectContaining({
-      recipient_user_id: outsider.userId, company_id: seeded.companyId, role: 'Employee',
-      type: 'company_invite', status: 'pending',
-    }),
-  ])
-
-  await admin.from('inbox').delete().eq('recipient_user_id', outsider.userId)
   await admin.from('companies').delete().eq('id', otherCompany.id)
 })
 
@@ -180,7 +168,6 @@ test('UC31 assigns, lists, and removes a department manager', async ({ request }
       company_id: seeded.companyId,
       department_id: departments.secondary,
       manager_id: manager.userId,
-      assigned_by: seeded.ownerId,
     },
   })
   expect(assign.status()).toBe(200)

@@ -100,16 +100,13 @@ const NEXT_WED = addDays(NEXT_MON, 2)
 const TOMORROW = addDays(TODAY, 1)
 
 // tasks.due_at is read back via LOCAL wall-clock getters (unlike shift times, which are
-// UTC-nominal) — build it from a local Date + local setHours so the stored instant still reads
-// back as the intended calendar day regardless of the machine's timezone.
+// Singapore-nominal) — build it from a local Date + local setHours so the stored instant still
+// reads back as the intended calendar day regardless of the machine's timezone.
 function dueAtOn(dateObj, hour = 17) {
   const d = new Date(dateObj)
   d.setHours(hour, 0, 0, 0)
   return d.toISOString()
 }
-// UTC calendar-day key — for the Casual Worker open-shift below, whose start/end times are
-// derived from the real "now" instant and compared against real now in UTC by the clock-in gate,
-// so its shift_date must match that same UTC day, not the machine's local day.
 function dueLaterToday(hoursFromNow = 2) {
   const now = new Date()
   const d = new Date(now)
@@ -128,14 +125,21 @@ function activeSubmissionWeekStart(today, deadlineWeekday = 0, deadlineTime = '0
     candidate = targetWeek
   }
 }
-function dateKeyUTC(d) {
-  const y = d.getUTCFullYear()
-  const m = String(d.getUTCMonth() + 1).padStart(2, '0')
-  const day = String(d.getUTCDate()).padStart(2, '0')
+// shifts.shift_date/start_time/end_time are Singapore-nominal wall-clock values (see
+// src/lib/singaporeTime.ts's sgtInstant/sgtTodayKey — the app parses them with a fixed +08:00
+// offset, not literal UTC). For a "now"-relative dynamic shift (e.g. "started 1h ago") to
+// actually land on the real intended instant, its shift_date/start_time/end_time must be the
+// Singapore wall-clock reading of that instant, not its raw UTC digits.
+function dateKeySGT(d) {
+  const sgt = new Date(d.getTime() + 8 * 60 * 60 * 1000)
+  const y = sgt.getUTCFullYear()
+  const m = String(sgt.getUTCMonth() + 1).padStart(2, '0')
+  const day = String(sgt.getUTCDate()).padStart(2, '0')
   return `${y}-${m}-${day}`
 }
 function toHM(d) {
-  return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`
+  const sgt = new Date(d.getTime() + 8 * 60 * 60 * 1000)
+  return `${String(sgt.getUTCHours()).padStart(2, '0')}:${String(sgt.getUTCMinutes()).padStart(2, '0')}`
 }
 
 // ─── Attendance (Module 5) 小工具：建 shift / assignment / attendance_record ──
@@ -171,18 +175,20 @@ async function createTask(fields) {
 }
 // lateMinutes=0 → Present；传大于0 → Late；不调用这个函数 → Absent（不建记录）。
 // breakStart/breakEnd（可选，"HH:MM" 24小时制）→ 填充 break_in_time/break_out_time。
+// clock_in/out/break 时间用 +08:00（新加坡时间）解析，跟 shift start_time="09:00" 被 App 的
+// sgtInstant 解析成的真实时刻对齐——用字面 Z（UTC）会跟 App 的 Late/Absent 判定差 8 小时。
 async function clockRecord(assignment, userId, { dateStr, endStr = '17:00', lateMinutes = 0, breakStart = null, breakEnd = null }) {
   if (!assignment) return
-  const clockIn = new Date(`${dateStr}T09:00:00.000Z`)
+  const clockIn = new Date(`${dateStr}T09:00:00.000+08:00`)
   clockIn.setUTCMinutes(clockIn.getUTCMinutes() + lateMinutes)
-  const clockOut = new Date(`${dateStr}T${endStr}:00.000Z`)
+  const clockOut = new Date(`${dateStr}T${endStr}:00.000+08:00`)
   const { error } = await supabase.from('attendance_records').insert({
     shift_assignment_id: assignment.id,
     casual_worker_id: userId,
     clock_in_time: clockIn.toISOString(),
     clock_out_time: clockOut.toISOString(),
-    break_in_time: breakStart ? new Date(`${dateStr}T${breakStart}:00.000Z`).toISOString() : null,
-    break_out_time: breakEnd ? new Date(`${dateStr}T${breakEnd}:00.000Z`).toISOString() : null,
+    break_in_time: breakStart ? new Date(`${dateStr}T${breakStart}:00.000+08:00`).toISOString() : null,
+    break_out_time: breakEnd ? new Date(`${dateStr}T${breakEnd}:00.000+08:00`).toISOString() : null,
     confirmed_by_employee_id: userId,
     submitted_by_employee_id: userId,
     status: 'submitted',
@@ -197,31 +203,31 @@ const DEMO_PHOTO_URL = 'https://api.dicebear.com/7.x/avataaars/svg?seed=tasking'
 const accounts = [
   { email: 'owner@test.com',    full_name: 'Sarah Mitchell', role: 'Owner',    phone_number: '+65 9123 4567', date_of_birth: '1980-03-15' },
   { email: 'partner1@test.com', full_name: 'James Tan',      role: 'Partner',  phone_number: '+65 9234 5678', date_of_birth: '1982-07-22' },
-  { email: 'manager1@test.com', full_name: 'David Lim',      role: 'Manager',  phone_number: '+65 9456 7890', date_of_birth: '1988-04-12', hourly_rate: 28.00 },
-  { email: 'manager2@test.com', full_name: 'Rachel Koh',     role: 'Manager',  phone_number: '+65 9567 8901', date_of_birth: '1990-09-28', hourly_rate: 27.50 },
-  { email: 'manager3@test.com', full_name: 'Aaron Wong',     role: 'Manager',  phone_number: '+65 9678 9012', date_of_birth: '1987-01-17', hourly_rate: 26.00 },
-  { email: 'manager4@test.com', full_name: 'Fiona Chen',     role: 'Manager',  phone_number: '+65 9789 0123', date_of_birth: '1991-06-03', hourly_rate: 29.00 },
+  { email: 'manager1@test.com', full_name: 'David Lim',      role: 'Manager',  phone_number: '+65 9456 7890', date_of_birth: '1988-04-12' },
+  { email: 'manager2@test.com', full_name: 'Rachel Koh',     role: 'Manager',  phone_number: '+65 9567 8901', date_of_birth: '1990-09-28' },
+  { email: 'manager3@test.com', full_name: 'Aaron Wong',     role: 'Manager',  phone_number: '+65 9678 9012', date_of_birth: '1987-01-17' },
+  { email: 'manager4@test.com', full_name: 'Fiona Chen',     role: 'Manager',  phone_number: '+65 9789 0123', date_of_birth: '1991-06-03' },
   // 2nd Manager per department (manager{i+5} pairs with manager{i+1} on the same department, see
   // the deptStaff/Step 7 assignment loop) — every department now has 2 Managers, so the Manager
   // Tasks/Shifts pages have a real peer-manager-in-the-same-department scenario to test against,
   // not just a single manager per department.
-  { email: 'manager5@test.com', full_name: 'Wendy Ho',       role: 'Manager',  phone_number: '+65 9890 1234', date_of_birth: '1989-11-02', hourly_rate: 27.00 },
-  { email: 'manager6@test.com', full_name: 'Kelvin Ang',     role: 'Manager',  phone_number: '+65 9901 2345', date_of_birth: '1986-05-19', hourly_rate: 28.50 },
-  { email: 'manager7@test.com', full_name: 'Natalie Goh',    role: 'Manager',  phone_number: '+65 9012 3456', date_of_birth: '1992-02-25', hourly_rate: 27.00 },
-  { email: 'manager8@test.com', full_name: 'Samuel Ng',      role: 'Manager',  phone_number: '+65 9123 4560', date_of_birth: '1985-12-08', hourly_rate: 26.50 },
-  { email: 'employee1@test.com', full_name: 'Ben Seah',      role: 'Employee', phone_number: '+65 8123 4567', date_of_birth: '1995-02-18', hourly_rate: 19.00 },
-  { email: 'employee2@test.com', full_name: 'Chloe Yeo',     role: 'Employee', phone_number: '+65 8234 5678', date_of_birth: '1997-10-05', hourly_rate: 18.50 },
-  { email: 'employee3@test.com', full_name: 'Daniel Tay',    role: 'Employee', phone_number: '+65 8345 6789', date_of_birth: '1994-07-30', hourly_rate: 20.00 },
-  { email: 'employee4@test.com', full_name: 'Elaine Chua',   role: 'Employee', phone_number: '+65 8456 7890', date_of_birth: '1996-04-11', hourly_rate: 19.50 },
+  { email: 'manager5@test.com', full_name: 'Wendy Ho',       role: 'Manager',  phone_number: '+65 9890 1234', date_of_birth: '1989-11-02' },
+  { email: 'manager6@test.com', full_name: 'Kelvin Ang',     role: 'Manager',  phone_number: '+65 9901 2345', date_of_birth: '1986-05-19' },
+  { email: 'manager7@test.com', full_name: 'Natalie Goh',    role: 'Manager',  phone_number: '+65 9012 3456', date_of_birth: '1992-02-25' },
+  { email: 'manager8@test.com', full_name: 'Samuel Ng',      role: 'Manager',  phone_number: '+65 9123 4560', date_of_birth: '1985-12-08' },
+  { email: 'employee1@test.com', full_name: 'Ben Seah',      role: 'Employee', phone_number: '+65 8123 4567', date_of_birth: '1995-02-18' },
+  { email: 'employee2@test.com', full_name: 'Chloe Yeo',     role: 'Employee', phone_number: '+65 8234 5678', date_of_birth: '1997-10-05' },
+  { email: 'employee3@test.com', full_name: 'Daniel Tay',    role: 'Employee', phone_number: '+65 8345 6789', date_of_birth: '1994-07-30' },
+  { email: 'employee4@test.com', full_name: 'Elaine Chua',   role: 'Employee', phone_number: '+65 8456 7890', date_of_birth: '1996-04-11' },
   // 2nd Employee per department (employee{i+5} pairs with employee{i+1} on the same department,
   // same i as its manager{i+5} above) — every department now has 2 Employees, not just Operations,
   // which also means MIN_EMPLOYEES_PER_DAY=1 is satisfiable everywhere: a Fixed Day Off request no
   // longer has to be structurally flagged with no safe alternative just because a department only
   // has 1 Employee (see suggestFixedOffDayGroup/suggestFixedOffDayQueue in requestAISuggestService.ts).
-  { email: 'employee5@test.com', full_name: 'Grace Lim',     role: 'Employee', phone_number: '+65 8567 8901', date_of_birth: '1998-08-14', hourly_rate: 18.00 },
-  { email: 'employee6@test.com', full_name: 'Hannah Lee',    role: 'Employee', phone_number: '+65 8678 9012', date_of_birth: '1999-03-21', hourly_rate: 18.50 },
-  { email: 'employee7@test.com', full_name: 'Ivan Koh',      role: 'Employee', phone_number: '+65 8789 0123', date_of_birth: '1996-08-09', hourly_rate: 19.00 },
-  { email: 'employee8@test.com', full_name: 'Sophia Tan',    role: 'Employee', phone_number: '+65 8890 1234', date_of_birth: '1997-01-27', hourly_rate: 18.50 },
+  { email: 'employee5@test.com', full_name: 'Grace Lim',     role: 'Employee', phone_number: '+65 8567 8901', date_of_birth: '1998-08-14' },
+  { email: 'employee6@test.com', full_name: 'Hannah Lee',    role: 'Employee', phone_number: '+65 8678 9012', date_of_birth: '1999-03-21' },
+  { email: 'employee7@test.com', full_name: 'Ivan Koh',      role: 'Employee', phone_number: '+65 8789 0123', date_of_birth: '1996-08-09' },
+  { email: 'employee8@test.com', full_name: 'Sophia Tan',    role: 'Employee', phone_number: '+65 8890 1234', date_of_birth: '1997-01-27' },
 ]
 
 // Guest Users — public job-board applicants (role 'Guest User', not scoped to any company yet).
@@ -232,19 +238,19 @@ const accounts = [
 const guestApplicants = [
   { email: 'guest1@test.com', full_name: 'Wei Jie Lim',  phone_number: '+65 8200 2001', date_of_birth: '2000-01-15',
     skills: 'Forklift operation, Inventory management, Heavy lifting', resume_url: 'https://example.com/demo-resumes/guest1-resume.pdf',
-    certs: [{ name: 'Forklift Licence', file_url: 'https://example.com/demo-certs/forklift-licence.pdf' }] },
+    certs: [{ name: 'Forklift Licence', certificate_url: 'https://example.com/demo-certs/forklift-licence.pdf' }] },
   { email: 'guest2@test.com', full_name: 'Priyanka Das',  phone_number: '+65 8200 2002', date_of_birth: '1999-05-22',
     skills: 'Customer service, Social media content, Copywriting', resume_url: 'https://example.com/demo-resumes/guest2-resume.pdf',
-    certs: [{ name: 'Digital Marketing Certificate', file_url: 'https://example.com/demo-certs/digital-marketing.pdf' }] },
+    certs: [{ name: 'Digital Marketing Certificate', certificate_url: 'https://example.com/demo-certs/digital-marketing.pdf' }] },
   { email: 'guest3@test.com', full_name: 'Kai Xuan Ong',  phone_number: '+65 8200 2003', date_of_birth: '2001-09-10',
     skills: 'Event setup, Sound equipment, Stage rigging', resume_url: 'https://example.com/demo-resumes/guest3-resume.pdf',
     certs: [] },
   { email: 'guest4@test.com', full_name: 'Amirah Yusof',  phone_number: '+65 8200 2004', date_of_birth: '1998-12-03',
     skills: 'Photography, Canva, Retail merchandising', resume_url: 'https://example.com/demo-resumes/guest4-resume.pdf',
-    certs: [{ name: 'First Aid Certificate', file_url: null }] },
+    certs: [{ name: 'First Aid Certificate', certificate_url: null }] },
   { email: 'guest5@test.com', full_name: 'Ryan Teo',      phone_number: '+65 8200 2005', date_of_birth: '2002-03-28',
     skills: 'PC hardware, Networking basics, Troubleshooting', resume_url: 'https://example.com/demo-resumes/guest5-resume.pdf',
-    certs: [{ name: 'CompTIA A+', file_url: 'https://example.com/demo-certs/comptia-a-plus.pdf' }] },
+    certs: [{ name: 'CompTIA A+', certificate_url: 'https://example.com/demo-certs/comptia-a-plus.pdf' }] },
 ]
 
 // Platform-level admin accounts (Module 9/10) — NOT scoped to any company. Protected from
@@ -264,6 +270,8 @@ const legacyTestEmailsToDelete = [
   'casual2@test.com',
   'casual3@test.com',
   'casual4@test.com',
+  'casual5@test.com',
+  'casual6@test.com',
   'partner2@test.com',
   ...Array.from({ length: 10 }, (_, i) => `cw${i + 1}@test.com`),
   ...Array.from({ length: 10 }, (_, i) => `guest${i + 1}@test.com`),
@@ -282,7 +290,6 @@ async function main() {
     'attendance_records',
     'shift_action_history',
     'shift_swap_requests',
-    'time_off_requests',
     'shift_assignments',
     'shifts',
     'shift_templates',
@@ -291,13 +298,12 @@ async function main() {
     'messages',
     'announcement_reads',
     'announcements',
-    'inbox',
     'job_invitations',
     'job_applicants',
-    'recruitment_cancellations',
+    'job_cancellations',
     'job_postings',
     'job_templates',
-    'employee_off_day_requests',
+    'off_day_requests',
     'off_day_quota_settings',
     'user_certificates',
     'manager_departments',
@@ -324,6 +330,11 @@ async function main() {
   const { error: swDeptSettingsErr } = await supabase.from('shift_swap_department_settings').delete().neq('company_id', '00000000-0000-0000-0000-000000000000')
   if (swDeptSettingsErr) console.warn(`  ⚠ 清空 shift_swap_department_settings 失败: ${swDeptSettingsErr.message}`)
   else console.log('  ✓ 清空 shift_swap_department_settings')
+  // casual_worker_profiles has no `id` column (PK is user_id) and its FK blocks the users cleanup
+  // below if left in place — must be cleared before users.
+  const { error: cwProfileErr } = await supabase.from('casual_worker_profiles').delete().neq('user_id', '00000000-0000-0000-0000-000000000000')
+  if (cwProfileErr) console.warn(`  ⚠ 清空 casual_worker_profiles 失败: ${cwProfileErr.message}`)
+  else console.log('  ✓ 清空 casual_worker_profiles')
   // Platform admin rows (User Admin / Marketing Admin) are excluded — the protect_admin_accounts
   // DB trigger rejects any attempt to delete them, which would otherwise fail this entire statement.
   const { error: uErr } = await supabase.from('users').delete().neq('id', '00000000-0000-0000-0000-000000000000')
@@ -394,8 +405,8 @@ async function main() {
         supabase_auth_id: authId,
         full_name: admin.full_name,
         email_address: admin.email,
-        phone_number: null,
-        date_of_birth: null,
+        phone_number: '+65 9000 0000',
+        date_of_birth: '1990-01-01',
         profile_photo_url: DEMO_PHOTO_URL,
         role: admin.role,
         company_id: null,
@@ -503,7 +514,6 @@ async function main() {
         profile_photo_url: DEMO_PHOTO_URL,
         role: account.role,
         company_id: company.id,
-        hourly_rate: account.hourly_rate ?? null,
       })
       .select()
       .single()
@@ -526,7 +536,6 @@ async function main() {
         manager_id: userIdMap[managerEmail].internalId,
         department_id: dept.id,
         company_id: company.id,
-        assigned_by: ownerUser.id,
       })
       if (mdErr) console.warn(`  ⚠ manager_departments 失败: ${mdErr.message}`)
       else console.log(`  ✓ ${managerEmail} → ${dept.name}`)
@@ -551,8 +560,8 @@ async function main() {
   // real shifts afterwards from a clean schedule.
   console.log('\nStep 8: Create Off Day clean baseline settings...')
   const quotaRows = [
-    { company_id: company.id, user_id: null, role: 'Manager', max_days_per_week: 2, updated_by: ownerUser.id },
-    { company_id: company.id, user_id: null, role: 'Employee', max_days_per_week: 2, updated_by: ownerUser.id },
+    { company_id: company.id, user_id: null, role: 'Manager', max_days_per_week: 2 },
+    { company_id: company.id, user_id: null, role: 'Employee', max_days_per_week: 2 },
   ]
   for (const row of quotaRows) {
     const { error } = await supabase.from('off_day_quota_settings').insert(row)
@@ -563,7 +572,6 @@ async function main() {
     company_id: company.id,
     deadline_weekday: 0,
     deadline_time: '08:00',
-    updated_by: ownerUser.id,
   }, { onConflict: 'company_id' })
   if (deadlineSeedErr) console.warn(`  ⚠ Failed to create off-day submission deadline: ${deadlineSeedErr.message}`)
   else console.log('  ✓ Off Day submission deadline: Sunday 08:00')
@@ -614,7 +622,6 @@ async function main() {
       shift_date: dateKey(addDays(TODAY, requesterDayOffset)),
       start_time: requesterTime[0],
       end_time: requesterTime[1],
-      title,
       created_by: ownerUser.id,
       publication_status: 'published',
     })
@@ -624,7 +631,6 @@ async function main() {
       shift_date: dateKey(addDays(TODAY, counterpartDayOffset)),
       start_time: counterpartTime[0],
       end_time: counterpartTime[1],
-      title,
       created_by: ownerUser.id,
       publication_status: 'published',
     })
@@ -647,7 +653,6 @@ async function main() {
       status: def.status,
       reviewed_by: def.reviewedBy ?? null,
       reviewed_at: def.reviewedAt ?? null,
-      requires_owner_review: def.requiresReview ?? false,
       owner_review_reason: def.ownerReviewReason ?? null,
       created_at: def.createdAt,
     }
@@ -802,7 +807,7 @@ async function main() {
   const todayKey = dateKey(TODAY)
   const managerClockStart = new Date(Date.now() + 30 * 60000)
   const managerClockEnd = new Date(managerClockStart.getTime() + 8 * 60 * 60000)
-  const managerClockDate = dateKeyUTC(managerClockStart)
+  const managerClockDate = dateKeySGT(managerClockStart)
   const managerClockStartTime = toHM(managerClockStart)
   const managerClockEndTime = toHM(managerClockEnd)
   const manager1UserId = userIdMap['manager1@test.com'].internalId
@@ -841,8 +846,6 @@ async function main() {
         profile_photo_url: DEMO_PHOTO_URL,
         role: 'Guest User',
         company_id: null,
-        skills: guest.skills,
-        resume_url: guest.resume_url,
       })
       .select()
       .single()
@@ -851,11 +854,15 @@ async function main() {
       continue
     }
     userIdMap[guest.email] = { authId: guestAuth.user.id, internalId: guestUser.id }
+    const { error: guestProfileErr } = await supabase
+      .from('casual_worker_profiles')
+      .insert({ user_id: guestUser.id, skills: guest.skills, resume_url: guest.resume_url })
+    if (guestProfileErr) console.warn(`  ⚠ Failed to seed dashboard guest profile (${guest.email}): ${guestProfileErr.message}`)
     for (const cert of guest.certs) {
       const { error: certErr } = await supabase.from('user_certificates').insert({
         user_id: guestUser.id,
         name: cert.name,
-        file_url: cert.file_url,
+        certificate_url: cert.certificate_url,
       })
       if (certErr) console.warn(`  ⚠ Failed to seed dashboard guest certificate (${guest.email}): ${certErr.message}`)
     }
@@ -880,8 +887,6 @@ async function main() {
         profile_photo_url: DEMO_PHOTO_URL,
         role: 'Casual Worker',
         company_id: company.id,
-        worker_status: 'active',
-        hourly_rate: 18.5,
       })
       .select()
       .single()
@@ -917,8 +922,6 @@ async function main() {
         profile_photo_url: DEMO_PHOTO_URL,
         role: 'Casual Worker',
         company_id: company.id,
-        worker_status: 'active',
-        hourly_rate: 19.0,
       })
       .select()
       .single()
@@ -942,7 +945,6 @@ async function main() {
     shift_date: managerClockDate,
     start_time: managerClockStartTime,
     end_time: managerClockEndTime,
-    title: 'Operations Live Floor Coverage',
     created_by: ownerUser.id,
     publication_status: 'published',
   })
@@ -958,7 +960,6 @@ async function main() {
     shift_date: todayKey,
     start_time: '09:00',
     end_time: '17:00',
-    title: 'Operations Day Team Coverage',
     created_by: ownerUser.id,
     publication_status: 'published',
   })
@@ -1007,7 +1008,6 @@ async function main() {
       shift_date: todayKey,
       start_time: '09:00',
       end_time: '17:00',
-      title: def.title,
       created_by: ownerUser.id,
       publication_status: 'published',
     })
@@ -1025,7 +1025,7 @@ async function main() {
   if (userIdMap['casual1@test.com']) {
     const casualPreStartStart = new Date(Date.now() + 30 * 60 * 1000)
     const casualPreStartEnd = new Date(casualPreStartStart.getTime() + 4 * 60 * 60 * 1000)
-    const casualPreStartDate = dateKeyUTC(casualPreStartStart)
+    const casualPreStartDate = dateKeySGT(casualPreStartStart)
     const casualPreStartStartTime = toHM(casualPreStartStart)
     const casualPreStartEndTime = toHM(casualPreStartEnd)
     const { data: casualPreStartJob, error: casualPreStartJobErr } = await supabase
@@ -1038,7 +1038,6 @@ async function main() {
         description: 'Cover the cafe counter during the pre-lunch rush. Prepare the till, greet guests, take orders, and keep the counter stocked before the lunch team arrives.',
         requirements: 'Arrive on time, wear black shoes, comfortable handling cash and customer questions.',
         location: '1 Raffles Place, Singapore 048616',
-        employment_type: 'Part-time',
         company_name: company.name,
         status: 'closed',
         form_type: 'oneoff',
@@ -1049,7 +1048,6 @@ async function main() {
         openings: 1,
         experience_required: 'Not Required',
         minimum_age: 16,
-        uniform_required: true,
         uniform_type: 'company',
         uniform_details: 'Black pants and covered shoes. Apron provided on site.',
         salary_amount: 72,
@@ -1068,7 +1066,6 @@ async function main() {
           user_id: userIdMap['casual1@test.com'].internalId,
           resume_url: 'https://example.com/demo-resumes/marcus-lee-resume.pdf',
           status: 'accepted',
-          relevant_experience: 'less_than_1',
           additional_note: 'I can arrive before the shift starts and help with cafe counter setup.',
         })
         .select()
@@ -1095,7 +1092,6 @@ async function main() {
           shift_date: todayKey,
           start_time: '09:00',
           end_time: '13:00',
-          title: 'Marketing Promo Booth Cover',
           created_by: ownerUser.id,
           publication_status: 'published',
         })
@@ -1130,8 +1126,6 @@ async function main() {
         profile_photo_url: DEMO_PHOTO_URL,
         role: 'Casual Worker',
         company_id: company.id,
-        worker_status: 'active',
-        hourly_rate: 17.5,
       })
       .select()
       .single()
@@ -1154,7 +1148,7 @@ async function main() {
       // Started 1h ago so it reads as already-in-progress whenever this is run or tested.
       const emp5Shift1Start = new Date(Date.now() - 60 * 60 * 1000)
       const emp5Shift1End = new Date(emp5Shift1Start.getTime() + 8 * 60 * 60 * 1000)
-      const emp5Shift1Date = dateKeyUTC(emp5Shift1Start)
+      const emp5Shift1Date = dateKeySGT(emp5Shift1Start)
       const emp5Shift1StartTime = toHM(emp5Shift1Start)
       const emp5Shift1EndTime = toHM(emp5Shift1End)
       const employee5CasualShift = await createShift({
@@ -1163,7 +1157,6 @@ async function main() {
         shift_date: emp5Shift1Date,
         start_time: emp5Shift1StartTime,
         end_time: emp5Shift1EndTime,
-        title: 'Weekend Cafe Support',
         created_by: manager1UserId,
         publication_status: 'published',
       })
@@ -1181,21 +1174,21 @@ async function main() {
           title: 'Clean and reset cafe tables',
           description: 'Wipe down all cafe tables and chairs, and reset condiment trays between the lunch and afternoon rush.',
           assigned_user_id: casual3User.id, assigned_by: employee5UserId,
-          status: 'In Progress', percentage_complete: 45, due_at: new Date(emp5Shift1Start.getTime() + 4 * 3600000).toISOString(), priority: 'Medium',
+          status: 'In Progress', due_at: new Date(emp5Shift1Start.getTime() + 4 * 3600000).toISOString(), priority: 'Medium',
         })
         await createTask({
           shift_id: employee5CasualShift.id, company_id: company.id, department_id: opsDept.id,
           title: 'Count afternoon float',
           description: 'Count the till float at the afternoon handover and log the total on the shift sheet.',
           assigned_user_id: casual3User.id, assigned_by: employee5UserId,
-          status: 'Review', percentage_complete: 100, due_at: new Date(emp5Shift1Start.getTime() + 5 * 3600000).toISOString(), priority: 'High',
+          status: 'Review', due_at: new Date(emp5Shift1Start.getTime() + 5 * 3600000).toISOString(), priority: 'High',
         })
         await createTask({
           shift_id: employee5CasualShift.id, company_id: company.id, department_id: opsDept.id,
           title: 'Set up morning coffee station',
           description: 'Set up the coffee station, grind beans for the day, and check the milk fridge stock.',
           assigned_user_id: casual3User.id, assigned_by: employee5UserId,
-          status: 'Complete', percentage_complete: 100,
+          status: 'Complete',
           due_at: emp5Shift1Start.toISOString(), completed_at: emp5Shift1Start.toISOString(),
         })
         console.log(`  ✓ Employee Tasks 页演示数据：Grace Lim（employee5）今天督导 Priya Nair（casual3），4 条 Task 覆盖 Assigned/In Progress/Review/Complete；班次 ${emp5Shift1StartTime}-${emp5Shift1EndTime} UTC（${emp5Shift1Date}）现在正好在班内`)
@@ -1224,8 +1217,6 @@ async function main() {
         profile_photo_url: DEMO_PHOTO_URL,
         role: 'Casual Worker',
         company_id: company.id,
-        worker_status: 'active',
-        hourly_rate: 17.0,
       })
       .select()
       .single()
@@ -1245,7 +1236,7 @@ async function main() {
       // 9h shift, staggered slightly from casual3's so the two Casual Workers aren't identical.
       const emp5Shift2Start = new Date(Date.now() - 90 * 60 * 1000)
       const emp5Shift2End = new Date(emp5Shift2Start.getTime() + 9 * 60 * 60 * 1000)
-      const emp5Shift2Date = dateKeyUTC(emp5Shift2Start)
+      const emp5Shift2Date = dateKeySGT(emp5Shift2Start)
       const emp5Shift2StartTime = toHM(emp5Shift2Start)
       const emp5Shift2EndTime = toHM(emp5Shift2End)
       const employee5CasualShift2 = await createShift({
@@ -1254,7 +1245,6 @@ async function main() {
         shift_date: emp5Shift2Date,
         start_time: emp5Shift2StartTime,
         end_time: emp5Shift2EndTime,
-        title: 'Weekend Floor Support',
         created_by: manager1UserId,
         publication_status: 'published',
       })
@@ -1272,14 +1262,14 @@ async function main() {
           title: 'Restock napkins and cutlery trays',
           description: 'Top up napkin dispensers and cutlery trays at every table before the lunch rush.',
           assigned_user_id: casual4User.id, assigned_by: employee5UserId,
-          status: 'In Progress', percentage_complete: 60, due_at: new Date(emp5Shift2Start.getTime() + 4 * 3600000).toISOString(), priority: 'Medium',
+          status: 'In Progress', due_at: new Date(emp5Shift2Start.getTime() + 4 * 3600000).toISOString(), priority: 'Medium',
         })
         await createTask({
           shift_id: employee5CasualShift2.id, company_id: company.id, department_id: opsDept.id,
           title: 'Clear and reset outdoor seating',
           description: 'Clear used cups and trays from the outdoor seating area and wipe down every table.',
           assigned_user_id: casual4User.id, assigned_by: employee5UserId,
-          status: 'Complete', percentage_complete: 100,
+          status: 'Complete',
           due_at: emp5Shift2Start.toISOString(), completed_at: emp5Shift2Start.toISOString(),
         })
         console.log(`  ✓ Employee Tasks 页演示数据：Grace Lim（employee5）今天同时督导 Daniel Wong（casual4），3 条 Task 覆盖 Assigned/In Progress/Complete；班次 ${emp5Shift2StartTime}-${emp5Shift2EndTime} UTC（${emp5Shift2Date}）现在正好在班内 —— 验证一个 Employee 同时带多个 CW 的场景`)
@@ -1317,14 +1307,12 @@ async function main() {
         description: 'Seeded manager dashboard posting with applicants, deadline, and staffing pressure.',
         requirements: 'Friendly, punctual, comfortable with guest-facing work.',
         location: company.location,
-        employment_type: 'Part-time',
         status: 'open',
         form_type: 'oneoff',
         urgency: 'high',
         estimated_hours: '5',
         experience_required: 'Not Required',
         minimum_age: 16,
-        uniform_required: false,
         salary_amount: 16,
         ...rest,
       })
@@ -1344,7 +1332,6 @@ async function main() {
       user_id: userIdMap[guestEmail].internalId,
       resume_url: guest?.resume_url ?? null,
       status: 'pending',
-      relevant_experience: 'less_than_1',
       additional_note: 'Available for the seeded Operations dashboard test shift.',
       skills_snapshot: guest?.skills ?? null,
       certificates_snapshot: guest?.certs ?? [],
@@ -1362,7 +1349,6 @@ async function main() {
     assigned_by: manager1UserId,
     status: 'Review',
     due_at: dueAtOn(TODAY, 12),
-    percentage_complete: 100,
     priority: 'High',
   })
   await createTask({
@@ -1374,7 +1360,6 @@ async function main() {
     assigned_by: manager1UserId,
     status: 'In Progress',
     due_at: dueAtOn(YESTERDAY, 16),
-    percentage_complete: 45,
     priority: 'High',
   })
   await createTask({
@@ -1386,7 +1371,6 @@ async function main() {
     assigned_by: manager1UserId,
     status: 'Assigned',
     due_at: dueAtOn(TOMORROW, 10),
-    percentage_complete: 0,
     priority: 'Medium',
   })
   await createTask({
@@ -1398,7 +1382,6 @@ async function main() {
     assigned_by: manager1UserId,
     status: 'Assigned',
     due_at: dueLaterToday(2),
-    percentage_complete: 0,
     priority: 'High',
   })
   await createTask({
@@ -1410,7 +1393,6 @@ async function main() {
     assigned_by: ownerUser.id,
     status: 'Assigned',
     due_at: dueAtOn(TOMORROW, 14),
-    percentage_complete: 0,
     priority: 'High',
   })
   await createTask({
@@ -1422,7 +1404,6 @@ async function main() {
     assigned_by: ownerUser.id,
     status: 'In Progress',
     due_at: dueAtOn(TOMORROW, 15),
-    percentage_complete: 35,
     priority: 'High',
     rejection_reason: 'Please account for the late service window before resubmitting.',
     rejected_at: minutesAgo(35),
@@ -1437,7 +1418,6 @@ async function main() {
     status: 'Complete',
     due_at: dueAtOn(TODAY, 11),
     completed_at: dueAtOn(TODAY, 11),
-    percentage_complete: 100,
     priority: 'Low',
   })
   await createTask({
@@ -1449,7 +1429,6 @@ async function main() {
     assigned_by: ownerUser.id,
     status: 'Assigned',
     due_at: dueAtOn(YESTERDAY, 15),
-    percentage_complete: 0,
     priority: 'High',
   })
   await createTask({
@@ -1462,7 +1441,6 @@ async function main() {
     status: 'Assigned',
     due_at: dueAtOn(TOMORROW, 11),
     created_at: new Date(Date.now() - 36 * 60 * 60 * 1000).toISOString(),
-    percentage_complete: 0,
     priority: 'Medium',
   })
   await createTask({
@@ -1475,7 +1453,6 @@ async function main() {
     status: 'Complete',
     due_at: dueAtOn(TODAY, 10),
     completed_at: dueAtOn(TODAY, 10),
-    percentage_complete: 100,
     priority: 'Low',
   })
   await createTask({
@@ -1487,15 +1464,14 @@ async function main() {
     assigned_by: userIdMap['partner1@test.com'].internalId,
     status: 'Assigned',
     due_at: dueAtOn(YESTERDAY, 17),
-    percentage_complete: 0,
     priority: 'High',
   })
   console.log('  ✓ Task Overview: manager Operations tasks plus Owner overdue, delay-alert, completed-today, and Partner-assigned samples')
 
   const { error: opsAnnouncementErr } = await supabase.from('announcements').insert({
-    from_user_id: manager1UserId,
+    user_id: manager1UserId,
     company_id: company.id,
-    department_id: opsDept.id,
+    audience_department_id: opsDept.id,
     title: 'Operations shift notes for today',
     content: 'Counter cover, stock variance follow-up, and weekend runner briefing are all active today.',
   })
@@ -1523,9 +1499,11 @@ async function main() {
   console.log('  Seeded for testing: owner@test.com and manager1@test.com Dashboard, Attendance, Tasks, Recruitment, Communication, Team, and Shift Swap Requests.')
   console.log('  Test paths: login owner@test.com -> Owner Dashboard, or manager1@test.com -> Manager Dashboard. No dashboard overview block should be empty.')
   console.log('═══════════════════════════════════════════')
-  return
 
+  // guest1-3 were already created above (Step 8c's dashboardGuestEmails pack, for the Owner/
+  // Manager dashboard demo) — only guest4/guest5 are still needed here.
   for (const guest of guestApplicants) {
+    if (userIdMap[guest.email]) continue
     const { data: authData, error: authErr } = await supabase.auth.admin.createUser({
       email: guest.email,
       password: PASSWORD,
@@ -1546,18 +1524,20 @@ async function main() {
         profile_photo_url: DEMO_PHOTO_URL,
         role: 'Guest User',
         company_id: null,
-        skills: guest.skills,
-        resume_url: guest.resume_url,
       })
       .select()
       .single()
     if (uErr) { console.error(`  ✗ 插入 Guest users 失败 ${guest.email}:`, uErr.message); process.exit(1) }
     userIdMap[guest.email] = { authId: authData.user.id, internalId: u.id }
+    const { error: profileErr } = await supabase
+      .from('casual_worker_profiles')
+      .insert({ user_id: u.id, skills: guest.skills, resume_url: guest.resume_url })
+    if (profileErr) console.warn(`  ⚠ 插入 casual_worker_profiles 失败 (${guest.email}): ${profileErr.message}`)
     for (const cert of guest.certs) {
       const { error: certErr } = await supabase.from('user_certificates').insert({
         user_id: u.id,
         name: cert.name,
-        file_url: cert.file_url,
+        certificate_url: cert.certificate_url,
       })
       if (certErr) console.warn(`  ⚠ 插入 user_certificates 失败 (${guest.email} / ${cert.name}): ${certErr.message}`)
     }
@@ -1578,7 +1558,6 @@ async function main() {
       description: 'Help set up and run a corporate weekend event — registration desk, guest flow, and teardown.',
       requirements: 'Comfortable on your feet for a full shift, clear spoken English, punctual.',
       location: company.location,
-      employment_type: 'Part-time',
       status: 'open',
       form_type: 'oneoff',
       urgency: 'normal',
@@ -1592,7 +1571,6 @@ async function main() {
       openings: 3,
       experience_required: 'Not Required',
       minimum_age: 16,
-      uniform_required: false,
       salary_amount: 15.5,
       expires_at: applicationDeadline,
     },
@@ -1605,7 +1583,6 @@ async function main() {
       description: 'Hand out promotional flyers in the city centre during lunch and evening foot traffic peaks.',
       requirements: 'Friendly, comfortable approaching strangers, own transport to the city centre.',
       location: company.location,
-      employment_type: 'Part-time',
       status: 'pending_approval',
       form_type: 'oneoff',
       urgency: 'high',
@@ -1614,7 +1591,6 @@ async function main() {
       openings: 2,
       experience_required: 'Not Required',
       minimum_age: 16,
-      uniform_required: false,
       salary_amount: 14,
       expires_at: applicationDeadline,
     },
@@ -1627,7 +1603,6 @@ async function main() {
       description: 'Assist packing/unpacking and reconnecting workstations during an office move.',
       requirements: null,
       location: company.location,
-      employment_type: 'Part-time',
       status: 'draft',
       form_type: 'oneoff',
       urgency: 'normal',
@@ -1636,7 +1611,6 @@ async function main() {
       openings: 1,
       experience_required: null,
       minimum_age: null,
-      uniform_required: false,
       salary_amount: null,
       expires_at: null,
     },
@@ -1649,7 +1623,6 @@ async function main() {
       description: 'Cover overnight live-chat customer support shifts.',
       requirements: 'Clear written English, own laptop, stable internet connection.',
       location: company.location,
-      employment_type: 'Part-time',
       status: 'rejected',
       form_type: 'oneoff',
       urgency: 'normal',
@@ -1658,7 +1631,6 @@ async function main() {
       openings: 2,
       experience_required: 'Not Required',
       minimum_age: 18,
-      uniform_required: false,
       salary_amount: 16,
       expires_at: applicationDeadline,
       rejection_reason: 'Overnight coverage is already fully staffed this month — please resubmit next month or propose daytime hours instead.',
@@ -1677,7 +1649,6 @@ async function main() {
       description: 'Recurring weekend shift counting and organizing warehouse inventory ahead of a new stock intake.',
       requirements: 'Comfortable with repetitive counting tasks, basic spreadsheet use a plus.',
       location: company.location,
-      employment_type: 'Part-time',
       status: 'open',
       form_type: 'shift',
       is_recurring: true,
@@ -1691,7 +1662,6 @@ async function main() {
       openings: 2,
       experience_required: '6+ Months',
       minimum_age: 18,
-      uniform_required: false,
       salary_amount: 13.5,
       expires_at: applicationDeadline,
     },
@@ -1704,7 +1674,6 @@ async function main() {
       description: 'Represent the brand at a retail pop-up booth — greet shoppers, hand out samples, and log leads.',
       requirements: 'Outgoing personality, comfortable standing for long periods, available on short notice.',
       location: company.location,
-      employment_type: 'Part-time',
       status: 'open',
       form_type: 'oneoff',
       urgency: 'urgent',
@@ -1714,7 +1683,6 @@ async function main() {
       openings: 2,
       experience_required: 'Preferred',
       minimum_age: 18,
-      uniform_required: true,
       uniform_type: 'company',
       uniform_details: 'Branded polo shirt and cap will be provided at check-in.',
       salary_amount: 90,
@@ -1732,7 +1700,6 @@ async function main() {
       description: 'Cover the café counter for a weekend rush — orders, till, and light cleaning.',
       requirements: 'Comfortable handling cash, friendly with customers.',
       location: company.location,
-      employment_type: 'Part-time',
       status: 'open',
       form_type: 'oneoff',
       urgency: 'normal',
@@ -1742,7 +1709,6 @@ async function main() {
       openings: 2,
       experience_required: 'Not Required',
       minimum_age: 16,
-      uniform_required: false,
       salary_amount: 16,
       expires_at: applicationDeadline,
     },
@@ -1758,7 +1724,6 @@ async function main() {
       description: 'Reorganise the stockroom shelving and relabel bins ahead of next month\'s delivery.',
       requirements: null,
       location: company.location,
-      employment_type: 'Part-time',
       status: 'draft',
       form_type: 'oneoff',
       urgency: 'normal',
@@ -1767,7 +1732,6 @@ async function main() {
       openings: 1,
       experience_required: null,
       minimum_age: null,
-      uniform_required: false,
       salary_amount: null,
       expires_at: null,
     },
@@ -1796,7 +1760,6 @@ async function main() {
         user_id: guestId,
         resume_url: guestDef.resume_url,
         status: 'pending',
-        relevant_experience: 'less_than_1',
         additional_note: `Hi, I'm ${guestDef.full_name.split(' ')[0]} and I'd love to help out with this one.`,
         skills_snapshot: guestDef.skills,
         certificates_snapshot: guestDef.certs,
@@ -1817,7 +1780,6 @@ async function main() {
         user_id: guestId,
         resume_url: guestDef.resume_url,
         status: 'pending',
-        relevant_experience: 'less_than_1',
         additional_note: `Hi, I'm ${guestDef.full_name.split(' ')[0]} and I'd love to help out with this one.`,
         skills_snapshot: guestDef.skills,
         certificates_snapshot: guestDef.certs,
@@ -1842,7 +1804,6 @@ async function main() {
         user_id: guestId,
         resume_url: guestDef.resume_url,
         status,
-        relevant_experience: extra.relevant_experience ?? 'less_than_1',
         additional_note: extra.additional_note ?? `Hi, I'm ${guestDef.full_name.split(' ')[0]} and I'd love to help out with this one.`,
         skills_snapshot: guestDef.skills,
         certificates_snapshot: guestDef.certs,
@@ -1904,36 +1865,37 @@ async function main() {
 
   // ── Step 11: 创建一个 Casual Worker 账号（Attendance Records 里的零工行）────
   console.log('\nStep 11: 创建 Casual Worker 账号...')
-  const { data: casualAuth, error: casualAuthErr } = await supabase.auth.admin.createUser({
-    email: 'casual1@test.com',
-    password: PASSWORD,
-    email_confirm: true,
-  })
-  if (casualAuthErr || !casualAuth.user) {
-    console.error(`  ✗ auth 创建失败 casual1@test.com: ${casualAuthErr?.message}`)
-    process.exit(1)
-  }
-  const { data: casualUser, error: casualUserErr } = await supabase
-    .from('users')
-    .insert({
-      supabase_auth_id: casualAuth.user.id,
-      full_name: 'Marcus Lee',
-      email_address: 'casual1@test.com',
-      phone_number: '+65 8300 3001',
-      date_of_birth: '1999-11-20',
-      profile_photo_url: DEMO_PHOTO_URL,
-      role: 'Casual Worker',
-      company_id: company.id,
-      worker_status: 'active',
-      // Pay = shift.flat_rate if set, else this hourly_rate × hours worked (see
-      // casualAttendanceService's history builder) — without this every past shift shows "$0.00".
-      hourly_rate: 18.5,
+  if (userIdMap['casual1@test.com']) {
+    // Already created by Step 8c's dashboardCasualAuth pack (same person, Marcus Lee) — reuse it.
+    console.log(`  ✓ Casual Worker: Marcus Lee 已在 Step 8c 创建 → ${userIdMap['casual1@test.com'].internalId}`)
+  } else {
+    const { data: casualAuth, error: casualAuthErr } = await supabase.auth.admin.createUser({
+      email: 'casual1@test.com',
+      password: PASSWORD,
+      email_confirm: true,
     })
-    .select()
-    .single()
-  if (casualUserErr) { console.error('  ✗ 插入 Casual Worker users 失败:', casualUserErr.message); process.exit(1) }
-  userIdMap['casual1@test.com'] = { authId: casualAuth.user.id, internalId: casualUser.id }
-  console.log(`  ✓ Casual Worker: Marcus Lee → ${casualUser.id}`)
+    if (casualAuthErr || !casualAuth.user) {
+      console.error(`  ✗ auth 创建失败 casual1@test.com: ${casualAuthErr?.message}`)
+      process.exit(1)
+    }
+    const { data: casualUser, error: casualUserErr } = await supabase
+      .from('users')
+      .insert({
+        supabase_auth_id: casualAuth.user.id,
+        full_name: 'Marcus Lee',
+        email_address: 'casual1@test.com',
+        phone_number: '+65 8300 3001',
+        date_of_birth: '1999-11-20',
+        profile_photo_url: DEMO_PHOTO_URL,
+        role: 'Casual Worker',
+        company_id: company.id,
+      })
+      .select()
+      .single()
+    if (casualUserErr) { console.error('  ✗ 插入 Casual Worker users 失败:', casualUserErr.message); process.exit(1) }
+    userIdMap['casual1@test.com'] = { authId: casualAuth.user.id, internalId: casualUser.id }
+    console.log(`  ✓ Casual Worker: Marcus Lee → ${casualUser.id}`)
+  }
 
   // ── Step 12: 创建 Shifts + Shift Assignments（Attendance 数据的排班基础）────
   // 过去 10 天（4 部门 × Manager+Employee，覆盖 Report 页默认的近 7 天窗口，不受种子脚本
@@ -1959,7 +1921,6 @@ async function main() {
         shift_date: dateKey(dayDate),
         start_time: '09:00',
         end_time: '17:00',
-        title: 'Regular Shift',
         created_by: ownerUser.id,
         publication_status: 'published',
       })
@@ -2007,7 +1968,6 @@ async function main() {
       shift_date: dateKey(dayDate),
       start_time: '10:00',
       end_time: '14:00',
-      title: 'Weekend Event Crew Cover',
       created_by: ownerUser.id,
       publication_status: 'published',
     })
@@ -2025,17 +1985,17 @@ async function main() {
   // pending swap request（见 Step 14），留成干净数据，让 Manager 自己在 UI 上测 Submit Shift
   // Swap（提交后走 Owner/Partner 审批）。种了 pending 的话 assignment 会先被锁住
   // （submitShiftSwapRequest 一发现某 assignment 已有 pending 请求就拒绝提交)。
-  const futMgr1Shift = await createShift({ company_id: company.id, department_id: depts[0].id, shift_date: dateKey(addDays(TODAY, 3)), start_time: '09:00', end_time: '17:00', title: 'Regular Shift', created_by: ownerUser.id, publication_status: 'published' })
-  const futMgr5Shift = await createShift({ company_id: company.id, department_id: depts[0].id, shift_date: dateKey(addDays(TODAY, 4)), start_time: '09:00', end_time: '17:00', title: 'Regular Shift', created_by: ownerUser.id, publication_status: 'published' })
-  const futEmp1Shift = await createShift({ company_id: company.id, department_id: depts[0].id, shift_date: dateKey(addDays(TODAY, 5)), start_time: '09:00', end_time: '17:00', title: 'Regular Shift', created_by: ownerUser.id, publication_status: 'published' })
-  const futEmp2Shift = await createShift({ company_id: company.id, department_id: depts[0].id, shift_date: dateKey(addDays(TODAY, 6)), start_time: '09:00', end_time: '17:00', title: 'Regular Shift', created_by: ownerUser.id, publication_status: 'published' })
+  const futMgr1Shift = await createShift({ company_id: company.id, department_id: depts[0].id, shift_date: dateKey(addDays(TODAY, 3)), start_time: '09:00', end_time: '17:00', created_by: ownerUser.id, publication_status: 'published' })
+  const futMgr5Shift = await createShift({ company_id: company.id, department_id: depts[0].id, shift_date: dateKey(addDays(TODAY, 4)), start_time: '09:00', end_time: '17:00', created_by: ownerUser.id, publication_status: 'published' })
+  const futEmp1Shift = await createShift({ company_id: company.id, department_id: depts[0].id, shift_date: dateKey(addDays(TODAY, 5)), start_time: '09:00', end_time: '17:00', created_by: ownerUser.id, publication_status: 'published' })
+  const futEmp2Shift = await createShift({ company_id: company.id, department_id: depts[0].id, shift_date: dateKey(addDays(TODAY, 6)), start_time: '09:00', end_time: '17:00', created_by: ownerUser.id, publication_status: 'published' })
   // Elaine（Customer Support）的这个班次故意撞在她 Off Day 申请的同一天（Step 15），给 UC57 AI 一个能标记 flagged 的冲突
-  const futEmp4Shift = await createShift({ company_id: company.id, department_id: depts[3].id, shift_date: dateKey(NEXT_WED), start_time: '09:00', end_time: '17:00', title: 'Regular Shift', created_by: ownerUser.id, publication_status: 'published' })
+  const futEmp4Shift = await createShift({ company_id: company.id, department_id: depts[3].id, shift_date: dateKey(NEXT_WED), start_time: '09:00', end_time: '17:00', created_by: ownerUser.id, publication_status: 'published' })
   // Rachel Koh (manager2) / Kelvin Ang (manager6) — Marketing 的两位 Manager——顶上原本 David/Rachel
   // 那条 pending Manager↔Manager swap request（见 Step 14），让 Owner/Partner 的审批队列（UC53）
   // 依然有真实数据可测，同时不碰 manager1/manager5 的干净数据。
-  const futMgr2Shift = await createShift({ company_id: company.id, department_id: depts[1].id, shift_date: dateKey(addDays(TODAY, 3)), start_time: '09:00', end_time: '17:00', title: 'Regular Shift', created_by: ownerUser.id, publication_status: 'published' })
-  const futMgr6Shift = await createShift({ company_id: company.id, department_id: depts[1].id, shift_date: dateKey(addDays(TODAY, 4)), start_time: '09:00', end_time: '17:00', title: 'Regular Shift', created_by: ownerUser.id, publication_status: 'published' })
+  const futMgr2Shift = await createShift({ company_id: company.id, department_id: depts[1].id, shift_date: dateKey(addDays(TODAY, 3)), start_time: '09:00', end_time: '17:00', created_by: ownerUser.id, publication_status: 'published' })
+  const futMgr6Shift = await createShift({ company_id: company.id, department_id: depts[1].id, shift_date: dateKey(addDays(TODAY, 4)), start_time: '09:00', end_time: '17:00', created_by: ownerUser.id, publication_status: 'published' })
 
   const futMgr1Assign = await assignShift(futMgr1Shift?.id, userIdMap['manager1@test.com'].internalId, ownerUser.id)
   const futMgr5Assign = await assignShift(futMgr5Shift?.id, userIdMap['manager5@test.com'].internalId, ownerUser.id)
@@ -2054,7 +2014,6 @@ async function main() {
     shift_date: dateKey(addDays(TODAY, 2)),
     start_time: '11:00',
     end_time: '15:00',
-    title: 'Weekend Event Crew Cover',
     created_by: ownerUser.id,
     publication_status: 'published',
   })
@@ -2064,7 +2023,6 @@ async function main() {
     shift_date: dateKey(addDays(TODAY, 5)),
     start_time: '09:00',
     end_time: '13:00',
-    title: 'Weekend Event Crew Cover',
     created_by: ownerUser.id,
     publication_status: 'published',
   })
@@ -2139,32 +2097,35 @@ async function main() {
   // 顺便把她排进 Marketing（不是 Operations），Casual Worker Cost Distribution 饼图也不再是
   // Operations 独占 100%。
   console.log('\nStep 13b: 创建第二个 Casual Worker（Farah Aziz）...')
-  const { data: casual2Auth, error: casual2AuthErr } = await supabase.auth.admin.createUser({
-    email: 'casual2@test.com', password: PASSWORD, email_confirm: true,
-  })
-  if (casual2AuthErr || !casual2Auth.user) {
-    console.error(`  ✗ auth 创建失败 casual2@test.com: ${casual2AuthErr?.message}`)
-    process.exit(1)
-  }
-  const { data: casual2User, error: casual2UserErr } = await supabase
-    .from('users')
-    .insert({
-      supabase_auth_id: casual2Auth.user.id,
-      full_name: 'Farah Aziz',
-      email_address: 'casual2@test.com',
-      phone_number: '+65 8300 3002',
-      date_of_birth: '2000-06-08',
-      profile_photo_url: DEMO_PHOTO_URL,
-      role: 'Casual Worker',
-      company_id: company.id,
-      worker_status: 'active',
-      hourly_rate: 17.0,
+  if (userIdMap['casual2@test.com']) {
+    // Already created by Step 8c's dashboardCasual2Auth pack (same person, Farah Aziz) — reuse it.
+    console.log(`  ✓ Casual Worker: Farah Aziz 已在 Step 8c 创建 → ${userIdMap['casual2@test.com'].internalId}`)
+  } else {
+    const { data: casual2Auth, error: casual2AuthErr } = await supabase.auth.admin.createUser({
+      email: 'casual2@test.com', password: PASSWORD, email_confirm: true,
     })
-    .select()
-    .single()
-  if (casual2UserErr) { console.error('  ✗ 插入第二个 Casual Worker users 失败:', casual2UserErr.message); process.exit(1) }
-  userIdMap['casual2@test.com'] = { authId: casual2Auth.user.id, internalId: casual2User.id }
-  console.log(`  ✓ Casual Worker: Farah Aziz → ${casual2User.id}`)
+    if (casual2AuthErr || !casual2Auth.user) {
+      console.error(`  ✗ auth 创建失败 casual2@test.com: ${casual2AuthErr?.message}`)
+      process.exit(1)
+    }
+    const { data: casual2User, error: casual2UserErr } = await supabase
+      .from('users')
+      .insert({
+        supabase_auth_id: casual2Auth.user.id,
+        full_name: 'Farah Aziz',
+        email_address: 'casual2@test.com',
+        phone_number: '+65 8300 3002',
+        date_of_birth: '2000-06-08',
+        profile_photo_url: DEMO_PHOTO_URL,
+        role: 'Casual Worker',
+        company_id: company.id,
+      })
+      .select()
+      .single()
+    if (casual2UserErr) { console.error('  ✗ 插入第二个 Casual Worker users 失败:', casual2UserErr.message); process.exit(1) }
+    userIdMap['casual2@test.com'] = { authId: casual2Auth.user.id, internalId: casual2User.id }
+    console.log(`  ✓ Casual Worker: Farah Aziz → ${casual2User.id}`)
+  }
 
   // start_time 09:00 to match clockRecord's hardcoded 09:00 clock-in baseline (see the helper
   // above) — that's what makes lateMinutes actually land as "late" against the real shift start.
@@ -2173,21 +2134,21 @@ async function main() {
   for (const dayDate of casual2Days) {
     const shift = await createShift({
       company_id: company.id, department_id: depts[1].id, shift_date: dateKey(dayDate),
-      start_time: '09:00', end_time: '13:00', title: 'Promo Table Crew Cover',
+      start_time: '09:00', end_time: '13:00',
       created_by: ownerUser.id, publication_status: 'published',
     })
-    const assignment = shift && await assignShift(shift.id, casual2User.id, ownerUser.id, userIdMap['employee2@test.com'].internalId)
+    const assignment = shift && await assignShift(shift.id, userIdMap['casual2@test.com'].internalId, ownerUser.id, userIdMap['employee2@test.com'].internalId)
     if (assignment) casual2Assignments[dateKey(dayDate)] = assignment
   }
   // Present, Late (25 min), Absent (no record), Present — exactly 1 Late + 1 No-show this period.
-  await clockRecord(casual2Assignments[dateKey(addDays(TODAY, -6))], casual2User.id, { dateStr: dateKey(addDays(TODAY, -6)), endStr: '13:00' })
-  await clockRecord(casual2Assignments[dateKey(addDays(TODAY, -5))], casual2User.id, { dateStr: dateKey(addDays(TODAY, -5)), endStr: '13:00', lateMinutes: 25 })
+  await clockRecord(casual2Assignments[dateKey(addDays(TODAY, -6))], userIdMap['casual2@test.com'].internalId, { dateStr: dateKey(addDays(TODAY, -6)), endStr: '13:00' })
+  await clockRecord(casual2Assignments[dateKey(addDays(TODAY, -5))], userIdMap['casual2@test.com'].internalId, { dateStr: dateKey(addDays(TODAY, -5)), endStr: '13:00', lateMinutes: 25 })
   // -4 天：故意不打卡 → Absent / No-show
-  await clockRecord(casual2Assignments[dateKey(addDays(TODAY, -3))], casual2User.id, { dateStr: dateKey(addDays(TODAY, -3)), endStr: '13:00' })
+  await clockRecord(casual2Assignments[dateKey(addDays(TODAY, -3))], userIdMap['casual2@test.com'].internalId, { dateStr: dateKey(addDays(TODAY, -3)), endStr: '13:00' })
   console.log('  ✓ Farah Aziz 本期 4 条 Marketing 部门班次：Present / Late 25min / No-show / Present')
 
   const { error: cwd2Err } = await supabase.from('casualworker_departments').upsert({
-    casual_worker_id: casual2User.id,
+    casual_worker_id: userIdMap['casual2@test.com'].internalId,
     department_id: depts[1].id,
     company_id: company.id,
     verified_at: new Date().toISOString(),
@@ -2313,37 +2274,37 @@ async function main() {
   console.log('\nStep 16: 创建 Job Templates + Shift Templates...')
   const jobTemplateDefs = [
     {
-      company_id: company.id, created_by: ownerUser.id, name: 'Standard Event Crew',
+      company_id: company.id, created_by: ownerUser.id,
       title: 'Event Crew', description: 'General event support — setup, registration desk, and teardown.',
       requirements: 'Comfortable on your feet for a full shift, punctual.',
-      employment_type: 'Part-time', form_type: 'oneoff', department_id: depts[0].id,
-      salary_amount: 15, salary_type: 'flat rate', uniform_required: false,
+      form_type: 'oneoff', department_id: depts[0].id,
+      salary_amount: 15, salary_type: 'flat rate', uniform_type: 'none',
       experience_required: 'Not Required', minimum_age: 16, estimated_hours: '6', urgency: 'normal',
     },
     {
-      company_id: company.id, created_by: ownerUser.id, name: 'Weekend Warehouse Shift',
+      company_id: company.id, created_by: ownerUser.id,
       title: 'Warehouse Assistant', description: 'Recurring weekend stock-count and inventory shift.',
       requirements: 'Basic spreadsheet use, comfortable with repetitive tasks.',
-      employment_type: 'Part-time', form_type: 'shift', department_id: depts[2].id,
-      salary_amount: 13.5, salary_type: 'per hour', uniform_required: false,
+      form_type: 'shift', department_id: depts[2].id,
+      salary_amount: 13.5, salary_type: 'per hour', uniform_type: 'none',
       experience_required: '6+ Months', minimum_age: 18, urgency: 'normal',
     },
     // Manager-created (David Lim, Operations) — so manager1@test.com has a template of their own
     // to test UC37 Edit Job Template with (Job Templates are creator-only to edit, department-only
     // to view — Owner's two templates above are invisible to a Manager, see jobTemplateRepository).
     {
-      company_id: company.id, created_by: userIdMap['manager1@test.com'].internalId, name: 'Weekend Café Cover',
+      company_id: company.id, created_by: userIdMap['manager1@test.com'].internalId,
       title: 'Café Cover Staff', description: 'Cover the café counter for a weekend rush — orders, till, and light cleaning.',
       requirements: 'Comfortable handling cash, friendly with customers.',
-      employment_type: 'Part-time', form_type: 'oneoff', department_id: depts[0].id,
-      salary_amount: 16, salary_type: 'flat rate', uniform_required: false,
+      form_type: 'oneoff', department_id: depts[0].id,
+      salary_amount: 16, salary_type: 'flat rate', uniform_type: 'none',
       experience_required: 'Not Required', minimum_age: 16, estimated_hours: '5', urgency: 'normal',
     },
   ]
   for (const def of jobTemplateDefs) {
     const { error } = await supabase.from('job_templates').insert(def)
-    if (error) console.warn(`  ⚠ 创建 job_template 失败 (${def.name}): ${error.message}`)
-    else console.log(`  ✓ Job Template: ${def.name}`)
+    if (error) console.warn(`  ⚠ 创建 job_template 失败 (${def.title}): ${error.message}`)
+    else console.log(`  ✓ Job Template: ${def.title}`)
   }
 
   const shiftTemplateDefs = [
@@ -2362,9 +2323,9 @@ async function main() {
     company_id: company.id, department_id: depts[3].id, created_by: ownerUser.id,
     title: 'Holiday Season Support — Customer Support', description: 'Extra overnight support coverage for the holiday rush.',
     requirements: 'Clear written English, own laptop.', location: company.location,
-    employment_type: 'Part-time', status: 'archived', form_type: 'oneoff', urgency: 'normal',
+    status: 'archived', form_type: 'oneoff', urgency: 'normal',
     estimated_hours: '6', job_start_time: '20:00', openings: 2, experience_required: 'Not Required',
-    minimum_age: 18, uniform_required: false, salary_amount: 15, expires_at: dateKey(TWO_DAYS_AGO),
+    minimum_age: 18, salary_amount: 15, expires_at: dateKey(TWO_DAYS_AGO),
     archived_at: new Date().toISOString(), archived_from_status: 'closed',
   })
   if (archivedErr) console.warn(`  ⚠ 创建 archived job_posting 失败: ${archivedErr.message}`)
@@ -2379,9 +2340,9 @@ async function main() {
     company_id: company.id, department_id: depts[1].id, created_by: ownerUser.id,
     title: 'Product Launch Day Crew', description: 'One-day crew to support an in-store product launch event.',
     requirements: 'Outgoing, comfortable talking to customers.', location: company.location,
-    employment_type: 'Part-time', status: 'closed', form_type: 'oneoff', urgency: 'normal',
+    status: 'closed', form_type: 'oneoff', urgency: 'normal',
     estimated_hours: '5', shift_date: dateKey(addDays(TODAY, -2)), job_start_time: '10:00',
-    openings: 1, experience_required: 'Not Required', minimum_age: 16, uniform_required: false,
+    openings: 1, experience_required: 'Not Required', minimum_age: 16,
     salary_amount: 80, expires_at: dateKey(addDays(TODAY, -3)), created_at: closedCreatedAt,
   }).select().single()
   if (closedJobErr) {
@@ -2390,7 +2351,7 @@ async function main() {
     const { data: closedApp, error: closedAppErr } = await supabase.from('job_applicants').insert({
       job_id: closedJob.id, user_id: userIdMap['guest3@test.com'].internalId,
       resume_url: guestApplicants.find(g => g.email === 'guest3@test.com').resume_url, status: 'accepted',
-      relevant_experience: 'less_than_1', decided_at: closedConfirmedAt,
+      decided_at: closedConfirmedAt,
     }).select().single()
     if (closedAppErr) {
       console.warn(`  ⚠ 创建 job_applicant 失败 (Product Launch Day Crew): ${closedAppErr.message}`)
@@ -2414,9 +2375,9 @@ async function main() {
     const { data: job, error: jobErr } = await supabase.from('job_postings').insert({
       company_id: company.id, department_id: departmentId, created_by: ownerUser.id,
       title, description, requirements, location: company.location,
-      employment_type: 'Part-time', status: 'closed', form_type: 'oneoff', urgency: 'normal',
+      status: 'closed', form_type: 'oneoff', urgency: 'normal',
       estimated_hours: '5', shift_date: dateKey(addDays(TODAY, -confirmedDaysAgo)), job_start_time: '10:00',
-      openings, experience_required: 'Not Required', minimum_age: 16, uniform_required: false,
+      openings, experience_required: 'Not Required', minimum_age: 16,
       salary_amount: salary, expires_at: dateKey(addDays(TODAY, -confirmedDaysAgo)), created_at: createdAt,
     }).select().single()
     if (jobErr) { console.warn(`  ⚠ 创建 closed job_posting 失败 (${title}): ${jobErr.message}`); return }
@@ -2424,7 +2385,7 @@ async function main() {
       const { data: app, error: appErr } = await supabase.from('job_applicants').insert({
         job_id: job.id, user_id: userIdMap[guestEmail].internalId,
         resume_url: guestApplicants.find(g => g.email === guestEmail).resume_url, status: 'accepted',
-        relevant_experience: 'less_than_1', decided_at: confirmedAt,
+        decided_at: confirmedAt,
       }).select().single()
       if (appErr) { console.warn(`  ⚠ 创建 job_applicant 失败 (${title} / ${guestEmail}): ${appErr.message}`); continue }
       const { error: inviteErr } = await supabase.from('job_invitations').insert({
@@ -2464,7 +2425,7 @@ async function main() {
   // UTC calendar date — matches both the Clock In gate (casualAttendanceService.clockIn) and the
   // Casual Dashboard's "which jobs show up" query (casualDashboardService.findCurrentAssignment,
   // fixed to use the same UTC day instead of local — see that file for why the two need to agree).
-  const cwOpenShiftDate = dateKeyUTC(cwOpenStart)
+  const cwOpenShiftDate = dateKeySGT(cwOpenStart)
 
   // openings: 1 and the single applicant below is inserted directly as 'accepted' (i.e. already
   // confirmed) — in the real app, respondToInvitation's auto-close (acceptedCount >= openings)
@@ -2475,9 +2436,9 @@ async function main() {
     company_id: company.id, department_id: depts[0].id, created_by: ownerUser.id,
     title: 'Same-Day Café Cover Shift', description: 'Cover the café counter for a same-day gap in the roster.',
     requirements: 'Available immediately, comfortable handling cash and orders.', location: company.location,
-    employment_type: 'Part-time', status: 'closed', archived_at: new Date().toISOString(), form_type: 'oneoff', urgency: 'urgent',
+    status: 'closed', archived_at: new Date().toISOString(), form_type: 'oneoff', urgency: 'urgent',
     estimated_hours: '4', shift_date: cwOpenShiftDate, job_start_time: toHM(cwOpenStart),
-    openings: 1, experience_required: 'Not Required', minimum_age: 16, uniform_required: false,
+    openings: 1, experience_required: 'Not Required', minimum_age: 16,
     salary_amount: 16, expires_at: dateKey(addDays(TODAY, 3)),
   }).select().single()
   if (cwOpenJobErr) {
@@ -2486,7 +2447,7 @@ async function main() {
     const { data: cwOpenApp, error: cwOpenAppErr } = await supabase.from('job_applicants').insert({
       job_id: cwOpenJob.id, user_id: userIdMap['casual1@test.com'].internalId,
       resume_url: 'https://example.com/demo-resumes/marcus-lee-resume.pdf', status: 'accepted',
-      relevant_experience: 'less_than_1', additional_note: "I've covered this counter before — happy to jump in today.",
+      additional_note: "I've covered this counter before — happy to jump in today.",
     }).select().single()
     if (cwOpenAppErr) {
       console.warn(`  ⚠ 创建 job_applicant 失败 (Marcus Lee): ${cwOpenAppErr.message}`)
@@ -2500,7 +2461,7 @@ async function main() {
     const cwOpenShift = await createShift({
       company_id: company.id, department_id: depts[0].id, shift_date: cwOpenShiftDate,
       start_time: toHM(cwOpenStart), end_time: toHM(cwOpenEnd), is_open_ended: false,
-      title: cwOpenJob.title, created_by: ownerUser.id, publication_status: 'published',
+      created_by: ownerUser.id, publication_status: 'published',
       source_job_posting_id: cwOpenJob.id,
     })
     if (cwOpenShift) {
@@ -2520,21 +2481,174 @@ async function main() {
         company_id: company.id, department_id: depts[0].id, shift_id: cwOpenShift.id,
         title: 'Restock napkins and cup sleeves', description: 'Check front counter stock and top up from the back storeroom.',
         assigned_user_id: userIdMap['casual1@test.com'].internalId, assigned_by: userIdMap['employee1@test.com'].internalId,
-        status: 'In Progress', due_at: dueAtOn(TODAY), percentage_complete: 50, priority: 'Medium',
+        status: 'In Progress', due_at: dueAtOn(TODAY), priority: 'Medium',
       })
       await createTask({
         company_id: company.id, department_id: depts[0].id, shift_id: cwOpenShift.id,
         title: 'Wipe down and reset outdoor seating', description: 'Clean tables and chairs, reset umbrellas for the next customers.',
         assigned_user_id: userIdMap['casual1@test.com'].internalId, assigned_by: userIdMap['employee1@test.com'].internalId,
-        status: 'Review', due_at: dueAtOn(TODAY), percentage_complete: 90, priority: 'Low',
+        status: 'Review', due_at: dueAtOn(TODAY), priority: 'Low',
       })
       await createTask({
         company_id: company.id, department_id: depts[0].id, shift_id: cwOpenShift.id,
         title: 'Brief opening checklist to Marcus', description: 'Walk through the opening checklist before the counter opens.',
         assigned_user_id: userIdMap['casual1@test.com'].internalId, assigned_by: userIdMap['employee1@test.com'].internalId,
-        status: 'Complete', due_at: dueAtOn(YESTERDAY), percentage_complete: 100,
+        status: 'Complete', due_at: dueAtOn(YESTERDAY),
       })
       console.log('  ✓ Ben Seah 给 Marcus Lee 分派的 4 条 Task（挂在当前班次 shift_id 上，Kanban 三列 + 1 条历史）')
+    }
+  }
+
+  // ── Step 18b: Employee Dashboard 演示数据——Ben Seah（employee1）今天同时督导两种类型的
+  // Casual Worker："Casual Workers Today" 卡片区分 Shift job（固定 start–end，正常打卡）跟
+  // One-off job（is_open_ended，只显示 start，主管必须先 Approve Clock Out 放行工人才能自己
+  // Clock Out —— 见 employeeAttendanceService.releaseClockOut / getClockOutReleaseQueue）。
+  // 用两个全新的 Casual Worker（不复用 casual1-4，他们今天已经在别处排班），One-off 的那个
+  // 直接种成"已打卡、未放行"，登录 employee1@test.com 立刻能在 Dashboard 看到 Approve Clock
+  // Out 按钮可点。
+  console.log('\nStep 18b: Employee Dashboard 演示数据（Ben Seah 同时督导 Shift job + One-off job 两个 Casual Worker）...')
+
+  const { data: casual5Auth, error: casual5AuthErr } = await supabase.auth.admin.createUser({
+    email: 'casual5@test.com', password: PASSWORD, email_confirm: true,
+  })
+  if (casual5AuthErr || !casual5Auth.user) {
+    console.warn(`  ⚠ Failed to create casual5@test.com auth: ${casual5AuthErr?.message}`)
+  } else {
+    const { data: casual5User, error: casual5UserErr } = await supabase
+      .from('users')
+      .insert({
+        supabase_auth_id: casual5Auth.user.id,
+        full_name: 'Hafiz Rahman',
+        email_address: 'casual5@test.com',
+        phone_number: '+65 8300 3005',
+        date_of_birth: '1999-09-09',
+        profile_photo_url: DEMO_PHOTO_URL,
+        role: 'Casual Worker',
+        company_id: company.id,
+      })
+      .select()
+      .single()
+    if (casual5UserErr) {
+      console.warn(`  ⚠ Failed to create casual5@test.com user: ${casual5UserErr.message}`)
+    } else {
+      userIdMap['casual5@test.com'] = { authId: casual5Auth.user.id, internalId: casual5User.id }
+      const { error: casual5DeptErr } = await supabase.from('casualworker_departments').upsert({
+        casual_worker_id: casual5User.id, department_id: depts[0].id, company_id: company.id,
+        verified_at: new Date().toISOString(),
+      }, { onConflict: 'casual_worker_id,department_id' })
+      if (casual5DeptErr) console.warn(`  ⚠ Failed to verify casual5@test.com in Operations: ${casual5DeptErr.message}`)
+
+      // Shift job — regular fixed-end shift, "now"-relative so it always reads as in-progress
+      // whenever the seed is run. is_open_ended stays false: this worker clocks out on their own
+      // once the shift reaches end_time, no release needed.
+      const casual5ShiftStart = new Date(Date.now() - 2 * 60 * 60 * 1000)
+      const casual5ShiftEnd = new Date(casual5ShiftStart.getTime() + 8 * 60 * 60 * 1000)
+      const casual5ShiftDate = dateKeySGT(casual5ShiftStart)
+      const casual5Shift = await createShift({
+        company_id: company.id, department_id: depts[0].id, shift_date: casual5ShiftDate,
+        start_time: toHM(casual5ShiftStart), end_time: toHM(casual5ShiftEnd), is_open_ended: false,
+        created_by: ownerUser.id, publication_status: 'published',
+      })
+      const casual5Assignment = casual5Shift && await assignShift(casual5Shift.id, casual5User.id, ownerUser.id, userIdMap['employee1@test.com'].internalId)
+      if (casual5Assignment) {
+        const { error: casual5ClockErr } = await supabase.from('attendance_records').insert({
+          shift_assignment_id: casual5Assignment.id,
+          casual_worker_id: casual5User.id,
+          clock_in_time: casual5ShiftStart.toISOString(),
+          confirmed_by_employee_id: casual5User.id,
+          submitted_by_employee_id: casual5User.id,
+          status: 'clocked_in',
+        })
+        if (casual5ClockErr) console.warn(`  ⚠ 创建 casual5 attendance_record 失败: ${casual5ClockErr.message}`)
+        console.log(`  ✓ Hafiz Rahman（casual5，Shift job）今天 ${toHM(casual5ShiftStart)}–${toHM(casual5ShiftEnd)} UTC 在班，已打卡，Ben Seah 督导`)
+      }
+    }
+  }
+
+  const { data: casual6Auth, error: casual6AuthErr } = await supabase.auth.admin.createUser({
+    email: 'casual6@test.com', password: PASSWORD, email_confirm: true,
+  })
+  if (casual6AuthErr || !casual6Auth.user) {
+    console.warn(`  ⚠ Failed to create casual6@test.com auth: ${casual6AuthErr?.message}`)
+  } else {
+    const { data: casual6User, error: casual6UserErr } = await supabase
+      .from('users')
+      .insert({
+        supabase_auth_id: casual6Auth.user.id,
+        full_name: 'Marcus Tan',
+        email_address: 'casual6@test.com',
+        phone_number: '+65 8300 3006',
+        date_of_birth: '2001-12-01',
+        profile_photo_url: DEMO_PHOTO_URL,
+        role: 'Casual Worker',
+        company_id: company.id,
+      })
+      .select()
+      .single()
+    if (casual6UserErr) {
+      console.warn(`  ⚠ Failed to create casual6@test.com user: ${casual6UserErr.message}`)
+    } else {
+      userIdMap['casual6@test.com'] = { authId: casual6Auth.user.id, internalId: casual6User.id }
+      const { error: casual6DeptErr } = await supabase.from('casualworker_departments').upsert({
+        casual_worker_id: casual6User.id, department_id: depts[0].id, company_id: company.id,
+        verified_at: new Date().toISOString(),
+      }, { onConflict: 'casual_worker_id,department_id' })
+      if (casual6DeptErr) console.warn(`  ⚠ Failed to verify casual6@test.com in Operations: ${casual6DeptErr.message}`)
+
+      // One-off job — genuinely is_open_ended (unlike Marcus Lee's Same-Day Café Cover Shift
+      // above, which deliberately stays fixed-end for a different, no-gate UC49 test). end_time
+      // is a structural placeholder (job_start_time + 1h, same convention the real app uses when
+      // generating a shift from a One-off posting — see the is_open_ended migration comment), not
+      // a real deadline. Already clocked in with no clock_out/release, so it lands straight in
+      // Ben Seah's Clock-Out Release Queue.
+      const casual6JobStart = new Date(Date.now() - 3 * 60 * 60 * 1000)
+      const casual6ShiftDate = dateKeySGT(casual6JobStart)
+      const { data: casual6Job, error: casual6JobErr } = await supabase.from('job_postings').insert({
+        company_id: company.id, department_id: depts[0].id, created_by: ownerUser.id,
+        title: 'Same-Day Storeroom Sort', description: 'One-off sort and reshelve of the storeroom backlog.',
+        requirements: 'Available same-day, comfortable with physical work.', location: company.location,
+        status: 'closed', archived_at: new Date().toISOString(), form_type: 'oneoff', urgency: 'urgent',
+        estimated_hours: '3', shift_date: casual6ShiftDate, job_start_time: toHM(casual6JobStart),
+        openings: 1, experience_required: 'Not Required', minimum_age: 16,
+        salary_amount: 60, expires_at: dateKey(addDays(TODAY, 1)),
+      }).select().single()
+      if (casual6JobErr) {
+        console.warn(`  ⚠ 创建 job_posting 失败 (Same-Day Storeroom Sort): ${casual6JobErr.message}`)
+      } else {
+        const { data: casual6App, error: casual6AppErr } = await supabase.from('job_applicants').insert({
+          job_id: casual6Job.id, user_id: casual6User.id,
+          resume_url: 'https://example.com/demo-resumes/marcus-tan-resume.pdf', status: 'accepted',
+          additional_note: "I'm free this afternoon and can start right away.",
+        }).select().single()
+        if (casual6AppErr) {
+          console.warn(`  ⚠ 创建 job_applicant 失败 (Marcus Tan): ${casual6AppErr.message}`)
+        } else {
+          const { error: casual6InviteErr } = await supabase.from('job_invitations').insert({
+            job_id: casual6Job.id, applicant_id: casual6App.id, sent_by: ownerUser.id, status: 'accepted',
+          })
+          if (casual6InviteErr) console.warn(`  ⚠ 创建 job_invitation 失败: ${casual6InviteErr.message}`)
+        }
+
+        const casual6Shift = await createShift({
+          company_id: company.id, department_id: depts[0].id, shift_date: casual6ShiftDate,
+          start_time: toHM(casual6JobStart), end_time: toHM(new Date(casual6JobStart.getTime() + 60 * 60 * 1000)),
+          is_open_ended: true, created_by: ownerUser.id,
+          publication_status: 'published', source_job_posting_id: casual6Job.id,
+        })
+        const casual6Assignment = casual6Shift && await assignShift(casual6Shift.id, casual6User.id, ownerUser.id, userIdMap['employee1@test.com'].internalId)
+        if (casual6Assignment) {
+          const { error: casual6ClockErr } = await supabase.from('attendance_records').insert({
+            shift_assignment_id: casual6Assignment.id,
+            casual_worker_id: casual6User.id,
+            clock_in_time: casual6JobStart.toISOString(),
+            confirmed_by_employee_id: casual6User.id,
+            submitted_by_employee_id: casual6User.id,
+            status: 'clocked_in',
+          })
+          if (casual6ClockErr) console.warn(`  ⚠ 创建 casual6 attendance_record 失败: ${casual6ClockErr.message}`)
+          console.log(`  ✓ Marcus Tan（casual6，One-off job）今天 ${toHM(casual6JobStart)} UTC 起已打卡、尚未 Clock Out，等 Ben Seah 在 Dashboard 点 Approve Clock Out 才能放行`)
+        }
+      }
     }
   }
 
@@ -2550,19 +2664,19 @@ async function main() {
     company_id: company.id, department_id: depts[1].id, title: 'Review Q3 campaign budget',
     description: 'Check spend against the approved Q3 marketing budget.',
     assigned_user_id: userIdMap['manager2@test.com'].internalId, assigned_by: ownerUser.id,
-    status: 'In Progress', due_at: dueAtOn(YESTERDAY), percentage_complete: 40, priority: 'High',
+    status: 'In Progress', due_at: dueAtOn(YESTERDAY), priority: 'High',
   })
   await createTask({
     company_id: company.id, department_id: depts[2].id, title: 'Sign off warehouse safety audit',
     description: 'Review the completed safety checklist and sign off.',
     assigned_user_id: userIdMap['manager3@test.com'].internalId, assigned_by: ownerUser.id,
-    status: 'Review', due_at: dueAtOn(TODAY), percentage_complete: 90, priority: 'Medium',
+    status: 'Review', due_at: dueAtOn(TODAY), priority: 'Medium',
   })
   await createTask({
     company_id: company.id, department_id: depts[3].id, title: 'Submit monthly support metrics',
     description: "Compile and submit last month's support ticket metrics.",
     assigned_user_id: userIdMap['manager4@test.com'].internalId, assigned_by: ownerUser.id,
-    status: 'Complete', due_at: dueAtOn(TWO_DAYS_AGO), percentage_complete: 100,
+    status: 'Complete', due_at: dueAtOn(TWO_DAYS_AGO),
   })
   await createTask({
     company_id: company.id, department_id: depts[0].id, title: 'Approve overtime requests',
@@ -2574,13 +2688,13 @@ async function main() {
     company_id: company.id, department_id: depts[2].id, title: 'Review new hire onboarding checklist',
     description: 'Make sure the onboarding checklist is up to date before the next intake.',
     assigned_user_id: userIdMap['manager3@test.com'].internalId, assigned_by: userIdMap['partner1@test.com'].internalId,
-    status: 'In Progress', due_at: dueAtOn(YESTERDAY), percentage_complete: 20, priority: 'Low',
+    status: 'In Progress', due_at: dueAtOn(YESTERDAY), priority: 'Low',
   })
   const t7 = await createTask({
     company_id: company.id, department_id: depts[0].id, title: 'Restock front counter supplies',
     description: 'Check and restock counter supplies before the weekend rush.',
     assigned_user_id: userIdMap['employee1@test.com'].internalId, assigned_by: userIdMap['manager1@test.com'].internalId,
-    status: 'In Progress', due_at: dueAtOn(TODAY), percentage_complete: 50, priority: 'Medium',
+    status: 'In Progress', due_at: dueAtOn(TODAY), priority: 'Medium',
   })
   await createTask({
     company_id: company.id, department_id: depts[1].id, title: 'Draft social media captions for weekend promo',
@@ -2592,20 +2706,20 @@ async function main() {
     company_id: company.id, department_id: depts[2].id, title: 'Update inventory count spreadsheet',
     description: "Reconcile last week's counts into the master spreadsheet.",
     assigned_user_id: userIdMap['employee3@test.com'].internalId, assigned_by: userIdMap['manager3@test.com'].internalId,
-    status: 'Review', due_at: dueAtOn(TODAY), percentage_complete: 95, priority: 'High',
+    status: 'Review', due_at: dueAtOn(TODAY), priority: 'High',
   })
   await createTask({
     company_id: company.id, department_id: depts[3].id, title: 'Clear support ticket backlog',
     description: 'Work through the remaining open tickets from last week.',
     assigned_user_id: userIdMap['employee4@test.com'].internalId, assigned_by: userIdMap['manager4@test.com'].internalId,
-    status: 'Complete', percentage_complete: 100,
+    status: 'Complete',
   })
   if (t7) {
     await createTask({
       company_id: company.id, department_id: depts[0].id, title: 'Count current stock',
       parent_task_id: t7.id, sequence_order: 1,
       assigned_user_id: userIdMap['employee1@test.com'].internalId, assigned_by: userIdMap['manager1@test.com'].internalId,
-      status: 'Complete', percentage_complete: 100,
+      status: 'Complete',
     })
     await createTask({
       company_id: company.id, department_id: depts[0].id, title: 'Place supplier order',
@@ -2626,7 +2740,7 @@ async function main() {
     company_id: company.id, department_id: depts[0].id, title: 'Reconcile weekend register discrepancies',
     description: "Compare Saturday and Sunday's register totals against the POS sales report and flag any discrepancy over $5.",
     assigned_user_id: userIdMap['employee1@test.com'].internalId, assigned_by: userIdMap['manager5@test.com'].internalId,
-    status: 'In Progress', due_at: dueAtOn(TOMORROW), percentage_complete: 35, priority: 'High',
+    status: 'In Progress', due_at: dueAtOn(TOMORROW), priority: 'High',
   })
   await createTask({
     company_id: company.id, department_id: depts[0].id, title: 'Prepare loading dock for incoming stock',
@@ -2638,20 +2752,20 @@ async function main() {
     company_id: company.id, department_id: depts[0].id, title: 'Submit weekly cash-handling report',
     description: 'Compile this week\'s cash-handling log into the standard template and submit it for manager sign-off.',
     assigned_user_id: userIdMap['employee1@test.com'].internalId, assigned_by: userIdMap['manager5@test.com'].internalId,
-    status: 'Review', due_at: dueAtOn(TODAY), percentage_complete: 100, priority: 'Medium',
+    status: 'Review', due_at: dueAtOn(TODAY), priority: 'Medium',
   })
   await createTask({
     company_id: company.id, department_id: depts[0].id, title: "Archive last month's supplier invoices",
     description: 'Scan and file last month\'s supplier invoices into the shared archive folder, sorted by vendor.',
     assigned_user_id: userIdMap['employee5@test.com'].internalId, assigned_by: userIdMap['manager5@test.com'].internalId,
-    status: 'Complete', due_at: dueAtOn(TWO_DAYS_AGO), percentage_complete: 100, completed_at: dueAtOn(TWO_DAYS_AGO),
+    status: 'Complete', due_at: dueAtOn(TWO_DAYS_AGO), completed_at: dueAtOn(TWO_DAYS_AGO),
   })
   if (wendyOpsTask1) {
     await createTask({
       company_id: company.id, department_id: depts[0].id, title: 'Cross-check till counts',
       parent_task_id: wendyOpsTask1.id, sequence_order: 1,
       assigned_user_id: userIdMap['employee1@test.com'].internalId, assigned_by: userIdMap['manager5@test.com'].internalId,
-      status: 'Complete', percentage_complete: 100,
+      status: 'Complete',
     })
     await createTask({
       company_id: company.id, department_id: depts[0].id, title: 'File discrepancy report',
@@ -2667,7 +2781,7 @@ async function main() {
     company_id: company.id, department_id: depts[0].id, title: 'Review new hire onboarding paperwork',
     description: "Check Grace's signed onboarding forms and W-9 for completeness before filing with HR.",
     assigned_user_id: userIdMap['employee5@test.com'].internalId, assigned_by: userIdMap['manager1@test.com'].internalId,
-    status: 'Review', due_at: dueAtOn(TODAY), percentage_complete: 100, priority: 'Low',
+    status: 'Review', due_at: dueAtOn(TODAY), priority: 'Low',
   })
   console.log('  ✓ Operations 另加 Wendy Ho（manager5）分派给 Ben Seah/Grace Lim 的 4 条 Task（含 2 条子任务，4 种状态齐全）')
   console.log('    + David Lim（manager1）自己的 1 条 Review Task —— Manager Tasks 页现在同部门两位 Manager 的任务都有真实数据可测')
@@ -2693,7 +2807,7 @@ async function main() {
     await createTask({
       company_id: company.id, department_id: depts[def.dept].id, title: def.title, description: def.description,
       assigned_user_id: userIdMap[def.employee].internalId, assigned_by: userIdMap[def.manager].internalId,
-      status: 'Complete', due_at: taskDueAt, percentage_complete: 100, priority: def.priority,
+      status: 'Complete', due_at: taskDueAt, priority: def.priority,
       completed_at: def.onTime ? taskDueAt : null,
     })
   }
@@ -2707,19 +2821,19 @@ async function main() {
   // (Elaine/Fiona, clocked in normally in Step 13) stays high — staff showing up but delivery
   // slipping is exactly the cross-measure anomaly anomalyDetectionService.ts looks for.
   const customerSupportBacklog = [
-    { title: 'Reconcile refund requests log', assignee: 'employee4@test.com', daysAgo: 6, status: 'Assigned', percentage_complete: 0 },
-    { title: 'Rebuild FAQ knowledge base article', assignee: 'employee4@test.com', daysAgo: 5, status: 'Complete', percentage_complete: 100, completedDaysAgo: 2 },
-    { title: 'Audit chat transcripts for compliance', assignee: 'manager4@test.com', daysAgo: 4, status: 'In Progress', percentage_complete: 60 },
-    { title: 'Update support macros for new pricing', assignee: 'employee4@test.com', daysAgo: 3, status: 'In Progress', percentage_complete: 30 },
-    { title: 'Follow up with VIP accounts', assignee: 'employee4@test.com', daysAgo: 3, status: 'Complete', percentage_complete: 100, completedDaysAgo: 1 },
-    { title: 'Resolve escalated billing dispute', assignee: 'manager4@test.com', daysAgo: 1, status: 'Assigned', percentage_complete: 0 },
+    { title: 'Reconcile refund requests log', assignee: 'employee4@test.com', daysAgo: 6, status: 'Assigned' },
+    { title: 'Rebuild FAQ knowledge base article', assignee: 'employee4@test.com', daysAgo: 5, status: 'Complete', completedDaysAgo: 2 },
+    { title: 'Audit chat transcripts for compliance', assignee: 'manager4@test.com', daysAgo: 4, status: 'In Progress' },
+    { title: 'Update support macros for new pricing', assignee: 'employee4@test.com', daysAgo: 3, status: 'In Progress' },
+    { title: 'Follow up with VIP accounts', assignee: 'employee4@test.com', daysAgo: 3, status: 'Complete', completedDaysAgo: 1 },
+    { title: 'Resolve escalated billing dispute', assignee: 'manager4@test.com', daysAgo: 1, status: 'Assigned' },
   ]
   for (const def of customerSupportBacklog) {
     const assignerEmail = def.assignee === 'manager4@test.com' ? 'partner1@test.com' : 'manager4@test.com'
     await createTask({
       company_id: company.id, department_id: depts[3].id, title: def.title,
       assigned_user_id: userIdMap[def.assignee].internalId, assigned_by: userIdMap[assignerEmail].internalId,
-      status: def.status, due_at: dueAtOn(addDays(TODAY, -def.daysAgo)), percentage_complete: def.percentage_complete,
+      status: def.status, due_at: dueAtOn(addDays(TODAY, -def.daysAgo)),
       completed_at: def.completedDaysAgo !== undefined ? dueAtOn(addDays(TODAY, -def.completedDaysAgo)) : null,
     })
   }
@@ -2733,21 +2847,21 @@ async function main() {
   // task_date when it's set, and only falls back to created_at (today, outside the window) when it
   // isn't — due_at is left null so these don't also skew the on-time-rate chart.
   const opsWorkloadDefs = [
-    { title: 'Unload delivery truck', description: "Unload this morning's supplier truck and stage pallets in the receiving bay.", priority: 'Medium', assignee: 'employee1@test.com', daysAgo: 6, status: 'Complete', percentage_complete: 100 },
-    { title: 'Restock aisle 3 shelving', description: 'Restock aisle 3 from the backroom overflow and front-face all items.', priority: 'Low', assignee: 'employee1@test.com', daysAgo: 5, status: 'Complete', percentage_complete: 100 },
-    { title: 'Process customer return items', description: "Inspect and process yesterday's customer returns — restock sellable items, log damaged ones.", priority: 'Medium', assignee: 'employee1@test.com', daysAgo: 5, status: 'Complete', percentage_complete: 100 },
-    { title: 'Set up weekend promo display', description: 'Build the weekend promo end-cap display per the layout sent by Marketing.', priority: 'Medium', assignee: 'employee1@test.com', daysAgo: 4, status: 'Complete', percentage_complete: 100 },
-    { title: 'Sweep and mop stockroom', description: 'Sweep and mop the stockroom floor and clear any blocked walkways.', priority: 'Low', assignee: 'employee1@test.com', daysAgo: 3, status: 'In Progress', percentage_complete: 50 },
-    { title: 'Label new inventory batch', description: "Print and apply shelf labels for this week's new inventory batch.", priority: 'Medium', assignee: 'employee1@test.com', daysAgo: 2, status: 'In Progress', percentage_complete: 20 },
-    { title: 'Cover front register during lunch', description: "Cover the front register during Ben's lunch break, 12–1pm.", priority: 'Medium', assignee: 'employee5@test.com', daysAgo: 4, status: 'Complete', percentage_complete: 100 },
-    { title: 'Review weekend staffing plan', description: 'Review the draft weekend roster for gaps before it goes out to the team.', priority: 'High', assignee: 'manager1@test.com', daysAgo: 3, status: 'In Progress', percentage_complete: 40 },
+    { title: 'Unload delivery truck', description: "Unload this morning's supplier truck and stage pallets in the receiving bay.", priority: 'Medium', assignee: 'employee1@test.com', daysAgo: 6, status: 'Complete' },
+    { title: 'Restock aisle 3 shelving', description: 'Restock aisle 3 from the backroom overflow and front-face all items.', priority: 'Low', assignee: 'employee1@test.com', daysAgo: 5, status: 'Complete' },
+    { title: 'Process customer return items', description: "Inspect and process yesterday's customer returns — restock sellable items, log damaged ones.", priority: 'Medium', assignee: 'employee1@test.com', daysAgo: 5, status: 'Complete' },
+    { title: 'Set up weekend promo display', description: 'Build the weekend promo end-cap display per the layout sent by Marketing.', priority: 'Medium', assignee: 'employee1@test.com', daysAgo: 4, status: 'Complete' },
+    { title: 'Sweep and mop stockroom', description: 'Sweep and mop the stockroom floor and clear any blocked walkways.', priority: 'Low', assignee: 'employee1@test.com', daysAgo: 3, status: 'In Progress' },
+    { title: 'Label new inventory batch', description: "Print and apply shelf labels for this week's new inventory batch.", priority: 'Medium', assignee: 'employee1@test.com', daysAgo: 2, status: 'In Progress' },
+    { title: 'Cover front register during lunch', description: "Cover the front register during Ben's lunch break, 12–1pm.", priority: 'Medium', assignee: 'employee5@test.com', daysAgo: 4, status: 'Complete' },
+    { title: 'Review weekend staffing plan', description: 'Review the draft weekend roster for gaps before it goes out to the team.', priority: 'High', assignee: 'manager1@test.com', daysAgo: 3, status: 'In Progress' },
   ]
   for (const def of opsWorkloadDefs) {
     const assignerId = def.assignee === 'manager1@test.com' ? ownerUser.id : userIdMap['manager1@test.com'].internalId
     await createTask({
       company_id: company.id, department_id: depts[0].id, title: def.title, description: def.description,
       assigned_user_id: userIdMap[def.assignee].internalId, assigned_by: assignerId,
-      status: def.status, percentage_complete: def.percentage_complete, priority: def.priority,
+      status: def.status, priority: def.priority,
       task_date: dateKey(addDays(TODAY, -def.daysAgo)),
     })
   }
@@ -2756,11 +2870,11 @@ async function main() {
   // ── Step 20: 创建 Announcements + Messages（Communication 页两个 Tab 都有数据，UC58-61）──
   console.log('\nStep 20: 创建 Communication 数据...')
   const announcementDefs = [
-    { from_user_id: ownerUser.id, company_id: company.id, department_id: null,
+    { user_id: ownerUser.id, company_id: company.id, audience_department_id: null,
       title: 'Q3 All-Hands — This Friday 3pm', content: 'Join us this Friday at 3pm for the Q3 all-hands. Attendance is expected for all Managers and Employees.' },
-    { from_user_id: ownerUser.id, company_id: company.id, department_id: depts[0].id,
+    { user_id: ownerUser.id, company_id: company.id, audience_department_id: depts[0].id,
       title: 'Updated opening checklist now posted', content: 'The updated opening checklist for Operations is now posted in the shared drive — please review before your next shift.' },
-    { from_user_id: userIdMap['partner1@test.com'].internalId, company_id: company.id, department_id: null,
+    { user_id: userIdMap['partner1@test.com'].internalId, company_id: company.id, audience_department_id: null,
       title: 'Reminder: submit expense reports by month-end', content: 'Please submit any outstanding expense reports by the last day of the month so payroll can process them on time.' },
   ]
   for (const def of announcementDefs) {

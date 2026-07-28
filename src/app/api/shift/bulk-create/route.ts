@@ -29,8 +29,6 @@ export async function POST(req: NextRequest) {
     .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
     .map(item => ({
       department_id: typeof item.department_id === 'string' ? item.department_id : '',
-      title: typeof item.title === 'string' ? item.title : null,
-      instruction: typeof item.instruction === 'string' ? item.instruction : null,
       shift_date: typeof item.shift_date === 'string' ? item.shift_date : '',
       start_time: typeof item.start_time === 'string' ? item.start_time : '',
       end_time: typeof item.end_time === 'string' ? item.end_time : '',

@@ -49,27 +49,21 @@ type Application = {
   decided_at?: string
   invitation_sent_at?: string
   invitation_responded_at?: string
-  resume_url?: string
-  cover_letter?: string
-  location?: string
-  employment_type?: string
+  resume?: string
   salary_amount?: number
   salary_type?: string
-  description?: string
-  requirements?: string
+  responsibilities?: string
+  skills?: string
   benefits?: string
   urgency?: string
   openings?: number
-  job_date?: string
   job_end_date?: string
-  shift_date?: string
-  shift_days?: string[]
-  shift_start_time?: string
-  shift_end_time?: string
+  job_date?: string
+  job_start_time?: string
+  job_end_time?: string
   break_start_time?: string
   break_end_time?: string
   estimated_hours?: string
-  is_recurring?: boolean
   recurrence_interval?: number
   recurrence_unit?: string
   // Extra posting fields (now that the applications API joins the full posting + company/department)
@@ -79,10 +73,8 @@ type Application = {
   minimum_age?: number
   experience_required?: string
   uniform_type?: string
-  uniform_required?: boolean
   uniform_details?: string
-  form_type?: string
-  job_start_time?: string
+  job_type?: string
   department_name?: string
   company_location?: string
   company_address?: string
@@ -113,18 +105,15 @@ function toJobView(app: Application): JobView {
     minimum_age: app.minimum_age,
     experience_required: app.experience_required,
     uniform_type: app.uniform_type,
-    uniform_required: app.uniform_required,
     uniform_details: app.uniform_details,
-    form_type: app.form_type,
-    is_recurring: app.is_recurring,
-    shift_date: app.shift_date,
-    shift_start_time: app.shift_start_time,
-    shift_end_time: app.shift_end_time,
+    job_type: app.job_type,
+    job_date: app.job_date,
+    job_start_time: app.job_start_time,
+    job_end_time: app.job_end_time,
     break_start_time: app.break_start_time,
     break_end_time: app.break_end_time,
-    job_start_time: app.job_start_time,
-    description: app.description,
-    requirements: app.requirements,
+    responsibilities: app.responsibilities,
+    skills: app.skills,
   }
 }
 
@@ -133,8 +122,7 @@ type RawApplication = {
   status: ApplicationStatus
   applied_at: string
   decided_at?: string | null
-  resume_url?: string
-  cover_letter?: string
+  resume?: string
   job_postings?: (Partial<Application> & { title?: string }) | null
   job_invitations?: {
     id: string
@@ -204,8 +192,7 @@ function ApplicationsContent() {
           // formatDate dropped the clock, which is exactly what the tracker needs to show).
           applied_at: app.applied_at,
           decided_at: app.decided_at ?? undefined,
-          resume_url: app.resume_url,
-          cover_letter: app.cover_letter,
+          resume: app.resume,
           invitation_id: invite?.id,
           invitation_status: invite?.status,
           invitation_sent_at: invite?.sent_at ?? undefined,

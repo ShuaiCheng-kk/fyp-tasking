@@ -38,29 +38,17 @@ export const authRepository = {
     supabase_auth_id: string
     full_name: string
     email_address: string
-    phone_number: string | null
-    date_of_birth?: string | null
-    profile_photo_url?: string | null
-    home_location?: string | null
+    phone_number: string
+    date_of_birth: string
+    profile_photo_url: string
     role: User['role']
     company_id?: string | null
   }): Promise<User> {
-    const tryInsert = async (payload: typeof data) => {
-      const { data: user, error } = await supabase
-        .from('users')
-        .insert(payload)
-        .select()
-        .single()
-      return { user, error }
-    }
-
-    let insertResult = await tryInsert(data)
-    if (insertResult.error && /profile_photo_url/i.test(insertResult.error.message)) {
-      const { profile_photo_url: _ignored, ...fallbackData } = data
-      insertResult = await tryInsert(fallbackData)
-    }
-
-    const { user, error } = insertResult
+    const { data: user, error } = await supabase
+      .from('users')
+      .insert(data)
+      .select()
+      .single()
     if (error) throw new Error(`Failed to create user record: ${error.message}`)
 
     const { data: verify, error: verifyError } = await supabase

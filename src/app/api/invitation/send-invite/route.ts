@@ -7,7 +7,7 @@ import { invitationService } from '@/services/invitation/invitationService'
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
-    const { email, role, company_id, department_id, invited_by, reporting_manager_id } = body
+    const { email, role, company_id, department_id, invited_by } = body
 
     if (!email || !role || !company_id || !invited_by) {
       return NextResponse.json(
@@ -22,7 +22,6 @@ export async function POST(req: NextRequest) {
       company_id,
       department_id: department_id || null,
       invited_by,
-      reporting_manager_id: reporting_manager_id || null,
     })
 
     return NextResponse.json({ success: true, message: 'Invite sent' })

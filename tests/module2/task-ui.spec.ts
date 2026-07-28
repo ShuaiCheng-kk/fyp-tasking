@@ -49,7 +49,7 @@ async function createManager(label: string): Promise<SeededMember> {
 
   const { error: deptError } = await admin
     .from('manager_departments')
-    .insert({ manager_id: user.id, company_id: seeded.companyId, department_id: departmentId, assigned_by: seeded.ownerId })
+    .insert({ manager_id: user.id, company_id: seeded.companyId, department_id: departmentId })
   if (deptError) throw new Error(`Failed to assign manager department: ${deptError.message}`)
 
   return { authUserId: authData.user.id, userId: user.id as string, email }
@@ -136,12 +136,12 @@ test.beforeAll(async () => {
   if (assignmentError) throw new Error(`Failed to create shift assignments: ${assignmentError.message}`)
 
   const seedTasks = [
-    ['Prep opening checklist', 'Assigned', managerA.userId, 'High', 0],
-    ['Stock front desk', 'In Progress', managerA.userId, 'Medium', 45],
-    ['Review VIP room', 'Review', managerB.userId, 'Urgent', 80],
+    ['Prep opening checklist', 'Assigned', managerA.userId, 'High'],
+    ['Stock front desk', 'In Progress', managerA.userId, 'Medium'],
+    ['Review VIP room', 'Review', managerB.userId, 'Urgent'],
   ] as const
 
-  for (const [title, status, assignedUserId, priority, percentageComplete] of seedTasks) {
+  for (const [title, status, assignedUserId, priority] of seedTasks) {
     const { error } = await admin.from('tasks').insert({
       company_id: seeded.companyId,
       department_id: departmentId,
@@ -151,7 +151,6 @@ test.beforeAll(async () => {
       assigned_user_id: assignedUserId,
       assigned_by: seeded.ownerId,
       status,
-      percentage_complete: percentageComplete,
       priority,
       task_date: taskUiDate,
       due_at: `${taskUiDate}T18:00:00.000Z`,

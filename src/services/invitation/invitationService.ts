@@ -71,7 +71,6 @@ export const invitationService = {
     company_id: string
     department_id: string | null
     invited_by: string
-    reporting_manager_id?: string | null
   }): Promise<void> {
     const normalizedRole = ROLE_MAP[data.role] ?? (data.role as InvitationCode['role'])
     const inviter = await authRepository.findByAuthIdOrInternalId(data.invited_by)
@@ -89,14 +88,7 @@ export const invitationService = {
       if (existingUser.company_id === data.company_id) {
         throw new Error('This user is already a member of this company.')
       }
-      await invitationRepository.insertInboxInvite({
-        recipient_user_id: existingUser.id,
-        sender_user_id: inviter.id,
-        company_id: data.company_id,
-        role: normalizedRole,
-        department_id: data.department_id,
-      })
-      return
+      throw new Error('This user already has an account with another company and cannot be invited.')
     }
 
     const expired_at = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
@@ -107,7 +99,6 @@ export const invitationService = {
       role: normalizedRole,
       generated_by: inviter.id,
       expired_at,
-      reporting_manager_id: data.reporting_manager_id || null,
     })
 
     const company = await companyRepository.findById(data.company_id)
@@ -129,9 +120,9 @@ export const invitationService = {
     full_name: string
     email_address: string
     password: string
-    phone_number: string | null
-    date_of_birth?: string | null
-    profile_photo_url?: string | null
+    phone_number: string
+    date_of_birth: string
+    profile_photo_url: string
   }): Promise<{ user: User; company_id: string }> {
     const invitation = await invitationRepository.findByCode(data.code)
     if (!invitation) throw new Error('Invalid or expired invitation code')
@@ -186,8 +177,8 @@ export const invitationService = {
         full_name: data.full_name,
         email_address: data.email_address,
         phone_number: data.phone_number,
-        date_of_birth: data.date_of_birth ?? null,
-        profile_photo_url: data.profile_photo_url ?? null,
+        date_of_birth: data.date_of_birth,
+        profile_photo_url: data.profile_photo_url,
         role: normalizedRole,
         company_id: invitation.company_id,
       })

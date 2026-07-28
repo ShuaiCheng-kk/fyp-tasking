@@ -6,7 +6,7 @@ import { casualWorkerStatusRepository } from '@/repositories/team/casualWorkerSt
 export const casualWorkerStatusService = {
   // "Inactive" = ban this Casual Worker from applying to THIS company's jobs (per-company, stored
   // on casualworker_departments). "Active" = lift that ban. A company_id is required because the
-  // ban is company-scoped; the global users.worker_status column is only mirrored for display.
+  // ban is company-scoped — the same worker can be banned by one company and stay active for another.
   async updateStatus({
     user_id,
     company_id,
@@ -17,7 +17,7 @@ export const casualWorkerStatusService = {
     company_id: string
     worker_status: string
     inactivate_reason: string | null
-  }) {
+  }): Promise<void> {
     const isBan = worker_status === 'inactive'
     // Reactivating clears the stored reason; banning keeps it.
     const reasonToStore = isBan ? inactivate_reason : null
@@ -34,8 +34,5 @@ export const casualWorkerStatusService = {
       const jobIds = await casualWorkerStatusRepository.getCompanyJobIds(company_id)
       await casualWorkerStatusRepository.withdrawPendingApplicationsForJobs(user_id, jobIds)
     }
-
-    // Mirror onto the global column so display surfaces that still read worker_status stay in sync.
-    return casualWorkerStatusRepository.updateStatus(user_id, worker_status, reasonToStore)
   },
 }

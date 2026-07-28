@@ -59,13 +59,13 @@ async function seedWorker(label: string, dateOfBirth: string): Promise<{ authId:
 }
 
 // Puts a worker in the company (the membership row the pool + ban are stamped on).
-async function joinCompany(userId: string, opts: { verified: boolean; blocked?: boolean }) {
+async function joinCompany(userId: string, opts: { verified: boolean; inactive?: boolean }) {
   const { error } = await admin.from('casualworker_departments').insert({
     casual_worker_id: userId,
     department_id: departmentId,
     company_id: seeded.companyId,
     verified_at: opts.verified ? new Date().toISOString() : null,
-    blocked_at: opts.blocked ? new Date().toISOString() : null,
+    inactive_at: opts.inactive ? new Date().toISOString() : null,
   })
   if (error) throw new Error(`Failed to add to company: ${error.message}`)
 }
@@ -150,7 +150,7 @@ test.beforeAll(async () => {
   await recordCompletedShift(regular.userId, '2026-01-10')
 
   banned = await seedWorker('banned', '1997-04-04')
-  await joinCompany(banned.userId, { verified: true, blocked: true })
+  await joinCompany(banned.userId, { verified: true, inactive: true })
   await recordCompletedShift(banned.userId, '2026-01-11')
 
   noShow = await seedWorker('noshow', '1996-05-05')
@@ -236,10 +236,10 @@ test('inviting a pool worker records the application for them and they confirm i
   // The offer lands as an application already accepted by the Owner, plus an invitation to confirm.
   const { data: applicant } = await admin
     .from('job_applicants')
-    .select('id, status, skills_snapshot')
+    .select('id, status, skills')
     .eq('job_id', job.id).eq('user_id', regular.userId).single()
   expect(applicant?.status).toBe('accepted')
-  expect(applicant?.skills_snapshot).toBe('Barista, Cash register')
+  expect(applicant?.skills).toBe('Barista, Cash register')
 
   const { data: invitation } = await admin
     .from('job_invitations')

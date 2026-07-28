@@ -94,16 +94,16 @@ export const workerProfileService = {
     const user = await workerProfileRepository.getByAuthId(authId)
     if (!user) throw new Error('Worker not found')
 
-    let fileUrl: string | null = null
+    let certificateUrl: string | null = null
     if (file) {
       const path = `profiles/${user.id}/certificates/${Date.now()}-${cleanFileName(file.name)}`
-      fileUrl = await workerProfileRepository.uploadProfileFile(file, path)
+      certificateUrl = await workerProfileRepository.uploadProfileFile(file, path)
     }
 
     return workerProfileRepository.addCertificate({
       user_id: user.id,
       name: trimmedName,
-      file_url: fileUrl,
+      certificate_url: certificateUrl,
     })
   },
 

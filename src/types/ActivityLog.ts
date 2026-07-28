@@ -6,7 +6,6 @@ export type ActivityLog = {
   target_id: string | null
   target_name: string | null
   detail: string | null
-  is_read: boolean
   created_at: string
   actor?: { full_name: string } | null
 }

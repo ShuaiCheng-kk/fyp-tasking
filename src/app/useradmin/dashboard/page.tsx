@@ -358,8 +358,8 @@ export default function UserAdminDashboard() {
     if (planFilters.length > 0 && !planFilters.includes(c.plan)) return false
     if (industryFilters.length > 0 && !industryFilters.includes(c.industry ?? '')) return false
     if (compStatusFilters.length === 1) {
-      if (compStatusFilters[0] === 'suspended' && !c.is_suspended) return false
-      if (compStatusFilters[0] === 'active' && c.is_suspended) return false
+      if (compStatusFilters[0] === 'suspended' && !c.suspended_at) return false
+      if (compStatusFilters[0] === 'active' && c.suspended_at) return false
     }
     if (compDateFrom && new Date(c.created_at) < new Date(compDateFrom)) return false
     if (compDateTo && new Date(c.created_at) > new Date(compDateTo + 'T23:59:59')) return false
@@ -611,7 +611,7 @@ export default function UserAdminDashboard() {
                             onMouseLeave={e => (e.currentTarget.style.background = '')}>
                             <td style={{ padding: '11px 16px', fontWeight: 600, color: T.text1 }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                                <Avatar name={c.name} imageUrl={c.logo_url} />
+                                <Avatar name={c.name} />
                                 {c.name}
                               </div>
                             </td>
@@ -619,7 +619,7 @@ export default function UserAdminDashboard() {
                               <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 5, background: c.plan === 'Paid' ? '#F0FDF4' : T.surfaceHi, color: c.plan === 'Paid' ? '#16A34A' : T.text3, border: `1px solid ${c.plan === 'Paid' ? '#BBF7D0' : T.border}` }}>{c.plan}</span>
                             </td>
                             <td style={{ padding: '11px 16px', color: T.text2, fontSize: '0.82rem' }}>{c.industry ?? '—'}</td>
-                            <td style={{ padding: '11px 16px' }}><StatusDot suspended={c.is_suspended} reason={c.suspended_reason} /></td>
+                            <td style={{ padding: '11px 16px' }}><StatusDot suspended={!!c.suspended_at} reason={c.suspended_reason} /></td>
                             <td style={{ padding: '11px 16px', color: T.text3, fontSize: '0.8rem', fontVariantNumeric: 'tabular-nums' }}>{new Date(c.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
                             <td style={{ padding: '11px 16px' }}>
                               <button onClick={() => openDetail(c.id)} style={{ display: 'flex', alignItems: 'center', gap: 3, background: T.accentBg, border: `1px solid ${T.accentMid}`, borderRadius: 6, cursor: 'pointer', color: T.accent, fontWeight: 600, fontSize: 11.5, padding: '4px 10px' }}>
@@ -826,13 +826,13 @@ export default function UserAdminDashboard() {
                   <div style={{ overflowY: 'auto', padding: 24, borderRight: `1px solid ${T.border}` }}>
                     <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20 }}>
                       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-                        <Avatar name={detailCompany.name} imageUrl={detailCompany.logo_url} size={52} />
+                        <Avatar name={detailCompany.name} size={52} />
                         <div>
                           <h3 style={{ fontWeight: 700, fontSize: '1.1rem', color: T.text1, margin: '0 0 4px' }}>{detailCompany.name}</h3>
                           {detailCompany.description && <p style={{ color: T.text2, margin: 0, fontSize: '0.82rem' }}>{detailCompany.description}</p>}
                         </div>
                       </div>
-                      <StatusDot suspended={detailCompany.is_suspended} />
+                      <StatusDot suspended={!!detailCompany.suspended_at} />
                     </div>
 
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 20px', marginBottom: 16, background: '#F8FAFC', border: `1px solid ${T.border}`, borderRadius: 10, padding: 14 }}>
@@ -841,7 +841,6 @@ export default function UserAdminDashboard() {
                         ['Industry', detailCompany.industry ?? '—'],
                         ['Size', detailCompany.size ?? '—'],
                         ['Location', detailCompany.location ?? '—'],
-                        ['Website', detailCompany.website ?? '—'],
                         ['Address', detailCompany.address ?? '—'],
                         ['Postal Code', detailCompany.postal_code ?? '—'],
                         ['Owner', detailCompany.owner_name ?? '—'],
@@ -857,7 +856,7 @@ export default function UserAdminDashboard() {
                       ))}
                     </div>
 
-                    {detailCompany.is_suspended && detailCompany.suspended_reason && (
+                    {detailCompany.suspended_at && detailCompany.suspended_reason && (
                       <div style={{ background: T.dangerBg, border: `1px solid ${T.dangerMid}`, borderRadius: 8, padding: '10px 14px' }}>
                         <div style={{ fontSize: 11, fontWeight: 700, color: T.danger, marginBottom: 2, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Suspension Reason</div>
                         <div style={{ fontSize: '0.82rem', color: '#B91C1C' }}>{detailCompany.suspended_reason}</div>
@@ -911,7 +910,7 @@ export default function UserAdminDashboard() {
                     style={{ padding: '8px 16px', borderRadius: 8, border: `1px solid ${T.border}`, background: T.surface, cursor: 'pointer', color: T.text2, fontWeight: 600, fontSize: '0.85rem' }}>
                     Close
                   </button>
-                  {detailCompany.is_suspended ? (
+                  {detailCompany.suspended_at ? (
                     <button onClick={() => setReinstateModal({ type: 'company', id: detailCompany.id, name: detailCompany.name })}
                       style={{ padding: '8px 16px', borderRadius: 8, border: 'none', background: T.success, cursor: 'pointer', color: '#fff', fontWeight: 600, fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 6 }}>
                       <CheckCircle size={14} /> Reinstate Company

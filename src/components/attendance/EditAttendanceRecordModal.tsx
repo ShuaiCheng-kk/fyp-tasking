@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { Check, UserRound, X } from 'lucide-react'
 import Spinner from '@/components/Spinner'
 import { ModalOverlay, ModalBox, ModalHeader, modalErrorBoxStyle, modalPrimaryButtonStyle, modalLabelStyle } from '@/components/modal'
-import { AttendanceDashboardRecord, AttendanceModifiedTimeField } from '@/types/Attendance'
+import { AttendanceDashboardRecord, AttendanceModifiedTimeField, AttendanceRecord } from '@/types/Attendance'
 import { getARStatus } from '@/components/attendance/ARStatus'
 
 // UC56 — click-to-edit-clock-time modal for a single attendance record. Shared by AttendanceView's
@@ -38,7 +38,7 @@ function formatShiftHour(time: string): string {
 
 function fmtClockStamp(iso: string | null): string {
   if (!iso) return '--'
-  return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'UTC' })
+  return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Singapore' })
 }
 
 const TIME_OPTIONS: string[] = (() => {
@@ -95,6 +95,24 @@ function formatModifiedFieldsLabel(fields: string[] | null | undefined): string 
   return fields.map(f => OWNER_MODIFIED_FIELD_LABELS[f] ?? f).join(', ')
 }
 
+// Which fields differ from their true original (the raw clock_in_time/clock_out_time/
+// break_in_time/break_out_time columns, which are never overwritten) at minute precision —
+// derived live instead of read from a stored flag, since the modified_* columns get rewritten
+// on every save regardless of which field was actually touched.
+function getStoredModifiedFields(record: AttendanceRecord | null | undefined): AttendanceModifiedTimeField[] {
+  if (!record) return []
+  const truncate = (iso: string | null) => iso?.slice(0, 16) ?? null
+  const pairs: [AttendanceModifiedTimeField, string | null, string | null][] = [
+    ['clock_in_time', record.clock_in_time, record.modified_clock_in_time],
+    ['clock_out_time', record.clock_out_time, record.modified_clock_out_time],
+    ['break_in_time', record.break_in_time, record.modified_break_in_time],
+    ['break_out_time', record.break_out_time, record.modified_break_out_time],
+  ]
+  return pairs
+    .filter(([, raw, adjusted]) => adjusted !== null && truncate(raw) !== truncate(adjusted))
+    .map(([field]) => field)
+}
+
 export default function EditAttendanceRecordModal({
   record, onClose, onSaved, companyId, internalUserId, basePath, canModifyClockTimes, scopeToManagerDepartments, showSuccessToast, showErrorToast,
 }: {
@@ -125,10 +143,10 @@ export default function EditAttendanceRecordModal({
   // is opened for review.
   useEffect(() => {
     if (!record) return
-    const initialClockIn = isoToAmPm(record.record?.owner_adjusted_clock_in_time ?? record.record?.clock_in_time)
-    const initialClockOut = isoToAmPm(record.record?.owner_adjusted_clock_out_time ?? record.record?.clock_out_time)
-    const initialBreakIn = isoToAmPm(record.record?.break_in_time)
-    const initialBreakOut = isoToAmPm(record.record?.break_out_time)
+    const initialClockIn = isoToAmPm(record.record?.modified_clock_in_time ?? record.record?.clock_in_time)
+    const initialClockOut = isoToAmPm(record.record?.modified_clock_out_time ?? record.record?.clock_out_time)
+    const initialBreakIn = isoToAmPm(record.record?.modified_break_in_time ?? record.record?.break_in_time)
+    const initialBreakOut = isoToAmPm(record.record?.modified_break_out_time ?? record.record?.break_out_time)
     setReviewClockIn(initialClockIn)
     setReviewClockOut(initialClockOut)
     setReviewBreakIn(initialBreakIn)
@@ -191,11 +209,10 @@ export default function EditAttendanceRecordModal({
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          action: 'final_review',
+          action: 'modify_times',
           id: record.record.id,
-          owner_id: internalUserId,
-          decision: 'modified',
-          owner_notes: reviewReason.trim(),
+          actor_id: internalUserId,
+          reason: reviewReason.trim(),
           clock_in_time: clockInIso,
           clock_out_time: clockOutIso,
           break_in_time: breakInIso,
@@ -214,10 +231,15 @@ export default function EditAttendanceRecordModal({
     } finally { setReviewActionLoading(false) }
   }
 
+  // Which fields the record currently on file already differs on, before any new edits below.
+  const storedModifiedFields = getStoredModifiedFields(record.record)
+  const showModifiedInfo = storedModifiedFields.length > 0
+  const modifiedFieldsSet = new Set(storedModifiedFields)
+
   // UC56 (rank confirmed 2026-07-23): Owner/Partner outrank Manager — once either of them
   // modifies a record, a Manager loses edit rights on it entirely.
   const lockedByOwnerOrPartner = scopeToManagerDepartments
-    && record.record?.owner_status === 'modified'
+    && showModifiedInfo
     && (record.modifier_role === 'Owner' || record.modifier_role === 'Partner')
   // UC56 (expanded 2026-07-23): a Manager's edit right stops at their own department's
   // Employee/Casual Worker records — a peer Manager's record is view-only.
@@ -229,14 +251,10 @@ export default function EditAttendanceRecordModal({
   const shiftDateForCompare = record.shift.shift_date
   const toISOForCompare = (ampm: string): string | null => ampm ? new Date(`${shiftDateForCompare}T${amPmToHHMM(ampm)}:00Z`).toISOString() : null
   const truncateToMinute = (iso: string | null) => iso?.slice(0, 16) ?? null
-  const resolveTrueOriginalClient = (field: AttendanceModifiedTimeField): string | null => {
-    const rec = record.record
-    if (!rec) return null
-    if (field === 'clock_in_time') return rec.clock_in_time
-    if (field === 'clock_out_time') return rec.clock_out_time
-    const stored = rec.owner_modified_original_values ?? {}
-    return field in stored ? stored[field] ?? null : rec[field]
-  }
+  // The true original for every field is always its own raw column — clock_in_time/
+  // clock_out_time/break_in_time/break_out_time are never overwritten; only the modified_*
+  // counterpart changes when a reviewer corrects a time.
+  const resolveTrueOriginalClient = (field: AttendanceModifiedTimeField): string | null => record.record?.[field] ?? null
   const currentPickerValues: Record<AttendanceModifiedTimeField, string | null> = {
     clock_in_time: toISOForCompare(reviewClockIn),
     clock_out_time: toISOForCompare(reviewClockOut),
@@ -245,8 +263,6 @@ export default function EditAttendanceRecordModal({
   }
   const willBeModified = (['clock_in_time', 'clock_out_time', 'break_in_time', 'break_out_time'] as const)
     .some(field => truncateToMinute(resolveTrueOriginalClient(field)) !== truncateToMinute(currentPickerValues[field]))
-  const showModifiedInfo = record.record?.owner_status === 'modified'
-  const modifiedFieldsSet = new Set(record.record?.owner_modified_fields ?? [])
   const fieldLabelWithBadge = (text: string, fieldKey: AttendanceModifiedTimeField) => (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
       {text}
@@ -257,7 +273,7 @@ export default function EditAttendanceRecordModal({
   )
   const originalValueNote = (fieldKey: AttendanceModifiedTimeField) => {
     if (!showModifiedInfo || !modifiedFieldsSet.has(fieldKey)) return null
-    const original = record.record?.owner_modified_original_values?.[fieldKey] ?? null
+    const original = record.record?.[fieldKey] ?? null
     return (
       <p style={{ margin: '4px 0 0', fontSize: 11, fontWeight: 700, color: '#EA580C' }}>
         Original: {original ? fmtClockStamp(original) : '—'}
@@ -302,7 +318,7 @@ export default function EditAttendanceRecordModal({
                   { label: 'Job Type', value: record.shift.is_open_ended ? 'One-off Job' : 'Shift Job' },
                   {
                     label: 'Job Title',
-                    value: record.shift.title ?? '—',
+                    value: record.job_title ?? '—',
                     onClick: record.shift.source_job_posting_id
                       ? () => router.push(`${basePath}/recruitment?job=${record.shift.source_job_posting_id}`)
                       : undefined,
@@ -318,7 +334,7 @@ export default function EditAttendanceRecordModal({
               : [{ label: 'Shift Time', value: `${formatShiftHour(record.shift.start_time)} – ${formatShiftHour(record.shift.end_time)}` }]
             ),
             ...(showModifiedInfo
-              ? [{ label: 'Modified By', value: `${record.modifier_name ?? 'Unknown'} on ${formatModifiedDateOnly(record.record?.owner_reviewed_at)}` }]
+              ? [{ label: 'Modified By', value: `${record.modifier_name ?? 'Unknown'} on ${formatModifiedDateOnly(record.record?.modified_at)}` }]
               : []
             ),
           ] as { label: string; value: string; onClick?: () => void }[]).map(field => (
@@ -370,12 +386,12 @@ export default function EditAttendanceRecordModal({
             <div style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <div>
                 <label style={{ ...modalLabelStyle, marginBottom: 4 }}>{fieldLabelWithBadge('Clock In', 'clock_in_time')}</label>
-                <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>{fmtClockStamp(record.record.owner_adjusted_clock_in_time ?? record.record.clock_in_time)}</p>
+                <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>{fmtClockStamp(record.record.modified_clock_in_time ?? record.record.clock_in_time)}</p>
                 {originalValueNote('clock_in_time')}
               </div>
               <div>
                 <label style={{ ...modalLabelStyle, marginBottom: 4 }}>{fieldLabelWithBadge('Clock Out', 'clock_out_time')}</label>
-                <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>{fmtClockStamp(record.record.owner_adjusted_clock_out_time ?? record.record.clock_out_time)}</p>
+                <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>{fmtClockStamp(record.record.modified_clock_out_time ?? record.record.clock_out_time)}</p>
                 {originalValueNote('clock_out_time')}
               </div>
             </div>
@@ -412,12 +428,12 @@ export default function EditAttendanceRecordModal({
             <div style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <div>
                 <label style={{ ...modalLabelStyle, marginBottom: 4 }}>{fieldLabelWithBadge('Break In', 'break_in_time')}</label>
-                <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>{fmtClockStamp(record.record.break_in_time)}</p>
+                <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>{fmtClockStamp(record.record.modified_break_in_time ?? record.record.break_in_time)}</p>
                 {originalValueNote('break_in_time')}
               </div>
               <div>
                 <label style={{ ...modalLabelStyle, marginBottom: 4 }}>{fieldLabelWithBadge('Break Out', 'break_out_time')}</label>
-                <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>{fmtClockStamp(record.record.break_out_time)}</p>
+                <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>{fmtClockStamp(record.record.modified_break_out_time ?? record.record.break_out_time)}</p>
                 {originalValueNote('break_out_time')}
               </div>
             </div>
@@ -427,7 +443,7 @@ export default function EditAttendanceRecordModal({
             <div style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6' }}>
               <label style={{ ...modalLabelStyle, marginBottom: 4 }}>Reason</label>
               <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif", whiteSpace: 'pre-wrap' }}>
-                {record.record.owner_notes || '—'}
+                {record.record.modified_reason || '—'}
               </p>
             </div>
           )}

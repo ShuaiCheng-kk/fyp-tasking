@@ -39,7 +39,6 @@ type HistoryEntry = {
   break_out_time: string | null
   hours: number | null
   hourly_rate: number | null
-  flat_rate: number | null
   pay: number | null
   notes: string | null
   completed_tasks: string[]
@@ -507,9 +506,7 @@ function RecordDetail({ entry, isCompact, detailJob }: {
   isCompact: boolean
   detailJob: JobView | null
 }) {
-  const rateLabel = entry.flat_rate !== null
-    ? `$${entry.flat_rate.toFixed(2)} flat`
-    : entry.hourly_rate !== null ? `$${entry.hourly_rate.toFixed(2)} / hour` : '–'
+  const rateLabel = entry.hourly_rate !== null ? `$${entry.hourly_rate.toFixed(2)} / hour` : '–'
   const breakLabel = entry.break_in_time
     ? `${formatClockTime(entry.break_in_time)} – ${formatClockTime(entry.break_out_time)}`
     : '—'
@@ -595,7 +592,7 @@ function RecordDetail({ entry, isCompact, detailJob }: {
               <div style={{ marginTop: 16, borderTop: '1px solid #F3F4F6', paddingTop: 16 }}>
                 {detailJob
                   ? <JobDetailPanel
-                      job={{ ...detailJob, shift_date: entry.shift_date, shift_start_time: entry.start_time, shift_end_time: entry.end_time }}
+                      job={{ ...detailJob, job_date: entry.shift_date, job_start_time: entry.start_time, job_end_time: entry.end_time }}
                       variant="inline"
                     />
                   : <p style={{ margin: 0, fontSize: '0.8125rem', color: '#6B7280' }}>Loading job details…</p>}
@@ -652,7 +649,7 @@ function RecordDetail({ entry, isCompact, detailJob }: {
           <TitledBlock icon={<Wallet size={15} color="#F97316" />} title="Payment Summary" containerStyle={{ flexShrink: 0, animation: 'attendanceFadeSlideUp 0.35s ease both', animationDelay: '0.18s' }}>
             <div style={{ position: 'relative', paddingLeft: 18 }}>
               <div style={{ position: 'absolute', left: 3, top: 18, bottom: 18, width: 2, background: '#E5E7EB', borderRadius: 1 }} />
-              <TimelineRow icon={<DollarSign size={16} color="#EA580C" />} iconBg="#FFEDD5" label={entry.flat_rate !== null ? 'Flat Rate' : 'Hourly Rate'} time={rateLabel} delay={0} />
+              <TimelineRow icon={<DollarSign size={16} color="#EA580C" />} iconBg="#FFEDD5" label="Hourly Rate" time={rateLabel} delay={0} />
               <TimelineRow icon={<Clock size={16} color="#2563EB" />} iconBg="#DBEAFE" label="Hours Worked" time={hoursWorkedLabel} delay={0.05} />
               <TimelineRow icon={<Coffee size={16} color="#EA580C" />} iconBg="#FFEDD5" label="Break Time" time={breakLabel} delay={0.1} />
               <TimelineRow icon={<Wallet size={16} color="#16A34A" />} iconBg="#DCFCE7" label="Total Earnings" time={entry.pay !== null ? `$${entry.pay.toFixed(2)}` : '–'} delay={0.15} last />

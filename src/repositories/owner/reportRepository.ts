@@ -12,7 +12,6 @@ export interface ReportUserRow {
   id: string
   full_name: string
   role: string
-  hourly_rate: number | null
   skills: string | null
   profile_photo_url: string | null
 }
@@ -143,12 +142,12 @@ export const reportRepository = {
   },
 
   // Returning Worker Rate KPI: of the given casual workers, which ones actually attended (clocked in on)
-  // at least one non-rejected shift of this company dated BEFORE the period started.
+  // at least one shift of this company dated BEFORE the period started.
   // Confirmed jobs cancelled BY THE WORKER inside [date_from, date_to_exclusive) — employer-side
   // cancels (cancelled_role='employer') are never returned, so they can't be pinned on the worker.
   async getWorkerCancellationsInRange(company_id: string, date_from: string, date_to_exclusive: string): Promise<Array<{ user_id: string }>> {
     const { data, error } = await supabase
-      .from('recruitment_cancellations')
+      .from('job_cancellations')
       .select('cancelled_by, job_postings!inner(company_id)')
       .eq('job_postings.company_id', company_id)
       .eq('cancelled_role', 'worker')
@@ -165,7 +164,6 @@ export const reportRepository = {
       .from('shift_assignments')
       .select('user_id, shifts!inner(id), attendance_records!inner(id)')
       .in('user_id', user_ids)
-      .neq('assignment_status', 'rejected')
       .eq('shifts.company_id', company_id)
       .lt('shifts.shift_date', before_date)
       .not('attendance_records.clock_in_time', 'is', null)
@@ -177,10 +175,19 @@ export const reportRepository = {
     if (ids.length === 0) return []
     const { data, error } = await supabase
       .from('users')
-      .select('id, full_name, role, hourly_rate, skills, profile_photo_url')
+      .select('id, full_name, role, profile_photo_url, casual_worker_profiles(skills)')
       .in('id', ids)
     if (error) throw new Error(error.message)
-    return (data ?? []) as ReportUserRow[]
+    return (data ?? []).map((row: any) => {
+      const profile = Array.isArray(row.casual_worker_profiles) ? row.casual_worker_profiles[0] : row.casual_worker_profiles
+      return {
+        id: row.id,
+        full_name: row.full_name,
+        role: row.role,
+        profile_photo_url: row.profile_photo_url,
+        skills: profile?.skills ?? null,
+      }
+    }) as ReportUserRow[]
   },
 
   // "Rehire Count by Worker" chart: lifetime (all-time, not period-scoped) shifts a casual
@@ -191,14 +198,14 @@ export const reportRepository = {
     if (user_ids.length === 0) return []
     const { data, error } = await supabase
       .from('attendance_records')
-      .select('casual_worker_id, shift_assignments!inner(shifts!inner(company_id))')
-      .in('casual_worker_id', user_ids)
+      .select('user_id, shift_assignments!inner(shifts!inner(company_id))')
+      .in('user_id', user_ids)
       .not('clock_out_time', 'is', null)
       .eq('shift_assignments.shifts.company_id', company_id)
     if (error) throw new Error(error.message)
     const counts = new Map<string, number>()
-    for (const row of (data ?? []) as Array<{ casual_worker_id: string }>) {
-      counts.set(row.casual_worker_id, (counts.get(row.casual_worker_id) ?? 0) + 1)
+    for (const row of (data ?? []) as Array<{ user_id: string }>) {
+      counts.set(row.user_id, (counts.get(row.user_id) ?? 0) + 1)
     }
     return [...counts.entries()].map(([user_id, completed_shifts]) => ({ user_id, completed_shifts }))
   },
@@ -256,17 +263,6 @@ export const reportRepository = {
     const { data, error } = await query
     if (error) throw new Error(error.message)
     return (data ?? []) as Task[]
-  },
-
-  async getTimeOffRequests(company_id: string, date_from: string, date_to: string): Promise<{ id: string; status: string }[]> {
-    const { data, error } = await supabase
-      .from('time_off_requests')
-      .select('id, status')
-      .eq('company_id', company_id)
-      .gte('created_at', `${date_from}T00:00:00`)
-      .lte('created_at', `${date_to}T23:59:59`)
-    if (error) throw new Error(error.message)
-    return (data ?? []) as { id: string; status: string }[]
   },
 
   async getSwapRequests(company_id: string, date_from: string, date_to: string): Promise<{ id: string; status: string }[]> {

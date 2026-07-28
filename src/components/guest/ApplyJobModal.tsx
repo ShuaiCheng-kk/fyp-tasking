@@ -30,7 +30,7 @@ type Profile = {
   date_of_birth: string | null
   skills: string | null
   resume_url: string | null
-  certificates: { id: string; name: string; file_url: string | null }[]
+  certificates: { id: string; name: string; certificate_url: string | null }[]
 }
 
 type Job = {
@@ -39,22 +39,17 @@ type Job = {
   company_name: string | null
   minimum_age: number | null
   experience_required: string | null
-  uniform_required: boolean
   uniform_type: string | null
   uniform_details: string | null
-  description: string | null
-  requirements: string | null
-  location: string | null
+  responsibilities: string | null
+  skills: string | null
   salary_amount: number | null
-  is_recurring: boolean
-  form_type: string | null
+  job_type: string | null
   job_date: string | null
-  shift_date: string | null
-  shift_start_time: string | null
-  shift_end_time: string | null
+  job_start_time: string | null
+  job_end_time: string | null
   break_start_time: string | null
   break_end_time: string | null
-  job_start_time: string | null
   estimated_hours: string | null
   expires_at: string | null
 }
@@ -294,16 +289,15 @@ export default function ApplyJobModal({ jobId, onClose, onApplied }: Props) {
       {/* Job details side card — same design as the Job Board detail panel, docked just beside
           the application modal so the worker can read the posting while filling in the form. */}
       {showJobInfo && job && (() => {
-        const isShiftJob = job.form_type === 'shift' || (job.form_type !== 'oneoff' && job.is_recurring)
+        const isShiftJob = job.job_type === 'shift'
         const payLabel = job.salary_amount != null ? (isShiftJob ? `$${job.salary_amount}/hr` : `$${job.salary_amount} flat rate`) : null
         const fmt12 = (t: string) => { const [h, m] = t.slice(0, 5).split(':').map(Number); const ap = h < 12 ? 'AM' : 'PM'; const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h; return `${h12}:${String(m).padStart(2, '0')} ${ap}` }
-        const scheduleDate = job.shift_date ?? job.job_date
-        const dateLabel = scheduleDate
-          ? new Date(`${scheduleDate.slice(0, 10)}T00:00:00`).toLocaleDateString('en-SG', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+        const dateLabel = job.job_date
+          ? new Date(`${job.job_date.slice(0, 10)}T00:00:00`).toLocaleDateString('en-SG', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
           : null
         const uniformLabel = job.uniform_type === 'dress_code'
           ? 'Specific Dress Code'
-          : (job.uniform_type === 'company' || job.uniform_required) ? 'Company Uniform Provided' : null
+          : job.uniform_type === 'company' ? 'Company Uniform Provided' : null
         const cd = (() => {
           if (!job.expires_at) return null
           const diffMs = new Date(job.expires_at).getTime() - Date.now()
@@ -367,15 +361,15 @@ export default function ApplyJobModal({ jobId, onClose, onApplied }: Props) {
             </div>
 
             {/* Schedule — Date / Working Hours / Break Time (shift) or Start Time (one-off) */}
-            {(dateLabel || job.shift_start_time || job.job_start_time) && (
+            {(dateLabel || job.job_start_time) && (
               <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 20 }}>
                 <p style={{ ...modalLabelStyle, margin: '0 0 8px' }}>Schedule</p>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                   {dateLabel && (
                     <p style={scheduleLine}><span style={{ fontWeight: 600, color: '#EA580C' }}>Date:</span> {dateLabel}</p>
                   )}
-                  {isShiftJob && (job.shift_start_time || job.shift_end_time) && (
-                    <p style={scheduleLine}><span style={{ fontWeight: 600, color: '#EA580C' }}>Working Hours:</span> {job.shift_start_time ? fmt12(job.shift_start_time) : '—'} – {job.shift_end_time ? fmt12(job.shift_end_time) : '—'}</p>
+                  {isShiftJob && (job.job_start_time || job.job_end_time) && (
+                    <p style={scheduleLine}><span style={{ fontWeight: 600, color: '#EA580C' }}>Working Hours:</span> {job.job_start_time ? fmt12(job.job_start_time) : '—'} – {job.job_end_time ? fmt12(job.job_end_time) : '—'}</p>
                   )}
                   {isShiftJob && (job.break_start_time || job.break_end_time) && (
                     <p style={scheduleLine}><span style={{ fontWeight: 600, color: '#EA580C' }}>Break Time:</span> {job.break_start_time ? fmt12(job.break_start_time) : '—'} – {job.break_end_time ? fmt12(job.break_end_time) : '—'}</p>
@@ -390,13 +384,13 @@ export default function ApplyJobModal({ jobId, onClose, onApplied }: Props) {
             {/* Responsibilities */}
             <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 20 }}>
               <p style={{ ...modalLabelStyle, margin: '0 0 8px' }}>Responsibilities</p>
-              <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, whiteSpace: 'pre-line', margin: 0 }}>{job.description || '—'}</p>
+              <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, whiteSpace: 'pre-line', margin: 0 }}>{job.responsibilities || '—'}</p>
             </div>
 
             {/* Skills & Qualifications */}
             <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 20 }}>
               <p style={{ ...modalLabelStyle, margin: '0 0 8px' }}>Skills &amp; Qualifications</p>
-              <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, whiteSpace: 'pre-line', margin: 0 }}>{job.requirements || '—'}</p>
+              <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, whiteSpace: 'pre-line', margin: 0 }}>{job.skills || '—'}</p>
             </div>
 
             {/* Dress code / uniform details */}

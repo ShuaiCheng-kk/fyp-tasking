@@ -26,8 +26,6 @@ export const companyService = {
     postal_code?: string | null
     industry?: string | null
     size?: string | null
-    logo_url?: string | null
-    website?: string | null
   }): Promise<Company> {
     const internalOwnerId = await resolveInternalOwnerUserId(data.owner_id)
     if (!internalOwnerId) throw new Error('Owner profile not found')
@@ -44,8 +42,6 @@ export const companyService = {
       postal_code: data.postal_code,
       industry: data.industry,
       size: data.size,
-      logo_url: data.logo_url,
-      website: data.website,
     })
     await authRepository.updateCompanyId(internalOwnerId, company.id)
 
@@ -164,8 +160,6 @@ export const companyService = {
     postal_code?: string | null
     industry?: string | null
     size?: string | null
-    logo_url?: string | null
-    website?: string | null
   }): Promise<Company> {
     return await companyRepository.updateCompany(id, data)
   },
@@ -184,9 +178,6 @@ export const companyService = {
     console.log(`[deleteCompany] Step 1: found ${nonOwnerMembers.length} non-Owner members`)
 
     const membersForFullDeletion = nonOwnerMembers
-
-    console.log(`[deleteCompany] Step 3: deleting inbox records for company ${company_id}`)
-    await companyRepository.deleteInboxByCompanyId(company_id)
 
     console.log(`[deleteCompany] Step 3: deleting announcements for company ${company_id}`)
     await companyRepository.deleteAnnouncementsByCompanyId(company_id)
@@ -229,8 +220,6 @@ export const companyService = {
     postal_code?: string | null
     industry?: string | null
     size?: string | null
-    logo_url?: string | null
-    website?: string | null
   }): Promise<Company> {
     const internalOwnerId = await resolveInternalOwnerUserId(data.owner_id)
     if (!internalOwnerId) throw new Error('Owner profile not found')
@@ -245,8 +234,6 @@ export const companyService = {
       postal_code: data.postal_code,
       industry: data.industry,
       size: data.size,
-      logo_url: data.logo_url,
-      website: data.website,
     })
     for (const [index, deptName] of data.departments.filter((d) => d.trim()).entries()) {
       await departmentRepository.createDepartment({

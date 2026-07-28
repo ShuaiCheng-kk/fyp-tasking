@@ -9,14 +9,14 @@ import { shiftSwapDepartmentSettingsRepository } from '@/repositories/owner/shif
 import { ownerTeamRepository } from '@/repositories/owner/ownerTeamRepository'
 import { taskRepository } from '@/repositories/owner/taskRepository'
 import { MIN_MANAGERS_PER_DAY, MIN_EMPLOYEES_PER_DAY, weekStart as computeWeekStart } from '@/lib/schedulingConstants'
+import { sgtInstant, sgtTodayKey } from '@/lib/singaporeTime'
 import { Shift } from '@/types/Shift'
 import {
   AttendanceDashboard,
   AttendanceDashboardRecord,
   AttendanceExceptionType,
-  AttendanceManagerReviewInput,
   AttendanceModifiedTimeField,
-  AttendanceReviewInput,
+  AttendanceModifyTimesInput,
   FixedOffDayDecisionGroupInput,
   FixedOffDayDecisionInput,
   FixedOffDayRequest,
@@ -28,47 +28,21 @@ import {
   ShiftSwapRequestView,
   ShiftSwapRuleConfig,
   ShiftSwapWithdrawInput,
-  TimeOffRequestView,
 } from '@/types/Attendance'
 
-// shift_date/start_time/end_time are stored as plain UTC-naive strings — without the explicit
-// 'Z', `new Date(...)` parses them as local time, which produces a multi-hour skew against the
-// already-UTC clock_in_time/clock_out_time timestamps on any server not running in UTC.
+// shift_date/start_time/end_time are Singapore-nominal wall-clock values (see
+// src/lib/singaporeTime) — sgtInstant resolves the real instant they represent, comparable to
+// the already-UTC clock_in_time/clock_out_time timestamps.
 function combineDateTime(date: string, time: string): Date {
-  return new Date(`${date}T${time}Z`)
+  return sgtInstant(date, time)
 }
 
 // Same-day/past-day swaps are disallowed — earliest swappable shift is tomorrow. This compares
-// plain calendar-day strings (both shift_date and "today" derived the same UTC-naive way) rather
-// than combineDateTime, since the rule is about calendar days, not exact timestamps.
+// plain calendar-day strings (both shift_date and "today" derived the same Singapore-nominal way)
+// rather than combineDateTime, since the rule is about calendar days, not exact timestamps.
 function isShiftDateExpired(shiftDate: string | null | undefined): boolean {
   if (!shiftDate) return false
-  const todayStr = new Date().toISOString().slice(0, 10)
-  return shiftDate <= todayStr
-}
-
-async function buildTimeOffRequestViews(requests: Awaited<ReturnType<typeof attendanceRepository.getTimeOffRequestsByCompany>>): Promise<TimeOffRequestView[]> {
-  if (requests.length === 0) return []
-  const userIds = [...new Set(requests.map(req => req.requester_id))]
-  const assignmentIds = [...new Set(requests.map(req => req.shift_assignment_id).filter(Boolean) as string[])]
-  const [users, assignmentsArr] = await Promise.all([
-    attendanceRepository.getUsersByIds(userIds),
-    Promise.all(assignmentIds.map(id => attendanceRepository.getShiftAssignmentById(id))),
-  ])
-  const usersById = indexById(users)
-  const assignmentsById = new Map(assignmentsArr.filter(Boolean).map(a => [a!.id, a!]))
-
-  return requests.map(req => {
-    const assignment = req.shift_assignment_id ? assignmentsById.get(req.shift_assignment_id) : undefined
-    return {
-      ...req,
-      requester_name: usersById.get(req.requester_id)?.full_name ?? 'Unknown',
-      shift_title: assignment?.shifts?.title ?? null,
-      shift_date: assignment?.shifts?.shift_date ?? null,
-      start_time: assignment?.shifts?.start_time ?? null,
-      end_time: assignment?.shifts?.end_time ?? null,
-    } as TimeOffRequestView
-  })
+  return shiftDate <= sgtTodayKey()
 }
 
 function assertShiftIsSwappable(shift: Shift, label: string) {
@@ -134,19 +108,18 @@ function getAttendanceExceptions(input: {
   record: {
     clock_in_time: string | null
     clock_out_time: string | null
-    owner_status: string
-    owner_adjusted_clock_in_time?: string | null
-    owner_adjusted_clock_out_time?: string | null
+    modified_clock_in_time?: string | null
+    modified_clock_out_time?: string | null
   } | null
 }): AttendanceExceptionType[] {
   const exceptions: AttendanceExceptionType[] = []
   const shiftEnd = combineDateTime(input.shift_date, input.end_time)
   const now = new Date()
 
-  // An Owner/Partner correction (UC56) supersedes the worker's original clock times for every
-  // exception check below — otherwise a corrected record keeps flagging Late/Absent forever.
-  const clockInTime = input.record?.owner_adjusted_clock_in_time ?? input.record?.clock_in_time ?? null
-  const clockOutTime = input.record?.owner_adjusted_clock_out_time ?? input.record?.clock_out_time ?? null
+  // An Owner/Partner/Manager correction (UC56) supersedes the worker's original clock times for
+  // every exception check below — otherwise a corrected record keeps flagging Late/Absent forever.
+  const clockInTime = input.record?.modified_clock_in_time ?? input.record?.clock_in_time ?? null
+  const clockOutTime = input.record?.modified_clock_out_time ?? input.record?.clock_out_time ?? null
 
   // Absent: no clock-in by shift end, OR clocked in after shift end (invalid clock-in)
   const clockedInAfterShiftEnd = clockInTime && new Date(clockInTime).getTime() >= shiftEnd.getTime()
@@ -161,7 +134,6 @@ function getAttendanceExceptions(input: {
 
   if (!input.record) return exceptions
 
-  if (input.record.owner_status === 'pending') exceptions.push('pending')
   // Present window: clock-in within 10 min after shift start (grace) = not late.
   // Late: clock-in more than 10 min after shift start.
   // The grace period is also applied at clock-in time (attendanceGrace.ts) so a clock-in
@@ -175,6 +147,44 @@ function indexById<T extends { id: string }>(rows: T[]): Map<string, T> {
   return new Map(rows.map(row => [row.id, row]))
 }
 
+// Truncates to minute precision ('YYYY-MM-DDTHH:MM') before comparing — the review modal only
+// lets a user edit to the minute (AM/PM picker), but re-submitting an untouched field still
+// round-trips through toISO() and drops the original's seconds/ms, which would otherwise make
+// every field look "changed" on every save even when the user only touched one of them.
+function fieldChangedToMinute(prev: string | null, next: string | null): boolean {
+  const truncate = (iso: string | null) => iso?.slice(0, 16) ?? null
+  return truncate(prev) !== truncate(next)
+}
+
+type ModifiableAttendanceTimes = {
+  clock_in_time: string | null
+  clock_out_time: string | null
+  break_in_time: string | null
+  break_out_time: string | null
+  modified_clock_in_time: string | null
+  modified_clock_out_time: string | null
+  modified_break_in_time: string | null
+  modified_break_out_time: string | null
+}
+
+// Which of the four time fields have actually been corrected — derived live by comparing each
+// raw column (the true original; clock_in_time/clock_out_time/break_in_time/break_out_time are
+// never overwritten) against its modified_* counterpart at minute precision, rather than reading
+// a stored flag. modifyAttendanceTimes rewrites all four modified_* columns on every save
+// regardless of which field the reviewer actually touched, so "the column has a value" alone
+// doesn't mean "this field was modified" — only a value that differs from the raw one does.
+function getModifiedFields(record: ModifiableAttendanceTimes): AttendanceModifiedTimeField[] {
+  const pairs: [AttendanceModifiedTimeField, string | null, string | null][] = [
+    ['clock_in_time', record.clock_in_time, record.modified_clock_in_time],
+    ['clock_out_time', record.clock_out_time, record.modified_clock_out_time],
+    ['break_in_time', record.break_in_time, record.modified_break_in_time],
+    ['break_out_time', record.break_out_time, record.modified_break_out_time],
+  ]
+  return pairs
+    .filter(([, raw, adjusted]) => adjusted !== null && fieldChangedToMinute(raw, adjusted))
+    .map(([field]) => field)
+}
+
 // UC56: Owner/Partner-modified clock/break times must stay internally consistent — enforced here
 // (not just by the modal disabling Save) since a direct PATCH could otherwise skip the UI check.
 // UC56 (expanded 2026-07-23): Owner/Partner may modify any company record. A Manager may only
@@ -182,10 +192,10 @@ function indexById<T extends { id: string }>(rows: T[]): Map<string, T> {
 // peer Manager's, and never outside their department scope.
 // UC56 (rank confirmed 2026-07-23): Owner and Partner outrank Manager and are equal to each other
 // for this purpose — once either of them modifies a record, a Manager can no longer modify it
-// further even within their own department (existing.owner_reviewed_by check below). The reverse
-// isn't true: Owner/Partner may always modify a record a Manager already corrected.
+// further even within their own department (existing.modified_by check below). The reverse isn't
+// true: Owner/Partner may always modify a record a Manager already corrected.
 async function assertCanModifyClockTimes(
-  existing: { id: string; owner_status: string; owner_reviewed_by: string | null },
+  existing: ModifiableAttendanceTimes & { id: string; modified_by: string | null },
   actor_id: string,
 ): Promise<void> {
   const [actor] = await attendanceRepository.getUsersByIds([actor_id])
@@ -196,8 +206,9 @@ async function assertCanModifyClockTimes(
   const context = await attendanceRepository.getAttendanceRecordContext(existing.id)
   if (!context) throw new Error('Attendance record not found')
 
+  const recordWasModified = getModifiedFields(existing).length > 0
   const idsToFetch = [context.assignee_user_id]
-  if (existing.owner_status === 'modified' && existing.owner_reviewed_by) idsToFetch.push(existing.owner_reviewed_by)
+  if (recordWasModified && existing.modified_by) idsToFetch.push(existing.modified_by)
   const users = await attendanceRepository.getUsersByIds([...new Set(idsToFetch)])
 
   const assignee = users.find(u => u.id === context.assignee_user_id)
@@ -212,73 +223,12 @@ async function assertCanModifyClockTimes(
     throw new Error('Not authorized to modify attendance records outside your department')
   }
 
-  if (existing.owner_status === 'modified' && existing.owner_reviewed_by) {
-    const reviewer = users.find(u => u.id === existing.owner_reviewed_by)
+  if (recordWasModified && existing.modified_by) {
+    const reviewer = users.find(u => u.id === existing.modified_by)
     if (reviewer?.role === 'Owner' || reviewer?.role === 'Partner') {
       throw new Error('This record was last modified by Owner/Partner and can no longer be modified by a Manager')
     }
   }
-}
-
-// Truncates to minute precision ('YYYY-MM-DDTHH:MM') before comparing — the review modal only
-// lets a user edit to the minute (AM/PM picker), but re-submitting an untouched field still
-// round-trips through toISO() and drops the original's seconds/ms, which would otherwise make
-// every field look "changed" on every save even when the user only touched one of them.
-function fieldChangedToMinute(prev: string | null, next: string | null): boolean {
-  const truncate = (iso: string | null) => iso?.slice(0, 16) ?? null
-  return truncate(prev) !== truncate(next)
-}
-
-type OwnerModificationExisting = {
-  clock_in_time: string | null
-  clock_out_time: string | null
-  break_in_time: string | null
-  break_out_time: string | null
-  owner_modified_original_values?: Partial<Record<AttendanceModifiedTimeField, string | null>> | null
-}
-
-// The value a field held the very FIRST time it was ever corrected — never the previous edit's
-// value. clock_in_time/clock_out_time are immutable raw punches (finalReviewAttendance only ever
-// writes owner_adjusted_clock_in/out_time, never these columns), so they're already the true
-// original forever. break_in_time/break_out_time ARE overwritten directly on each edit, so once a
-// break field has a stored original (from an earlier edit) that value is reused; only the very
-// first edit falls back to the current column, which at that point still holds the true original.
-function resolveTrueOriginal(field: AttendanceModifiedTimeField, existing: OwnerModificationExisting): string | null {
-  if (field === 'clock_in_time') return existing.clock_in_time
-  if (field === 'clock_out_time') return existing.clock_out_time
-  const stored = existing.owner_modified_original_values ?? {}
-  return field in stored ? stored[field]! : existing[field]
-}
-
-// Which of the four time fields differ from their TRUE original (not the previous edit) at
-// minute precision, and what that true original is — stored as owner_modified_fields/
-// owner_modified_original_values so the Owner/Partner page can show exactly what changed and
-// from what (UC56 "M" badge + per-field original value). A field that's been edited back to
-// exactly its true original is correctly excluded — see finalReviewAttendance for what that means
-// for the record's overall status.
-function computeOwnerModification(
-  existing: OwnerModificationExisting,
-  input: { clock_in_time?: string | null; clock_out_time?: string | null; break_in_time?: string | null; break_out_time?: string | null },
-): { changedFields: AttendanceModifiedTimeField[]; originalValues: Partial<Record<AttendanceModifiedTimeField, string | null>> } {
-  const newValues: Record<AttendanceModifiedTimeField, string | null> = {
-    clock_in_time: input.clock_in_time ?? existing.clock_in_time,
-    clock_out_time: input.clock_out_time ?? existing.clock_out_time,
-    break_in_time: input.break_in_time ?? existing.break_in_time,
-    break_out_time: input.break_out_time ?? existing.break_out_time,
-  }
-
-  const changedFields: AttendanceModifiedTimeField[] = []
-  const originalValues: Partial<Record<AttendanceModifiedTimeField, string | null>> = {}
-
-  ;(['clock_in_time', 'clock_out_time', 'break_in_time', 'break_out_time'] as const).forEach(field => {
-    const trueOriginal = resolveTrueOriginal(field, existing)
-    if (fieldChangedToMinute(trueOriginal, newValues[field])) {
-      changedFields.push(field)
-      originalValues[field] = trueOriginal
-    }
-  })
-
-  return { changedFields, originalValues }
 }
 
 function validateModifiedAttendanceTimes(times: {
@@ -536,8 +486,8 @@ async function runAutoAssignmentSweepForUpcomingWeek(company_id: string): Promis
     if (row.status === 'rejected') continue
     const info = roleAndDeptById.get(row.user_id)
     if (!info?.department_id) continue
-    ensureSeeded(info.department_id, row.request_date)
-    markConsumed(info.department_id, info.role, row.request_date)
+    ensureSeeded(info.department_id, row.requested_date)
+    markConsumed(info.department_id, info.role, row.requested_date)
   }
 
   const candidates: Array<{ id: string; role: 'Manager' | 'Employee'; department_id: string | null }> = [
@@ -561,7 +511,7 @@ async function runAutoAssignmentSweepForUpcomingWeek(company_id: string): Promis
       user_id: candidate.id,
       company_id,
       dates: picked,
-      week_start: upcomingWeekStart,
+      requested_week: upcomingWeekStart,
       source: 'auto_assigned',
     })
   }
@@ -571,6 +521,7 @@ async function runAutoAssignmentSweepForUpcomingWeek(company_id: string): Promis
 // scan every pending record regardless of date) and getAttendanceByDateRange (UC50/UC51, which
 // need just today or just a calendar month) — same assembly, different assignment source.
 async function buildDashboardRecords(
+  company_id: string,
   assignments: Awaited<ReturnType<typeof attendanceRepository.getAssignmentsByCompany>>,
 ): Promise<AttendanceDashboardRecord[]> {
   const assignmentIds = assignments.map(assignment => assignment.id)
@@ -578,24 +529,32 @@ async function buildDashboardRecords(
 
   const userIds = new Set<string>()
   const departmentIds = new Set<string>()
+  const casualWorkerIds = new Set<string>()
   assignments.forEach(assignment => {
     userIds.add(assignment.user_id)
     if (assignment.supervisor_employee_id) userIds.add(assignment.supervisor_employee_id)
     if (assignment.shifts?.department_id) departmentIds.add(assignment.shifts.department_id)
   })
   records.forEach(record => {
-    userIds.add(record.casual_worker_id)
-    userIds.add(record.confirmed_by_employee_id)
-    userIds.add(record.submitted_by_employee_id)
-    if (record.owner_reviewed_by) userIds.add(record.owner_reviewed_by)
+    userIds.add(record.user_id)
+    if (record.modified_by) userIds.add(record.modified_by)
   })
 
-  const [users, departments] = await Promise.all([
+  const postingIds = new Set<string>()
+  assignments.forEach(assignment => {
+    if (assignment.shifts?.source_job_posting_id) postingIds.add(assignment.shifts.source_job_posting_id)
+    casualWorkerIds.add(assignment.user_id)
+  })
+
+  const [users, departments, postings, banStatusByUser] = await Promise.all([
     attendanceRepository.getUsersByIds([...userIds]),
     attendanceRepository.getDepartmentsByIds([...departmentIds]),
+    attendanceRepository.getJobPostingsByIds([...postingIds]),
+    attendanceRepository.getCasualBanStatusByCompany(company_id, [...casualWorkerIds]),
   ])
   const usersById = indexById(users)
   const departmentsById = indexById(departments)
+  const postingsById = indexById(postings)
   const recordsByAssignment = new Map(records.map(record => [record.shift_assignment_id, record]))
 
   return assignments
@@ -609,13 +568,14 @@ async function buildDashboardRecords(
         assignee_name: usersById.get(assignment.user_id)?.full_name ?? 'Unknown member',
         assignee_role: usersById.get(assignment.user_id)?.role ?? 'Member',
         assignee_profile_photo_url: usersById.get(assignment.user_id)?.profile_photo_url ?? null,
-        assignee_worker_status: usersById.get(assignment.user_id)?.worker_status ?? null,
-        assignee_hourly_rate: usersById.get(assignment.user_id)?.hourly_rate ?? null,
+        assignee_worker_status: banStatusByUser.get(assignment.user_id)?.inactive_at ? 'inactive' : 'active',
+        assignee_hourly_rate: shift.hourly_rate ?? null,
         supervisor_name: assignment.supervisor_employee_id ? usersById.get(assignment.supervisor_employee_id)?.full_name ?? null : null,
         department_name: shift.department_id ? departmentsById.get(shift.department_id)?.name ?? null : null,
+        job_title: shift.source_job_posting_id ? postingsById.get(shift.source_job_posting_id)?.title ?? null : null,
         record,
-        modifier_name: record?.owner_reviewed_by ? usersById.get(record.owner_reviewed_by)?.full_name ?? null : null,
-        modifier_role: record?.owner_reviewed_by ? usersById.get(record.owner_reviewed_by)?.role ?? null : null,
+        modifier_name: record?.modified_by ? usersById.get(record.modified_by)?.full_name ?? null : null,
+        modifier_role: record?.modified_by ? usersById.get(record.modified_by)?.role ?? null : null,
         exceptions: getAttendanceExceptions({
           shift_date: shift.shift_date,
           start_time: shift.start_time,
@@ -629,15 +589,12 @@ async function buildDashboardRecords(
 export const attendanceService = {
   async getAttendanceDashboard(company_id: string): Promise<AttendanceDashboard> {
     const assignments = await attendanceRepository.getAssignmentsByCompany(company_id)
-    const dashboardRecords = await buildDashboardRecords(assignments)
+    const dashboardRecords = await buildDashboardRecords(company_id, assignments)
 
     return {
       records: dashboardRecords,
       summary: {
         total_assignments: dashboardRecords.length,
-        pending_final_review: dashboardRecords.filter(row => row.record?.owner_status === 'pending').length,
-        approved: dashboardRecords.filter(row => row.record?.owner_status === 'approved').length,
-        rejected: dashboardRecords.filter(row => row.record?.owner_status === 'rejected').length,
         late: dashboardRecords.filter(row => row.exceptions.includes('late')).length,
         absent: dashboardRecords.filter(row => row.exceptions.includes('absent')).length,
         overtime: dashboardRecords.filter(row => row.exceptions.includes('overtime')).length,
@@ -649,86 +606,61 @@ export const attendanceService = {
   // records scoped to an explicit date window instead of the company's entire history.
   async getAttendanceByDateRange(company_id: string, from_date: string, to_date: string): Promise<AttendanceDashboardRecord[]> {
     const assignments = await attendanceRepository.getAssignmentsByCompanyAndDateRange(company_id, from_date, to_date)
-    return buildDashboardRecords(assignments)
+    return buildDashboardRecords(company_id, assignments)
   },
 
-  async getTimeOffRequests(company_id: string): Promise<TimeOffRequestView[]> {
-    const requests = await attendanceRepository.getTimeOffRequestsByCompany(company_id)
-    return buildTimeOffRequestViews(requests)
-  },
-
-  async decideTimeOffRequest(input: { id: string; reviewer_id: string; decision: 'approved' | 'rejected' }): Promise<TimeOffRequestView> {
-    if (!['approved', 'rejected'].includes(input.decision)) throw new Error('Decision must be approved or rejected')
-    const request = await attendanceRepository.updateTimeOffRequest(input.id, {
-      status: input.decision,
-      reviewed_by: input.reviewer_id,
-      reviewed_at: new Date().toISOString(),
-    })
-    const [view] = await buildTimeOffRequestViews([request])
-    return view
-  },
-
-  async managerReviewAttendance(input: AttendanceManagerReviewInput) {
+  // UC56 — the only action a reviewer can take on an attendance record: correct its clock/break
+  // times. Whether anything actually changed (and which fields) is derived afterwards by
+  // comparing the new modified_* values to their raw counterparts, not tracked as a decision.
+  async modifyAttendanceTimes(input: AttendanceModifyTimesInput) {
     const existing = await attendanceRepository.getAttendanceRecordById(input.id)
     if (!existing) throw new Error('Attendance record not found')
-    return attendanceRepository.updateAttendanceRecord(input.id, {
-      manager_notes: input.manager_notes,
-      status: 'manager_reviewed',
-    })
-  },
-
-  async finalReviewAttendance(input: AttendanceReviewInput) {
-    const existing = await attendanceRepository.getAttendanceRecordById(input.id)
-    if (!existing) throw new Error('Attendance record not found')
-    if (!['approved', 'rejected', 'modified'].includes(input.decision)) {
-      throw new Error('Invalid attendance decision')
-    }
 
     // UC56 (expanded 2026-07-23): Owner/Partner may modify any record; a Manager may only modify
     // their own department's Employee/Casual Worker records, never a peer Manager's, and never a
     // record Owner/Partner already modified (they outrank Manager for this).
-    await assertCanModifyClockTimes(existing, input.owner_id)
+    await assertCanModifyClockTimes(existing, input.actor_id)
 
-    let modification: { changedFields: AttendanceModifiedTimeField[]; originalValues: Partial<Record<AttendanceModifiedTimeField, string | null>> } | null = null
-    // The decision actually persisted — starts as what was requested, but a 'modified' submission
-    // that nets out identical to the true original (e.g. edited to 9:10 then edited back to 9:00)
-    // downgrades to 'approved': nothing differs from what was originally recorded, so it isn't a
-    // correction at all, and per UC56 it must not keep showing the "M" badge / reason from before.
-    let resolvedDecision = input.decision
+    const nextClockIn = input.clock_in_time ?? existing.clock_in_time
+    const nextClockOut = input.clock_out_time ?? existing.clock_out_time
+    const nextBreakIn = input.break_in_time ?? existing.break_in_time
+    const nextBreakOut = input.break_out_time ?? existing.break_out_time
+    validateModifiedAttendanceTimes({
+      clock_in_time: nextClockIn,
+      clock_out_time: nextClockOut,
+      break_in_time: nextBreakIn,
+      break_out_time: nextBreakOut,
+    })
 
-    if (input.decision === 'modified') {
-      validateModifiedAttendanceTimes({
-        clock_in_time: input.clock_in_time ?? existing.clock_in_time,
-        clock_out_time: input.clock_out_time ?? existing.clock_out_time,
-        break_in_time: input.break_in_time ?? existing.break_in_time,
-        break_out_time: input.break_out_time ?? existing.break_out_time,
-      })
-      modification = computeOwnerModification(existing, input)
-      if (modification.changedFields.length === 0) {
-        resolvedDecision = 'approved'
-      } else if (!input.owner_notes?.trim()) {
-        // Enforced here too (not just the modal disabling Save) since a direct PATCH could
-        // otherwise skip the UI check — a reason is mandatory whenever a time is actually
-        // corrected, so anyone reviewing the record later knows why. Not required when nothing
-        // ends up different from the true original (handled above).
-        throw new Error('A reason is required when modifying attendance times')
-      }
+    // Compared against the true originals (the raw columns), not the previous modified_* values —
+    // a submission that nets out identical to the true original (e.g. edited to 9:10 then edited
+    // back to 9:00) correctly reports no changed fields, so it stops showing the "M" badge / reason
+    // from before without any special-case "downgrade" branch.
+    const changedFields = getModifiedFields({
+      clock_in_time: existing.clock_in_time,
+      clock_out_time: existing.clock_out_time,
+      break_in_time: existing.break_in_time,
+      break_out_time: existing.break_out_time,
+      modified_clock_in_time: nextClockIn,
+      modified_clock_out_time: nextClockOut,
+      modified_break_in_time: nextBreakIn,
+      modified_break_out_time: nextBreakOut,
+    })
+    // Enforced here too (not just the modal disabling Save) since a direct PATCH could otherwise
+    // skip the UI check — a reason is mandatory whenever a time actually ends up different from
+    // its true original.
+    if (changedFields.length > 0 && !input.reason?.trim()) {
+      throw new Error('A reason is required when modifying attendance times')
     }
 
     return attendanceRepository.updateAttendanceRecord(input.id, {
-      owner_status: resolvedDecision,
-      owner_notes: resolvedDecision === 'modified' ? input.owner_notes ?? null : (input.decision === 'modified' ? null : input.owner_notes ?? null),
-      owner_reviewed_by: input.owner_id,
-      owner_reviewed_at: new Date().toISOString(),
-      owner_adjusted_clock_in_time: input.decision === 'modified' ? input.clock_in_time ?? existing.clock_in_time : existing.owner_adjusted_clock_in_time,
-      owner_adjusted_clock_out_time: input.decision === 'modified' ? input.clock_out_time ?? existing.clock_out_time : existing.owner_adjusted_clock_out_time,
-      // Break times have no adjusted-copy columns — the Owner edits the recorded pair directly
-      // (UC56: Owner/Partner modify clock times directly, breaks included).
-      break_in_time: input.decision === 'modified' ? input.break_in_time ?? existing.break_in_time : existing.break_in_time,
-      break_out_time: input.decision === 'modified' ? input.break_out_time ?? existing.break_out_time : existing.break_out_time,
-      owner_modified_fields: modification ? modification.changedFields : existing.owner_modified_fields,
-      owner_modified_original_values: modification ? modification.originalValues : existing.owner_modified_original_values,
-      status: resolvedDecision === 'approved' ? 'owner_approved' : resolvedDecision === 'rejected' ? 'owner_rejected' : 'owner_modified',
+      modified_clock_in_time: nextClockIn,
+      modified_clock_out_time: nextClockOut,
+      modified_break_in_time: nextBreakIn,
+      modified_break_out_time: nextBreakOut,
+      modified_reason: changedFields.length > 0 ? input.reason?.trim() ?? null : null,
+      modified_by: input.actor_id,
+      modified_at: new Date().toISOString(),
     })
   },
 
@@ -863,11 +795,11 @@ export const attendanceService = {
         counterpart_photo_url: counterpart?.profile_photo_url ?? null,
         reviewer_name: req.reviewed_by ? usersById.get(req.reviewed_by)?.full_name ?? 'Unknown' : null,
         department_name: deptName,
-        requester_shift_title: reqAss?.shifts?.title ?? null,
+        requester_shift_title: null,
         requester_shift_date: reqAss?.shifts?.shift_date ?? null,
         requester_start_time: reqAss?.shifts?.start_time ?? null,
         requester_end_time: reqAss?.shifts?.end_time ?? null,
-        counterpart_shift_title: ctrAss?.shifts?.title ?? null,
+        counterpart_shift_title: null,
         counterpart_shift_date: ctrAss?.shifts?.shift_date ?? null,
         counterpart_start_time: ctrAss?.shifts?.start_time ?? null,
         counterpart_end_time: ctrAss?.shifts?.end_time ?? null,
@@ -947,13 +879,13 @@ export const attendanceService = {
     }
     // Owner picks the replacement date freely (any week) — a request that comes back unchanged
     // (new_date === the date it already had) is really just being approved as requested, not modified.
-    const unchanged = input.decision === 'modified' && input.new_date === existing.request_date
+    const unchanged = input.decision === 'modified' && input.new_date === existing.requested_date
 
     const updated = await attendanceRepository.updateFixedOffDayRequest(input.id, {
       status: unchanged ? 'approved' : input.decision,
       reviewed_by: input.reviewer_id,
       reviewed_at: new Date().toISOString(),
-      ...(input.decision === 'modified' && !unchanged ? { request_date: input.new_date } : {}),
+      ...(input.decision === 'modified' && !unchanged ? { requested_date: input.new_date } : {}),
     })
     await runAutoAssignmentSweepForUpcomingWeek(existing.company_id)
     return updated
@@ -994,7 +926,7 @@ export const attendanceService = {
     input.ids.forEach((_, i) => {
       const row = rows[i]!
       const newDate = input.decision === 'modified' ? input.new_dates![i] : undefined
-      const unchanged = newDate !== undefined && newDate === row.request_date
+      const unchanged = newDate !== undefined && newDate === row.requested_date
       statuses.push(unchanged ? 'approved' : input.decision)
       requestDates.push(newDate !== undefined && !unchanged ? newDate : null)
     })
@@ -1002,7 +934,7 @@ export const attendanceService = {
     const decided = await attendanceRepository.decideFixedOffDayRequestGroupAtomic({
       ids: input.ids,
       statuses,
-      request_dates: requestDates,
+      requested_dates: requestDates,
       reviewer_id: input.reviewer_id,
       reviewed_at: reviewedAt,
     })
@@ -1103,7 +1035,6 @@ export const attendanceService = {
     }
     if (verdict.outcome === 'escalate') {
       return attendanceRepository.updateShiftSwapRequest(input.id, {
-        requires_owner_review: true,
         owner_review_reason: verdict.reason,
       })
     }
@@ -1184,7 +1115,7 @@ export const attendanceService = {
       user_id: requesterId,
       company_id: input.company_id,
       dates: input.dates,
-      week_start: targetWeekStart,
+      requested_week: targetWeekStart,
       source: 'submitted',
     })
   },
@@ -1192,11 +1123,11 @@ export const attendanceService = {
   async editFixedOffDayRequest(input: {
     user_id: string
     company_id: string
-    week_start: string
+    requested_week: string
     dates: string[]
   }) {
     if (input.dates.length === 0) throw new Error('Select at least one date')
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(input.week_start)) throw new Error('Invalid week_start')
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(input.requested_week)) throw new Error('Invalid requested_week')
     const requester = await authRepository.findByAuthIdOrInternalId(input.user_id)
     if (!requester || requester.company_id !== input.company_id) throw new Error('Requester not found')
     const requesterId = requester.id
@@ -1210,15 +1141,15 @@ export const attendanceService = {
     const weekStarts = new Set(input.dates.map(computeWeekStart))
     if (weekStarts.size > 1) throw new Error('All dates must fall within the same week')
     const targetWeekStart = [...weekStarts][0]
-    if (targetWeekStart !== input.week_start) throw new Error('Dates must stay within the original request week')
+    if (targetWeekStart !== input.requested_week) throw new Error('Dates must stay within the original request week')
 
     const deadline = await offDaySettingsRepository.getDeadline(input.company_id)
     const activeWeekStart = resolveActiveSubmissionWeekStart(todayKey, deadline)
-    if (input.week_start !== activeWeekStart) {
+    if (input.requested_week !== activeWeekStart) {
       throw new Error('This Off Day request can no longer be edited')
     }
 
-    const existingForWeek = await attendanceRepository.getFixedOffDayRequestsByUserAndWeek(requesterId, input.company_id, input.week_start)
+    const existingForWeek = await attendanceRepository.getFixedOffDayRequestsByUserAndWeek(requesterId, input.company_id, input.requested_week)
     const editableRows = existingForWeek.filter(r => r.source === 'submitted')
     if (editableRows.length === 0) throw new Error('Off Day request not found')
     if (editableRows.some(r => r.status !== 'pending')) {
@@ -1239,12 +1170,12 @@ export const attendanceService = {
       throw new Error(`You must select exactly ${requiredDaysPerWeek} day(s) off per week`)
     }
 
-    await attendanceRepository.deleteFixedOffDayRequestsByUserAndWeek(requesterId, input.company_id, input.week_start, ['pending'])
+    await attendanceRepository.deleteFixedOffDayRequestsByUserAndWeek(requesterId, input.company_id, input.requested_week, ['pending'])
     return attendanceRepository.createFixedOffDayRequests({
       user_id: requesterId,
       company_id: input.company_id,
       dates: input.dates,
-      week_start: input.week_start,
+      requested_week: input.requested_week,
       source: 'submitted',
     })
   },
@@ -1253,20 +1184,18 @@ export const attendanceService = {
     const requests = await attendanceRepository.getFixedOffDayRequestsByUser(user_id)
     const todayKey = new Date().toISOString().slice(0, 10)
     return requests
-      .filter(r => r.status === 'approved' && r.request_date >= todayKey)
-      .map(r => r.request_date)
+      .filter(r => r.status === 'approved' && r.requested_date >= todayKey)
+      .map(r => r.requested_date)
       .sort()
   },
 
   // UC52/55 — View own submitted requests (M or E) — includes both sides of a swap
   async getMyRequests(user_id: string): Promise<{
     swaps: ShiftSwapRequestView[]
-    time_off: TimeOffRequestView[]
     fixed_off: FixedOffDayRequestView[]
   }> {
-    const [swaps, timeOffRequests, fixed_off] = await Promise.all([
+    const [swaps, fixed_off] = await Promise.all([
       attendanceRepository.getShiftSwapRequestsByUser(user_id),
-      attendanceRepository.getTimeOffRequestsByUser(user_id),
       attendanceRepository.getFixedOffDayRequestsByUser(user_id),
     ])
 
@@ -1343,11 +1272,11 @@ export const attendanceService = {
           counterpart_photo_url: counterpart?.profile_photo_url ?? null,
           reviewer_name: req.reviewed_by ? usersById.get(req.reviewed_by)?.full_name ?? 'Unknown' : null,
           department_name: deptsById.get(reqAss?.shifts?.department_id ?? '') ?? null,
-          requester_shift_title: reqAss?.shifts?.title ?? null,
+          requester_shift_title: null,
           requester_shift_date: reqAss?.shifts?.shift_date ?? null,
           requester_start_time: reqAss?.shifts?.start_time ?? null,
           requester_end_time: reqAss?.shifts?.end_time ?? null,
-          counterpart_shift_title: ctrAss?.shifts?.title ?? null,
+          counterpart_shift_title: null,
           counterpart_shift_date: ctrAss?.shifts?.shift_date ?? null,
           counterpart_start_time: ctrAss?.shifts?.start_time ?? null,
           counterpart_end_time: ctrAss?.shifts?.end_time ?? null,
@@ -1378,8 +1307,6 @@ export const attendanceService = {
       department_id: foDeptByUser.get(req.user_id) ?? null,
     }))
 
-    const timeOffView = await buildTimeOffRequestViews(timeOffRequests)
-
-    return { swaps: swapsView, time_off: timeOffView, fixed_off: fixedOffView }
+    return { swaps: swapsView, fixed_off: fixedOffView }
   },
 }

@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase'
+import { sgtTodayKey } from '@/lib/singaporeTime'
 
 export const employeeDashboardRepository = {
   async getEmployeeDashboard(
@@ -42,7 +43,9 @@ export const employeeDashboardRepository = {
   // which pointed at a column on the Employee's OWN assignment row from before this mechanism
   // existed and was never kept in sync (dead per CLAUDE.md's stale-schema warning).
   async getSupervisedWorkersToday(employee_id: string, company_id: string) {
-    const today = new Date().toISOString().slice(0, 10)
+    // Shift dates are Singapore-nominal (see src/lib/singaporeTime) — "today" must be the
+    // Singapore calendar day, not raw UTC, or this misses/mismatches shifts for ~8 hours a day.
+    const today = sgtTodayKey()
     const { data, error } = await supabase
       .from('shift_assignments')
       .select(`
@@ -50,12 +53,12 @@ export const employeeDashboardRepository = {
         user_id,
         shifts!inner (
           id,
-          title,
           shift_date,
           start_time,
           end_time,
           is_open_ended,
-          company_id
+          company_id,
+          source_job_posting_id
         )
       `)
       .eq('supervisor_employee_id', employee_id)
@@ -65,16 +68,21 @@ export const employeeDashboardRepository = {
     if (error) throw new Error(error.message)
 
     const workerIds = [...new Set((data ?? []).map((row: any) => row.user_id))]
-    const { data: workers } = workerIds.length
-      ? await supabase
-          .from('users')
-          .select('id, full_name, email_address, phone_number, profile_photo_url')
-          .in('id', workerIds)
-      : { data: [] }
+    const postingIds = [...new Set((data ?? []).map((row: any) => row.shifts?.source_job_posting_id).filter(Boolean))]
+    const [{ data: workers }, { data: postings }] = await Promise.all([
+      workerIds.length
+        ? supabase.from('users').select('id, full_name, email_address, phone_number, profile_photo_url').in('id', workerIds)
+        : Promise.resolve({ data: [] }),
+      postingIds.length
+        ? supabase.from('job_postings').select('id, title').in('id', postingIds)
+        : Promise.resolve({ data: [] }),
+    ])
     const workerMap = new Map(((workers ?? []) as any[]).map(w => [w.id, w]))
+    const postingMap = new Map(((postings ?? []) as any[]).map(j => [j.id, j]))
 
     return (data ?? []).map((row: any) => {
       const worker = workerMap.get(row.user_id)
+      const posting = row.shifts?.source_job_posting_id ? postingMap.get(row.shifts.source_job_posting_id) : null
       return {
         shift_assignment_id: row.id,
         id: row.user_id,
@@ -83,7 +91,7 @@ export const employeeDashboardRepository = {
         phone_number: worker?.phone_number ?? '',
         profile_photo_url: worker?.profile_photo_url ?? null,
         shift_id: row.shifts?.id ?? '',
-        shift_title: row.shifts?.title ?? 'Shift',
+        shift_title: posting?.title ?? 'Shift',
         start_time: row.shifts?.start_time ?? '',
         end_time: row.shifts?.end_time ?? '',
         is_open_ended: row.shifts?.is_open_ended ?? false,

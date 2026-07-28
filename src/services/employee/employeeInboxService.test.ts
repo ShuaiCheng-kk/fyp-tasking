@@ -14,10 +14,6 @@ vi.mock('@/repositories/employee/employeeInboxRepository', () => ({
     insertMessage: vi.fn(),
     countUnreadMessages: vi.fn(),
     countUnreadAnnouncements: vi.fn(),
-    countPendingInvitations: vi.fn(),
-    getInvitesByRecipient: vi.fn(),
-    getInboxItemById: vi.fn(),
-    updateInboxStatus: vi.fn(),
     findUserById: vi.fn(),
     findUserByAuthIdOrInternalId: vi.fn(),
   },
@@ -116,10 +112,9 @@ describe('employeeInboxService — Communication (UC61)', () => {
   })
 
   describe('getUnreadCount', () => {
-    it('combines unread messages, pending invitations, and unread announcements', async () => {
+    it('combines unread messages and unread announcements', async () => {
       vi.mocked(employeeInboxRepository.countUnreadMessages).mockResolvedValue(1)
       vi.mocked(employeeInboxRepository.countUnreadAnnouncements).mockResolvedValue(2)
-      vi.mocked(employeeInboxRepository.countPendingInvitations).mockResolvedValue(0)
 
       const result = await employeeInboxService.getUnreadCount('employee-1', 'company-1')
 
@@ -128,18 +123,10 @@ describe('employeeInboxService — Communication (UC61)', () => {
 
     it('skips the announcement count when there is no company', async () => {
       vi.mocked(employeeInboxRepository.countUnreadMessages).mockResolvedValue(1)
-      vi.mocked(employeeInboxRepository.countPendingInvitations).mockResolvedValue(0)
 
       await employeeInboxService.getUnreadCount('employee-1', null)
 
       expect(employeeInboxRepository.countUnreadAnnouncements).not.toHaveBeenCalled()
-    })
-  })
-
-  describe('updateInboxStatus', () => {
-    it('delegates to the repository', async () => {
-      await employeeInboxService.updateInboxStatus('inbox-1', 'accepted')
-      expect(employeeInboxRepository.updateInboxStatus).toHaveBeenCalledWith('inbox-1', 'accepted')
     })
   })
 })

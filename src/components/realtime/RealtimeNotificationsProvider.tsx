@@ -55,7 +55,7 @@ const TABLE_RESOURCES: Record<string, NotificationResource[]> = {
   job_applicants: ['recruitment', 'applications', 'dashboard'],
   job_invitations: ['applications', 'recruitment', 'dashboard'],
   shift_swap_requests: ['attendance', 'dashboard'],
-  employee_off_day_requests: ['attendance', 'shifts', 'dashboard'],
+  off_day_requests: ['attendance', 'shifts', 'dashboard'],
   shifts: ['shifts', 'attendance', 'dashboard'],
   shift_assignments: ['shifts', 'attendance', 'dashboard'],
   attendance_records: ['attendance', 'dashboard'],
@@ -146,8 +146,8 @@ export function RealtimeNotificationsProvider({ children }: { children: React.Re
           } catch {}
           const annData = await fetchJson(`/api/inbox/announcements?company_id=${encodeURIComponent(user.companyId)}&role=${annRole}`).catch(() => null)
           if (annData?.success) {
-            next.communication += ((annData.announcements ?? []) as Array<{ id: string; from_user_id: string; created_at: string; updated_at?: string | null }>)
-              .filter(a => a.from_user_id !== user.id && !readIds.has(`${a.id}:${a.updated_at ?? a.created_at}`)).length
+            next.communication += ((annData.announcements ?? []) as Array<{ id: string; user_id: string; created_at: string; updated_at?: string | null }>)
+              .filter(a => a.user_id !== user.id && !readIds.has(`${a.id}:${a.updated_at ?? a.created_at}`)).length
           }
 
           const dashboardData = await fetchJson(`/api/owner/dashboard?company_id=${encodeURIComponent(user.companyId)}&owner_id=${encodeURIComponent(user.id)}${role === 'manager' ? '&viewer_role=Manager' : ''}`).catch(() => null)
@@ -224,7 +224,7 @@ export function RealtimeNotificationsProvider({ children }: { children: React.Re
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     )
 
-    const companyTables = ['tasks', 'announcements', 'job_postings', 'shift_swap_requests', 'employee_off_day_requests', 'shifts', 'users', 'departments']
+    const companyTables = ['tasks', 'announcements', 'job_postings', 'shift_swap_requests', 'off_day_requests', 'shifts', 'users', 'departments']
     const channels = [
       ...companyTables.map(table =>
         supabase

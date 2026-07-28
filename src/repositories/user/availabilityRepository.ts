@@ -4,56 +4,7 @@
 import { supabase } from '@/lib/supabase'
 import { ShiftSwapRequest, ShiftSwapRequestCreateInput } from '@/types/Attendance'
 
-export type LeaveRequest = {
-  id: string
-  company_id: string
-  requester_id: string
-  shift_assignment_id: string | null
-  request_type: string
-  reason: string | null
-  status: string
-  reviewed_by: string | null
-  reviewed_at: string | null
-  created_at: string
-  updated_at: string
-}
-
-type LeaveRequestCreateInput = {
-  user_id: string
-  company_id: string
-  request_type: 'time_off' | 'break_waiver'
-  reason: string | null
-  shift_assignment_id: string | null
-}
-
 export const availabilityRepository = {
-  async getLeaveRequestsByUser(user_id: string): Promise<LeaveRequest[]> {
-    const { data, error } = await supabase
-      .from('time_off_requests')
-      .select('id, company_id, requester_id, shift_assignment_id, request_type, reason, status, reviewed_by, reviewed_at, created_at, updated_at')
-      .eq('requester_id', user_id)
-      .order('created_at', { ascending: false })
-    if (error) throw new Error(error.message)
-    return (data ?? []) as LeaveRequest[]
-  },
-
-  async createLeaveRequest(input: LeaveRequestCreateInput): Promise<LeaveRequest> {
-    const { data, error } = await supabase
-      .from('time_off_requests')
-      .insert({
-        company_id: input.company_id,
-        requester_id: input.user_id,
-        shift_assignment_id: input.shift_assignment_id ?? null,
-        request_type: input.request_type,
-        reason: input.reason,
-        status: 'pending',
-      })
-      .select('id, company_id, requester_id, shift_assignment_id, request_type, reason, status, reviewed_by, reviewed_at, created_at, updated_at')
-      .single()
-    if (error) throw new Error(error.message)
-    return data as LeaveRequest
-  },
-
   async createShiftSwapRequest(input: ShiftSwapRequestCreateInput & { counterpart_status?: 'pending' | 'approved' | 'rejected'; counterpart_reviewed_at?: string | null }): Promise<ShiftSwapRequest> {
     const { data, error } = await supabase
       .from('shift_swap_requests')

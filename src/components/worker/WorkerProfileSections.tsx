@@ -246,8 +246,8 @@ export function CertificatesCard({ authId, onToast }: Props) {
               </span>
               {/* Opens the uploaded proof file so the worker can double-check they attached the
                   right document to the right certificate. */}
-              {cert.file_url && (
-                <a href={cert.file_url} target="_blank" rel="noreferrer" title="View uploaded file"
+              {cert.certificate_url && (
+                <a href={cert.certificate_url} target="_blank" rel="noreferrer" title="View uploaded file"
                   style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 30, height: 30, color: '#15803D', borderRadius: 6, flexShrink: 0 }}
                   onMouseEnter={e => { e.currentTarget.style.background = '#DCFCE7' }}
                   onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}>

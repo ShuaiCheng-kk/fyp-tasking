@@ -16,7 +16,7 @@ classDiagram
         +PATCH(req) action dispatcher
         manager_review / final_review
         submit_shift_swap / respond_shift_swap / withdraw_shift_swap
-        decide_shift_swap / decide_time_off
+        decide_shift_swap
         submit_fixed_off_day / decide_fixed_off_day
         apply_ai_approvals
     }
@@ -55,8 +55,6 @@ classDiagram
         +submitFixedOffDayRequest(input)
         +decideFixedOffDayRequest(input: FixedOffDayDecisionInput)
         +decideFixedOffDayRequestGroup(input: FixedOffDayDecisionGroupInput)
-        +getTimeOffRequests(company_id) TimeOffRequestView[]
-        +decideTimeOffRequest(input) TimeOffRequestView
         +getMyRequests(user_id)
         +getUpcomingApprovedOffDates(user_id) string[]
     }
@@ -95,8 +93,6 @@ classDiagram
         +getOffDayRequestsByCompany(company_id) FixedOffDayRequest[]
         +createFixedOffDayRequests(input) FixedOffDayRequest[]
         +updateFixedOffDayRequest(id, fields) FixedOffDayRequest
-        +getTimeOffRequestsByCompany(company_id) TimeOffRequestRow[]
-        +updateTimeOffRequest(id, fields) TimeOffRequestRow
         +getMovableTasksByShiftAssignment(assignment_id)
         +updateShiftAssignmentUser(assignment_id, user_id) ShiftAssignment
         +... (40+ query methods)
@@ -154,14 +150,6 @@ classDiagram
         +status: AttendanceRequestStatus
         +source: FixedOffDaySource
     }
-    class TimeOffRequestView {
-        <<DTO>>
-        +id: string
-        +user_id: string
-        +type: TimeOffRequestType
-        +status: AttendanceRequestStatus
-    }
-
     class Supabase {
         <<external>>
     }
@@ -188,7 +176,6 @@ classDiagram
     attendanceService ..> AttendanceRecord : uses
     attendanceService ..> ShiftSwapRequest : uses
     attendanceService ..> FixedOffDayRequest : uses
-    attendanceService ..> TimeOffRequestView : returns
     shiftSwapSettingsService ..> ShiftSwapSettings : uses
 ```
 

@@ -68,7 +68,6 @@ export const ownerTeamService = {
 
     const supabaseAuthId = target.supabase_auth_id
 
-    await ownerTeamRepository.deleteInboxByUserId(user_id_to_remove)
     await ownerTeamRepository.deleteMessagesByUserId(user_id_to_remove)
     await ownerTeamRepository.cleanupUserOperationalReferences(user_id_to_remove, requester.id)
     await ownerTeamRepository.deleteManagerDepartmentsByUserId(user_id_to_remove)
@@ -99,7 +98,6 @@ export const ownerTeamService = {
     manager_id: string
     company_id: string
     department_id: string
-    assigned_by: string
   }): Promise<void> {
     const manager = await ownerTeamRepository.findUserById(data.manager_id)
     if (!manager || manager.company_id !== data.company_id || manager.role !== 'Manager') {
@@ -110,16 +108,15 @@ export const ownerTeamService = {
       data.manager_id,
       data.company_id,
       data.department_id,
-      data.assigned_by,
     )
   },
 
-  async assignManagerToDepartment(manager_id: string, company_id: string, department_id: string, assigned_by: string): Promise<void> {
+  async assignManagerToDepartment(manager_id: string, company_id: string, department_id: string): Promise<void> {
     const manager = await ownerTeamRepository.findUserById(manager_id)
     if (!manager || manager.company_id !== company_id) {
       throw new Error('Manager not found in this company')
     }
-    await ownerTeamRepository.assignManagerDepartment(manager_id, company_id, department_id, assigned_by)
+    await ownerTeamRepository.assignManagerDepartment(manager_id, company_id, department_id)
   },
 
   async removeManagerFromDepartment(manager_id: string, department_id: string): Promise<void> {

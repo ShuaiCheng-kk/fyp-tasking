@@ -3,30 +3,30 @@
 
 import { reportRepository } from '@/repositories/owner/reportRepository'
 import { recruitmentRepository } from '@/repositories/owner/recruitmentRepository'
+import { sgtInstant } from '@/lib/singaporeTime'
 import { AttendanceRecord } from '@/types/Attendance'
 import {
   CasualReliabilityRow,
   CompanyReport,
   DepartmentPerformanceRow,
-  DepartmentReportRow,
   RecruitmentHistorySummary,
   RecruitmentPostingRow,
   ReportFilters,
   ReportOverview,
   ReportPeriod,
   TaskWorkloadRow,
-  WorkforceAnalyticsReport,
 } from '@/types/Report'
 
 // Every number in this report is computed from recorded data only — no assumed hours,
 // no invented multipliers, no hand-picked thresholds. When a rate has nothing to
 // measure, it is null (the UI renders "no data"), never a fake 0%.
 
-// shift_date/start_time/end_time are UTC-naive strings; parse with 'Z' so they compare
-// correctly against the already-UTC clock_in_time/clock_out_time timestamps
-// (same convention as attendanceService.combineDateTime).
+// shift_date/start_time/end_time are Singapore-nominal wall-clock values (see
+// src/lib/singaporeTime) — sgtInstant resolves the real instant they represent, comparable to
+// the already-UTC clock_in_time/clock_out_time timestamps (same convention as
+// attendanceService.combineDateTime).
 function combineDateTime(date: string, time: string): Date {
-  return new Date(`${date}T${time}Z`)
+  return sgtInstant(date, time)
 }
 
 function percent(part: number, total: number): number | null {
@@ -38,14 +38,14 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100
 }
 
-// The clock times that count are the Owner-adjusted ones when the Owner corrected the
-// record during final review (same precedence the Attendance module applies).
+// The clock times that count are the corrected ones if a reviewer adjusted them during UC56
+// (same precedence the Attendance module applies).
 function effectiveClockIn(record: AttendanceRecord): string | null {
-  return record.owner_adjusted_clock_in_time ?? record.clock_in_time
+  return record.modified_clock_in_time ?? record.clock_in_time
 }
 
 function effectiveClockOut(record: AttendanceRecord): string | null {
-  return record.owner_adjusted_clock_out_time ?? record.clock_out_time
+  return record.modified_clock_out_time ?? record.clock_out_time
 }
 
 // Mirrors attendanceService.getAttendanceExceptions: absent = no clock-in by shift end
@@ -79,12 +79,6 @@ function actualWorkedHours(record: AttendanceRecord | null): number {
   if (record.break_in_time && record.break_out_time) {
     ms -= new Date(record.break_out_time).getTime() - new Date(record.break_in_time).getTime()
   }
-  return ms > 0 ? ms / 3600000 : 0
-}
-
-function scheduledHours(shift: { shift_date: string; start_time: string; end_time: string }): number {
-  const ms = combineDateTime(shift.shift_date, shift.end_time).getTime()
-    - combineDateTime(shift.shift_date, shift.start_time).getTime()
   return ms > 0 ? ms / 3600000 : 0
 }
 
@@ -224,7 +218,6 @@ async function buildPeriodData(filters: ReportFilters, now: Date): Promise<Perio
     const isCasual = user?.role === 'Casual Worker'
     const isInternal = user?.role === 'Manager' || user?.role === 'Employee'
     const record = recordByAssignmentId.get(assignment.id) ?? null
-    const rejected = assignment.assignment_status === 'rejected'
     const verdict = classifyAttendance(shift, record, now)
 
     // Casual Worker attendance drives the existing attendance_rate + per-worker reliability rows.
@@ -245,12 +238,11 @@ async function buildPeriodData(filters: ReportFilters, now: Date): Promise<Perio
         on_time_task_completion_rate: null,
         skills: user?.skills ?? null,
       }
-      // Every assignment counts as "requested", whatever became of it — rejected, no-show, or a
-      // shift that hasn't ended yet. This measures how often managers reach for this worker.
+      // Every assignment counts as "requested", whatever became of it — no-show or a shift that
+      // hasn't ended yet. This measures how often managers reach for this worker.
       stats.assigned_shifts += 1
-      if (rejected) stats.rejected_shifts += 1
 
-      if (verdict.countable && !rejected) {
+      if (verdict.countable) {
         attendanceCountable += 1
         if (verdict.absent) {
           stats.absent += 1
@@ -270,7 +262,7 @@ async function buildPeriodData(filters: ReportFilters, now: Date): Promise<Perio
     // Managers and Employees clock in/out against their own shift_assignment the same way
     // (employeeAttendanceService.clockIn/clockOut) — counted per attendance record, not per
     // person, per the Owner's requested On-time Attendance Rate KPI.
-    if (isInternal && verdict.countable && !rejected) {
+    if (isInternal && verdict.countable) {
       internalCountable += 1
       const deptKey = shift.department_id ?? 'none'
       const bucket = deptInternalAttendance.get(deptKey) ?? { present: 0, late: 0, absent: 0 }
@@ -280,30 +272,26 @@ async function buildPeriodData(filters: ReportFilters, now: Date): Promise<Perio
       deptInternalAttendance.set(deptKey, bucket)
     }
 
-    // Labor cost = money actually owed for work: nothing for rejected assignments, and
-    // nothing for a Casual Worker who never showed up (absent), never completed clock-out,
-    // or whose shift hasn't ended yet. For payable work the shift's flat rate wins when set;
-    // otherwise the assignee's hourly rate × hours — actual clocked hours for Casual Workers,
-    // scheduled hours for internal staff (they don't clock in this system).
-    // A payable assignment with neither rate is counted as uncosted, never guessed.
-    const fullyAttended = isCasual ? !!(record && effectiveClockIn(record) && effectiveClockOut(record)) : true
-    const payable = !rejected && (!isCasual || (verdict.countable && !verdict.absent && fullyAttended))
+    // Labor cost = money actually owed for Casual Worker shifts only — internal staff are
+    // salaried, not paid per shift, so they never contribute a labor cost line. Rate comes from
+    // the shift itself (set from job_postings.salary_amount at shift-creation time), not a fixed
+    // rate on the worker. Nothing for a Casual Worker who never showed up (absent), never
+    // completed clock-out, or whose shift hasn't ended yet. A payable assignment with no rate is
+    // counted as uncosted, never guessed.
+    const fullyAttended = !!(record && effectiveClockIn(record) && effectiveClockOut(record))
+    const payable = isCasual && verdict.countable && !verdict.absent && fullyAttended
     if (payable) {
       let cost: number | null = null
-      if (shift.flat_rate !== null && shift.flat_rate !== undefined) {
-        cost = shift.flat_rate
-      } else if (user?.hourly_rate !== null && user?.hourly_rate !== undefined) {
-        cost = user.hourly_rate * (isCasual ? actualWorkedHours(record) : scheduledHours(shift))
+      if (shift.hourly_rate !== null && shift.hourly_rate !== undefined) {
+        cost = shift.hourly_rate * actualWorkedHours(record)
       }
       if (cost === null) {
         uncosted += 1
       } else {
         laborCost += cost
         row.labor_cost = round2(row.labor_cost + cost)
-        if (isCasual) {
-          casualLaborCost += cost
-          row.casual_labor_cost = round2(row.casual_labor_cost + cost)
-        }
+        casualLaborCost += cost
+        row.casual_labor_cost = round2(row.casual_labor_cost + cost)
       }
     }
   }
@@ -451,7 +439,7 @@ async function buildPeriodData(filters: ReportFilters, now: Date): Promise<Perio
   }
 
   // ── Casual Worker Pool Analytics — every KPI counts each worker ONCE ───────
-  // "Worked" = at least one countable (ended, non-rejected) shift assignment in the period;
+  // "Worked" = at least one countable (ended) shift assignment in the period;
   // an absent-only worker still belongs to this period's pool (casualStats.worked counts
   // attended shifts, casualStats.absent counts no-shows — either > 0 means they were used).
   // A worker who only cancelled (no attended/absent shift this period) is surfaced separately by
@@ -694,135 +682,6 @@ export const reportService = {
       previous_departments: previous.departments,
       workload: current.workload,
       casual: { ...current.casual, pool: poolRows },
-    }
-  },
-
-  // ── LEGACY — old report shape still served to the Partner/Manager report pages.
-  // Delete (with the legacy repository methods and /api/report/recruitment) when
-  // those pages inherit the new CompanyReport view.
-
-  async getWorkforceAnalytics(filters: ReportFilters): Promise<WorkforceAnalyticsReport> {
-    const [departments, shifts, tasks, timeOffRows, swapRows] = await Promise.all([
-      reportRepository.getDepartments(filters.company_id),
-      reportRepository.getShifts(filters),
-      reportRepository.getTasks(filters),
-      reportRepository.getTimeOffRequests(filters.company_id, filters.date_from, filters.date_to),
-      reportRepository.getSwapRequests(filters.company_id, filters.date_from, filters.date_to),
-    ])
-
-    const assignments = await reportRepository.getAssignmentsByShiftIds(shifts.map(s => s.id))
-    const attendance = await reportRepository.getAttendanceByAssignmentIds(assignments.map(a => a.id))
-
-    const shiftsById = new Map(shifts.map(s => [s.id, s]))
-    const departmentNames = new Map(departments.map(d => [d.id, d.name]))
-    const rows = new Map<string, DepartmentReportRow>()
-
-    const ensureRow = (departmentId: string | null): DepartmentReportRow => {
-      const key = departmentId ?? 'none'
-      const existing = rows.get(key)
-      if (existing) return existing
-      const row: DepartmentReportRow = {
-        department_id: departmentId,
-        department_name: departmentId ? (departmentNames.get(departmentId) ?? 'Department') : 'No department',
-        shifts: 0,
-        assignments: 0,
-        tasks: 0,
-        completed_tasks: 0,
-        attendance_records: 0,
-        approved_attendance: 0,
-        rejected_attendance: 0,
-      }
-      rows.set(key, row)
-      return row
-    }
-
-    shifts.forEach(shift => ensureRow(shift.department_id).shifts += 1)
-    assignments.forEach(assignment => {
-      const shift = shiftsById.get(assignment.shift_id)
-      ensureRow(shift?.department_id ?? null).assignments += 1
-    })
-    tasks.forEach(task => {
-      const row = ensureRow(task.department_id)
-      row.tasks += 1
-      if (task.status === 'Complete' || task.percentage_complete >= 100) row.completed_tasks += 1
-    })
-
-    const assignmentsById = new Map(assignments.map(a => [a.id, a]))
-    const attendanceByAssignmentId = new Map(attendance.map(r => [r.shift_assignment_id, r]))
-
-    attendance.forEach(record => {
-      const assignment = assignmentsById.get(record.shift_assignment_id)
-      const shift = assignment ? shiftsById.get(assignment.shift_id) : null
-      const row = ensureRow(shift?.department_id ?? null)
-      row.attendance_records += 1
-      if (record.owner_status === 'approved' || record.status === 'owner_approved') row.approved_attendance += 1
-      if (record.owner_status === 'rejected' || record.status === 'owner_rejected') row.rejected_attendance += 1
-    })
-
-    let lateCount = 0
-    let absentCount = 0
-    let overtimeCount = 0
-    for (const assignment of assignments) {
-      const shift = shiftsById.get(assignment.shift_id)
-      const record = attendanceByAssignmentId.get(assignment.id)
-      if (!record || !record.clock_in_time) {
-        absentCount += 1
-      } else if (shift) {
-        const clockIn = new Date(record.clock_in_time).getTime()
-        if (clockIn > combineDateTime(shift.shift_date, shift.start_time).getTime()) lateCount += 1
-        if (record.clock_out_time
-          && new Date(record.clock_out_time).getTime() > combineDateTime(shift.shift_date, shift.end_time).getTime()) {
-          overtimeCount += 1
-        }
-      }
-    }
-
-    const completed = tasks.filter(t => t.status === 'Complete' || t.percentage_complete >= 100).length
-
-    return {
-      summary: {
-        shifts: shifts.length,
-        assignments: assignments.length,
-        tasks: tasks.length,
-        completed_tasks: completed,
-        task_completion_rate: percent(completed, tasks.length) ?? 0,
-        attendance_records: attendance.length,
-        approved_attendance: attendance.filter(r => r.owner_status === 'approved' || r.status === 'owner_approved').length,
-        rejected_attendance: attendance.filter(r => r.owner_status === 'rejected' || r.status === 'owner_rejected').length,
-        pending_attendance: attendance.filter(r => r.owner_status === 'pending').length,
-        late_attendance: lateCount,
-        absent_count: absentCount,
-        overtime_count: overtimeCount,
-      },
-      task_breakdown: {
-        assigned: tasks.filter(t => t.status === 'Assigned' || !t.status).length,
-        in_progress: tasks.filter(t => t.status === 'In Progress').length,
-        review: tasks.filter(t => t.status === 'Review').length,
-        complete: completed,
-      },
-      hr_requests: {
-        time_off_pending: timeOffRows.filter(r => r.status === 'pending').length,
-        time_off_approved: timeOffRows.filter(r => r.status === 'approved').length,
-        time_off_rejected: timeOffRows.filter(r => r.status === 'rejected').length,
-        swap_pending: swapRows.filter(r => r.status === 'pending').length,
-        swap_approved: swapRows.filter(r => r.status === 'approved').length,
-        swap_rejected: swapRows.filter(r => r.status === 'rejected').length,
-      },
-      departments: [...rows.values()].sort((a, b) => (b.assignments + b.tasks) - (a.assignments + a.tasks)),
-      recent_activity: [
-        ...shifts.slice(0, 5).map(s => ({
-          type: 'shift' as const,
-          title: s.title || 'Shift',
-          detail: `${departmentNames.get(s.department_id) ?? 'No department'} · ${s.start_time.slice(0, 5)}-${s.end_time.slice(0, 5)}`,
-          date: s.shift_date,
-        })),
-        ...tasks.slice(0, 5).map(t => ({
-          type: 'task' as const,
-          title: t.title,
-          detail: `${t.status} · ${t.percentage_complete}% complete`,
-          date: t.created_at,
-        })),
-      ].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8),
     }
   },
 

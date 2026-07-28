@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
 
     const { data, error } = await supabase
       .from('job_postings')
-      .select('*, departments(name), companies(location, description, size, address, industry)')
+      .select('*, departments(name), companies(name, location, description, size, address, industry)')
       .eq('status', 'open')
       .is('archived_at', null)
       .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
@@ -41,6 +41,9 @@ export async function GET(req: NextRequest) {
         department_name: Array.isArray(departments)
           ? (departments[0]?.name ?? null)
           : (departments?.name ?? null),
+        company_name: Array.isArray(companies)
+          ? (companies[0]?.name ?? null)
+          : (companies?.name ?? null),
         company_location: Array.isArray(companies)
           ? (companies[0]?.location ?? null)
           : (companies?.location ?? null),

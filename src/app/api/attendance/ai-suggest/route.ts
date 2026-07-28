@@ -36,7 +36,7 @@ export async function POST(req: NextRequest) {
       const suggestion = await requestAISuggestService.suggestFixedOffDayGroup({
         requester_name: first.requester_name,
         requester_role: first.requester_role,
-        request_dates: group.map(r => r.request_date),
+        requested_dates: group.map(r => r.requested_date),
         department_id: first.department_id,
         company_id,
         user_id: first.user_id,

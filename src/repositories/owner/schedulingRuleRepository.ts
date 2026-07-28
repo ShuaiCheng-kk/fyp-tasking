@@ -11,26 +11,7 @@ export type RuleValidationUser = {
   full_name: string
   role: string
   company_id: string | null
-  worker_status?: string | null
-  status?: string | null
-  employment_status?: string | null
-  weekly_working_hours?: number | null
-  max_weekly_hours?: number | null
-  contracted_weekly_hours?: number | null
   department_ids: string[]
-}
-
-export type ApprovedTimeOffRow = {
-  id: string
-  requester_id: string
-  shift_assignment_id: string | null
-  status: string
-  request_type: string
-  shifts?: Shift | null
-}
-
-export type TimeOffContextRow = ApprovedTimeOffRow & {
-  created_at?: string | null
 }
 
 export const schedulingRuleRepository = {
@@ -102,59 +83,18 @@ export const schedulingRuleRepository = {
     return results.flat()
   },
 
-  async getApprovedTimeOffByCompany(company_id: string): Promise<ApprovedTimeOffRow[]> {
+  async getOffDayRequests(company_id: string, date_from: string, date_to: string): Promise<Array<{ user_id: string; requested_date: string }>> {
     const { data, error } = await supabase
-      .from('time_off_requests')
-      .select('id, requester_id, shift_assignment_id, status, request_type, shift_assignments(shifts(*))')
-      .eq('company_id', company_id)
-      .eq('status', 'approved')
-    if (error) throw new Error(error.message)
-    return (data ?? []).map((row: any) => ({
-      id: row.id,
-      requester_id: row.requester_id,
-      shift_assignment_id: row.shift_assignment_id,
-      status: row.status,
-      request_type: row.request_type,
-      shifts: Array.isArray(row.shift_assignments)
-        ? row.shift_assignments[0]?.shifts ?? null
-        : row.shift_assignments?.shifts ?? null,
-    })) as ApprovedTimeOffRow[]
-  },
-
-  async getTimeOffRequestsByCompany(company_id: string): Promise<TimeOffContextRow[]> {
-    const { data, error } = await supabase
-      .from('time_off_requests')
-      .select('id, requester_id, shift_assignment_id, status, request_type, created_at, shift_assignments(shifts(*))')
-      .eq('company_id', company_id)
-    if (error) {
-      if (/time_off_requests|does not exist|schema cache/i.test(error.message)) return []
-      throw new Error(error.message)
-    }
-    return (data ?? []).map((row: any) => ({
-      id: row.id,
-      requester_id: row.requester_id,
-      shift_assignment_id: row.shift_assignment_id,
-      status: row.status,
-      request_type: row.request_type,
-      created_at: row.created_at ?? null,
-      shifts: Array.isArray(row.shift_assignments)
-        ? row.shift_assignments[0]?.shifts ?? null
-        : row.shift_assignments?.shifts ?? null,
-    })) as TimeOffContextRow[]
-  },
-
-  async getOffDayRequests(company_id: string, date_from: string, date_to: string): Promise<Array<{ user_id: string; request_date: string }>> {
-    const { data, error } = await supabase
-      .from('employee_off_day_requests')
-      .select('user_id, request_date')
+      .from('off_day_requests')
+      .select('user_id, requested_date')
       .eq('company_id', company_id)
       .in('status', ['approved', 'modified'])
-      .gte('request_date', date_from)
-      .lte('request_date', date_to)
+      .gte('requested_date', date_from)
+      .lte('requested_date', date_to)
     if (error) {
-      if (/employee_off_day_requests|does not exist|schema cache/i.test(error.message)) return []
+      if (/off_day_requests|does not exist|schema cache/i.test(error.message)) return []
       throw new Error(error.message)
     }
-    return (data ?? []) as Array<{ user_id: string; request_date: string }>
+    return (data ?? []) as Array<{ user_id: string; requested_date: string }>
   },
 }

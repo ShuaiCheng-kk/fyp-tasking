@@ -2,8 +2,6 @@ export interface Shift {
   id: string
   company_id: string
   department_id: string
-  title: string | null
-  instruction: string | null
   shift_date: string
   start_time: string
   end_time: string
@@ -16,17 +14,16 @@ export interface Shift {
   template_id: string | null
   source_job_posting_id: string | null
   is_open_ended: boolean
-  flat_rate: number | null
   created_by: string
-  created_at: string
-  updated_at: string
+  // Pay rate for the Casual Worker on this shift, copied from job_postings.salary_amount at
+  // shift-creation time. Null for internal-staff (Manager/Employee) shifts — they're salaried,
+  // not paid per shift.
+  hourly_rate: number | null
 }
 
 export interface ShiftInput {
   company_id: string
   department_id: string
-  title?: string | null
-  instruction?: string | null
   shift_date: string
   start_time: string
   end_time: string
@@ -39,6 +36,7 @@ export interface ShiftInput {
   template_id?: string | null
   source_job_posting_id?: string | null
   is_open_ended?: boolean
+  hourly_rate?: number | null
 }
 
 export interface SplitShiftBlockInput {
@@ -49,8 +47,6 @@ export interface SplitShiftBlockInput {
 export interface SplitShiftInput {
   company_id: string
   department_id: string
-  title?: string | null
-  instruction?: string | null
   shift_date: string
   blocks: SplitShiftBlockInput[]
   created_by: string
@@ -108,8 +104,6 @@ export interface BulkShiftAssignmentResult {
 
 export interface BulkCreateShiftInput {
   department_id: string
-  title?: string | null
-  instruction?: string | null
   shift_date: string
   start_time: string
   end_time: string

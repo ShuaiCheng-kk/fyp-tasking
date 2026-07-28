@@ -7,13 +7,6 @@ import { resumeTextService } from '@/services/ai/resumeTextService'
 import { CandidateRecommendation } from '@/types/AI'
 import { JobApplicant } from '@/types/Recruitment'
 
-const EXPERIENCE_LABELS: Record<string, string> = {
-  none: 'No experience in this role',
-  less_than_1: 'Less than 1 year in this role',
-  '1_to_2': '1–2 years in this role',
-  more_than_2: 'More than 2 years in this role',
-}
-
 // The AI compares soft signals only (skills, certificates, resume, experience answer, note).
 // Hard gates — age, job status, schedule conflicts — were already enforced deterministically
 // at apply time and are never delegated to the model.
@@ -70,8 +63,8 @@ export const candidateRecommendationService = {
     if (toCompute.length > 0) {
       const resumeTexts = await Promise.all(
         toCompute.map(applicant =>
-          applicant.resume_url
-            ? resumeTextService.extractResumeText(applicant.resume_url)
+          applicant.resume
+            ? resumeTextService.extractResumeText(applicant.resume)
             : Promise.resolve(null)
         )
       )
@@ -89,24 +82,20 @@ export const candidateRecommendationService = {
         input: {
           job_posting: {
             title: jobPosting.title,
-            description: jobPosting.description,
-            requirements: jobPosting.requirements,
+            responsibilities: jobPosting.responsibilities,
+            skills: jobPosting.skills,
             experience_required: jobPosting.experience_required,
-            employment_type: jobPosting.employment_type,
             location: jobPosting.company_location,
             salary_amount: jobPosting.salary_amount,
           },
           applicants: toCompute.map((applicant, index) => ({
             applicant_id: applicant.id,
             full_name: applicant.full_name,
-            skills: applicant.skills_snapshot,
-            certificates: (applicant.certificates_snapshot ?? []).map(cert => ({
+            skills: applicant.skills,
+            certificates: (applicant.certificates ?? []).map(cert => ({
               name: cert.name,
               proof_attached: Boolean(cert.file_url),
             })),
-            relevant_experience: applicant.relevant_experience
-              ? EXPERIENCE_LABELS[applicant.relevant_experience] ?? applicant.relevant_experience
-              : null,
             additional_note: applicant.additional_note,
             resume_text: resumeTexts[index],
           })),
@@ -153,11 +142,10 @@ export const candidateRecommendationService = {
 
 function hasSignal(applicant: JobApplicant): boolean {
   return Boolean(
-    applicant.skills_snapshot ||
-    (applicant.certificates_snapshot && applicant.certificates_snapshot.length > 0) ||
-    applicant.resume_url ||
-    applicant.additional_note ||
-    applicant.relevant_experience
+    applicant.skills ||
+    (applicant.certificates && applicant.certificates.length > 0) ||
+    applicant.resume ||
+    applicant.additional_note
   )
 }
 

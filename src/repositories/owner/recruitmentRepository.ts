@@ -2,7 +2,7 @@
 // RULE: Supabase queries only. No business logic.
 
 import { supabase } from '@/lib/supabase'
-import { ApplicantCertificateSnapshot, CasualWorkerStatus, JobApplicant, JobInvitation, JobPosting, JobPostingInput, JobPostingPendingApproval, PoolWorker } from '@/types/Recruitment'
+import { ApplicantCertificateSnapshot, JobApplicant, JobInvitation, JobPosting, JobPostingInput, JobPostingPendingApproval, PoolWorker } from '@/types/Recruitment'
 
 export const recruitmentRepository = {
   async getPublicJobPostings(): Promise<JobPosting[]> {
@@ -136,11 +136,11 @@ export const recruitmentRepository = {
   },
 
   async getJobPostingById(id: string): Promise<JobPosting | null> {
-    // Company profile fields are joined live (same shape as /api/jobs/public) so detail views
-    // can render the Company Profile section; job_postings itself only snapshots company_name.
+    // Company profile fields (including name) are joined live (same shape as /api/jobs/public) so
+    // detail views can render the Company Profile section — job_postings stores none of them.
     const { data, error } = await supabase
       .from('job_postings')
-      .select('*, departments(name), companies(location, description, size, address, industry)')
+      .select('*, departments(name), companies(name, location, description, size, address, industry)')
       .eq('id', id)
       .single()
     if (error) return null
@@ -150,6 +150,7 @@ export const recruitmentRepository = {
     return {
       ...rest,
       department_name: dept?.name ?? null,
+      company_name: co?.name ?? null,
       company_location: co?.location ?? null,
       company_description: co?.description ?? null,
       company_size: co?.size ?? null,
@@ -166,31 +167,25 @@ export const recruitmentRepository = {
         department_id: input.department_id ?? null,
         created_by: input.created_by,
         title: input.title,
-        description: input.description,
-        requirements: input.requirements ?? null,
-        location: input.location ?? null,
-        employment_type: input.employment_type ?? null,
-        company_name: input.company_name ?? null,
+        responsibilities: input.responsibilities,
+        skills: input.skills ?? null,
         salary_amount: input.salary_amount ?? null,
         urgency: input.urgency ?? null,
         estimated_hours: input.estimated_hours ?? null,
-        is_recurring: input.is_recurring ?? false,
         status: input.status ?? 'open',
-        shift_date: input.shift_date ?? null,
-        shift_start_time: input.shift_start_time ?? null,
-        shift_end_time: input.shift_end_time ?? null,
+        job_date: input.job_date ?? null,
+        job_start_time: input.job_start_time ?? null,
+        job_end_time: input.job_end_time ?? null,
         break_start_time: input.break_start_time ?? null,
         break_end_time: input.break_end_time ?? null,
-        job_start_time: input.job_start_time ?? null,
         assigned_employee_id: input.assigned_employee_id ?? null,
-        form_type: input.form_type ?? null,
+        job_type: input.job_type ?? null,
         expires_at: input.expires_at ?? null,
         template_id: input.template_id ?? null,
         experience_required: input.experience_required ?? null,
         minimum_age: input.minimum_age ?? null,
         openings: input.openings ?? null,
-        uniform_required: input.uniform_required ?? false,
-        uniform_type: input.uniform_type ?? null,
+        uniform_type: input.uniform_type ?? 'none',
         uniform_details: input.uniform_details ?? null,
       })
       .select()
@@ -374,14 +369,14 @@ export const recruitmentRepository = {
     if (error) throw new Error(error.message)
   },
 
-  async insertRecruitmentCancellation(input: {
+  async insertJobCancellation(input: {
     job_id: string
     applicant_id: string | null
     cancelled_by: string
     cancelled_role: 'worker' | 'employer'
     reason: string | null
   }): Promise<void> {
-    const { error } = await supabase.from('recruitment_cancellations').insert(input)
+    const { error } = await supabase.from('job_cancellations').insert(input)
     if (error) throw new Error(error.message)
   },
 
@@ -399,7 +394,7 @@ export const recruitmentRepository = {
     const counts = new Map<string, number>()
     if (user_ids.length === 0) return counts
     const { data, error } = await supabase
-      .from('recruitment_cancellations')
+      .from('job_cancellations')
       .select('cancelled_by')
       .eq('cancelled_role', 'worker')
       .in('cancelled_by', user_ids)
@@ -525,89 +520,6 @@ export const recruitmentRepository = {
     return (data as { role: string } | null)?.role ?? null
   },
 
-  async getCasualWorkersByCompany(company_id: string): Promise<CasualWorkerStatus[]> {
-    const { data, error } = await supabase
-      .from('users')
-      .select('id, full_name, email_address, worker_status')
-      .eq('company_id', company_id)
-      .eq('role', 'Casual Worker')
-      .order('full_name', { ascending: true })
-    if (error) throw new Error(error.message)
-
-    const workers = (data ?? []) as Array<{ id: string; full_name: string; email_address: string; worker_status: string | null }>
-
-    return workers.map(worker => ({
-      id: worker.id,
-      full_name: worker.full_name,
-      email_address: worker.email_address,
-      department_id: null,
-      department_name: null,
-      worker_status: (worker.worker_status as CasualWorkerStatus['worker_status']) ?? 'active',
-    }))
-  },
-
-  async getAcceptedCasualWorkersByAssignedEmployee(company_id: string, employee_id: string): Promise<CasualWorkerStatus[]> {
-    const { data: postings, error: postingError } = await supabase
-      .from('job_postings')
-      .select('id, department_id')
-      .eq('company_id', company_id)
-      .eq('assigned_employee_id', employee_id)
-      .not('status', 'in', '("pending_approval","draft","rejected")')
-    if (postingError) throw new Error(postingError.message)
-
-    const jobDeptMap = new Map((postings ?? []).map((posting: { id: string; department_id: string | null }) => [posting.id, posting.department_id]))
-    const jobIds = [...jobDeptMap.keys()]
-    if (jobIds.length === 0) return []
-
-    const { data: applicants, error: applicantError } = await supabase
-      .from('job_applicants')
-      .select('job_id, user_id')
-      .in('job_id', jobIds)
-      .eq('status', 'accepted')
-      .not('user_id', 'is', null)
-    if (applicantError) throw new Error(applicantError.message)
-
-    const workerIds = [...new Set((applicants ?? []).map((applicant: { user_id: string | null }) => applicant.user_id).filter((id): id is string => Boolean(id)))]
-    if (workerIds.length === 0) return []
-
-    const workerDeptMap = new Map<string, string | null>()
-    for (const applicant of (applicants ?? []) as Array<{ job_id: string; user_id: string | null }>) {
-      if (applicant.user_id && !workerDeptMap.has(applicant.user_id)) {
-        workerDeptMap.set(applicant.user_id, jobDeptMap.get(applicant.job_id) ?? null)
-      }
-    }
-
-    const { data: workersData, error: workerError } = await supabase
-      .from('users')
-      .select('id, full_name, email_address, worker_status')
-      .in('id', workerIds)
-      .eq('company_id', company_id)
-      .eq('role', 'Casual Worker')
-      .order('full_name', { ascending: true })
-    if (workerError) throw new Error(workerError.message)
-
-    const deptIds = [...new Set([...workerDeptMap.values()].filter((id): id is string => Boolean(id)))]
-    const { data: departmentData, error: departmentError } = deptIds.length > 0
-      ? await supabase.from('departments').select('id, name').in('id', deptIds)
-      : { data: [], error: null }
-    if (departmentError) throw new Error(departmentError.message)
-
-    const deptMap = new Map(((departmentData ?? []) as Array<{ id: string; name: string }>).map(department => [department.id, department.name]))
-    const workers = (workersData ?? []) as Array<{ id: string; full_name: string; email_address: string; worker_status: string | null }>
-
-    return workers.map(worker => {
-      const deptId = workerDeptMap.get(worker.id) ?? null
-      return {
-        id: worker.id,
-        full_name: worker.full_name,
-        email_address: worker.email_address,
-        department_id: deptId,
-        department_name: deptId ? deptMap.get(deptId) ?? null : null,
-        worker_status: (worker.worker_status as CasualWorkerStatus['worker_status']) ?? 'active',
-      }
-    })
-  },
-
   async getClosedPostingsByDateRange(company_id: string, date_from: string, date_to: string): Promise<JobPosting[]> {
     const { data, error } = await supabase
       .from('job_postings')
@@ -621,17 +533,8 @@ export const recruitmentRepository = {
     return (data ?? []) as JobPosting[]
   },
 
-  async updateCasualWorkerStatus(user_id: string, worker_status: 'active' | 'inactive' | 'blocked'): Promise<void> {
-    const { error } = await supabase
-      .from('users')
-      .update({ worker_status })
-      .eq('id', user_id)
-      .eq('role', 'Casual Worker')
-    if (error) throw new Error(error.message)
-  },
-
   // The company's verified worker pool: Casual Workers who have actually completed a shift here
-  // (verified_at) and are not banned (blocked_at). Enriched with how many shifts they've finished
+  // (verified_at) and are not banned (inactive_at). Enriched with how many shifts they've finished
   // so the Owner can pick the regulars they trust.
   // department_ids: a Manager's pool is scoped to workers verified in THEIR department(s) only —
   // casualworker_departments is a per-department row (a worker can be verified in several), so
@@ -646,7 +549,7 @@ export const recruitmentRepository = {
       .select('casual_worker_id, department_id, verified_at, departments(name)')
       .eq('company_id', company_id)
       .not('verified_at', 'is', null)
-      .is('blocked_at', null)
+      .is('inactive_at', null)
     if (department_ids) query = query.in('department_id', department_ids)
     const { data: cwdRows, error: cwdErr } = await query
     if (cwdErr) throw new Error(cwdErr.message)
@@ -669,7 +572,7 @@ export const recruitmentRepository = {
 
     const { data: users, error: usersErr } = await supabase
       .from('users')
-      .select('id, full_name, email_address, phone_number, profile_photo_url, skills')
+      .select('id, full_name, email_address, phone_number, profile_photo_url, casual_worker_profiles(skills)')
       .in('id', workerIds)
       .eq('role', 'Casual Worker')
     if (usersErr) throw new Error(usersErr.message)
@@ -678,8 +581,8 @@ export const recruitmentRepository = {
     // shift they belong to (attendance_records has no company_id of its own).
     const { data: attendance, error: attErr } = await supabase
       .from('attendance_records')
-      .select('casual_worker_id, clock_out_time, shift_assignments!inner(shifts!inner(company_id, shift_date))')
-      .in('casual_worker_id', workerIds)
+      .select('user_id, clock_out_time, shift_assignments!inner(shifts!inner(company_id, shift_date))')
+      .in('user_id', workerIds)
       .not('clock_out_time', 'is', null)
       .eq('shift_assignments.shifts.company_id', company_id)
     if (attErr) throw new Error(attErr.message)
@@ -688,22 +591,23 @@ export const recruitmentRepository = {
     for (const row of (attendance ?? []) as any[]) {
       const shift = row.shift_assignments?.shifts
       const date = Array.isArray(shift) ? shift[0]?.shift_date : shift?.shift_date
-      const current = stats.get(row.casual_worker_id) ?? { count: 0, last: null }
+      const current = stats.get(row.user_id) ?? { count: 0, last: null }
       current.count += 1
       if (date && (!current.last || date > current.last)) current.last = date
-      stats.set(row.casual_worker_id, current)
+      stats.set(row.user_id, current)
     }
 
     return ((users ?? []) as any[]).map(user => {
       const meta = byWorker.get(user.id)!
       const stat = stats.get(user.id) ?? { count: 0, last: null }
+      const profile = Array.isArray(user.casual_worker_profiles) ? user.casual_worker_profiles[0] : user.casual_worker_profiles
       return {
         id: user.id,
         full_name: user.full_name,
         email_address: user.email_address,
         phone_number: user.phone_number ?? null,
         profile_photo_url: user.profile_photo_url ?? null,
-        skills: user.skills ?? null,
+        skills: profile?.skills ?? null,
         department_id: meta.department_id,
         department_name: meta.department_name,
         verified_at: meta.verified_at,
@@ -731,20 +635,19 @@ export const recruitmentRepository = {
   async createDirectApplicant(input: {
     job_id: string
     user_id: string
-    resume_url: string | null
-    skills_snapshot: string | null
-    certificates_snapshot: ApplicantCertificateSnapshot[]
+    resume: string | null
+    skills: string | null
+    certificates: ApplicantCertificateSnapshot[]
   }): Promise<JobApplicant> {
     const { data, error } = await supabase
       .from('job_applicants')
       .insert({
         job_id: input.job_id,
         user_id: input.user_id,
-        resume_url: input.resume_url,
-        relevant_experience: null,
+        resume: input.resume,
         additional_note: null,
-        skills_snapshot: input.skills_snapshot,
-        certificates_snapshot: input.certificates_snapshot,
+        skills: input.skills,
+        certificates: input.certificates,
         status: 'accepted',
       })
       .select()

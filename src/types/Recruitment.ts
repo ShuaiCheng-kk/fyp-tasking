@@ -4,18 +4,18 @@ export interface JobPosting {
   department_id: string | null
   created_by: string
   title: string
-  description: string
-  requirements: string | null
-  location: string | null
-  employment_type: string | null
-  status: 'open' | 'archived' | 'closed' | 'expired' | 'pending_approval' | 'rejected' | 'draft'
-  is_recurring: boolean
+  responsibilities: string
+  skills: string | null
+  status: 'open' | 'archived' | 'closed' | 'pending_approval' | 'rejected' | 'draft'
   archived_at: string | null
   // Status the posting had right before it was archived ('open' or 'closed') — lets Unarchive
   // restore it to where it came from instead of always reopening it.
   archived_from_status: string | null
   created_at: string
   updated_at: string
+  // company_name/location/description/size/address/industry are not columns on job_postings —
+  // joined live from companies at read time (see recruitmentRepository.getJobPostingById and
+  // /api/jobs/public).
   company_name: string | null
   company_location: string | null
   company_description: string | null
@@ -25,12 +25,13 @@ export interface JobPosting {
   salary_amount: number | null
   urgency: string | null
   estimated_hours: string | null
-  shift_date: string | null
-  shift_start_time: string | null
-  shift_end_time: string | null
+  job_date: string | null
+  // Shift jobs: paired with job_end_time as the shift's start/end. One-off jobs: used alone as
+  // the job's start time (job_type decides which reading applies — no separate column for either).
+  job_start_time: string | null
+  job_end_time: string | null
   break_start_time: string | null
   break_end_time: string | null
-  job_start_time: string | null
   assigned_employee_id: string | null
   rejection_reason: string | null
   // Who rejected the posting (Owner/Partner) — set alongside rejection_reason, cleared on
@@ -41,10 +42,10 @@ export interface JobPosting {
   experience_required: string | null
   minimum_age: number | null
   openings: number | null
-  form_type: string | null
-  shift_days: string[] | null
-  uniform_required: boolean
-  uniform_type: string | null
+  job_type: string | null
+  // 'company' = employer provides uniform. 'dress_code' = no uniform, but a specific dress code
+  // applies (see uniform_details). 'none' = no requirement.
+  uniform_type: string
   uniform_details: string | null
 }
 
@@ -53,31 +54,25 @@ export interface JobPostingInput {
   department_id?: string | null
   created_by: string
   title: string
-  description: string
-  requirements?: string | null
-  location?: string | null
-  employment_type?: string | null
-  company_name?: string | null
+  responsibilities: string
+  skills?: string | null
   salary_amount?: number | null
   urgency?: string | null
   estimated_hours?: string | null
-  is_recurring?: boolean
   status?: string
-  shift_date?: string | null
-  shift_start_time?: string | null
-  shift_end_time?: string | null
+  job_date?: string | null
+  job_start_time?: string | null
+  job_end_time?: string | null
   break_start_time?: string | null
   break_end_time?: string | null
-  job_start_time?: string | null
   assigned_employee_id?: string | null
-  form_type?: string | null
+  job_type?: string | null
   expires_at?: string | null
   template_id?: string | null
   experience_required?: string | null
   minimum_age?: number | null
   openings?: number | null
-  uniform_required?: boolean
-  uniform_type?: string | null
+  uniform_type?: string
   uniform_details?: string | null
 }
 
@@ -111,16 +106,14 @@ export interface JobApplicant {
   email_address: string
   phone_number: string | null
   profile_photo_url: string | null
-  resume_url: string | null
-  cover_letter: string | null
+  resume: string | null
   status: 'pending' | 'accepted' | 'rejected' | 'withdrawn' | 'cancelled_by_employer' | 'job_closed'
   applied_at: string
   // Per-job answers + the profile snapshot taken at apply time (later profile edits never
   // change what the employer sees on this application).
-  relevant_experience: 'none' | 'less_than_1' | '1_to_2' | 'more_than_2' | null
   additional_note: string | null
-  skills_snapshot: string | null
-  certificates_snapshot: ApplicantCertificateSnapshot[] | null
+  skills: string | null
+  certificates: ApplicantCertificateSnapshot[] | null
   // Cached AI match analysis — computed once per application, not on every page open.
   ai_summary: string | null
   ai_computed_at: string | null
@@ -149,15 +142,6 @@ export interface JobPostingPendingApproval extends JobPosting {
   // Only resolved when this list was fetched with include_rejected — a Manager's "Waiting For
   // Review" merges in their own rejected submissions to show the reason next to it.
   rejected_by_name: string | null
-}
-
-export interface CasualWorkerStatus {
-  id: string
-  full_name: string
-  email_address: string
-  department_id: string | null
-  department_name: string | null
-  worker_status: 'active' | 'inactive' | 'blocked'
 }
 
 // A Casual Worker in the company's verified pool — they already clocked in AND out for this

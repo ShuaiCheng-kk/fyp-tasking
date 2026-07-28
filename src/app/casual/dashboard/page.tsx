@@ -10,6 +10,7 @@ import RoleAvatar from '@/components/RoleAvatar'
 import { JobDetailPanel, JobView } from '@/components/jobs/JobPresentation'
 import { useIsCompactViewport } from '@/hooks/useIsCompactViewport'
 import { useResourceInvalidation } from '@/components/realtime/RealtimeNotificationsProvider'
+import { sgtInstant, sgtTodayKey, sgtDateKeyPlusDays } from '@/lib/singaporeTime'
 
 type JobItem = {
   assignment_id: string
@@ -30,7 +31,7 @@ type JobItem = {
   clock_out_time: string | null
   break_in_time: string | null
   break_out_time: string | null
-  clock_out_released_at: string | null
+  clock_out_released: boolean
 }
 
 const pageKeyframes = `
@@ -46,19 +47,15 @@ const pageKeyframes = `
 const CLOCK_IN_WINDOW_MINUTES_BEFORE = 30
 
 function workActionsUnlocked(job: JobItem): boolean {
-  const shiftStart = new Date(`${job.shift_date}T${job.start_time}Z`)
+  const shiftStart = sgtInstant(job.shift_date, job.start_time)
   const earliestClockIn = new Date(shiftStart.getTime() - CLOCK_IN_WINDOW_MINUTES_BEFORE * 60000)
   return Date.now() >= earliestClockIn.getTime()
 }
 
 function canClockOut(job: JobItem): boolean {
-  if (job.is_open_ended) return !!job.clock_out_released_at
-  const shiftEnd = new Date(`${job.shift_date}T${job.end_time}Z`)
+  if (job.is_open_ended) return job.clock_out_released
+  const shiftEnd = sgtInstant(job.shift_date, job.end_time)
   return Date.now() >= shiftEnd.getTime()
-}
-
-function localDateKey(date: Date) {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
 
 function formatShiftDate(dateKey: string) {
@@ -71,11 +68,8 @@ function formatShiftDate(dateKey: string) {
 function formatTimelineDate(dateKey: string) {
   const date = new Date(`${dateKey}T00:00:00`)
   const dayMonth = date.toLocaleDateString('en-SG', { day: 'numeric', month: 'short' })
-  const today = new Date()
-  if (dateKey === localDateKey(today)) return `Today, ${dayMonth}`
-  const tomorrow = new Date(today)
-  tomorrow.setDate(tomorrow.getDate() + 1)
-  if (dateKey === localDateKey(tomorrow)) return `Tomorrow, ${dayMonth}`
+  if (dateKey === sgtTodayKey()) return `Today, ${dayMonth}`
+  if (dateKey === sgtDateKeyPlusDays(1)) return `Tomorrow, ${dayMonth}`
   return `${date.toLocaleDateString('en-SG', { weekday: 'short' })}, ${dayMonth}`
 }
 
@@ -188,10 +182,10 @@ export default function CasualDashboardPage() {
     if (!currentJob) return
     const now = Date.now()
     const boundaries: number[] = []
-    const windowOpensAt = new Date(`${currentJob.shift_date}T${currentJob.start_time}Z`).getTime() - CLOCK_IN_WINDOW_MINUTES_BEFORE * 60000
+    const windowOpensAt = sgtInstant(currentJob.shift_date, currentJob.start_time).getTime() - CLOCK_IN_WINDOW_MINUTES_BEFORE * 60000
     if (now < windowOpensAt) boundaries.push(windowOpensAt)
     if (currentJob.clock_in_time && !currentJob.clock_out_time && !currentJob.is_open_ended) {
-      const endsAt = new Date(`${currentJob.shift_date}T${currentJob.end_time}Z`).getTime()
+      const endsAt = sgtInstant(currentJob.shift_date, currentJob.end_time).getTime()
       if (now < endsAt) boundaries.push(endsAt)
     }
     if (boundaries.length === 0) return
@@ -329,7 +323,7 @@ export default function CasualDashboardPage() {
   const breakOutEnabled = isCurrentSelected && !!currentJob?.break_in_time && !currentJob?.break_out_time && !busy
   const clockInEnabled = isCurrentSelected && !clockedIn && actionsUnlocked && !busy
   const clockOutEnabled = isCurrentSelected && clockedIn && !clockedOut && !!currentJob && canClockOut(currentJob) && !busy
-  const awaitingRelease = !!selectedJob?.is_open_ended && selClockedIn && !selClockedOut && !selectedJob?.clock_out_released_at
+  const awaitingRelease = !!selectedJob?.is_open_ended && selClockedIn && !selClockedOut && !selectedJob?.clock_out_released
   const clockInCompleted = selClockedIn
   const breakInCompleted = !!selectedJob?.break_in_time
   const breakOutCompleted = !!selectedJob?.break_out_time
@@ -474,7 +468,7 @@ export default function CasualDashboardPage() {
                 /* The posting's advertised schedule can differ from this assignment's actual
                    occurrence (recurring shifts) — show THIS shift's date and times. */
                 ? <JobDetailPanel
-                    job={{ ...detailJob, shift_date: selectedJob.shift_date, shift_start_time: selectedJob.start_time, shift_end_time: selectedJob.end_time }}
+                    job={{ ...detailJob, job_date: selectedJob.shift_date, job_start_time: selectedJob.start_time, job_end_time: selectedJob.end_time }}
                     variant="inline"
                   />
                 : <p style={{ margin: 0, fontSize: '0.8125rem', color: '#6B7280' }}>Loading job details…</p>}

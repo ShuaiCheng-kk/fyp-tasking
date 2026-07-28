@@ -31,7 +31,7 @@ describe('ownerAnnouncementService — Communication (UC58-60)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(userService.getUserById).mockResolvedValue({ role: 'Owner', department_id: null } as any)
-    vi.mocked(ownerAnnouncementRepository.getAnnouncementOwner).mockResolvedValue({ from_user_id: 'owner-1' })
+    vi.mocked(ownerAnnouncementRepository.getAnnouncementOwner).mockResolvedValue({ user_id: 'owner-1' })
   })
 
   describe('getAnnouncements', () => {
@@ -121,7 +121,7 @@ describe('ownerAnnouncementService — Communication (UC58-60)', () => {
     })
 
     it('rejects a Manager trying to move their announcement to a different department', async () => {
-      vi.mocked(ownerAnnouncementRepository.getAnnouncementOwner).mockResolvedValue({ from_user_id: 'mgr-1' })
+      vi.mocked(ownerAnnouncementRepository.getAnnouncementOwner).mockResolvedValue({ user_id: 'mgr-1' })
       vi.mocked(userService.getUserById).mockResolvedValue({ role: 'Manager', department_id: 'dept-1' } as any)
 
       await expect(ownerAnnouncementService.updateAnnouncement('ann-1', 'mgr-1', 'Title', 'Body', 'dept-2'))
@@ -130,7 +130,7 @@ describe('ownerAnnouncementService — Communication (UC58-60)', () => {
     })
 
     it('rejects a Manager trying to make their announcement company-wide', async () => {
-      vi.mocked(ownerAnnouncementRepository.getAnnouncementOwner).mockResolvedValue({ from_user_id: 'mgr-1' })
+      vi.mocked(ownerAnnouncementRepository.getAnnouncementOwner).mockResolvedValue({ user_id: 'mgr-1' })
       vi.mocked(userService.getUserById).mockResolvedValue({ role: 'Manager', department_id: 'dept-1' } as any)
 
       await expect(ownerAnnouncementService.updateAnnouncement('ann-1', 'mgr-1', 'Title', 'Body', null))
@@ -139,7 +139,7 @@ describe('ownerAnnouncementService — Communication (UC58-60)', () => {
     })
 
     it('allows a Manager to keep their announcement in their own department', async () => {
-      vi.mocked(ownerAnnouncementRepository.getAnnouncementOwner).mockResolvedValue({ from_user_id: 'mgr-1' })
+      vi.mocked(ownerAnnouncementRepository.getAnnouncementOwner).mockResolvedValue({ user_id: 'mgr-1' })
       vi.mocked(userService.getUserById).mockResolvedValue({ role: 'Manager', department_id: 'dept-1' } as any)
       vi.mocked(ownerAnnouncementRepository.updateAnnouncement).mockResolvedValue({ id: 'ann-1' })
 
@@ -149,7 +149,7 @@ describe('ownerAnnouncementService — Communication (UC58-60)', () => {
     })
 
     it('rejects editing when the requester does not own the announcement', async () => {
-      vi.mocked(ownerAnnouncementRepository.getAnnouncementOwner).mockResolvedValue({ from_user_id: 'owner-1' })
+      vi.mocked(ownerAnnouncementRepository.getAnnouncementOwner).mockResolvedValue({ user_id: 'owner-1' })
 
       await expect(ownerAnnouncementService.updateAnnouncement('ann-1', 'mgr-1', 'Title', 'Body', null))
         .rejects.toThrow('You can only edit your own announcements')

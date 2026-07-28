@@ -16,7 +16,6 @@ vi.mock('@/repositories/invitation/invitationRepository', () => ({
     insertManagerDepartment: vi.fn(),
     insertEmployeeDepartment: vi.fn(),
     createCode: vi.fn(),
-    insertInboxInvite: vi.fn(),
   },
 }))
 
@@ -61,7 +60,9 @@ describe('invitationService.redeemCode — Accept Company Invitation (UC70)', ()
     full_name: 'New Employee',
     email_address: 'employee@test.com',
     password: 'Password123!',
-    phone_number: null,
+    phone_number: '91234567',
+    date_of_birth: '1995-01-01',
+    profile_photo_url: 'https://cdn/photo.jpg',
   }
 
   it('rejects an invitation code that does not exist', async () => {
@@ -175,24 +176,17 @@ describe('invitationService.sendInvite — Send Direct Invitation (UC27)', () =>
     await expect(invitationService.sendInvite(baseInput)).rejects.toThrow('This user is already a member of this company.')
   })
 
-  it('an existing user (member of a different company) gets an inbox invite, not an email', async () => {
+  it('rejects when the invited email already has an account with a different company', async () => {
     vi.mocked(authRepository.findByAuthIdOrInternalId).mockResolvedValue(inviter as never)
     vi.mocked(authRepository.findByEmail).mockResolvedValue({ id: 'existing-1', company_id: 'company-2' } as never)
 
-    await invitationService.sendInvite(baseInput)
-
-    expect(invitationRepository.insertInboxInvite).toHaveBeenCalledWith({
-      recipient_user_id: 'existing-1',
-      sender_user_id: 'inviter-1',
-      company_id: 'company-1',
-      role: 'Employee',
-      department_id: null,
-    })
+    await expect(invitationService.sendInvite(baseInput))
+      .rejects.toThrow('This user already has an account with another company and cannot be invited.')
     expect(invitationRepository.createCode).not.toHaveBeenCalled()
     expect(emailService.sendInviteEmail).not.toHaveBeenCalled()
   })
 
-  it('a brand-new email gets a fresh invitation code and an email, not an inbox notification', async () => {
+  it('a brand-new email gets a fresh invitation code and an email', async () => {
     vi.mocked(authRepository.findByAuthIdOrInternalId).mockResolvedValue(inviter as never)
     vi.mocked(authRepository.findByEmail).mockResolvedValue(null)
     vi.mocked(invitationRepository.createCode).mockResolvedValue({
@@ -206,7 +200,6 @@ describe('invitationService.sendInvite — Send Direct Invitation (UC27)', () =>
     expect(invitationRepository.createCode).toHaveBeenCalledWith(
       expect.objectContaining({ company_id: 'company-1', role: 'Employee', generated_by: 'inviter-1' })
     )
-    expect(invitationRepository.insertInboxInvite).not.toHaveBeenCalled()
     expect(emailService.sendInviteEmail).toHaveBeenCalledWith(
       expect.objectContaining({ to: 'invitee@test.com', role: 'Employee', companyName: 'Acme Co', inviterName: 'Test Owner' })
     )

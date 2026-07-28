@@ -106,14 +106,6 @@ export const ownerTeamRepository = {
     if (error) throw new Error(error.message)
   },
 
-  async deleteInboxByUserId(user_id: string): Promise<void> {
-    const { error } = await supabase
-      .from('inbox')
-      .delete()
-      .or(`recipient_user_id.eq.${user_id},sender_user_id.eq.${user_id}`)
-    if (error) throw new Error(error.message)
-  },
-
   async deleteMessagesByUserId(user_id: string): Promise<void> {
     const { error } = await supabase
       .from('messages')
@@ -183,25 +175,19 @@ export const ownerTeamRepository = {
         .delete()
         .or(`requester_assignment_id.in.(${assignmentIds.join(',')}),counterpart_assignment_id.in.(${assignmentIds.join(',')})`)
       if (swapByAssignmentError) throw new Error(swapByAssignmentError.message)
-
-      const { error: timeOffByAssignmentError } = await supabase
-        .from('time_off_requests')
-        .delete()
-        .in('shift_assignment_id', assignmentIds)
-      if (timeOffByAssignmentError) throw new Error(timeOffByAssignmentError.message)
     }
 
     const { error: attendanceByUserError } = await supabase
       .from('attendance_records')
       .delete()
-      .or(`casual_worker_id.eq.${user_id},confirmed_by_employee_id.eq.${user_id},submitted_by_employee_id.eq.${user_id}`)
+      .eq('user_id', user_id)
     if (attendanceByUserError) throw new Error(attendanceByUserError.message)
 
-    const { error: attendanceReviewedByError } = await supabase
+    const { error: attendanceModifiedByError } = await supabase
       .from('attendance_records')
-      .update({ owner_reviewed_by: null })
-      .eq('owner_reviewed_by', user_id)
-    if (attendanceReviewedByError) throw new Error(attendanceReviewedByError.message)
+      .update({ modified_by: null })
+      .eq('modified_by', user_id)
+    if (attendanceModifiedByError) throw new Error(attendanceModifiedByError.message)
 
     const { error: swapByUserError } = await supabase
       .from('shift_swap_requests')
@@ -214,18 +200,6 @@ export const ownerTeamRepository = {
       .update({ reviewed_by: null })
       .eq('reviewed_by', user_id)
     if (swapReviewedByError) throw new Error(swapReviewedByError.message)
-
-    const { error: timeOffByUserError } = await supabase
-      .from('time_off_requests')
-      .delete()
-      .eq('requester_id', user_id)
-    if (timeOffByUserError) throw new Error(timeOffByUserError.message)
-
-    const { error: timeOffReviewedByError } = await supabase
-      .from('time_off_requests')
-      .update({ reviewed_by: null })
-      .eq('reviewed_by', user_id)
-    if (timeOffReviewedByError) throw new Error(timeOffReviewedByError.message)
 
     const { error: tasksAssignedError } = await supabase
       .from('tasks')
@@ -268,7 +242,7 @@ export const ownerTeamRepository = {
     const { error: announcementsError } = await supabase
       .from('announcements')
       .delete()
-      .eq('from_user_id', user_id)
+      .eq('user_id', user_id)
     if (announcementsError) throw new Error(announcementsError.message)
 
     const { error: shiftSupervisorError } = await supabase
@@ -333,15 +307,15 @@ export const ownerTeamRepository = {
     }))
   },
 
-  async assignManagerDepartment(manager_id: string, company_id: string, department_id: string, assigned_by: string): Promise<void> {
+  async assignManagerDepartment(manager_id: string, company_id: string, department_id: string): Promise<void> {
     const { error } = await supabase
       .from('manager_departments')
-      .insert({ manager_id, company_id, department_id, assigned_by })
+      .insert({ manager_id, company_id, department_id })
     if (error) {
       if (error.code === '23505') {
         const { error: updateError } = await supabase
           .from('manager_departments')
-          .update({ company_id, department_id, assigned_by, assigned_at: new Date().toISOString() })
+          .update({ company_id, department_id })
           .eq('manager_id', manager_id)
         if (updateError) throw new Error(updateError.message)
         return
@@ -394,9 +368,6 @@ export const ownerTeamRepository = {
     if (error) throw new Error(error.message)
   },
 
-  // Plain move — unlike assignManagerDepartment, this doesn't record an assigned_by (the caller,
-  // e.g. Team page's "change member department" action, isn't necessarily the one assigning them
-  // to a Manager role in the first place, just relocating an existing Manager).
   async moveManagerToDepartment(manager_id: string, company_id: string, department_id: string): Promise<void> {
     const { error } = await supabase
       .from('manager_departments')

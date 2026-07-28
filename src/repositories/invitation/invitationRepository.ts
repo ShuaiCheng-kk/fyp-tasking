@@ -10,15 +10,10 @@ export const invitationRepository = {
     role: InvitationCode['role']
     generated_by: string
     expired_at: string
-    reporting_manager_id?: string | null
   }): Promise<InvitationCode> {
-    const { reporting_manager_id, ...baseData } = data
-    const insertData = reporting_manager_id
-      ? { ...baseData, reporting_manager_id }
-      : baseData
     const { data: invitation, error } = await supabase
       .from('invitation_code')
-      .insert(insertData)
+      .insert(data)
       .select()
       .single()
     if (error) throw new Error(error.message)
@@ -41,19 +36,6 @@ export const invitationRepository = {
       .from('invitation_code')
       .update({ status: 'Expired', used_by })
       .eq('code', code)
-    if (error) throw new Error(error.message)
-  },
-
-  async insertInboxInvite(data: {
-    recipient_user_id: string
-    sender_user_id: string
-    company_id: string
-    role: string
-    department_id: string | null
-  }): Promise<void> {
-    const { error } = await supabase
-      .from('inbox')
-      .insert({ ...data, type: 'company_invite', status: 'pending' })
     if (error) throw new Error(error.message)
   },
 

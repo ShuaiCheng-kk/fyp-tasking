@@ -123,7 +123,7 @@ test.afterAll(async () => {
       await admin.from('shift_assignments').delete().in('shift_id', shiftIds)
       await admin.from('shifts').delete().in('id', shiftIds)
     }
-    await admin.from('recruitment_cancellations').delete().in('job_id', createdJobIds)
+    await admin.from('job_cancellations').delete().in('job_id', createdJobIds)
     await admin.from('job_invitations').delete().in('job_id', createdJobIds)
     await admin.from('job_applicants').delete().in('job_id', createdJobIds)
     await admin.from('job_postings').delete().in('id', createdJobIds)
@@ -175,7 +175,7 @@ test('worker Cancel Shift: shift voided, application withdrawn, full job reopens
 
   // History kept + in-app message to the employer.
   const { data: history } = await admin
-    .from('recruitment_cancellations').select('cancelled_role, reason').eq('job_id', job.id)
+    .from('job_cancellations').select('cancelled_role, reason').eq('job_id', job.id)
   expect(history).toHaveLength(1)
   expect(history![0]).toMatchObject({ cancelled_role: 'worker', reason: 'Family emergency' })
   const { data: messages } = await admin
@@ -239,7 +239,7 @@ test('owner Remove Worker: reason mandatory; cancels the engagement and reopens 
   const { data: reopened } = await admin.from('job_postings').select('status').eq('id', job.id).single()
   expect(reopened?.status).toBe('open')
   const { data: history } = await admin
-    .from('recruitment_cancellations').select('cancelled_role').eq('job_id', job.id)
+    .from('job_cancellations').select('cancelled_role').eq('job_id', job.id)
   expect(history![0]).toMatchObject({ cancelled_role: 'employer' })
 })
 

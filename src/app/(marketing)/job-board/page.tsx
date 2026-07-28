@@ -21,8 +21,8 @@ import {
 
 // The public jobs API joins the department name onto each posting (see
 // src/app/api/jobs/public/route.ts) — not part of the base JobPosting shape.
-// form_type is a real job_postings column that the shared type doesn't declare yet.
-type JobPosting = BaseJobPosting & { department_name: string | null; form_type: string | null };
+// job_type is a real job_postings column that the shared type doesn't declare yet.
+type JobPosting = BaseJobPosting & { department_name: string | null; job_type: string | null };
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 
@@ -280,7 +280,7 @@ export default function JobBoardPage() {
     if (activeTab === 'oneoff' && resolveJobType(job) !== 'oneoff') return false;
     if (selectedLocation !== 'All Locations' && job.company_location !== selectedLocation) return false;
     if (selectedIndustry !== 'All Industries' && job.company_industry !== selectedIndustry) return false;
-    if (q && ![job.title, job.description, job.company_location, job.company_industry, job.company_name]
+    if (q && ![job.title, job.responsibilities, job.company_location, job.company_industry, job.company_name]
       .filter(Boolean).some(v => v!.toLowerCase().includes(q))) return false;
     return true;
   }).sort((a, b) => {

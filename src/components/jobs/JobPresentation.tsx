@@ -32,18 +32,15 @@ export type JobView = {
   minimum_age?: number | null
   experience_required?: string | null
   uniform_type?: string | null
-  uniform_required?: boolean | null
   uniform_details?: string | null
-  form_type?: string | null
-  is_recurring?: boolean | null
-  shift_date?: string | null
-  shift_start_time?: string | null
-  shift_end_time?: string | null
+  job_type?: string | null
+  job_date?: string | null
+  job_start_time?: string | null
+  job_end_time?: string | null
   break_start_time?: string | null
   break_end_time?: string | null
-  job_start_time?: string | null
-  description?: string | null
-  requirements?: string | null
+  responsibilities?: string | null
+  skills?: string | null
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -84,13 +81,12 @@ function fmt12(t: string) {
 function uniformLabelOf(job: JobView): string | null {
   return job.uniform_type === 'dress_code'
     ? 'Specific Dress Code'
-    : (job.uniform_type === 'company' || job.uniform_required) ? 'Company Uniform Provided' : null
+    : job.uniform_type === 'company' ? 'Company Uniform Provided' : null
 }
 
-// Resolve effective job type — prefer explicit form_type, fall back to is_recurring.
+// Resolve effective job type — job_type is nullable in the schema, default to 'oneoff' if unset.
 export function resolveJobType(job: JobView): 'shift' | 'oneoff' {
-  if (job.form_type === 'shift' || job.form_type === 'oneoff') return job.form_type
-  return job.is_recurring ? 'shift' : 'oneoff'
+  return job.job_type === 'shift' ? 'shift' : 'oneoff'
 }
 
 // Format salary: shift → "$15/hr", one-off → "$80".
@@ -342,15 +338,15 @@ export function JobDetailPanel({
       </div>
 
       {/* Schedule */}
-      {(job.shift_date || job.shift_start_time || job.job_start_time) && (
+      {(job.job_date || job.job_start_time) && (
         <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: '20px' }}>
           <p style={{ ...modalLabelStyle, fontFamily: fB, margin: '0 0 8px' }}>Schedule</p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {job.shift_date && (
-              <p style={scheduleLine}><span style={{ fontWeight: 600, color: '#EA580C' }}>Date:</span> {new Date(job.shift_date).toLocaleDateString('en-SG', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
+            {job.job_date && (
+              <p style={scheduleLine}><span style={{ fontWeight: 600, color: '#EA580C' }}>Date:</span> {new Date(job.job_date).toLocaleDateString('en-SG', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
             )}
-            {isShiftJob && (job.shift_start_time || job.shift_end_time) && (
-              <p style={scheduleLine}><span style={{ fontWeight: 600, color: '#EA580C' }}>Working Hours:</span> {job.shift_start_time ? fmt12(job.shift_start_time) : '—'} – {job.shift_end_time ? fmt12(job.shift_end_time) : '—'}</p>
+            {isShiftJob && (job.job_start_time || job.job_end_time) && (
+              <p style={scheduleLine}><span style={{ fontWeight: 600, color: '#EA580C' }}>Working Hours:</span> {job.job_start_time ? fmt12(job.job_start_time) : '—'} – {job.job_end_time ? fmt12(job.job_end_time) : '—'}</p>
             )}
             {isShiftJob && (job.break_start_time || job.break_end_time) && (
               <p style={scheduleLine}><span style={{ fontWeight: 600, color: '#EA580C' }}>Break Time:</span> {job.break_start_time ? fmt12(job.break_start_time) : '—'} – {job.break_end_time ? fmt12(job.break_end_time) : '—'}</p>
@@ -366,7 +362,7 @@ export function JobDetailPanel({
       <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: '20px' }}>
         <p style={{ ...modalLabelStyle, fontFamily: fB, margin: '0 0 8px' }}>Responsibilities</p>
         <p style={{ fontFamily: fB, fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, whiteSpace: 'pre-line', margin: 0 }}>
-          {job.description || '—'}
+          {job.responsibilities || '—'}
         </p>
       </div>
 
@@ -374,7 +370,7 @@ export function JobDetailPanel({
       <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: '20px' }}>
         <p style={{ ...modalLabelStyle, fontFamily: fB, margin: '0 0 8px' }}>Skills &amp; Qualifications</p>
         <p style={{ fontFamily: fB, fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, whiteSpace: 'pre-line', margin: 0 }}>
-          {job.requirements || '—'}
+          {job.skills || '—'}
         </p>
       </div>
 

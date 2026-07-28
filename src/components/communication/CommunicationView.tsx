@@ -14,7 +14,7 @@ import { useIsCompactViewport } from '@/hooks/useIsCompactViewport'
 import { useResourceInvalidation } from '@/components/realtime/RealtimeNotificationsProvider'
 import {
   Plus, X, Trash2, Pencil, Megaphone,
-  Send, Search, SquarePen, Check, Bell, MessageSquare, Crown,
+  Send, Search, SquarePen, MessageSquare, Crown,
   Users, Globe, UserCog, UserRound, Pin, PinOff,
   ImagePlus, Paperclip, FileText, ChevronDown,
 } from 'lucide-react'
@@ -25,9 +25,9 @@ type Department = { id: string; name: string }
 
 type Announcement = {
   id: string
-  from_user_id: string
+  user_id: string
   company_id: string
-  department_id: string | null
+  audience_department_id: string | null
   title: string
   content: string
   created_at: string
@@ -60,14 +60,6 @@ type Message = {
   content: string
   created_at: string
   is_read: boolean
-}
-
-type InboxInvite = {
-  id: string
-  role: string
-  created_at: string
-  sender_name: string
-  company_name: string
 }
 
 
@@ -108,22 +100,6 @@ const formatDateWithTime = formatTime
 function formatAnnouncementTimestamp(ann: { created_at: string; updated_at?: string | null }) {
   if (ann.updated_at) return `Edited ${formatDateWithTime(ann.updated_at)}`
   return formatDateWithTime(ann.created_at)
-}
-
-function getReadIdsKey(companyId: string, userId: string) {
-  return `ann_read_ids_${companyId}_${userId}`
-}
-
-function loadReadIds(companyId: string, userId: string): Set<string> {
-  try {
-    const raw = localStorage.getItem(getReadIdsKey(companyId, userId))
-    if (raw) return new Set(JSON.parse(raw))
-  } catch {}
-  return new Set()
-}
-
-function saveReadIds(companyId: string, userId: string, ids: Set<string>) {
-  localStorage.setItem(getReadIdsKey(companyId, userId), JSON.stringify([...ids]))
 }
 
 function hashColor(name: string): string {
@@ -254,9 +230,9 @@ export default function CommunicationView({ renderSidebar, basePath }: {
   renderSidebar: (p: { unreadMessages: number; unreadAnnouncements: number }) => React.ReactNode
   basePath: string
 }) {
-  const [activeTab, setActiveTab] = useState<'chat' | 'announcements' | 'invites'>('chat')
+  const [activeTab, setActiveTab] = useState<'chat' | 'announcements'>('chat')
   const commTabBarRef = useRef<HTMLDivElement>(null)
-  const commTabButtonRefs = useRef<Record<'chat' | 'announcements' | 'invites', HTMLButtonElement | null>>({ chat: null, announcements: null, invites: null })
+  const commTabButtonRefs = useRef<Record<'chat' | 'announcements', HTMLButtonElement | null>>({ chat: null, announcements: null })
   const [commTabIndicator, setCommTabIndicator] = useState({ left: 0, width: 0, opacity: 0 })
 
   const [authUserId, setAuthUserId] = useState<string | null>(null)
@@ -319,16 +295,12 @@ export default function CommunicationView({ renderSidebar, basePath }: {
   const panelContainerRefs = useRef<Record<string, HTMLDivElement | null>>({})
   const panelPrevRects = useRef<Record<string, DOMRect>>({})
 
-  const [msgSubTab, setMsgSubTab] = useState<'messages' | 'invites'>('messages')
   // kept for backward compat (pendingPartnerId flow)
   const [selectedConv, setSelectedConv] = useState<Conversation | null>(null)
-  const [invites, setInvites] = useState<InboxInvite[]>([])
   const [successToast, setSuccessToast] = useState('')
   const [errorToast, setErrorToast] = useState('')
   const successToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const errorToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const [inviteLoading, setInviteLoading] = useState(false)
-  const [inviteActing, setInviteActing] = useState<string | null>(null)
 
   const [composeOpen, setComposeOpen] = useState(false)
   const [companyMembers, setCompanyMembers] = useState<CompanyMember[]>([])
@@ -369,7 +341,12 @@ export default function CommunicationView({ renderSidebar, basePath }: {
             setUserRole(d.user.role ?? '')
             setUserDeptId(d.user.department_id ?? null)
             if (d.user?.full_name) setOwnerName(d.user.full_name)
-            if (cid) setReadIds(loadReadIds(cid, d.user.id))
+            if (cid) {
+              fetch(`/api/inbox/announcements/read?user_id=${d.user.id}&company_id=${cid}`)
+                .then(r => r.json())
+                .then(rd => { if (rd.success) setReadIds(new Set(rd.readIds ?? [])) })
+                .catch(() => {})
+            }
           }
         })
     }
@@ -407,7 +384,7 @@ export default function CommunicationView({ renderSidebar, basePath }: {
   const fetchAnnouncements = useCallback(() => {
     if (!companyId || !userRole) return
     const params = new URLSearchParams({ company_id: companyId, role: userRole })
-    if (userDeptId) params.set('department_id', userDeptId)
+    if (userDeptId) params.set('audience_department_id', userDeptId)
     fetch(`/api/inbox/announcements?${params}`)
       .then(r => r.json())
       .then(d => { if (d.success) setAnnouncements(d.announcements ?? []) })
@@ -452,20 +429,10 @@ export default function CommunicationView({ renderSidebar, basePath }: {
       })
   }, [internalUserId])
 
-  const fetchInvites = useCallback(() => {
-    if (!internalUserId) return
-    setInviteLoading(true)
-    fetch(`/api/inbox/invites?user_id=${internalUserId}`)
-      .then(r => r.json())
-      .then(d => { if (d.success) setInvites(d.invites ?? []) })
-      .finally(() => setInviteLoading(false))
-  }, [internalUserId])
-
   useResourceInvalidation(['communication'], () => {
     fetchAnnouncements()
     fetchUnreadCount()
     fetchConversations()
-    fetchInvites()
   })
 
   useEffect(() => {
@@ -521,10 +488,6 @@ export default function CommunicationView({ renderSidebar, basePath }: {
       .then(d => d.success ? (d.members as CompanyMember[]).filter(m => m.role !== 'Casual Worker' && m.id !== internalUserId) : [])
   }
 
-  useEffect(() => {
-    if (!internalUserId) return
-    fetchInvites()
-  }, [internalUserId, fetchInvites])
 
   useEffect(() => {
     const q = search.toLowerCase()
@@ -613,27 +576,25 @@ export default function CommunicationView({ renderSidebar, basePath }: {
     return () => { supabase.removeChannel(channel) }
   }, [internalUserId])
 
-  // Keyed by id + updated_at (falling back to created_at when never edited), not just id — an
-  // edit changes updated_at, so a mark saved against the pre-edit stamp no longer matches and the
-  // announcement goes back to "unread" for everyone who'd already read the old version. A plain
-  // id-only mark would stay "read" forever even though the content changed underneath it.
-  function readKey(ann: Announcement): string {
-    return `${ann.id}:${ann.updated_at ?? ann.created_at}`
-  }
-
   function handleSelectAnn(ann: Announcement) {
     setSelectedAnn(ann)
-    if (!companyId || !internalUserId) return
+    if (!internalUserId || readIds.has(ann.id)) return
     const next = new Set(readIds)
-    next.add(readKey(ann))
+    next.add(ann.id)
     setReadIds(next)
-    saveReadIds(companyId, internalUserId, next)
+    // Editing an announcement clears its read receipts server-side, so a later edit still
+    // shows up as unread for everyone even though this mark already fired.
+    fetch('/api/inbox/announcements/read', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: internalUserId, announcement_ids: [ann.id] }),
+    }).catch(() => {})
   }
 
   // Only announcements someone ELSE posted count toward the unread badge — posting your own
   // never got added to readIds, so it was inflating the red-dot notification as if it were
   // something you hadn't seen yet.
-  const unreadAnnCount = announcements.filter(a => a.from_user_id !== internalUserId && !readIds.has(readKey(a))).length
+  const unreadAnnCount = announcements.filter(a => a.user_id !== internalUserId && !readIds.has(a.id)).length
 
   useEffect(() => { setUnreadAnnCountState(unreadAnnCount) }, [unreadAnnCount])
 
@@ -666,8 +627,8 @@ export default function CommunicationView({ renderSidebar, basePath }: {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          from_user_id: internalUserId, company_id: companyId,
-          department_id: annDeptId === 'company-wide' ? null : annDeptId,
+          user_id: internalUserId, company_id: companyId,
+          audience_department_id: annDeptId === 'company-wide' ? null : annDeptId,
           title: annTitle, content: annContent,
         }),
       })
@@ -716,9 +677,9 @@ export default function CommunicationView({ renderSidebar, basePath }: {
     setSelectedAnn(ann)
     setEditTitle(ann.title)
     setEditContent(ann.content)
-    if (ann.department_id) {
+    if (ann.audience_department_id) {
       setEditAudience('specific-dept')
-      setEditDeptId(ann.department_id)
+      setEditDeptId(ann.audience_department_id)
     } else {
       setEditAudience('company-wide')
       setEditDeptId(null)
@@ -738,14 +699,14 @@ export default function CommunicationView({ renderSidebar, basePath }: {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           announcement_id: selectedAnn.id, requesting_user_id: internalUserId,
-          title: editTitle, content: editContent, department_id: deptId,
+          title: editTitle, content: editContent, audience_department_id: deptId,
         }),
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.error ?? 'Failed to save')
       setShowEditModal(false)
       fetchAnnouncements()
-      setSelectedAnn(prev => prev ? { ...prev, title: editTitle, content: editContent, department_id: deptId, updated_at: new Date().toISOString() } : prev)
+      setSelectedAnn(prev => prev ? { ...prev, title: editTitle, content: editContent, audience_department_id: deptId, updated_at: new Date().toISOString() } : prev)
       showSuccessToast('Announcement updated')
     } catch (err: unknown) {
       setEditError(err instanceof Error ? err.message : 'An error occurred')
@@ -773,41 +734,6 @@ export default function CommunicationView({ renderSidebar, basePath }: {
     setComposeSearch('')
     fetchEligibleContacts().then(setCompanyMembers)
   }, [companyId, internalUserId, userRole])
-
-  async function handleAcceptInvite(invite: InboxInvite) {
-    if (!internalUserId) return
-    setInviteActing(invite.id)
-    try {
-      const res = await fetch('/api/inbox/invites/accept', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ inbox_id: invite.id, user_id: internalUserId }),
-      })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.error ?? 'Failed to accept')
-      setInvites(prev => prev.filter(i => i.id !== invite.id))
-      showSuccessToast(`You have joined ${invite.company_name}`)
-    } catch (err) {
-      showErrorToast(err instanceof Error ? err.message : 'Something went wrong')
-    } finally { setInviteActing(null) }
-  }
-
-  async function handleDeclineInvite(invite: InboxInvite) {
-    setInviteActing(invite.id)
-    try {
-      const res = await fetch('/api/inbox/invites/decline', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ inbox_id: invite.id }),
-      })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.error ?? 'Failed to decline')
-      setInvites(prev => prev.filter(i => i.id !== invite.id))
-      showSuccessToast('Invitation declined')
-    } catch (err) {
-      showErrorToast(err instanceof Error ? err.message : 'Something went wrong')
-    } finally { setInviteActing(null) }
-  }
 
   // Picking a recipient opens the chat panel immediately — no separate "type then Send"
   // step, since the recipient may just want to send a photo/file rather than text.
@@ -1053,21 +979,21 @@ export default function CommunicationView({ renderSidebar, basePath }: {
     ? announcements.filter(ann => matchesAnnSearch(ann, annSearch))
     : announcements
 
-  const myAnnouncements = filteredAnnouncements.filter(ann => ann.from_user_id === internalUserId)
+  const myAnnouncements = filteredAnnouncements.filter(ann => ann.user_id === internalUserId)
 
   const othersAnnouncements = announcements
-    .filter(ann => ann.from_user_id !== internalUserId)
+    .filter(ann => ann.user_id !== internalUserId)
     .filter(ann => !othersSearch || matchesAnnSearch(ann, othersSearch))
     // Matches the badge on the card, which shows the announcement's audience scope.
-    .filter(ann => othersDeptFilter === 'all' || ann.department_id === othersDeptFilter)
+    .filter(ann => othersDeptFilter === 'all' || ann.audience_department_id === othersDeptFilter)
 
   function renderAnnouncementCard(ann: Announcement, i: number) {
     // Same "own posts are never unread" rule as unreadAnnCount — otherwise every card in My
     // Announcements stayed permanently bold, since posting never adds it to readIds.
-    const unread = ann.from_user_id !== internalUserId && !readIds.has(readKey(ann))
+    const unread = ann.user_id !== internalUserId && !readIds.has(ann.id)
     const selected = selectedAnn?.id === ann.id
-    const deptName = ann.department_id ? (departments.find(d => d.id === ann.department_id)?.name ?? 'Dept') : null
-    const isMine = ann.from_user_id === internalUserId
+    const deptName = ann.audience_department_id ? (departments.find(d => d.id === ann.audience_department_id)?.name ?? 'Dept') : null
+    const isMine = ann.user_id === internalUserId
     return (
       <div
         key={ann.id}
@@ -1086,7 +1012,7 @@ export default function CommunicationView({ renderSidebar, basePath }: {
           {/* Always shows the announcement's own audience/scope (department or Company-wide) — never
               the poster's department, which is a different concept (who posted it, not who can see
               it) and was showing "Owner/Partner" instead of "Company-wide" for company-wide posts. */}
-          <DepartmentBadge departmentId={ann.department_id} departmentName={deptName} fallbackIcon={<Globe size={9} />} />
+          <DepartmentBadge departmentId={ann.audience_department_id} departmentName={deptName} fallbackIcon={<Globe size={9} />} />
           <span style={{ fontSize: 11.5, color: '#9CA3AF', fontWeight: 500, flexShrink: 0 }}>{formatAnnouncementTimestamp(ann)}</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
@@ -1237,7 +1163,6 @@ export default function CommunicationView({ renderSidebar, basePath }: {
             {([
               { key: 'chat',          label: 'Chat',          badge: unreadMessages  },
               { key: 'announcements', label: 'Announcements', badge: unreadAnnCount  },
-              // 'invites' tab hidden from UI; logic kept in place for later reuse elsewhere.
             ] as const).map(tab => {
               const active = activeTab === tab.key
               return (
@@ -1703,7 +1628,7 @@ export default function CommunicationView({ renderSidebar, basePath }: {
                       />
                     </div>
                     {/* Manager is already scoped server-side to company-wide + their own single
-                        department (see fetchAnnouncements' department_id param) — a filter that
+                        department (see fetchAnnouncements' audience_department_id param) — a filter that
                         lists every department in the company would just be dead options that
                         always return empty, so it's Owner/Partner only (they get every department
                         at once and actually need to narrow it down). */}
@@ -1754,7 +1679,7 @@ export default function CommunicationView({ renderSidebar, basePath }: {
                   <>
                     <div style={{ flexShrink: 0, background: '#FFFFFF', borderBottom: '1px solid #EDF2F7', padding: '16px 24px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
-                        {selectedAnn.from_user_id !== internalUserId ? (
+                        {selectedAnn.user_id !== internalUserId ? (
                           selectedAnn.created_by_photo_url ? (
                             <div style={{ width: 44, height: 44, borderRadius: '50%', overflow: 'hidden', flexShrink: 0 }}>
                               <img src={selectedAnn.created_by_photo_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
@@ -1780,15 +1705,15 @@ export default function CommunicationView({ renderSidebar, basePath }: {
                             <h2 style={{ margin: 0, minWidth: 0, color: '#0F172A', fontSize: 19, lineHeight: 1.2, fontWeight: 800, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedAnn.title}</h2>
                             <div style={{ flexShrink: 0 }}>
                               <DepartmentBadge
-                                departmentId={selectedAnn.department_id}
-                                departmentName={selectedAnn.department_id ? (departments.find(d => d.id === selectedAnn.department_id)?.name ?? 'Department') : null}
+                                departmentId={selectedAnn.audience_department_id}
+                                departmentName={selectedAnn.audience_department_id ? (departments.find(d => d.id === selectedAnn.audience_department_id)?.name ?? 'Department') : null}
                                 fallbackIcon={<Globe size={11} />}
                                 large
                               />
                             </div>
                           </div>
                           <div style={{ color: '#9CA3AF', fontSize: 13, fontWeight: 500, marginTop: 4 }}>
-                            {selectedAnn.from_user_id !== internalUserId ? (
+                            {selectedAnn.user_id !== internalUserId ? (
                               <>Posted by <span style={{ color: '#334155', fontWeight: 700 }}>{selectedAnn.created_by_name ?? 'Unknown'}</span> at {formatAnnouncementTimestamp(selectedAnn)}</>
                             ) : (
                               formatAnnouncementTimestamp(selectedAnn)
@@ -1817,53 +1742,6 @@ export default function CommunicationView({ renderSidebar, basePath }: {
             </div>
           )}
 
-          {/* ── Invites tab ── */}
-          {activeTab === 'invites' && (
-            <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 24, background: '#FFFFFF' }}>
-              {inviteLoading ? (
-                <div style={{ padding: 48, textAlign: 'center' }}><Spinner size={18} dark /></div>
-              ) : invites.length === 0 ? (
-                <div style={{ height: 240, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94A3B8', gap: 10 }}>
-                  <div style={{ width: 56, height: 56, borderRadius: 18, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#F97316' }}>
-                    <Bell size={24} strokeWidth={1.5} />
-                  </div>
-                  <p style={{ margin: 0, fontWeight: 600, fontSize: 14 }}>No pending invitations</p>
-                </div>
-              ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 14 }}>
-                  {invites.map((invite, i) => (
-                    <div key={invite.id} className="comm-ann-card" style={{ padding: 18, background: '#FFFFFF', border: '1.5px solid #EDF2F7', borderRadius: 14, animationDelay: isManagerRole ? '0s' : `${i * 0.05}s` }}>
-                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 14 }}>
-                        <div style={{ width: 38, height: 38, borderRadius: 10, background: '#FFF7ED', color: '#F97316', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                          <Bell size={16} />
-                        </div>
-                        <div>
-                          <p style={{ margin: 0, fontSize: 13, color: '#0F172A', fontWeight: 700, lineHeight: 1.45 }}>
-                            <span style={{ color: '#374151' }}>{invite.sender_name}</span> invited you to join <span style={{ color: '#0F172A' }}>{invite.company_name}</span>
-                          </p>
-                          <p style={{ margin: '4px 0 0', fontSize: 11.5, color: '#94A3B8', fontWeight: 600 }}>
-                            As <span style={{ color: '#F97316', fontWeight: 700 }}>{invite.role}</span> · {formatTime(invite.created_at)}
-                          </p>
-                        </div>
-                      </div>
-                      <div style={{ display: 'flex', gap: 8 }}>
-                        <button onClick={() => handleAcceptInvite(invite)} disabled={inviteActing === invite.id}
-                          style={{ flex: 1, height: 34, background: '#10B981', color: '#fff', border: 'none', borderRadius: 9, fontWeight: 700, fontSize: 12, cursor: inviteActing === invite.id ? 'not-allowed' : 'pointer', opacity: inviteActing === invite.id ? 0.6 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}
-                        >
-                          {inviteActing === invite.id ? <Spinner size={12} /> : <Check size={13} />} Accept
-                        </button>
-                        <button onClick={() => handleDeclineInvite(invite)} disabled={inviteActing === invite.id}
-                          style={{ flex: 1, height: 34, background: '#fff', color: '#64748B', border: '1.5px solid #E2E8F0', borderRadius: 9, fontWeight: 700, fontSize: 12, cursor: inviteActing === invite.id ? 'not-allowed' : 'pointer', opacity: inviteActing === invite.id ? 0.6 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}
-                        >
-                          <X size={13} /> Decline
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
         </section>
         </div>{/* /content panel padding */}
       </main>

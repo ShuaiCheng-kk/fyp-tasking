@@ -54,7 +54,7 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ success: false, message: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { company_id, department_id, manager_id, assigned_by } = body as Record<string, unknown>
+  const { company_id, department_id, manager_id } = body as Record<string, unknown>
 
   if (!company_id || typeof company_id !== 'string') {
     return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
@@ -65,16 +65,12 @@ export async function PATCH(req: NextRequest) {
   if (!manager_id || typeof manager_id !== 'string') {
     return NextResponse.json({ success: false, message: 'manager_id is required' }, { status: 400 })
   }
-  if (!assigned_by || typeof assigned_by !== 'string') {
-    return NextResponse.json({ success: false, message: 'assigned_by is required' }, { status: 400 })
-  }
 
   try {
     await ownerTeamService.setDepartmentManager({
       company_id,
       department_id,
       manager_id,
-      assigned_by,
     })
     return NextResponse.json({ success: true })
   } catch (err) {

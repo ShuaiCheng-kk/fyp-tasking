@@ -37,7 +37,7 @@ describe('employeeAnnouncementService — View Announcements', () => {
     it('resolves the internal user id first, then fetches their announcements', async () => {
       vi.mocked(employeeInboxRepository.findUserByAuthIdOrInternalId).mockResolvedValue({ id: 'employee-1' })
       const announcements = [{
-        id: 'ann-1', from_user_id: 'owner-1', company_id: 'company-1', department_id: null,
+        id: 'ann-1', user_id: 'owner-1', company_id: 'company-1', audience_department_id: null,
         title: 'Welcome', content: 'Hello team', created_at: '2026-06-01T00:00:00Z', created_by_name: 'Owner One',
       }]
       vi.mocked(employeeAnnouncementRepository.getEmployeeAnnouncements).mockResolvedValue(announcements)

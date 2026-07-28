@@ -1,5 +1,4 @@
 export type SchedulingRuleKey =
-  | 'approved_leave_block'
   | 'fixed_off_day_block'
   | 'weekly_hours_limit'
   | 'min_managers_per_department_day'

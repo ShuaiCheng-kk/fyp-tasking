@@ -4,7 +4,7 @@
 import { supabase } from '@/lib/supabase'
 import { OffDayQuotaDefaultRole, OffDayQuotaSetting, OffDayQuotaUpsertInput, OffDaySubmissionDeadline, OffDaySubmissionDeadlineUpsertInput } from '@/types/Attendance'
 
-const QUOTA_SETTING_COLUMNS = 'company_id, user_id, max_days_per_week, role, updated_by, updated_at'
+const QUOTA_SETTING_COLUMNS = 'company_id, user_id, max_days_per_week, role'
 
 export const offDaySettingsRepository = {
   async getQuotaSettings(company_id: string): Promise<OffDayQuotaSetting[]> {
@@ -57,8 +57,6 @@ export const offDaySettingsRepository = {
         .from('off_day_quota_settings')
         .update({
           max_days_per_week: input.max_days_per_week,
-          updated_by: input.updated_by,
-          updated_at: new Date().toISOString(),
         })
         .eq('id', (existing as { id: string }).id)
         .select(QUOTA_SETTING_COLUMNS)
@@ -74,7 +72,6 @@ export const offDaySettingsRepository = {
         user_id: input.user_id,
         max_days_per_week: input.max_days_per_week,
         role: input.role,
-        updated_by: input.updated_by,
       })
       .select(QUOTA_SETTING_COLUMNS)
       .single()
@@ -94,7 +91,7 @@ export const offDaySettingsRepository = {
   async getDeadline(company_id: string): Promise<OffDaySubmissionDeadline | null> {
     const { data, error } = await supabase
       .from('off_day_submission_deadline')
-      .select('company_id, deadline_weekday, deadline_time, updated_by, updated_at')
+      .select('company_id, deadline_weekday, deadline_time')
       .eq('company_id', company_id)
       .maybeSingle()
     if (error) throw new Error(error.message)
@@ -108,10 +105,8 @@ export const offDaySettingsRepository = {
         company_id: input.company_id,
         deadline_weekday: input.deadline_weekday,
         deadline_time: input.deadline_time,
-        updated_by: input.updated_by,
-        updated_at: new Date().toISOString(),
       }, { onConflict: 'company_id' })
-      .select('company_id, deadline_weekday, deadline_time, updated_by, updated_at')
+      .select('company_id, deadline_weekday, deadline_time')
       .single()
     if (error) throw new Error(error.message)
     return data as OffDaySubmissionDeadline
