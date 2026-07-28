@@ -79,7 +79,7 @@ function addDays(d, n) {
   next.setDate(next.getDate() + n)
   return next
 }
-// Monday of the week containing d (used for employee_off_day_requests.week_start).
+// Monday of the week containing d (used for off_day_requests.week_start).
 function mondayOf(d) {
   const day = d.getDay()
   return addDays(d, day === 0 ? -6 : 1 - day)
@@ -184,14 +184,11 @@ async function clockRecord(assignment, userId, { dateStr, endStr = '17:00', late
   const clockOut = new Date(`${dateStr}T${endStr}:00.000+08:00`)
   const { error } = await supabase.from('attendance_records').insert({
     shift_assignment_id: assignment.id,
-    casual_worker_id: userId,
+    user_id: userId,
     clock_in_time: clockIn.toISOString(),
     clock_out_time: clockOut.toISOString(),
     break_in_time: breakStart ? new Date(`${dateStr}T${breakStart}:00.000+08:00`).toISOString() : null,
     break_out_time: breakEnd ? new Date(`${dateStr}T${breakEnd}:00.000+08:00`).toISOString() : null,
-    confirmed_by_employee_id: userId,
-    submitted_by_employee_id: userId,
-    status: 'submitted',
   })
   if (error) console.warn(`  ⚠ 创建 attendance_record 失败: ${error.message}`)
 }
@@ -375,7 +372,7 @@ async function main() {
 
   // ── Step 2b: 确保平台级 Admin 账号存在（Marketing Admin / User Admin）──────
   console.log('\nStep 2b: 确保平台级 Admin 账号存在...')
-  for (const admin of platformAdmins) {
+  for (const [adminIndex, admin] of platformAdmins.entries()) {
     let authId = allAuthUsers.find(u => u.email === admin.email)?.id
 
     if (!authId) {
@@ -405,7 +402,7 @@ async function main() {
         supabase_auth_id: authId,
         full_name: admin.full_name,
         email_address: admin.email,
-        phone_number: '+65 9000 0000',
+        phone_number: `+65 9000 000${adminIndex}`,
         date_of_birth: '1990-01-01',
         profile_photo_url: DEMO_PHOTO_URL,
         role: admin.role,
@@ -577,15 +574,15 @@ async function main() {
   else console.log('  ✓ Off Day submission deadline: Sunday 08:00')
   const closedSubmissionWeek = addDays(activeSubmissionWeekStart(TODAY, 0, '08:00'), -7)
   const offDayReminderRows = [
-    { user_id: userIdMap['employee1@test.com'].internalId, request_date: dateKey(addDays(closedSubmissionWeek, 1)) },
-    { user_id: userIdMap['employee5@test.com'].internalId, request_date: dateKey(addDays(closedSubmissionWeek, 2)) },
+    { user_id: userIdMap['employee1@test.com'].internalId, requested_date: dateKey(addDays(closedSubmissionWeek, 1)) },
+    { user_id: userIdMap['employee5@test.com'].internalId, requested_date: dateKey(addDays(closedSubmissionWeek, 2)) },
   ]
-  const { error: offDayReminderErr } = await supabase.from('employee_off_day_requests').insert(
+  const { error: offDayReminderErr } = await supabase.from('off_day_requests').insert(
     offDayReminderRows.map(row => ({
       user_id: row.user_id,
       company_id: company.id,
-      request_date: row.request_date,
-      week_start: dateKey(closedSubmissionWeek),
+      requested_date: row.requested_date,
+      requested_week: dateKey(closedSubmissionWeek),
       status: 'pending',
       source: 'submitted',
     })),
@@ -1035,15 +1032,13 @@ async function main() {
         department_id: opsDept.id,
         created_by: manager1UserId,
         title: 'Pre-Shift Cafe Counter Cover',
-        description: 'Cover the cafe counter during the pre-lunch rush. Prepare the till, greet guests, take orders, and keep the counter stocked before the lunch team arrives.',
-        requirements: 'Arrive on time, wear black shoes, comfortable handling cash and customer questions.',
-        location: '1 Raffles Place, Singapore 048616',
-        company_name: company.name,
+        responsibilities: 'Cover the cafe counter during the pre-lunch rush. Prepare the till, greet guests, take orders, and keep the counter stocked before the lunch team arrives.',
+        skills: 'Arrive on time, wear black shoes, comfortable handling cash and customer questions.',
         status: 'closed',
-        form_type: 'oneoff',
+        job_type: 'oneoff',
         urgency: 'normal',
         estimated_hours: '4',
-        shift_date: casualPreStartDate,
+        job_date: casualPreStartDate,
         job_start_time: casualPreStartStartTime,
         openings: 1,
         experience_required: 'Not Required',
@@ -1064,7 +1059,7 @@ async function main() {
         .insert({
           job_id: casualPreStartJob.id,
           user_id: userIdMap['casual1@test.com'].internalId,
-          resume_url: 'https://example.com/demo-resumes/marcus-lee-resume.pdf',
+          resume: 'https://example.com/demo-resumes/marcus-lee-resume.pdf',
           status: 'accepted',
           additional_note: 'I can arrive before the shift starts and help with cafe counter setup.',
         })
@@ -1282,7 +1277,7 @@ async function main() {
       key: 'manager_deadline_today',
       title: 'Operations Event Runner - Applications Close Today',
       expires_at: todayKey,
-      shift_date: dateKey(TOMORROW),
+      job_date: dateKey(TOMORROW),
       openings: 4,
       job_start_time: '10:00',
     },
@@ -1290,7 +1285,7 @@ async function main() {
       key: 'manager_starting_soon',
       title: 'Lobby Queue Host - Starts Tomorrow',
       expires_at: dateKey(addDays(TODAY, 3)),
-      shift_date: dateKey(TOMORROW),
+      job_date: dateKey(TOMORROW),
       openings: 3,
       job_start_time: '11:00',
     },
@@ -1304,11 +1299,10 @@ async function main() {
         company_id: company.id,
         department_id: opsDept.id,
         created_by: manager1UserId,
-        description: 'Seeded manager dashboard posting with applicants, deadline, and staffing pressure.',
-        requirements: 'Friendly, punctual, comfortable with guest-facing work.',
-        location: company.location,
+        responsibilities: 'Seeded manager dashboard posting with applicants, deadline, and staffing pressure.',
+        skills: 'Friendly, punctual, comfortable with guest-facing work.',
         status: 'open',
-        form_type: 'oneoff',
+        job_type: 'oneoff',
         urgency: 'high',
         estimated_hours: '5',
         experience_required: 'Not Required',
@@ -1330,11 +1324,11 @@ async function main() {
     const { error: appErr } = await supabase.from('job_applicants').insert({
       job_id: managerDashboardJobIds.manager_deadline_today,
       user_id: userIdMap[guestEmail].internalId,
-      resume_url: guest?.resume_url ?? null,
+      resume: guest?.resume_url ?? null,
       status: 'pending',
       additional_note: 'Available for the seeded Operations dashboard test shift.',
-      skills_snapshot: guest?.skills ?? null,
-      certificates_snapshot: guest?.certs ?? [],
+      skills: guest?.skills ?? null,
+      certificates: guest?.certs ?? [],
     })
     if (appErr) console.warn(`  ⚠ Failed to create manager dashboard applicant (${guestEmail}): ${appErr.message}`)
   }
@@ -1555,18 +1549,17 @@ async function main() {
       department_id: depts[0].id, // Operations
       created_by: ownerUser.id,
       title: 'Weekend Event Crew',
-      description: 'Help set up and run a corporate weekend event — registration desk, guest flow, and teardown.',
-      requirements: 'Comfortable on your feet for a full shift, clear spoken English, punctual.',
-      location: company.location,
+      responsibilities: 'Help set up and run a corporate weekend event — registration desk, guest flow, and teardown.',
+      skills: 'Comfortable on your feet for a full shift, clear spoken English, punctual.',
       status: 'open',
-      form_type: 'oneoff',
+      job_type: 'oneoff',
       urgency: 'normal',
       estimated_hours: '6',
       // Real date, not just a deadline — accepting an invitation on this job (respondToInvitation)
       // only creates the actual shifts/shift_assignments row (what the Casual dashboard reads) when
       // shift_date is set; leaving it null silently produces an "accepted" application with no
       // shift behind it.
-      shift_date: dateKey(nextWeekday(TODAY, 6)), // next Saturday
+      job_date: dateKey(nextWeekday(TODAY, 6)), // next Saturday
       job_start_time: '09:00',
       openings: 3,
       experience_required: 'Not Required',
@@ -1580,11 +1573,10 @@ async function main() {
       department_id: depts[1].id, // Marketing
       created_by: userIdMap['manager2@test.com'].internalId, // Rachel Koh — so it lands on someone else's approval queue
       title: 'Flyer Distribution — City Centre',
-      description: 'Hand out promotional flyers in the city centre during lunch and evening foot traffic peaks.',
-      requirements: 'Friendly, comfortable approaching strangers, own transport to the city centre.',
-      location: company.location,
+      responsibilities: 'Hand out promotional flyers in the city centre during lunch and evening foot traffic peaks.',
+      skills: 'Friendly, comfortable approaching strangers, own transport to the city centre.',
       status: 'pending_approval',
-      form_type: 'oneoff',
+      job_type: 'oneoff',
       urgency: 'high',
       estimated_hours: '4',
       job_start_time: '11:00',
@@ -1600,11 +1592,10 @@ async function main() {
       department_id: depts[2].id, // Engineering
       created_by: ownerUser.id,
       title: 'IT Support — Office Relocation',
-      description: 'Assist packing/unpacking and reconnecting workstations during an office move.',
-      requirements: null,
-      location: company.location,
+      responsibilities: 'Assist packing/unpacking and reconnecting workstations during an office move.',
+      skills: null,
       status: 'draft',
-      form_type: 'oneoff',
+      job_type: 'oneoff',
       urgency: 'normal',
       estimated_hours: null,
       job_start_time: null,
@@ -1620,11 +1611,10 @@ async function main() {
       department_id: depts[3].id, // Customer Support
       created_by: userIdMap['manager4@test.com'].internalId, // Fiona Chen — so Owner's rejection has a real recipient
       title: 'Live Chat Support — Overnight',
-      description: 'Cover overnight live-chat customer support shifts.',
-      requirements: 'Clear written English, own laptop, stable internet connection.',
-      location: company.location,
+      responsibilities: 'Cover overnight live-chat customer support shifts.',
+      skills: 'Clear written English, own laptop, stable internet connection.',
       status: 'rejected',
-      form_type: 'oneoff',
+      job_type: 'oneoff',
       urgency: 'normal',
       estimated_hours: '8',
       job_start_time: '22:00',
@@ -1646,17 +1636,14 @@ async function main() {
       department_id: depts[2].id, // Engineering
       created_by: ownerUser.id,
       title: 'Warehouse Stock Count — Weekend Shift',
-      description: 'Recurring weekend shift counting and organizing warehouse inventory ahead of a new stock intake.',
-      requirements: 'Comfortable with repetitive counting tasks, basic spreadsheet use a plus.',
-      location: company.location,
+      responsibilities: 'Recurring weekend shift counting and organizing warehouse inventory ahead of a new stock intake.',
+      skills: 'Comfortable with repetitive counting tasks, basic spreadsheet use a plus.',
       status: 'open',
-      form_type: 'shift',
-      is_recurring: true,
+      job_type: 'shift',
       urgency: 'normal',
-      shift_date: dateKey(addDays(TODAY, 4)),
-      shift_days: ['Saturday', 'Sunday'],
-      shift_start_time: '08:00',
-      shift_end_time: '13:00',
+      job_date: dateKey(addDays(TODAY, 4)),
+      job_start_time: '08:00',
+      job_end_time: '13:00',
       break_start_time: '10:00',
       break_end_time: '10:15',
       openings: 2,
@@ -1671,14 +1658,13 @@ async function main() {
       department_id: depts[1].id, // Marketing
       created_by: ownerUser.id,
       title: 'Retail Promo Day — Orchard Road',
-      description: 'Represent the brand at a retail pop-up booth — greet shoppers, hand out samples, and log leads.',
-      requirements: 'Outgoing personality, comfortable standing for long periods, available on short notice.',
-      location: company.location,
+      responsibilities: 'Represent the brand at a retail pop-up booth — greet shoppers, hand out samples, and log leads.',
+      skills: 'Outgoing personality, comfortable standing for long periods, available on short notice.',
       status: 'open',
-      form_type: 'oneoff',
+      job_type: 'oneoff',
       urgency: 'urgent',
       estimated_hours: '5',
-      shift_date: dateKey(addDays(TODAY, 2)), // same reason as the 'open' job above
+      job_date: dateKey(addDays(TODAY, 2)), // same reason as the 'open' job above
       job_start_time: '10:00',
       openings: 2,
       experience_required: 'Preferred',
@@ -1697,14 +1683,13 @@ async function main() {
       department_id: depts[0].id, // Operations
       created_by: userIdMap['manager1@test.com'].internalId,
       title: 'Weekend Café Cover',
-      description: 'Cover the café counter for a weekend rush — orders, till, and light cleaning.',
-      requirements: 'Comfortable handling cash, friendly with customers.',
-      location: company.location,
+      responsibilities: 'Cover the café counter for a weekend rush — orders, till, and light cleaning.',
+      skills: 'Comfortable handling cash, friendly with customers.',
       status: 'open',
-      form_type: 'oneoff',
+      job_type: 'oneoff',
       urgency: 'normal',
       estimated_hours: '5',
-      shift_date: dateKey(nextWeekday(TODAY, 6)), // next Saturday
+      job_date: dateKey(nextWeekday(TODAY, 6)), // next Saturday
       job_start_time: '09:00',
       openings: 2,
       experience_required: 'Not Required',
@@ -1721,11 +1706,10 @@ async function main() {
       department_id: depts[0].id, // Operations
       created_by: userIdMap['manager1@test.com'].internalId,
       title: 'Stockroom Reorganisation — Half Day',
-      description: 'Reorganise the stockroom shelving and relabel bins ahead of next month\'s delivery.',
-      requirements: null,
-      location: company.location,
+      responsibilities: 'Reorganise the stockroom shelving and relabel bins ahead of next month\'s delivery.',
+      skills: null,
       status: 'draft',
-      form_type: 'oneoff',
+      job_type: 'oneoff',
       urgency: 'normal',
       estimated_hours: null,
       job_start_time: null,
@@ -1758,11 +1742,11 @@ async function main() {
       const { error: appErr } = await supabase.from('job_applicants').insert({
         job_id: jobIdByKey.open,
         user_id: guestId,
-        resume_url: guestDef.resume_url,
+        resume: guestDef.resume_url,
         status: 'pending',
         additional_note: `Hi, I'm ${guestDef.full_name.split(' ')[0]} and I'd love to help out with this one.`,
-        skills_snapshot: guestDef.skills,
-        certificates_snapshot: guestDef.certs,
+        skills: guestDef.skills,
+        certificates: guestDef.certs,
       })
       if (appErr) console.warn(`  ⚠ 创建 job_applicant 失败 (${guestDef.full_name}): ${appErr.message}`)
       else console.log(`  ✓ Applicant: ${guestDef.full_name} → Weekend Event Crew`)
@@ -1778,11 +1762,11 @@ async function main() {
       const { error: appErr } = await supabase.from('job_applicants').insert({
         job_id: jobIdByKey.manager_open,
         user_id: guestId,
-        resume_url: guestDef.resume_url,
+        resume: guestDef.resume_url,
         status: 'pending',
         additional_note: `Hi, I'm ${guestDef.full_name.split(' ')[0]} and I'd love to help out with this one.`,
-        skills_snapshot: guestDef.skills,
-        certificates_snapshot: guestDef.certs,
+        skills: guestDef.skills,
+        certificates: guestDef.certs,
       })
       if (appErr) console.warn(`  ⚠ 创建 job_applicant 失败 (${guestDef.full_name}): ${appErr.message}`)
       else console.log(`  ✓ Applicant: ${guestDef.full_name} → Weekend Café Cover (Manager)`)
@@ -1802,11 +1786,11 @@ async function main() {
       .insert({
         job_id: jobId,
         user_id: guestId,
-        resume_url: guestDef.resume_url,
+        resume: guestDef.resume_url,
         status,
         additional_note: extra.additional_note ?? `Hi, I'm ${guestDef.full_name.split(' ')[0]} and I'd love to help out with this one.`,
-        skills_snapshot: guestDef.skills,
-        certificates_snapshot: guestDef.certs,
+        skills: guestDef.skills,
+        certificates: guestDef.certs,
         decided_at: extra.decided_at ?? null,
       })
       .select()
@@ -2207,11 +2191,11 @@ async function main() {
 
   // ── Step 15: 创建 Fixed Day Off Requests（UC54/55/57）───────────────────────
   console.log('\nStep 15: 创建 Fixed Day Off Requests...')
-  const { error: offApprovedErr } = await supabase.from('employee_off_day_requests').insert({
+  const { error: offApprovedErr } = await supabase.from('off_day_requests').insert({
     user_id: userIdMap['employee3@test.com'].internalId,
     company_id: company.id,
-    request_date: dateKey(TODAY),
-    week_start: dateKey(mondayOf(TODAY)),
+    requested_date: dateKey(TODAY),
+    requested_week: dateKey(mondayOf(TODAY)),
     source: 'submitted',
     status: 'approved',
   })
@@ -2226,44 +2210,44 @@ async function main() {
   // the second collides with the first (flagged) AND — because the department has 2 people, not
   // 1 — there IS a real alternative day, so the AI can actually suggest one. Sequential awaits
   // (not Promise.all) so created_at ordering between the two is guaranteed.
-  const { error: offSafeErr } = await supabase.from('employee_off_day_requests').insert({
+  const { error: offSafeErr } = await supabase.from('off_day_requests').insert({
     user_id: userIdMap['employee1@test.com'].internalId,
     company_id: company.id,
-    request_date: weekStartNext,
-    week_start: weekStartNext,
+    requested_date: weekStartNext,
+    requested_week: weekStartNext,
     source: 'submitted',
     status: 'pending',
   })
   if (offSafeErr) console.warn(`  ⚠ 创建 pending Off Day 失败 (employee1): ${offSafeErr.message}`)
   else console.log(`  ✓ Off Day（待审批）：Ben Seah → ${weekStartNext}（Operations 现有 2 个 Employee，先提交的这条 AI Process 应判定 safe）`)
 
-  const { error: offFlaggedErr } = await supabase.from('employee_off_day_requests').insert({
+  const { error: offFlaggedErr } = await supabase.from('off_day_requests').insert({
     user_id: userIdMap['employee5@test.com'].internalId,
     company_id: company.id,
-    request_date: weekStartNext,
-    week_start: weekStartNext,
+    requested_date: weekStartNext,
+    requested_week: weekStartNext,
     source: 'submitted',
     status: 'pending',
   })
   if (offFlaggedErr) console.warn(`  ⚠ 创建 pending Off Day 失败 (employee5): ${offFlaggedErr.message}`)
   else console.log(`  ✓ Off Day（待审批）：Grace Lim → ${weekStartNext}（跟 Ben Seah 撞同一天且后提交，AI Process 应判定 flagged 并给出真实的替代日建议）`)
 
-  const { error: offMgrErr } = await supabase.from('employee_off_day_requests').insert({
+  const { error: offMgrErr } = await supabase.from('off_day_requests').insert({
     user_id: userIdMap['manager3@test.com'].internalId,
     company_id: company.id,
-    request_date: dateKey(NEXT_TUE),
-    week_start: weekStartNext,
+    requested_date: dateKey(NEXT_TUE),
+    requested_week: weekStartNext,
     source: 'submitted',
     status: 'pending',
   })
   if (offMgrErr) console.warn(`  ⚠ 创建 pending Off Day 失败 (manager3): ${offMgrErr.message}`)
   else console.log(`  ✓ Off Day（待审批）：Aaron Wong → ${dateKey(NEXT_TUE)}（Manager 自己的申请，同样是 O/P 审批；Engineering 现在有 manager3+manager7 两个 Manager，AI Process 应判定 safe——覆盖"Manager 自己申请 Off Day"这个提交路径，跟 Ben/Grace 那组 Employee 场景分开测）`)
 
-  const { error: offConflictErr } = await supabase.from('employee_off_day_requests').insert({
+  const { error: offConflictErr } = await supabase.from('off_day_requests').insert({
     user_id: userIdMap['employee4@test.com'].internalId,
     company_id: company.id,
-    request_date: dateKey(NEXT_WED),
-    week_start: weekStartNext,
+    requested_date: dateKey(NEXT_WED),
+    requested_week: weekStartNext,
     source: 'submitted',
     status: 'pending',
   })
@@ -2275,18 +2259,18 @@ async function main() {
   const jobTemplateDefs = [
     {
       company_id: company.id, created_by: ownerUser.id,
-      title: 'Event Crew', description: 'General event support — setup, registration desk, and teardown.',
-      requirements: 'Comfortable on your feet for a full shift, punctual.',
-      form_type: 'oneoff', department_id: depts[0].id,
-      salary_amount: 15, salary_type: 'flat rate', uniform_type: 'none',
+      title: 'Event Crew', responsibilities: 'General event support — setup, registration desk, and teardown.',
+      skills: 'Comfortable on your feet for a full shift, punctual.',
+      job_type: 'oneoff', department_id: depts[0].id,
+      salary_amount: 15, uniform_type: 'none',
       experience_required: 'Not Required', minimum_age: 16, estimated_hours: '6', urgency: 'normal',
     },
     {
       company_id: company.id, created_by: ownerUser.id,
-      title: 'Warehouse Assistant', description: 'Recurring weekend stock-count and inventory shift.',
-      requirements: 'Basic spreadsheet use, comfortable with repetitive tasks.',
-      form_type: 'shift', department_id: depts[2].id,
-      salary_amount: 13.5, salary_type: 'per hour', uniform_type: 'none',
+      title: 'Warehouse Assistant', responsibilities: 'Recurring weekend stock-count and inventory shift.',
+      skills: 'Basic spreadsheet use, comfortable with repetitive tasks.',
+      job_type: 'shift', department_id: depts[2].id,
+      salary_amount: 13.5, uniform_type: 'none',
       experience_required: '6+ Months', minimum_age: 18, urgency: 'normal',
     },
     // Manager-created (David Lim, Operations) — so manager1@test.com has a template of their own
@@ -2294,10 +2278,10 @@ async function main() {
     // to view — Owner's two templates above are invisible to a Manager, see jobTemplateRepository).
     {
       company_id: company.id, created_by: userIdMap['manager1@test.com'].internalId,
-      title: 'Café Cover Staff', description: 'Cover the café counter for a weekend rush — orders, till, and light cleaning.',
-      requirements: 'Comfortable handling cash, friendly with customers.',
-      form_type: 'oneoff', department_id: depts[0].id,
-      salary_amount: 16, salary_type: 'flat rate', uniform_type: 'none',
+      title: 'Café Cover Staff', responsibilities: 'Cover the café counter for a weekend rush — orders, till, and light cleaning.',
+      skills: 'Comfortable handling cash, friendly with customers.',
+      job_type: 'oneoff', department_id: depts[0].id,
+      salary_amount: 16, uniform_type: 'none',
       experience_required: 'Not Required', minimum_age: 16, estimated_hours: '5', urgency: 'normal',
     },
   ]
@@ -2321,9 +2305,9 @@ async function main() {
   console.log('\nStep 17: 创建 Archived Job Posting...')
   const { error: archivedErr } = await supabase.from('job_postings').insert({
     company_id: company.id, department_id: depts[3].id, created_by: ownerUser.id,
-    title: 'Holiday Season Support — Customer Support', description: 'Extra overnight support coverage for the holiday rush.',
-    requirements: 'Clear written English, own laptop.', location: company.location,
-    status: 'archived', form_type: 'oneoff', urgency: 'normal',
+    title: 'Holiday Season Support — Customer Support', responsibilities: 'Extra overnight support coverage for the holiday rush.',
+    skills: 'Clear written English, own laptop.',
+    status: 'archived', job_type: 'oneoff', urgency: 'normal',
     estimated_hours: '6', job_start_time: '20:00', openings: 2, experience_required: 'Not Required',
     minimum_age: 18, salary_amount: 15, expires_at: dateKey(TWO_DAYS_AGO),
     archived_at: new Date().toISOString(), archived_from_status: 'closed',
@@ -2338,10 +2322,10 @@ async function main() {
   const closedConfirmedAt = dueAtOn(addDays(TODAY, -3), 15)
   const { data: closedJob, error: closedJobErr } = await supabase.from('job_postings').insert({
     company_id: company.id, department_id: depts[1].id, created_by: ownerUser.id,
-    title: 'Product Launch Day Crew', description: 'One-day crew to support an in-store product launch event.',
-    requirements: 'Outgoing, comfortable talking to customers.', location: company.location,
-    status: 'closed', form_type: 'oneoff', urgency: 'normal',
-    estimated_hours: '5', shift_date: dateKey(addDays(TODAY, -2)), job_start_time: '10:00',
+    title: 'Product Launch Day Crew', responsibilities: 'One-day crew to support an in-store product launch event.',
+    skills: 'Outgoing, comfortable talking to customers.',
+    status: 'closed', job_type: 'oneoff', urgency: 'normal',
+    estimated_hours: '5', job_date: dateKey(addDays(TODAY, -2)), job_start_time: '10:00',
     openings: 1, experience_required: 'Not Required', minimum_age: 16,
     salary_amount: 80, expires_at: dateKey(addDays(TODAY, -3)), created_at: closedCreatedAt,
   }).select().single()
@@ -2350,7 +2334,7 @@ async function main() {
   } else {
     const { data: closedApp, error: closedAppErr } = await supabase.from('job_applicants').insert({
       job_id: closedJob.id, user_id: userIdMap['guest3@test.com'].internalId,
-      resume_url: guestApplicants.find(g => g.email === 'guest3@test.com').resume_url, status: 'accepted',
+      resume: guestApplicants.find(g => g.email === 'guest3@test.com').resume_url, status: 'accepted',
       decided_at: closedConfirmedAt,
     }).select().single()
     if (closedAppErr) {
@@ -2369,14 +2353,14 @@ async function main() {
   // Time to Fill only ever plotted one bar (Marketing). Three more closed postings, spread across
   // the other three departments with different outcomes (fast full fill / partial fill / slow full
   // fill), so both charts show real per-department variety instead of a single data point.
-  async function createClosedJobPosting({ departmentId, title, description, requirements, openings, hires, createdDaysAgo, confirmedDaysAgo, salary }) {
+  async function createClosedJobPosting({ departmentId, title, description, skills, openings, hires, createdDaysAgo, confirmedDaysAgo, salary }) {
     const createdAt = dueAtOn(addDays(TODAY, -createdDaysAgo), 9)
     const confirmedAt = dueAtOn(addDays(TODAY, -confirmedDaysAgo), 15)
     const { data: job, error: jobErr } = await supabase.from('job_postings').insert({
       company_id: company.id, department_id: departmentId, created_by: ownerUser.id,
-      title, description, requirements, location: company.location,
-      status: 'closed', form_type: 'oneoff', urgency: 'normal',
-      estimated_hours: '5', shift_date: dateKey(addDays(TODAY, -confirmedDaysAgo)), job_start_time: '10:00',
+      title, responsibilities: description, skills,
+      status: 'closed', job_type: 'oneoff', urgency: 'normal',
+      estimated_hours: '5', job_date: dateKey(addDays(TODAY, -confirmedDaysAgo)), job_start_time: '10:00',
       openings, experience_required: 'Not Required', minimum_age: 16,
       salary_amount: salary, expires_at: dateKey(addDays(TODAY, -confirmedDaysAgo)), created_at: createdAt,
     }).select().single()
@@ -2384,7 +2368,7 @@ async function main() {
     for (const guestEmail of hires) {
       const { data: app, error: appErr } = await supabase.from('job_applicants').insert({
         job_id: job.id, user_id: userIdMap[guestEmail].internalId,
-        resume_url: guestApplicants.find(g => g.email === guestEmail).resume_url, status: 'accepted',
+        resume: guestApplicants.find(g => g.email === guestEmail).resume_url, status: 'accepted',
         decided_at: confirmedAt,
       }).select().single()
       if (appErr) { console.warn(`  ⚠ 创建 job_applicant 失败 (${title} / ${guestEmail}): ${appErr.message}`); continue }
@@ -2399,19 +2383,19 @@ async function main() {
   await createClosedJobPosting({
     departmentId: depts[0].id, title: 'Weekend Warehouse Restock Crew',
     description: 'Two-person crew to restock the warehouse floor ahead of the weekend rush.',
-    requirements: 'Comfortable with physical, repetitive work.',
+    skills: 'Comfortable with physical, repetitive work.',
     openings: 2, hires: ['guest1@test.com', 'guest5@test.com'], createdDaysAgo: 6, confirmedDaysAgo: 5, salary: 70,
   })
   await createClosedJobPosting({
     departmentId: depts[2].id, title: 'IT Helpdesk Temp Support',
     description: 'Temporary helpdesk coverage for a hardware refresh rollout.',
-    requirements: 'Basic troubleshooting and networking knowledge.',
+    skills: 'Basic troubleshooting and networking knowledge.',
     openings: 3, hires: ['guest2@test.com'], createdDaysAgo: 6, confirmedDaysAgo: 4, salary: 90,
   })
   await createClosedJobPosting({
     departmentId: depts[3].id, title: 'Weekend Support Overflow Crew',
     description: 'Extra hands to clear the weekend support ticket backlog.',
-    requirements: 'Clear written English, calm under pressure.',
+    skills: 'Clear written English, calm under pressure.',
     openings: 2, hires: ['guest4@test.com', 'guest3@test.com'], createdDaysAgo: 6, confirmedDaysAgo: 1, salary: 75,
   })
 
@@ -2434,10 +2418,10 @@ async function main() {
   // which is exactly the inconsistency this seed step exists to avoid.
   const { data: cwOpenJob, error: cwOpenJobErr } = await supabase.from('job_postings').insert({
     company_id: company.id, department_id: depts[0].id, created_by: ownerUser.id,
-    title: 'Same-Day Café Cover Shift', description: 'Cover the café counter for a same-day gap in the roster.',
-    requirements: 'Available immediately, comfortable handling cash and orders.', location: company.location,
-    status: 'closed', archived_at: new Date().toISOString(), form_type: 'oneoff', urgency: 'urgent',
-    estimated_hours: '4', shift_date: cwOpenShiftDate, job_start_time: toHM(cwOpenStart),
+    title: 'Same-Day Café Cover Shift', responsibilities: 'Cover the café counter for a same-day gap in the roster.',
+    skills: 'Available immediately, comfortable handling cash and orders.',
+    status: 'closed', archived_at: new Date().toISOString(), job_type: 'oneoff', urgency: 'urgent',
+    estimated_hours: '4', job_date: cwOpenShiftDate, job_start_time: toHM(cwOpenStart),
     openings: 1, experience_required: 'Not Required', minimum_age: 16,
     salary_amount: 16, expires_at: dateKey(addDays(TODAY, 3)),
   }).select().single()
@@ -2446,7 +2430,7 @@ async function main() {
   } else {
     const { data: cwOpenApp, error: cwOpenAppErr } = await supabase.from('job_applicants').insert({
       job_id: cwOpenJob.id, user_id: userIdMap['casual1@test.com'].internalId,
-      resume_url: 'https://example.com/demo-resumes/marcus-lee-resume.pdf', status: 'accepted',
+      resume: 'https://example.com/demo-resumes/marcus-lee-resume.pdf', status: 'accepted',
       additional_note: "I've covered this counter before — happy to jump in today.",
     }).select().single()
     if (cwOpenAppErr) {
@@ -2553,11 +2537,8 @@ async function main() {
       if (casual5Assignment) {
         const { error: casual5ClockErr } = await supabase.from('attendance_records').insert({
           shift_assignment_id: casual5Assignment.id,
-          casual_worker_id: casual5User.id,
+          user_id: casual5User.id,
           clock_in_time: casual5ShiftStart.toISOString(),
-          confirmed_by_employee_id: casual5User.id,
-          submitted_by_employee_id: casual5User.id,
-          status: 'clocked_in',
         })
         if (casual5ClockErr) console.warn(`  ⚠ 创建 casual5 attendance_record 失败: ${casual5ClockErr.message}`)
         console.log(`  ✓ Hafiz Rahman（casual5，Shift job）今天 ${toHM(casual5ShiftStart)}–${toHM(casual5ShiftEnd)} UTC 在班，已打卡，Ben Seah 督导`)
@@ -2605,10 +2586,10 @@ async function main() {
       const casual6ShiftDate = dateKeySGT(casual6JobStart)
       const { data: casual6Job, error: casual6JobErr } = await supabase.from('job_postings').insert({
         company_id: company.id, department_id: depts[0].id, created_by: ownerUser.id,
-        title: 'Same-Day Storeroom Sort', description: 'One-off sort and reshelve of the storeroom backlog.',
-        requirements: 'Available same-day, comfortable with physical work.', location: company.location,
-        status: 'closed', archived_at: new Date().toISOString(), form_type: 'oneoff', urgency: 'urgent',
-        estimated_hours: '3', shift_date: casual6ShiftDate, job_start_time: toHM(casual6JobStart),
+        title: 'Same-Day Storeroom Sort', responsibilities: 'One-off sort and reshelve of the storeroom backlog.',
+        skills: 'Available same-day, comfortable with physical work.',
+        status: 'closed', archived_at: new Date().toISOString(), job_type: 'oneoff', urgency: 'urgent',
+        estimated_hours: '3', job_date: casual6ShiftDate, job_start_time: toHM(casual6JobStart),
         openings: 1, experience_required: 'Not Required', minimum_age: 16,
         salary_amount: 60, expires_at: dateKey(addDays(TODAY, 1)),
       }).select().single()
@@ -2617,7 +2598,7 @@ async function main() {
       } else {
         const { data: casual6App, error: casual6AppErr } = await supabase.from('job_applicants').insert({
           job_id: casual6Job.id, user_id: casual6User.id,
-          resume_url: 'https://example.com/demo-resumes/marcus-tan-resume.pdf', status: 'accepted',
+          resume: 'https://example.com/demo-resumes/marcus-tan-resume.pdf', status: 'accepted',
           additional_note: "I'm free this afternoon and can start right away.",
         }).select().single()
         if (casual6AppErr) {
@@ -2639,11 +2620,8 @@ async function main() {
         if (casual6Assignment) {
           const { error: casual6ClockErr } = await supabase.from('attendance_records').insert({
             shift_assignment_id: casual6Assignment.id,
-            casual_worker_id: casual6User.id,
+            user_id: casual6User.id,
             clock_in_time: casual6JobStart.toISOString(),
-            confirmed_by_employee_id: casual6User.id,
-            submitted_by_employee_id: casual6User.id,
-            status: 'clocked_in',
           })
           if (casual6ClockErr) console.warn(`  ⚠ 创建 casual6 attendance_record 失败: ${casual6ClockErr.message}`)
           console.log(`  ✓ Marcus Tan（casual6，One-off job）今天 ${toHM(casual6JobStart)} UTC 起已打卡、尚未 Clock Out，等 Ben Seah 在 Dashboard 点 Approve Clock Out 才能放行`)
