@@ -14,6 +14,21 @@ import { ShiftAssignment } from '@/types/ShiftAssignment'
 type AssignmentWithShift = ShiftAssignment & { shifts: Shift | null }
 
 export const attendanceRepository = {
+  // BUG-044 — Fixed Day Off submission had no check against the requester already being
+  // scheduled on one of the requested dates. Returns just the shift_date values that actually
+  // collide, so the service can name them in the error message.
+  async getShiftDatesForUserWithinDates(user_id: string, dates: string[]): Promise<string[]> {
+    if (dates.length === 0) return []
+    const { data, error } = await supabase
+      .from('shift_assignments')
+      .select('shifts!inner(shift_date)')
+      .eq('user_id', user_id)
+      .in('shifts.shift_date', dates)
+    if (error) throw new Error(error.message)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return [...new Set((data ?? []).map((row: any) => row.shifts.shift_date as string))]
+  },
+
   async getAssignmentsByCompany(company_id: string): Promise<AssignmentWithShift[]> {
     const { data, error } = await supabase
       .from('shift_assignments')

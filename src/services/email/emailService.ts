@@ -304,4 +304,35 @@ export const emailService = {
       `,
     })
   },
+
+  // UC30: sent to whoever an Owner removes from the company (any role) — their account is deleted
+  // as part of that same action, so this is the only notice they get that they can no longer sign in.
+  async sendRemovedFromCompanyEmail(data: {
+    to: string
+    fullName: string
+    companyName: string
+  }): Promise<void> {
+    await resend.emails.send({
+      from: 'Tasking <noreply@gettasking.com>',
+      to: data.to,
+      subject: `You have been removed from ${data.companyName}`,
+      html: `
+        <div style="font-family: Inter, sans-serif; max-width: 480px; margin: 0 auto; padding: 32px 24px; background: #ffffff;">
+          <span style="font-size: 20px; font-weight: 700; color: #F97316;">Tasking</span>
+          <h2 style="font-size: 22px; font-weight: 700; color: #1C1C1E; margin: 24px 0 8px 0;">
+            You've been removed from ${data.companyName}
+          </h2>
+          <p style="font-size: 15px; color: #6B7280; margin: 0 0 16px 0;">
+            Hi ${data.fullName}, you have been removed as a member of ${data.companyName} on Tasking.
+            Your account has been deactivated and you will no longer be able to sign in.
+          </p>
+          <p style="font-size: 13px; color: #9CA3AF; margin: 0;">
+            If you believe this was a mistake, please contact ${data.companyName} directly.
+          </p>
+          <hr style="border: none; border-top: 1px solid #F3F4F6; margin: 24px 0;">
+          <p style="font-size: 12px; color: #9CA3AF; margin: 0;">© 2025 Tasking. All rights reserved.</p>
+        </div>
+      `,
+    })
+  },
 }

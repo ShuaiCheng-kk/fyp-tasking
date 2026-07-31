@@ -11,9 +11,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { AlertTriangle, Check, CreditCard } from 'lucide-react'
 import GuestPersonalInfoCard from '@/components/guest/GuestPersonalInfoCard'
-import { SkillsCard, CertificatesCard, ResumeCard } from '@/components/worker/WorkerProfileSections'
+import { SkillsCard, CertificatesCard, ResumeCard, ProfileCardSkeleton } from '@/components/worker/WorkerProfileSections'
 import { TitledBlock } from '@/components/panel'
 import { useIsCompactViewport } from '@/hooks/useIsCompactViewport'
+import type { WorkerProfile } from '@/types/WorkerProfile'
 
 const pageKeyframes = `
   @keyframes blockSlideUp { from { opacity: 0; transform: translateY(20px) } to { opacity: 1; transform: translateY(0) } }
@@ -42,12 +43,11 @@ function Spinner({ size = 13 }: { size?: number }) {
 }
 
 function PaymentInformationCard({
-  internalUserId, initialMethod, initialAccount, highlighted, onToast, onSaved,
+  internalUserId, initialMethod, initialAccount, onToast, onSaved,
 }: {
   internalUserId: string
   initialMethod: PaymentMethod
   initialAccount: string
-  highlighted: boolean
   onToast: (msg: string) => void
   onSaved: (savedAccount: string) => void
 }) {
@@ -82,12 +82,6 @@ function PaymentInformationCard({
     <TitledBlock
       icon={<CreditCard size={15} color="#F97316" />}
       title="Payment Information"
-      containerStyle={highlighted ? { border: '2px solid #F97316', boxShadow: '0 0 0 4px rgba(249,115,22,0.12)' } : undefined}
-      headerRight={highlighted && (
-        <span style={{ fontSize: '0.72rem', fontWeight: 800, color: '#EA580C', background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: 999, padding: '3px 10px' }}>
-          Complete this first
-        </span>
-      )}
     >
       <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
         {(['paynow', 'bank_transfer'] as const).map(m => (
@@ -127,8 +121,11 @@ function PaymentInformationCard({
 export default function CasualProfilePage() {
   // Single column on phone; the page itself scrolls instead of this section internally scrolling.
   const isPhone = useIsCompactViewport(640)
-  const [authId, setAuthId] = useState('')
-  const [internalUserId, setInternalUserId] = useState('')
+  // One fetch for the whole profile (personal info + skills + certificates + resume) instead of
+  // each card below running its own identical `/api/guest/profile` fetch — same fix as Guest's
+  // Profile page (2026-07-31). Payment info stays a separate parallel fetch since it's
+  // Casual-Worker-only and doesn't live on WorkerProfile.
+  const [profile, setProfile] = useState<WorkerProfile | null>(null)
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('paynow')
   const [paymentAccount, setPaymentAccount] = useState('')
   const [paymentLoaded, setPaymentLoaded] = useState(false)
@@ -148,14 +145,13 @@ export default function CasualProfilePage() {
         window.location.href = '/signin'
         return
       }
-      setAuthId(storedAuthId)
 
-      const [meRes, casualRes] = await Promise.all([
-        fetch(`/api/user/me?user_id=${storedAuthId}`),
+      const [profileRes, casualRes] = await Promise.all([
+        fetch(`/api/guest/profile?user_id=${storedAuthId}`),
         fetch(`/api/casual/profile?user_id=${storedAuthId}`),
       ])
-      const meData = await meRes.json()
-      if (meData.success) setInternalUserId(meData.user.id)
+      const profileData = await profileRes.json()
+      if (profileData.success) setProfile(profileData.profile)
 
       const casualData = await casualRes.json()
       if (casualData.success) {
@@ -204,39 +200,52 @@ export default function CasualProfilePage() {
         {/* The profile grid is the page's scroll block — the header (and banner) above stay fixed
             and this section scrolls internally once the cards outgrow the viewport, same pattern
             as Guest's Worker Profile page and the Owner pages.
-            Keyed on paymentLoaded (the last of the page's fetches to resolve) so this block — and
-            its entrance animation — mounts fresh right when the real cards are ready, instead of
-            animating an already-empty shell the instant the page mounts and settling long before
-            the API round-trip actually returns anything to show. */}
-        <section key={paymentLoaded ? 'ready' : 'loading'} style={isPhone
+            Keyed on whether both fetches above have landed, so this block — and its entrance
+            animation — mounts fresh right when the real cards are ready, instead of animating an
+            already-empty shell the instant the page mounts and settling long before the API
+            round-trips actually return anything to show. */}
+        <section key={(profile && paymentLoaded) ? 'ready' : 'loading'} style={isPhone
           ? { maxWidth: 1080, margin: '0 auto', width: '100%', display: 'grid', gridTemplateColumns: '1fr', gap: 16, alignItems: 'start', animation: 'blockSlideUp 0.38s ease both' }
           : { maxWidth: 1080, margin: '0 auto', width: '100%', flex: '1 1 auto', minHeight: 0, overflowY: 'auto', display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 16, alignItems: 'start', animation: 'blockSlideUp 0.38s ease both' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            <div style={paymentMissing ? lockedWrapperStyle : undefined}>
-              {internalUserId && <GuestPersonalInfoCard userId={internalUserId} onToast={showToast} />}
-            </div>
-            <div style={paymentMissing ? lockedWrapperStyle : undefined}>
-              {authId && <SkillsCard authId={authId} onToast={showToast} />}
-            </div>
-            {authId && internalUserId && paymentLoaded && (
-              <PaymentInformationCard
-                internalUserId={internalUserId}
-                initialMethod={paymentMethod}
-                initialAccount={paymentAccount}
-                highlighted={paymentMissing}
-                onToast={showToast}
-                onSaved={handlePaymentSaved}
-              />
-            )}
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            <div style={paymentMissing ? lockedWrapperStyle : undefined}>
-              {authId && <CertificatesCard authId={authId} onToast={showToast} />}
-            </div>
-            <div style={paymentMissing ? lockedWrapperStyle : undefined}>
-              {authId && <ResumeCard authId={authId} onToast={showToast} />}
-            </div>
-          </div>
+          {profile && paymentLoaded ? (
+            <>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <div style={paymentMissing ? lockedWrapperStyle : undefined}>
+                  <GuestPersonalInfoCard initialProfile={profile} onToast={showToast} />
+                </div>
+                <div style={paymentMissing ? lockedWrapperStyle : undefined}>
+                  <SkillsCard authId={profile.supabase_auth_id} profile={profile} onToast={showToast} />
+                </div>
+                <PaymentInformationCard
+                  internalUserId={profile.id}
+                  initialMethod={paymentMethod}
+                  initialAccount={paymentAccount}
+                  onToast={showToast}
+                  onSaved={handlePaymentSaved}
+                />
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <div style={paymentMissing ? lockedWrapperStyle : undefined}>
+                  <CertificatesCard authId={profile.supabase_auth_id} profile={profile} onToast={showToast} />
+                </div>
+                <div style={paymentMissing ? lockedWrapperStyle : undefined}>
+                  <ResumeCard authId={profile.supabase_auth_id} profile={profile} onToast={showToast} />
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <ProfileCardSkeleton lines={4} />
+                <ProfileCardSkeleton lines={1} />
+                <ProfileCardSkeleton lines={1} />
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <ProfileCardSkeleton lines={2} />
+                <ProfileCardSkeleton lines={1} />
+              </div>
+            </>
+          )}
         </section>
       </main>
 

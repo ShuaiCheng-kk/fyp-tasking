@@ -1040,7 +1040,9 @@ export default function DashboardView({ sidebar, basePath, viewerRole }: {
         const clockInEnabled = !clockBusyId && !clockedIn && canClockIn(shift.shift)
         const breakInEnabled = !clockBusyId && clockedIn && !clockedOut && !breakInDone
         const breakOutEnabled = !clockBusyId && clockedIn && !clockedOut && breakInDone && !breakOutDone
-        const clockOutEnabled = !clockBusyId && clockedIn && !clockedOut && canClockOut(shift.shift)
+        // Manager must complete both break steps before clocking out — same rule as Employee and
+        // a Shift Job Casual Worker; only a One-Off Job Casual Worker skips the break requirement.
+        const clockOutEnabled = !clockBusyId && clockedIn && !clockedOut && breakInDone && breakOutDone && canClockOut(shift.shift)
         return (
           <div key={shift.assignment.id} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', minWidth: 0 }}>
             {!compactLabel && (

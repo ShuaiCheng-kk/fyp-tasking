@@ -61,7 +61,8 @@ export async function GET(req: NextRequest) {
       if (!from_date || !to_date) {
         return NextResponse.json({ success: false, message: 'from_date and to_date are required' }, { status: 400 })
       }
-      const records = await attendanceService.getAttendanceByDateRange(company_id, from_date, to_date)
+      const viewer_role = searchParams.get('viewer_role') ?? undefined
+      const records = await attendanceService.getAttendanceByDateRange(company_id, from_date, to_date, { role: viewer_role })
       return NextResponse.json({ success: true, records })
     }
     const dashboard = await attendanceService.getAttendanceDashboard(company_id)

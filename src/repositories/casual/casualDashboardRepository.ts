@@ -52,19 +52,34 @@ export const casualDashboardRepository = {
     title: string
     company_name: string | null
     location: string | null
+    address: string | null
     created_by: string | null
   }[]> {
     if (ids.length === 0) return []
+    // job_postings has no location/address columns of its own — both are the company's, via the
+    // companies join (matches the "Location" field on the confirmation email, which reads from
+    // companies.location too). location is the area/neighbourhood (e.g. "Raffles Place"), address
+    // is the full street address — same split JobPresentation.tsx uses for the public job board.
     const { data, error } = await supabase
       .from('job_postings')
-      .select('id, title, location, created_by, companies(name)')
+      .select('id, title, created_by, companies(name, location, address)')
       .in('id', ids)
     if (error) throw new Error(error.message)
     return (data ?? []).map((row: any) => {
       const { companies, ...rest } = row
       const co = Array.isArray(companies) ? companies[0] : companies
-      return { ...rest, company_name: co?.name ?? null }
+      return { ...rest, company_name: co?.name ?? null, location: co?.location ?? null, address: co?.address ?? null }
     })
+  },
+
+  async getDepartmentsByIds(ids: string[]): Promise<{ id: string; name: string }[]> {
+    if (ids.length === 0) return []
+    const { data, error } = await supabase
+      .from('departments')
+      .select('id, name')
+      .in('id', ids)
+    if (error) throw new Error(error.message)
+    return data ?? []
   },
 
   async getUsersByIds(ids: string[]): Promise<{

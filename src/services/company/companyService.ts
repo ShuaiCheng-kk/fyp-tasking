@@ -14,6 +14,25 @@ async function resolveInternalOwnerUserId(ownerRef: string): Promise<string | nu
   return byPk?.id ?? null
 }
 
+const DEPARTMENT_NAME_MAX_LENGTH = 100
+
+// BUG-014/BUG-010: department name had no length limit (raw Postgres varchar(255) errors leaked
+// to the user, and long unbroken strings blew out the card/org-chart layout) and no dedup check
+// at any layer (frontend, service, or DB) — two identically named departments become
+// indistinguishable in every Shift/Task/Recruitment dropdown. Mirrors importService's
+// normalizeName + case-insensitive dedup, the one path that already got this right.
+async function validateDepartmentName(company_id: string, name: string, excludeDepartmentId?: string): Promise<string> {
+  const normalized = name.trim().replace(/\s+/g, ' ')
+  if (!normalized) throw new Error('Department name cannot be empty')
+  if (normalized.length > DEPARTMENT_NAME_MAX_LENGTH) {
+    throw new Error(`Department name cannot exceed ${DEPARTMENT_NAME_MAX_LENGTH} characters`)
+  }
+  const existing = await departmentRepository.findByCompanyId(company_id)
+  const clash = existing.some(d => d.id !== excludeDepartmentId && d.name.trim().toLowerCase() === normalized.toLowerCase())
+  if (clash) throw new Error(`A department named "${normalized}" already exists`)
+  return normalized
+}
+
 export const companyService = {
 
   async setupCompany(data: {
@@ -53,7 +72,8 @@ export const companyService = {
     company_id: string
     color?: string | null
   }): Promise<Department> {
-    return await departmentRepository.createDepartment(data)
+    const name = await validateDepartmentName(data.company_id, data.name)
+    return await departmentRepository.createDepartment({ ...data, name })
   },
 
   async getDepartments(company_id: string): Promise<Department[]> {
@@ -67,7 +87,10 @@ export const companyService = {
   },
 
   async updateDepartment(department_id: string, name: string, color?: string | null): Promise<void> {
-    await departmentRepository.updateById(department_id, name, color)
+    const current = await departmentRepository.findById(department_id)
+    if (!current) throw new Error('Department not found')
+    const validName = await validateDepartmentName(current.company_id, name, department_id)
+    await departmentRepository.updateById(department_id, validName, color)
   },
 
   async deleteDepartment(department_id: string): Promise<void> {

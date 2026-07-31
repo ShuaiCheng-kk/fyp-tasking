@@ -3,6 +3,7 @@
 
 import { shiftRepository } from '@/repositories/owner/shiftRepository'
 import { attendanceRepository } from '@/repositories/owner/attendanceRepository'
+import { sgtInstant, sgtShiftEndInstant } from '@/lib/singaporeTime'
 import { BulkCreateShiftsPayload, BulkCreateShiftsResult, BulkEditShiftItem, BulkEditShiftsResult, BulkShiftAssignmentPayload, BulkShiftAssignmentResult, ClopeningConflict, DuplicateShiftInput, RecurringShiftInput, RecurringSplitShiftInput, Shift, ShiftInput, ShiftMutationResult, SplitShiftInput, SplitShiftResult } from '@/types/Shift'
 import { TimelineRow, TimelineShiftBlock } from '@/types/Timeline'
 import { ShiftActionRedoPayload, ShiftActionType } from '@/types/ShiftActionHistory'
@@ -23,8 +24,12 @@ export const shiftService = {
     if (!input.company_id || !input.department_id || !input.shift_date || !input.start_time || !input.end_time || !input.created_by) {
       throw new Error('Missing required shift fields')
     }
-    if (input.start_time >= input.end_time) {
-      throw new Error('start_time must be before end_time')
+    // BUG-021: overnight shifts (e.g. 22:00-06:00, ending the following Singapore calendar day)
+    // are valid — end_time <= start_time is only rejected when they're exactly equal
+    // (zero-length, ambiguous). Everywhere downstream that needs the real end instant resolves it
+    // through sgtShiftEndInstant, which applies this same next-day convention.
+    if (input.start_time === input.end_time) {
+      throw new Error('start_time and end_time cannot be the same')
     }
     const warning = input.assigned_user_id
       ? await detectClopeningConflict({
@@ -123,8 +128,9 @@ export const shiftService = {
     const existing = await shiftRepository.getShiftById(id)
     if (!existing) throw new Error('Shift not found')
     const effectiveShift = { ...existing, ...fields }
-    if (effectiveShift.start_time >= effectiveShift.end_time) {
-      throw new Error('start_time must be before end_time')
+    // BUG-021: overnight shifts are valid — see createShift's comment above.
+    if (effectiveShift.start_time === effectiveShift.end_time) {
+      throw new Error('start_time and end_time cannot be the same')
     }
     const assignedUserId = assignment?.assigned_user_id
     const warning = assignedUserId
@@ -367,8 +373,9 @@ export const shiftService = {
     if (!input.shift_date || !input.start_time || !input.end_time || !input.created_by) {
       throw new Error('shift_date, start_time, end_time, and created_by are required')
     }
-    if (input.start_time >= input.end_time) {
-      throw new Error('start_time must be before end_time')
+    // BUG-021: overnight shifts are valid — see createShift's comment above.
+    if (input.start_time === input.end_time) {
+      throw new Error('start_time and end_time cannot be the same')
     }
 
     const original = await shiftRepository.getShiftById(id)
@@ -626,8 +633,9 @@ export const shiftService = {
         failed.push({ ...item, message: 'Missing required fields' })
         continue
       }
-      if (item.start_time >= item.end_time) {
-        failed.push({ ...item, message: 'start_time must be before end_time' })
+      // BUG-021: overnight shifts are valid — see createShift's comment above.
+      if (item.start_time === item.end_time) {
+        failed.push({ ...item, message: 'start_time and end_time cannot be the same' })
         continue
       }
       try {
@@ -678,8 +686,9 @@ export const shiftService = {
         failed.push({ shift_date: item.shift_date, start_time: item.start_time, end_time: item.end_time, message: 'Missing required fields' })
         continue
       }
-      if (item.start_time >= item.end_time) {
-        failed.push({ shift_date: item.shift_date, start_time: item.start_time, end_time: item.end_time, message: 'start_time must be before end_time' })
+      // BUG-021: overnight shifts are valid — see createShift's comment above.
+      if (item.start_time === item.end_time) {
+        failed.push({ shift_date: item.shift_date, start_time: item.start_time, end_time: item.end_time, message: 'start_time and end_time cannot be the same' })
         continue
       }
       try {
@@ -735,7 +744,7 @@ export const shiftService = {
         ...members.map(member => member.department_id).filter((id): id is string => Boolean(id)),
       ]),
     ]
-    const assigneeIds = [...new Set(assignments.map(assignment => assignment.user_id))]
+    const assigneeIds = [...new Set(assignments.map(assignment => assignment.user_id).filter((id): id is string => !!id))]
 
     const [departments, assignedUsers] = await Promise.all([
       shiftRepository.getDepartmentsByIds(deptIds),
@@ -769,7 +778,7 @@ export const shiftService = {
     const assignedShiftIds = new Set<string>()
     for (const assignment of assignments) {
       const shift = shiftMap.get(assignment.shift_id)
-      const user = memberMap.get(assignment.user_id)
+      const user = assignment.user_id ? memberMap.get(assignment.user_id) : undefined
       if (!shift || !user) continue
       assignedShiftIds.add(shift.id)
 
@@ -1028,16 +1037,18 @@ async function detectClopeningConflict(input: {
     to,
     input.exclude_shift_id,
   )
-  const newStart = new Date(`${input.shift_date}T${input.start_time}`).getTime()
-  const newEnd = new Date(`${input.shift_date}T${input.end_time}`).getTime()
+  // BUG-021: an overnight shift's end falls on the following Singapore calendar day —
+  // sgtShiftEndInstant applies that convention; the start is always same-day.
+  const newStart = sgtInstant(input.shift_date, input.start_time).getTime()
+  const newEnd = sgtShiftEndInstant(input.shift_date, input.start_time, input.end_time).getTime()
 
   for (const assignment of assigned) {
     const shift = assignment.shifts
     if (!shift) continue
     // The other half of the same split shift is meant to sit right next to this one — not a real clopening risk.
     if (input.exclude_split_group_id && shift.split_group_id === input.exclude_split_group_id) continue
-    const existingStart = new Date(`${shift.shift_date}T${shift.start_time}`).getTime()
-    const existingEnd = new Date(`${shift.shift_date}T${shift.end_time}`).getTime()
+    const existingStart = sgtInstant(shift.shift_date, shift.start_time).getTime()
+    const existingEnd = sgtShiftEndInstant(shift.shift_date, shift.start_time, shift.end_time).getTime()
     let restMs: number | null = null
     if (existingEnd <= newStart) restMs = newStart - existingEnd
     if (newEnd <= existingStart) restMs = existingStart - newEnd

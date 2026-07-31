@@ -473,9 +473,10 @@ export const taskService = {
   // To-do checkbox for a sub-task — only meaningful while the parent is In Progress (the work is
   // actually happening), only the parent's assignee may tick it (the person doing the work, same
   // permission as dragging the parent's Kanban card), and only in sequence_order — the previous
-  // sub-task must already be ticked before the next one can be. Ticking the last sub-task in the
-  // chain auto-promotes the parent and every sub-task to Review, mirroring the one-step-forward
-  // drag-and-drop move.
+  // sub-task must already be ticked before the next one can be. Ticking every sub-task does NOT
+  // auto-promote the parent to Review (2026-08-02, reverses the previous auto-promote-on-last-tick
+  // behavior) — the checklist being done isn't the same as the work being ready for review; only
+  // the assignee dragging the card is that confirmation, same as a task with no sub-tasks at all.
   async completeSubTask(subTaskId: string, actingUserId?: string | null): Promise<Task[]> {
     if (!subTaskId) throw new Error('Sub-task id is required')
     const subTask = await taskRepository.getTaskById(subTaskId)
@@ -498,12 +499,7 @@ export const taskService = {
     if (priorIncomplete) throw new Error('Complete the previous sub-tasks first')
 
     const updatedSubTask = await taskRepository.updateTask(subTaskId, { is_completed: true })
-    const allComplete = ordered.every((t, i) => i === index ? true : t.is_completed)
-    if (!allComplete) return [updatedSubTask, parent]
-
-    const updatedParent = await taskRepository.updateTask(parent.id, { status: 'Review' })
-    await taskRepository.updateSubTasksByParent(parent.id, { status: 'Review' })
-    return [updatedSubTask, updatedParent]
+    return [updatedSubTask, parent]
   },
 
   // A Manager's own department membership plus every peer Manager sharing at least one of those

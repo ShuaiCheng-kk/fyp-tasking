@@ -40,6 +40,7 @@ export const ownerInboxService = {
       Array.from(partnerMap.values()).map(async (conv) => {
         let partnerName = 'Unknown'
         let partnerRole = ''
+        let partnerPhotoUrl: string | null = null
         let partnerDeleted = false
         let companyName: string | null = null
         try {
@@ -50,6 +51,11 @@ export const ownerInboxService = {
           if (user) {
             partnerName = (user as any).full_name ?? (user as any).email_address ?? 'Unknown'
             partnerRole = (user as any).role ?? ''
+            // Read straight off this by-ID lookup, not the "eligible contacts" list CommunicationView
+            // uses for the New Message compose picker — a real conversation partner outside that
+            // narrower scope (e.g. a different department, or since removed) must not silently lose
+            // their avatar just because they're not someone you could START a new chat with today.
+            partnerPhotoUrl = (user as any).profile_photo_url ?? null
           } else {
             partnerDeleted = true
             partnerName = conv.lastKnownSenderName ?? 'Deleted User'
@@ -60,7 +66,7 @@ export const ownerInboxService = {
           partnerName = conv.lastKnownSenderName ?? 'Deleted User'
         }
         const { lastKnownSenderName, ...rest } = conv
-        return { ...rest, partnerName, partnerRole, partnerDeleted, companyName }
+        return { ...rest, partnerName, partnerRole, partnerPhotoUrl, partnerDeleted, companyName }
       })
     )
 

@@ -69,20 +69,29 @@ export const employeeDashboardRepository = {
 
     const workerIds = [...new Set((data ?? []).map((row: any) => row.user_id))]
     const postingIds = [...new Set((data ?? []).map((row: any) => row.shifts?.source_job_posting_id).filter(Boolean))]
-    const [{ data: workers }, { data: postings }] = await Promise.all([
+    const assignmentIds = (data ?? []).map((row: any) => row.id)
+    const [{ data: workers }, { data: postings }, { data: records }] = await Promise.all([
       workerIds.length
         ? supabase.from('users').select('id, full_name, email_address, phone_number, profile_photo_url').in('id', workerIds)
         : Promise.resolve({ data: [] }),
       postingIds.length
         ? supabase.from('job_postings').select('id, title').in('id', postingIds)
         : Promise.resolve({ data: [] }),
+      // Attendance timestamps for this Employee's "click a worker's card" detail view — a
+      // shift-job worker's Clock In/Break In/Break Out/Clock Out times, or a one-off job
+      // worker's clock-in time (paired with the release queue for the Approve Clock Out action).
+      assignmentIds.length
+        ? supabase.from('attendance_records').select('shift_assignment_id, clock_in_time, break_in_time, break_out_time, clock_out_time').in('shift_assignment_id', assignmentIds)
+        : Promise.resolve({ data: [] }),
     ])
     const workerMap = new Map(((workers ?? []) as any[]).map(w => [w.id, w]))
     const postingMap = new Map(((postings ?? []) as any[]).map(j => [j.id, j]))
+    const recordMap = new Map(((records ?? []) as any[]).map(r => [r.shift_assignment_id, r]))
 
     return (data ?? []).map((row: any) => {
       const worker = workerMap.get(row.user_id)
       const posting = row.shifts?.source_job_posting_id ? postingMap.get(row.shifts.source_job_posting_id) : null
+      const record = recordMap.get(row.id)
       return {
         shift_assignment_id: row.id,
         id: row.user_id,
@@ -95,6 +104,10 @@ export const employeeDashboardRepository = {
         start_time: row.shifts?.start_time ?? '',
         end_time: row.shifts?.end_time ?? '',
         is_open_ended: row.shifts?.is_open_ended ?? false,
+        clock_in_time: record?.clock_in_time ?? null,
+        break_in_time: record?.break_in_time ?? null,
+        break_out_time: record?.break_out_time ?? null,
+        clock_out_time: record?.clock_out_time ?? null,
       }
     })
   },

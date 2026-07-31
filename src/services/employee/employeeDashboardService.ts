@@ -50,9 +50,11 @@ export const employeeDashboardService = {
   ): Promise<{ department_id: string; candidates: { id: string; full_name: string }[] }> {
     const dashboard = await employeeDashboardRepository.getEmployeeDashboard(employee_id)
     const workers = await employeeDashboardRepository.getSupervisedWorkersToday(employee_id, company_id)
+    // A worker who already clocked out today is off duty and can't take on a new task — same rule
+    // as the Member panel / New-Edit Task pickers in TasksView.tsx (2026-07-31).
     return {
       department_id: dashboard?.department_id ?? '',
-      candidates: workers.map(w => ({ id: w.id, full_name: w.full_name })),
+      candidates: workers.filter(w => !w.clock_out_time).map(w => ({ id: w.id, full_name: w.full_name })),
     }
   },
 }

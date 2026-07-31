@@ -307,7 +307,7 @@ function classifyAttendance(
 
     const shiftStart = row.shift.start_time.slice(0, 5)
     const person: AttendancePersonRow = {
-      user_id: row.assignment.user_id,
+      user_id: row.assignment.user_id ?? row.assignment.id,
       name: row.assignee_name,
       shift_start: shiftStart,
       clock_in_label: null,

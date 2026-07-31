@@ -8,7 +8,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 
-const BASE = 'https://fyp-tasking.vercel.app'
+const BASE = process.env.NEXT_PUBLIC_APP_URL || 'https://fyp-tasking.vercel.app'
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)

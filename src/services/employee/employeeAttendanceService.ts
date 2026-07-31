@@ -1,6 +1,6 @@
 import { employeeAttendanceRepository } from '@/repositories/employee/employeeAttendanceRepository'
 import { applyClockInGracePeriod } from '@/services/shared/attendanceGrace'
-import { sgtInstant, sgtTodayKey } from '@/lib/singaporeTime'
+import { sgtInstant, sgtShiftEndInstant, sgtTodayKey } from '@/lib/singaporeTime'
 
 // UC49: the Clock In button only appears starting 30 minutes before the shift's scheduled
 // start; Clock Out never appears early — only once the shift has actually reached its end time.
@@ -53,7 +53,9 @@ export const employeeAttendanceService = {
 
     const rawNow = input.clock_time ?? new Date().toISOString()
     const shiftStart = sgtInstant(assignment.shifts.shift_date, assignment.shifts.start_time)
-    const shiftEnd = sgtInstant(assignment.shifts.shift_date, assignment.shifts.end_time)
+    // BUG-021: an overnight shift's end (end_time <= start_time) falls on the following Singapore
+    // calendar day.
+    const shiftEnd = sgtShiftEndInstant(assignment.shifts.shift_date, assignment.shifts.start_time, assignment.shifts.end_time)
     const earliestClockIn = new Date(shiftStart.getTime() - CLOCK_IN_WINDOW_MINUTES_BEFORE * 60000)
     if (new Date(rawNow).getTime() < earliestClockIn.getTime()) {
       throw new Error('Too early to clock in for this shift')
@@ -92,7 +94,9 @@ export const employeeAttendanceService = {
 
     if (!assignment.shifts.is_open_ended) {
       const rawNow = input.clock_time ?? new Date().toISOString()
-      const shiftEnd = sgtInstant(assignment.shifts.shift_date, assignment.shifts.end_time)
+      // BUG-021: an overnight shift's end (end_time <= start_time) falls on the following
+      // Singapore calendar day.
+      const shiftEnd = sgtShiftEndInstant(assignment.shifts.shift_date, assignment.shifts.start_time, assignment.shifts.end_time)
       if (new Date(rawNow).getTime() < shiftEnd.getTime()) {
         throw new Error('Too early to clock out — wait until the shift ends')
       }

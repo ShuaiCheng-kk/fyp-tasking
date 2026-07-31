@@ -50,6 +50,7 @@ export const employeeInboxService = {
       Array.from(partnerMap.values()).map(async (conv) => {
         let partnerName = 'Unknown'
         let partnerRole = ''
+        let partnerPhotoUrl: string | null = null
         let partnerDeleted = false
         let companyName: string | null = null
         try {
@@ -57,6 +58,11 @@ export const employeeInboxService = {
           if (user) {
             partnerName = (user as any).full_name ?? (user as any).email_address ?? 'Unknown'
             partnerRole = (user as any).role ?? ''
+            // Read straight off this by-ID lookup, not the narrower getEmployeeContacts scope
+            // (Manager + department teammates + supervised Casual Workers only) — an Owner/Partner
+            // messaging the Employee directly is a real conversation but never appears in that
+            // contacts list, so their avatar must not depend on being in it.
+            partnerPhotoUrl = (user as any).profile_photo_url ?? null
           } else {
             partnerDeleted = true
             partnerName = conv.lastKnownSenderName ?? 'Deleted User'
@@ -66,7 +72,7 @@ export const employeeInboxService = {
           partnerName = conv.lastKnownSenderName ?? 'Deleted User'
         }
         const { lastKnownSenderName, ...rest } = conv
-        return { ...rest, partnerName, partnerRole, partnerDeleted, companyName }
+        return { ...rest, partnerName, partnerRole, partnerPhotoUrl, partnerDeleted, companyName }
       })
     )
 

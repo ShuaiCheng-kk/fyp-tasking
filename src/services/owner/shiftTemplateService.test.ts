@@ -65,14 +65,31 @@ describe('shiftTemplateService — Shift Template', () => {
       })).rejects.toThrow('Missing required shift template fields')
     })
 
-    it('rejects when start_time is not before end_time', async () => {
-      await expect(shiftTemplateService.createTemplate({
+    // BUG-021: overnight templates (end_time on the following day) are valid — only an exact
+    // start===end match is rejected.
+    it('accepts an overnight template where end_time is numerically before start_time', async () => {
+      const overnightTemplate = { ...baseTemplate, start_time: '18:00', end_time: '09:00' }
+      vi.mocked(shiftTemplateRepository.createTemplate).mockResolvedValue(overnightTemplate)
+
+      const result = await shiftTemplateService.createTemplate({
         company_id: 'company-1',
-        name: 'Morning Shift',
+        name: 'Night Shift',
         start_time: '18:00',
         end_time: '09:00',
         created_by: 'owner-1',
-      })).rejects.toThrow('start_time must be before end_time')
+      })
+
+      expect(result).toEqual(overnightTemplate)
+    })
+
+    it('rejects when start_time equals end_time', async () => {
+      await expect(shiftTemplateService.createTemplate({
+        company_id: 'company-1',
+        name: 'Morning Shift',
+        start_time: '09:00',
+        end_time: '09:00',
+        created_by: 'owner-1',
+      })).rejects.toThrow('start_time and end_time cannot be the same')
     })
   })
 
@@ -181,10 +198,20 @@ describe('shiftTemplateService — Shift Template', () => {
       await expect(shiftTemplateService.updateTemplate('template-1', { name: '   ' })).rejects.toThrow('Please name this template.')
     })
 
-    it('rejects when start_time is not before end_time', async () => {
+    it('accepts an overnight update where end_time is numerically before start_time', async () => {
+      const overnightTemplate = { ...baseTemplate, start_time: '18:00', end_time: '09:00' }
+      vi.mocked(shiftTemplateRepository.getTemplateById).mockResolvedValue(baseTemplate)
+      vi.mocked(shiftTemplateRepository.updateTemplate).mockResolvedValue(overnightTemplate)
+
+      const result = await shiftTemplateService.updateTemplate('template-1', { start_time: '18:00', end_time: '09:00' })
+
+      expect(result).toEqual(overnightTemplate)
+    })
+
+    it('rejects when start_time equals end_time', async () => {
       vi.mocked(shiftTemplateRepository.getTemplateById).mockResolvedValue(baseTemplate)
 
-      await expect(shiftTemplateService.updateTemplate('template-1', { start_time: '18:00', end_time: '09:00' })).rejects.toThrow('start_time must be before end_time')
+      await expect(shiftTemplateService.updateTemplate('template-1', { start_time: '09:00', end_time: '09:00' })).rejects.toThrow('start_time and end_time cannot be the same')
     })
   })
 })

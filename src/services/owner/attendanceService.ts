@@ -9,7 +9,7 @@ import { shiftSwapDepartmentSettingsRepository } from '@/repositories/owner/shif
 import { ownerTeamRepository } from '@/repositories/owner/ownerTeamRepository'
 import { taskRepository } from '@/repositories/owner/taskRepository'
 import { MIN_MANAGERS_PER_DAY, MIN_EMPLOYEES_PER_DAY, weekStart as computeWeekStart } from '@/lib/schedulingConstants'
-import { sgtInstant, sgtTodayKey } from '@/lib/singaporeTime'
+import { sgtInstant, sgtShiftEndInstant, sgtTodayKey } from '@/lib/singaporeTime'
 import { Shift } from '@/types/Shift'
 import {
   AttendanceDashboard,
@@ -113,7 +113,9 @@ function getAttendanceExceptions(input: {
   } | null
 }): AttendanceExceptionType[] {
   const exceptions: AttendanceExceptionType[] = []
-  const shiftEnd = combineDateTime(input.shift_date, input.end_time)
+  // BUG-021: an overnight shift's end (end_time <= start_time) falls on the following Singapore
+  // calendar day — sgtShiftEndInstant resolves that, instead of treating it as same-day.
+  const shiftEnd = sgtShiftEndInstant(input.shift_date, input.start_time, input.end_time)
   const now = new Date()
 
   // An Owner/Partner/Manager correction (UC56) supersedes the worker's original clock times for
@@ -139,7 +141,7 @@ function getAttendanceExceptions(input: {
   // The grace period is also applied at clock-in time (attendanceGrace.ts) so a clock-in
   // recorded at exactly start_time can be ≤10 min after and is never flagged late.
   if (minutesAfter(clockInTime, input.shift_date, input.start_time) > 10) exceptions.push('late')
-  if (minutesAfter(clockOutTime, input.shift_date, input.end_time) > 15) exceptions.push('overtime')
+  if (clockOutTime && Math.round((new Date(clockOutTime).getTime() - shiftEnd.getTime()) / 60000) > 15) exceptions.push('overtime')
   return exceptions
 }
 
@@ -531,19 +533,19 @@ async function buildDashboardRecords(
   const departmentIds = new Set<string>()
   const casualWorkerIds = new Set<string>()
   assignments.forEach(assignment => {
-    userIds.add(assignment.user_id)
+    if (assignment.user_id) userIds.add(assignment.user_id)
     if (assignment.supervisor_employee_id) userIds.add(assignment.supervisor_employee_id)
     if (assignment.shifts?.department_id) departmentIds.add(assignment.shifts.department_id)
   })
   records.forEach(record => {
-    userIds.add(record.user_id)
+    if (record.user_id) userIds.add(record.user_id)
     if (record.modified_by) userIds.add(record.modified_by)
   })
 
   const postingIds = new Set<string>()
   assignments.forEach(assignment => {
     if (assignment.shifts?.source_job_posting_id) postingIds.add(assignment.shifts.source_job_posting_id)
-    casualWorkerIds.add(assignment.user_id)
+    if (assignment.user_id) casualWorkerIds.add(assignment.user_id)
   })
 
   const [users, departments, postings, banStatusByUser] = await Promise.all([
@@ -565,10 +567,10 @@ async function buildDashboardRecords(
       return {
         assignment,
         shift,
-        assignee_name: usersById.get(assignment.user_id)?.full_name ?? 'Unknown member',
-        assignee_role: usersById.get(assignment.user_id)?.role ?? 'Member',
-        assignee_profile_photo_url: usersById.get(assignment.user_id)?.profile_photo_url ?? null,
-        assignee_worker_status: banStatusByUser.get(assignment.user_id)?.inactive_at ? 'inactive' : 'active',
+        assignee_name: (assignment.user_id ? usersById.get(assignment.user_id)?.full_name : null) ?? assignment.user_name_snapshot ?? 'Removed member',
+        assignee_role: (assignment.user_id ? usersById.get(assignment.user_id)?.role : null) ?? 'Member',
+        assignee_profile_photo_url: (assignment.user_id ? usersById.get(assignment.user_id)?.profile_photo_url : null) ?? null,
+        assignee_worker_status: (assignment.user_id && banStatusByUser.get(assignment.user_id)?.inactive_at) ? 'inactive' : 'active',
         assignee_hourly_rate: shift.hourly_rate ?? null,
         supervisor_name: assignment.supervisor_employee_id ? usersById.get(assignment.supervisor_employee_id)?.full_name ?? null : null,
         department_name: shift.department_id ? departmentsById.get(shift.department_id)?.name ?? null : null,
@@ -604,9 +606,15 @@ export const attendanceService = {
 
   // UC50/UC51 — Today's ratio + timeline, and the Past Attendance Record calendar, both need
   // records scoped to an explicit date window instead of the company's entire history.
-  async getAttendanceByDateRange(company_id: string, from_date: string, to_date: string): Promise<AttendanceDashboardRecord[]> {
+  // BUG-023 (root cause A) — this path had no viewer/role concept at all, unlike
+  // shiftService.getTimelineShifts' filterShiftsForViewer, so Manager/Employee's merged Shift
+  // Calendar (which reads attendance via this range query, not the Timeline path) leaked Draft
+  // shifts that hadn't been published yet.
+  async getAttendanceByDateRange(company_id: string, from_date: string, to_date: string, viewer?: { role?: string }): Promise<AttendanceDashboardRecord[]> {
     const assignments = await attendanceRepository.getAssignmentsByCompanyAndDateRange(company_id, from_date, to_date)
-    return buildDashboardRecords(company_id, assignments)
+    const records = await buildDashboardRecords(company_id, assignments)
+    if (viewer?.role === 'Owner' || viewer?.role === 'Partner' || !viewer?.role) return records
+    return records.filter(r => r.shift.publication_status === 'published')
   },
 
   // UC56 — the only action a reviewer can take on an attendance record: correct its clock/break
@@ -1108,6 +1116,14 @@ export const attendanceService = {
     if (existingForWeek.some(r => r.status === 'approved' || r.status === 'modified')) {
       throw new Error('This week has already been reviewed and cannot be submitted again')
     }
+
+    // BUG-044 — requesting a day off on a date the requester is already rostered for used to
+    // sail through with no warning, silently producing a conflict Owner/Partner would only spot
+    // by noticing it themselves when reviewing the queue.
+    const conflictingDates = await attendanceRepository.getShiftDatesForUserWithinDates(requesterId, input.dates)
+    if (conflictingDates.length > 0) {
+      throw new Error(`You already have a shift scheduled on ${conflictingDates.sort().join(', ')} — that date can't be requested off`)
+    }
     // Legacy rejected rows should not block the current no-reject workflow.
     await attendanceRepository.deleteFixedOffDayRequestsByUserAndWeek(requesterId, input.company_id, targetWeekStart, ['rejected'])
 
@@ -1205,11 +1221,16 @@ export const attendanceService = {
     if (visibleSwaps.length > 0) {
       const assignmentIds = [...new Set(visibleSwaps.flatMap(s => [s.requester_assignment_id, s.counterpart_assignment_id]))]
       const userIds = [...new Set(visibleSwaps.flatMap(s => [s.requester_id, s.counterpart_id, s.reviewed_by]).filter(Boolean) as string[])]
+      // Batched — one query across all assignment ids instead of one round-trip per assignment.
+      // getShiftSwapRequests (the reviewer queue) already got this fix; this requester-facing
+      // sibling had drifted from it, which was making "My Requests" take 1-2s+ per load — each
+      // assignment/task-count/movable-task lookup was its own separate Supabase round trip
+      // (confirmed 2026-07-31).
       const [assignmentsArr, users] = await Promise.all([
-        Promise.all(assignmentIds.map(id => attendanceRepository.getShiftAssignmentById(id))),
+        attendanceRepository.getShiftAssignmentsByIds(assignmentIds),
         attendanceRepository.getUsersByIds(userIds),
       ])
-      const assignmentsById = new Map(assignmentsArr.filter(Boolean).map(a => [a!.id, a!]))
+      const assignmentsById = new Map(assignmentsArr.map(a => [a.id, a]))
       const usersById = indexById(users)
 
       // Auto-reject any pending request whose shift date has arrived — see autoExpireSwapRequestIfNeeded.
@@ -1223,15 +1244,44 @@ export const attendanceService = {
         req.status = 'rejected'
       }))
 
-      const [taskCounts, movableTasks] = await Promise.all([
-        Promise.all(assignmentIds.map(id => attendanceRepository.getTasksByShiftAssignment(id).then(t => ({ id, count: t.length })))),
-        Promise.all(assignmentIds.map(id => attendanceRepository.getMovableTasksByShiftAssignment(id).then(tasks => ({ id, tasks })))),
+      const shiftIds = [...new Set(assignmentIds.map(id => assignmentsById.get(id)?.shift_id).filter(Boolean) as string[])]
+      const [shiftTasks, shiftMovableTasks] = await Promise.all([
+        attendanceRepository.getTasksByShiftIds(shiftIds),
+        attendanceRepository.getMovableTasksByShiftIds(shiftIds),
       ])
-      const taskCountById = new Map(taskCounts.map(tc => [tc.id, tc.count]))
-      const movableTasksById = new Map(movableTasks.map(mt => [mt.id, mt.tasks]))
-      const deptIds = [...new Set(assignmentsArr.filter(Boolean).map(a => a!.shifts?.department_id).filter(Boolean) as string[])]
+      const taskCountById = new Map(assignmentIds.map(id => {
+        const shiftId = assignmentsById.get(id)?.shift_id
+        return [id, shiftTasks.filter(t => t.shift_id === shiftId).length]
+      }))
+      const movableTasksById = new Map(assignmentIds.map(id => {
+        const assignment = assignmentsById.get(id)
+        const tasks = shiftMovableTasks
+          .filter(t => t.shift_id === assignment?.shift_id && t.assigned_user_id === assignment?.user_id)
+          .map(({ id, title, description, status, priority, due_at, created_at }) => ({ id, title, description, status, priority, due_at, created_at }))
+        return [id, tasks]
+      }))
+      const deptIds = [...new Set(assignmentsArr.map(a => a.shifts?.department_id).filter(Boolean) as string[])]
       const depts = await attendanceRepository.getDepartmentsByIds(deptIds)
       const deptsById = new Map(depts.map(d => [d.id, d.name]))
+
+      // Memoized within this call: "My Requests" is usually the same requester (and often the
+      // same department) across several pending swaps, so without this the loop below was
+      // re-fetching the identical settings row and the identical monthly-usage count once per
+      // request instead of once per distinct (role, department) / (company, user) pair.
+      const settingsCache = new Map<string, Promise<ShiftSwapRuleConfig | null>>()
+      const cachedSwapRuleSettings = (cid: string, role: string, deptId: string | null) => {
+        const key = `${cid}:${role}:${deptId ?? ''}`
+        let cached = settingsCache.get(key)
+        if (!cached) { cached = resolveSwapRuleSettings(cid, role, deptId); settingsCache.set(key, cached) }
+        return cached
+      }
+      const usageCache = new Map<string, Promise<number>>()
+      const cachedApprovedSwapCount = (cid: string, userId: string, start: string, end: string) => {
+        const key = `${cid}:${userId}:${start}:${end}`
+        let cached = usageCache.get(key)
+        if (!cached) { cached = attendanceRepository.countApprovedShiftSwapsForUser(cid, userId, start, end); usageCache.set(key, cached) }
+        return cached
+      }
 
       swapsView = await Promise.all(visibleSwaps.map(async req => {
         const reqAss = assignmentsById.get(req.requester_assignment_id)
@@ -1248,11 +1298,11 @@ export const attendanceService = {
         let deadline_exceeded: boolean | null = null
         if (req.status === 'pending') {
           const departmentId = reqAss?.shifts?.department_id ?? ctrAss?.shifts?.department_id ?? null
-          const settings = await resolveSwapRuleSettings(req.company_id, requester?.role ?? '', departmentId)
+          const settings = await cachedSwapRuleSettings(req.company_id, requester?.role ?? '', departmentId)
           if (settings?.monthly_swap_limit != null) {
             monthly_swap_limit = settings.monthly_swap_limit
             const { start, end } = currentCalendarMonthRange()
-            const used = await attendanceRepository.countApprovedShiftSwapsForUser(req.company_id, req.requester_id, start, end)
+            const used = await cachedApprovedSwapCount(req.company_id, req.requester_id, start, end)
             requester_swaps_left = Math.max(0, settings.monthly_swap_limit - used)
             limit_exceeded = requester_swaps_left <= 0
           }

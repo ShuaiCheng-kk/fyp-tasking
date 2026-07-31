@@ -3,7 +3,7 @@
 
 import { reportRepository } from '@/repositories/owner/reportRepository'
 import { recruitmentRepository } from '@/repositories/owner/recruitmentRepository'
-import { sgtInstant } from '@/lib/singaporeTime'
+import { sgtInstant, sgtShiftEndInstant } from '@/lib/singaporeTime'
 import { AttendanceRecord } from '@/types/Attendance'
 import {
   CasualReliabilityRow,
@@ -55,7 +55,9 @@ function classifyAttendance(
   record: AttendanceRecord | null,
   now: Date,
 ): { absent: boolean; late: boolean; countable: boolean } {
-  const shiftEnd = combineDateTime(shift.shift_date, shift.end_time)
+  // BUG-021: an overnight shift's end (end_time <= start_time) falls on the following Singapore
+  // calendar day — sgtShiftEndInstant resolves that, instead of treating it as same-day.
+  const shiftEnd = sgtShiftEndInstant(shift.shift_date, shift.start_time, shift.end_time)
   // Shifts that have not ended yet can't be judged — excluded from every attendance rate.
   if (now.getTime() <= shiftEnd.getTime()) return { absent: false, late: false, countable: false }
 
@@ -138,7 +140,7 @@ async function buildPeriodData(filters: ReportFilters, now: Date): Promise<Perio
   // A worker who cancelled a confirmed job may have no shift assignment at all this period —
   // their name still has to resolve for the risk list, so their ids join the lookup too.
   const cancellingUserIds = [...new Set(workerCancellations.map(c => c.user_id))]
-  const combinedUserIds = [...new Set([...assignments.map(a => a.user_id), ...deadlineTaskAssigneeIds, ...rangeTaskAssigneeIds, ...cancellingUserIds])]
+  const combinedUserIds = [...new Set([...assignments.map(a => a.user_id).filter((id): id is string => !!id), ...deadlineTaskAssigneeIds, ...rangeTaskAssigneeIds, ...cancellingUserIds])]
   const [attendance, users, applicants, invitations] = await Promise.all([
     reportRepository.getAttendanceByAssignmentIds(assignments.map(a => a.id)),
     reportRepository.getUsersByIds(combinedUserIds),
@@ -214,14 +216,18 @@ async function buildPeriodData(filters: ReportFilters, now: Date): Promise<Perio
     const row = ensureRow(shift.department_id)
     row.assignments += 1
 
-    const user = usersById.get(assignment.user_id)
-    const isCasual = user?.role === 'Casual Worker'
-    const isInternal = user?.role === 'Manager' || user?.role === 'Employee'
+    // A removed member's role no longer resolves — their attendance still counts toward the
+    // department's raw totals above, but the per-worker Casual/Internal breakdowns below need a
+    // live role to classify into, so they're skipped for it (name/labor cost history is preserved
+    // elsewhere via user_name_snapshot; this is just the per-person reliability rows).
+    const user = assignment.user_id ? usersById.get(assignment.user_id) : undefined
+    const isCasual = !!assignment.user_id && user?.role === 'Casual Worker'
+    const isInternal = !!assignment.user_id && (user?.role === 'Manager' || user?.role === 'Employee')
     const record = recordByAssignmentId.get(assignment.id) ?? null
     const verdict = classifyAttendance(shift, record, now)
 
     // Casual Worker attendance drives the existing attendance_rate + per-worker reliability rows.
-    if (isCasual) {
+    if (isCasual && assignment.user_id) {
       const stats = casualStats.get(assignment.user_id) ?? {
         user_id: assignment.user_id,
         full_name: user?.full_name ?? '',

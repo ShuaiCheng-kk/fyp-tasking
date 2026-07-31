@@ -6,6 +6,7 @@ import { createBrowserClient } from '@supabase/ssr'
 import { Crown, X, Check, Pencil, Camera } from 'lucide-react'
 import DatePickerField from '@/components/DatePickerField'
 import Toast from '@/components/Toast'
+import { isValidImageFile } from '@/lib/imageValidation'
 
 const keyframes = `
   @keyframes oubOverlayIn  { from { opacity: 0 } to { opacity: 1 } }
@@ -127,10 +128,15 @@ export default function OwnerUserBadge({ userId, companyId }: { userId: string; 
 
   const handlePhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
+    e.target.value = ''
     if (!file) return
     setUploadingPhoto(true)
     setError('')
     try {
+      if (!(await isValidImageFile(file))) {
+        setError('That file is not a valid image. Please choose a photo.')
+        return
+      }
       const supabase = createBrowserClient(
         process.env.NEXT_PUBLIC_SUPABASE_URL!,
         process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,

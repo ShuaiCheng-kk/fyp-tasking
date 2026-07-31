@@ -616,23 +616,22 @@ describe('taskService — Task (UC12-23)', () => {
       expect(parent.status).toBe('In Progress')
     })
 
-    it('promotes the parent and all sub-tasks to Review once the last one is ticked', async () => {
+    it('does NOT auto-promote the parent to Review once the last sub-task is ticked (2026-08-02 — the assignee must drag it themselves)', async () => {
       const completedA = { ...subA, is_completed: true }
       const completedB = { ...subB, is_completed: true }
       vi.mocked(taskRepository.getTaskById).mockImplementation(async id =>
         id === 'sub-c' ? subC : parentInProgress
       )
       vi.mocked(taskRepository.getSubTasks).mockResolvedValue([completedA, completedB, subC])
-      vi.mocked(taskRepository.updateTask).mockImplementation(async (id, input) =>
-        id === 'parent-1' ? { ...parentInProgress, ...input } : { ...subC, ...input }
-      )
+      vi.mocked(taskRepository.updateTask).mockResolvedValue({ ...subC, is_completed: true })
 
       const [updatedSub, parent] = await taskService.completeSubTask('sub-c', 'employee-1')
 
       expect(updatedSub.is_completed).toBe(true)
-      expect(taskRepository.updateTask).toHaveBeenCalledWith('parent-1', { status: 'Review' })
-      expect(taskRepository.updateSubTasksByParent).toHaveBeenCalledWith('parent-1', { status: 'Review' })
-      expect(parent.status).toBe('Review')
+      expect(taskRepository.updateTask).toHaveBeenCalledWith('sub-c', { is_completed: true })
+      expect(taskRepository.updateTask).not.toHaveBeenCalledWith('parent-1', expect.anything())
+      expect(taskRepository.updateSubTasksByParent).not.toHaveBeenCalled()
+      expect(parent.status).toBe('In Progress')
     })
 
     it('is a no-op when the sub-task is already completed', async () => {

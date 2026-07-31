@@ -6,11 +6,14 @@ import { authService } from '@/services/auth/authService'
 
 export async function POST(req: NextRequest) {
   try {
-    const { password } = await req.json()
+    const { user_id, password } = await req.json()
+    if (!user_id || typeof user_id !== 'string') {
+      return NextResponse.json({ success: false, message: 'user_id is required' }, { status: 400 })
+    }
     if (!password || password.length < 6) {
       return NextResponse.json({ success: false, message: 'Password must be at least 6 characters' }, { status: 400 })
     }
-    await authService.resetPassword(password)
+    await authService.resetPassword(user_id, password)
     return NextResponse.json({ success: true })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Something went wrong'

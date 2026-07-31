@@ -1,5 +1,4 @@
 import { authRepository } from '@/repositories/auth/authRepository'
-import { companyRepository } from '@/repositories/company/companyRepository'
 import { User } from '@/types/auth.types'
 
 const ROLE_ORDER: Record<string, number> = { Owner: 0, Partner: 1, Manager: 2, Employee: 3, 'Casual Worker': 4, 'Guest User': 5 }
@@ -170,31 +169,6 @@ export const userService = {
 
   async updateProfile(id: string, patch: { full_name?: string; phone_number?: string | null; date_of_birth?: string | null; profile_photo_url?: string | null }): Promise<User> {
     return authRepository.updateProfile(id, patch)
-  },
-
-  async leaveCompany(user_id: string, company_id: string): Promise<{ accountDeleted: boolean }> {
-    const user = await authRepository.findById(user_id)
-    if (!user) throw new Error('User not found')
-
-    await companyRepository.nullifyUserCompanyId(user_id, company_id)
-    await companyRepository.expireInvitationCodesForUser(user_id, company_id)
-
-    const { supabase } = await import('@/lib/supabase')
-    const { data: remaining } = await supabase
-      .from('users')
-      .select('company_id')
-      .eq('id', user_id)
-      .single()
-
-    if (remaining?.company_id) {
-      return { accountDeleted: false }
-    }
-
-    await supabase.from('messages').delete().or(`from_user_id.eq.${user_id},to_user_id.eq.${user_id}`)
-    await supabase.from('manager_departments').delete().eq('manager_id', user_id)
-    await authRepository.deleteById(user_id)
-    await authRepository.deleteAuthUser(user.supabase_auth_id)
-    return { accountDeleted: true }
   },
 
 }

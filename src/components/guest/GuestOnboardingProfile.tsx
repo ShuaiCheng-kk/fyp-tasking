@@ -47,6 +47,9 @@ export default function GuestOnboardingProfile({
     const name = certChoice === CUSTOM_OPTION ? certCustomName.trim() : certChoice
     if (!name) { setError('Choose a certificate or enter a name.'); return }
     if (!certFile) { setError('Please upload a file to prove you hold this certificate.'); return }
+    if (certificates.some(c => c.name.trim().toLowerCase() === name.toLowerCase())) {
+      setError(`You've already added "${name}".`); return
+    }
     setCertBusy(true); setError('')
     try {
       const form = new FormData()
@@ -205,7 +208,12 @@ export default function GuestOnboardingProfile({
                 placeholder="Select a certificate…"
                 height={CERT_ROW_HEIGHT}
                 options={[
-                  ...PRESET_CERTIFICATES.map(name => ({ value: name, label: name })),
+                  // Already-added certificates drop out of the picklist — don't rely on the
+                  // duplicate-name error after the fact (2026-07-30, same fix as the sibling
+                  // CertificatesCard in WorkerProfileSections.tsx).
+                  ...PRESET_CERTIFICATES
+                    .filter(name => !certificates.some(c => c.name.trim().toLowerCase() === name.toLowerCase()))
+                    .map(name => ({ value: name, label: name })),
                   { value: CUSTOM_OPTION, label: '+ Add custom certificate' },
                 ]}
               />

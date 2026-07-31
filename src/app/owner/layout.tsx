@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
 import AiScheduleStatusWidget from '@/components/shifts/AiScheduleStatusWidget'
+import { useReloadOnBfcacheRestore } from '@/hooks/useReloadOnBfcacheRestore'
 
 const ROLE_DASHBOARD: Record<string, string> = {
   Partner: '/partner/dashboard',
@@ -19,6 +20,7 @@ export default function OwnerLayout({
   const router = useRouter()
   const [checking, setChecking] = useState(true)
   const [showDeletedModal, setShowDeletedModal] = useState(false)
+  useReloadOnBfcacheRestore()
 
   const handleExit = async () => {
     const supabase = createBrowserClient(

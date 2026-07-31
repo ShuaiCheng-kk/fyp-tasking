@@ -67,7 +67,7 @@ const DUE_SHIFT = {
   assignedUserIds: ['worker-1'],
 }
 
-const POSTING = { id: 'job-1', title: 'Warehouse Assistant', company_name: 'Acme Events', location: '123 Warehouse Rd', created_by: 'owner-1' }
+const POSTING = { id: 'job-1', title: 'Warehouse Assistant', company_name: 'Acme Events', location: '123 Warehouse Rd', address: '123 Warehouse Rd, Singapore', created_by: 'owner-1' }
 
 describe('shiftReminderService.sendDueShiftReminders', () => {
   beforeEach(() => {

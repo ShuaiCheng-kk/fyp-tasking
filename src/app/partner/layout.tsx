@@ -1,8 +1,9 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
 import AiScheduleStatusWidget from '@/components/shifts/AiScheduleStatusWidget'
+import { useReloadOnBfcacheRestore } from '@/hooks/useReloadOnBfcacheRestore'
 
 const ROLE_DASHBOARD: Record<string, string> = {
   Owner: '/owner/dashboard',
@@ -19,6 +20,8 @@ export default function PartnerLayout({
   const router = useRouter()
   const [checking, setChecking] = useState(true)
   const [showDeletedModal, setShowDeletedModal] = useState(false)
+  const authUserIdRef = useRef<string | null>(null)
+  useReloadOnBfcacheRestore()
 
   const handleExit = async () => {
     const supabase = createBrowserClient(
@@ -64,6 +67,8 @@ export default function PartnerLayout({
         return
       }
 
+      authUserIdRef.current = userId
+
       const res = await fetch(`/api/user/me?user_id=${userId}`)
       if (res.status === 404) {
         setShowDeletedModal(true)
@@ -86,6 +91,31 @@ export default function PartnerLayout({
 
     return () => subscription.unsubscribe()
   }, [router])
+
+  // Poll every 3 s to detect removal while the Partner stays on the page (BUG-051) — mirrors
+  // EmployeeLayout's equivalent check, which this layout was missing: without it, a Partner
+  // already on a page when removed never sees the "account removed" modal until they navigate.
+  useEffect(() => {
+    if (showDeletedModal) return
+    const interval = setInterval(async () => {
+      const uid = authUserIdRef.current
+      if (!uid) return
+      try {
+        const res = await fetch(`/api/user/me?user_id=${uid}`)
+        if (res.status === 404) {
+          clearInterval(interval)
+          setShowDeletedModal(true)
+          return
+        }
+        const data = await res.json()
+        if (!data.success || !data.user?.role) {
+          clearInterval(interval)
+          setShowDeletedModal(true)
+        }
+      } catch {}
+    }, 3000)
+    return () => clearInterval(interval)
+  }, [showDeletedModal])
 
   if (showDeletedModal) {
     return (

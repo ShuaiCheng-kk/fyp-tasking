@@ -16,14 +16,25 @@ vi.mock('@/lib/supabase', () => ({
   createClient: () => ({}),
 }))
 
+const mockAdminClient = vi.hoisted(() => ({
+  auth: {
+    admin: {
+      getUserById: vi.fn(),
+      updateUserById: vi.fn(),
+    },
+    signInWithPassword: vi.fn(),
+  },
+}))
+
 vi.mock('@supabase/supabase-js', () => ({
-  createClient: () => ({}),
+  createClient: () => mockAdminClient,
 }))
 
 vi.mock('@/repositories/auth/authRepository', () => ({
   authRepository: {
     findByAuthId: vi.fn(),
     createUser: vi.fn(),
+    updateAuthPassword: vi.fn(),
   },
 }))
 
@@ -119,18 +130,38 @@ describe('authService — Account & Authentication (UC82-85, UC88)', () => {
   })
 
   describe('resetPassword (UC84)', () => {
-    it('updates the authenticated user password', async () => {
-      mockSupabase.auth.updateUser.mockResolvedValue({ error: null })
-
-      await authService.resetPassword('NewPassword123!')
-
-      expect(mockSupabase.auth.updateUser).toHaveBeenCalledWith({ password: 'NewPassword123!' })
+    beforeEach(() => {
+      mockAdminClient.auth.admin.getUserById.mockResolvedValue({
+        data: { user: { email: 'owner@test.com' } },
+        error: null,
+      })
     })
 
-    it('throws when Supabase rejects the new password', async () => {
-      mockSupabase.auth.updateUser.mockResolvedValue({ error: { message: 'Password too weak' } })
+    it('updates the password via the admin API, invalidating other sessions', async () => {
+      // Signing in with the "new" password fails — it genuinely differs from the current one.
+      mockAdminClient.auth.signInWithPassword.mockResolvedValue({ data: { user: null }, error: { message: 'Invalid login credentials' } })
+      vi.mocked(authRepository.updateAuthPassword).mockResolvedValue(undefined)
 
-      await expect(authService.resetPassword('123')).rejects.toThrow('Password too weak')
+      await authService.resetPassword('auth-user-1', 'NewPassword123!')
+
+      expect(authRepository.updateAuthPassword).toHaveBeenCalledWith('auth-user-1', 'NewPassword123!')
+    })
+
+    it('throws when the admin API rejects the new password', async () => {
+      mockAdminClient.auth.signInWithPassword.mockResolvedValue({ data: { user: null }, error: { message: 'Invalid login credentials' } })
+      vi.mocked(authRepository.updateAuthPassword).mockRejectedValue(new Error('Password too weak'))
+
+      await expect(authService.resetPassword('auth-user-1', '123')).rejects.toThrow('Password too weak')
+    })
+
+    it('throws when the new password is the same as the current one (M8-CHAIN-01)', async () => {
+      // Signing in with the "new" password succeeds — it's identical to the current password.
+      mockAdminClient.auth.signInWithPassword.mockResolvedValue({ data: { user: { id: 'auth-user-1' } }, error: null })
+
+      await expect(authService.resetPassword('auth-user-1', 'SamePassword123!')).rejects.toThrow(
+        'New password must be different from your current password'
+      )
+      expect(authRepository.updateAuthPassword).not.toHaveBeenCalled()
     })
   })
 

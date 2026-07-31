@@ -9,6 +9,7 @@ import { ModalOverlay, ModalBox, ModalHeader, modalInputStyle, modalLabelStyle, 
 import Spinner from '@/components/Spinner'
 import Toast from '@/components/Toast'
 import DepartmentBadge from '@/components/DepartmentBadge'
+import { EmptyState } from '@/components/panel'
 import { setDeptColorOverrides } from '@/lib/deptColor'
 import { useIsCompactViewport } from '@/hooks/useIsCompactViewport'
 import { useResourceInvalidation } from '@/components/realtime/RealtimeNotificationsProvider'
@@ -45,6 +46,7 @@ type Conversation = {
   partnerId: string
   partnerName: string
   partnerRole: string
+  partnerPhotoUrl?: string | null
   lastMessage: string
   lastTime: string
   unreadCount: number
@@ -278,6 +280,7 @@ export default function CommunicationView({ renderSidebar, basePath }: {
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set())
   const [search, setSearch] = useState('')
   const [deletingConvId, setDeletingConvId] = useState<string | null>(null)
+  const [deleteConvConfirmId, setDeleteConvConfirmId] = useState<string | null>(null)
 
   // Multi-panel chat state (up to 4 panels)
   const [openPanelIds, setOpenPanelIds] = useState<string[]>([])
@@ -648,6 +651,15 @@ export default function CommunicationView({ renderSidebar, basePath }: {
     } finally { setPosting(false) }
   }
 
+  // X / Cancel — unlike every other modal in this file, this one used to leave annTitle/annContent
+  // populated after closing without posting, so reopening it showed stale leftover text (BUG-013).
+  function closeNewAnnModal() {
+    setShowNewAnnModal(false)
+    setAnnTitle('')
+    setAnnContent('')
+    setAnnDeptId('company-wide')
+  }
+
   async function handleDeleteAnnouncement(announcementId: string) {
     if (!internalUserId) return
     setDeleting(true)
@@ -716,6 +728,11 @@ export default function CommunicationView({ renderSidebar, basePath }: {
   const canPostCompanyWide = ['owner', 'partner'].includes(userRole?.toLowerCase())
   // Managers may only broadcast within their own department — never company-wide, never another department.
   const isManagerRole = userRole === 'Manager'
+  // O/P never see Manager-posted announcements (ownerAnnouncementRepository's isOwnerOrPartner
+  // branch already filters those out server-side) and don't post to each other in practice, so
+  // "From Others" never has anything meaningful to show them — only Manager needs it (sees O/P's
+  // company-wide posts here, posts their own department ones in "My Announcements").
+  const isOwnerOrPartnerRole = userRole === 'Owner' || userRole === 'Partner'
   const isManagerCompact = useIsCompactViewport(1180)
   const managerCommGridStyle: React.CSSProperties = isManagerRole && isManagerCompact
     ? { flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gridTemplateRows: 'minmax(240px, 0.48fr) minmax(320px, 0.52fr)', gap: 12, overflow: 'hidden' }
@@ -746,6 +763,7 @@ export default function CommunicationView({ renderSidebar, basePath }: {
         partnerId: member.id,
         partnerName: member.full_name,
         partnerRole: member.role,
+        partnerPhotoUrl: member.profile_photo_url,
         lastMessage: '',
         lastTime: new Date().toISOString(),
         unreadCount: 0,
@@ -837,6 +855,7 @@ export default function CommunicationView({ renderSidebar, basePath }: {
       showErrorToast(err instanceof Error ? err.message : 'Failed to delete conversation')
     } finally {
       setDeletingConvId(null)
+      setDeleteConvConfirmId(null)
     }
   }
 
@@ -1016,8 +1035,13 @@ export default function CommunicationView({ renderSidebar, basePath }: {
           <span style={{ fontSize: 11.5, color: '#9CA3AF', fontWeight: 500, flexShrink: 0 }}>{formatAnnouncementTimestamp(ann)}</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-          <span style={{ fontWeight: unread ? 800 : 600, fontSize: 13, lineHeight: '15px', color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flex: 1 }}>
-            {ann.title}
+          <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, flex: 1 }}>
+            {/* Bold weight alone (below) was too subtle to read as "unread" (BUG-053) — an explicit
+                dot matches the same red-dot convention used everywhere else in the app. */}
+            {unread && <span aria-hidden="true" style={{ width: 7, height: 7, borderRadius: '50%', background: '#EF4444', flexShrink: 0 }} />}
+            <span style={{ fontWeight: unread ? 800 : 600, fontSize: 13, lineHeight: '15px', color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
+              {ann.title}
+            </span>
           </span>
           {isMine && (
             <div style={{ display: 'flex', gap: 4, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
@@ -1267,7 +1291,7 @@ export default function CommunicationView({ renderSidebar, basePath }: {
                           }}
                         >
                           <button onClick={() => openPanelSolo(conv.partnerId)} style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0, background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', padding: 0 }}>
-                            <Avatar name={conv.partnerName} size={44} role={conv.partnerRole} photoUrl={companyMembers.find(m => m.id === conv.partnerId)?.profile_photo_url ?? null} />
+                            <Avatar name={conv.partnerName} size={44} role={conv.partnerRole} photoUrl={conv.partnerPhotoUrl ?? null} />
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 4 }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
@@ -1297,7 +1321,7 @@ export default function CommunicationView({ renderSidebar, basePath }: {
                           </button>
                           <span style={{ position: 'absolute', top: 16, right: 12, fontSize: 11.5, color: '#9CA3AF', fontWeight: 500 }}>{formatTime(conv.lastTime)}</span>
                           <button
-                            onClick={() => deleteConversation(conv.partnerId)}
+                            onClick={() => setDeleteConvConfirmId(conv.partnerId)}
                             title="Delete conversation"
                             disabled={deletingConvId === conv.partnerId}
                             style={{ position: 'absolute', bottom: 16, right: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', width: 24, height: 24, background: 'none', border: 'none', borderRadius: 7, cursor: 'pointer', color: '#DC2626', transition: 'color 0.15s' }}
@@ -1323,14 +1347,14 @@ export default function CommunicationView({ renderSidebar, basePath }: {
                       const draggedListId = e.dataTransfer.getData('listPartnerId')
                       if (draggedListId) openPanel(draggedListId)
                     }}
-                    style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#FFFFFF', borderRadius: 14, border: '1px solid #E5E7EB', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
-                    <div style={{ textAlign: 'center', color: '#94A3B8' }}>
-                      <div style={{ width: 56, height: 56, borderRadius: 18, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px', color: '#F97316' }}>
-                        <MessageSquare size={24} strokeWidth={1.5} />
-                      </div>
-                      <p style={{ margin: 0, fontWeight: 700, fontSize: 14, color: '#374151' }}>Select a conversation to start chatting</p>
-                      <p style={{ margin: '6px 0 0', fontSize: 12, color: '#9CA3AF', fontWeight: 500 }}>Drag a conversation onto an open one to view up to 4 side by side</p>
-                    </div>
+                    style={{ flex: 1, display: 'flex', background: '#FFFFFF', borderRadius: 14, border: '1px solid #E5E7EB', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
+                    <EmptyState
+                      variant="iconBox"
+                      fill
+                      icon={<MessageSquare size={24} strokeWidth={1.5} />}
+                      message="Select a conversation to start chatting"
+                      subtitle="Drag a conversation onto an open one to view up to 4 side by side"
+                    />
                   </div>
                 ) : (
                   /* Panel grid — layout depends on count */
@@ -1394,7 +1418,7 @@ export default function CommunicationView({ renderSidebar, basePath }: {
                             style={{ width: '92%', margin: '12px auto 0', padding: '10px 12px', background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 12, display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, cursor: openPanelIds.length > 1 ? 'grab' : 'default', userSelect: 'none' }}
                             title={openPanelIds.length > 1 ? 'Drag to swap panels' : undefined}
                           >
-                            <Avatar name={conv.partnerName} size={38} role={conv.partnerRole} photoUrl={companyMembers.find(m => m.id === conv.partnerId)?.profile_photo_url ?? null} />
+                            <Avatar name={conv.partnerName} size={38} role={conv.partnerRole} photoUrl={conv.partnerPhotoUrl ?? null} />
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                                 <span style={{ fontWeight: 800, fontSize: 15.5, color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{conv.partnerName}</span>
@@ -1414,7 +1438,7 @@ export default function CommunicationView({ renderSidebar, basePath }: {
                             </button>
                             {/* Delete button */}
                             <button
-                              onClick={() => deleteConversation(partnerId)}
+                              onClick={() => setDeleteConvConfirmId(partnerId)}
                               title="Delete conversation"
                               disabled={deletingConvId === partnerId}
                               style={{ flexShrink: 0, width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#FEF2F2', border: '1.5px solid rgba(220,38,38,0.3)', borderRadius: 9, cursor: 'pointer', color: '#DC2626', transition: 'all 0.15s' }}
@@ -1439,7 +1463,7 @@ export default function CommunicationView({ renderSidebar, basePath }: {
                           <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 7 }}>
                             {msgs.length === 0 && (
                               <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
-                                <Avatar name={conv.partnerName} size={64} role={conv.partnerRole} photoUrl={companyMembers.find(m => m.id === conv.partnerId)?.profile_photo_url ?? null} />
+                                <Avatar name={conv.partnerName} size={64} role={conv.partnerRole} photoUrl={conv.partnerPhotoUrl ?? null} />
                                 <p style={{ margin: '16px 0 0', fontWeight: 700, fontSize: 15, color: '#374151' }}>No messages yet</p>
                                 <p style={{ margin: '5px 0 0', fontSize: 12.5, color: '#9CA3AF', fontWeight: 500 }}>Send a message to start chatting with {conv.partnerName}</p>
                               </div>
@@ -1601,15 +1625,13 @@ export default function CommunicationView({ renderSidebar, basePath }: {
 
                   <div style={{ overflowY: 'auto', flex: 1, minHeight: 0, padding: '14px 10px 10px' }}>
                     {myAnnouncements.length === 0 ? (
-                      <div style={{ height: 120, borderRadius: 12, background: '#F8FAFC', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94A3B8', gap: 8, fontWeight: 600, fontSize: 13 }}>
-                        <Megaphone size={24} strokeWidth={1.5} />
-                        {annSearch ? 'No matching announcements' : 'No announcements yet'}
-                      </div>
+                      <EmptyState icon={<Megaphone size={24} strokeWidth={1.5} />} message={annSearch ? 'No matching announcements' : 'No announcements yet'} />
                     ) : myAnnouncements.map((ann, i) => renderAnnouncementCard(ann, i))}
                   </div>
                 </div>
 
-                {/* From Others (Partners, Managers, etc.) */}
+                {/* From Others (Partners, Managers, etc.) — Manager-only, see isOwnerOrPartnerRole above */}
+                {!isOwnerOrPartnerRole && (
                 <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', background: '#FFFFFF', borderRadius: 14, border: '1px solid #E5E7EB', boxShadow: '0 1px 4px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '16px 18px', borderBottom: '1px solid #E2E8F0', flexShrink: 0 }}>
                     <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -1664,13 +1686,11 @@ export default function CommunicationView({ renderSidebar, basePath }: {
                   </div>
                   <div style={{ overflowY: 'auto', flex: 1, minHeight: 0, padding: '10px 10px 10px' }}>
                     {othersAnnouncements.length === 0 ? (
-                      <div style={{ height: 120, borderRadius: 12, background: '#F8FAFC', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94A3B8', gap: 8, fontWeight: 600, fontSize: 13 }}>
-                        <Megaphone size={24} strokeWidth={1.5} />
-                        {othersSearch || othersDeptFilter !== 'all' ? 'No matching announcements' : 'No announcements from others yet'}
-                      </div>
+                      <EmptyState icon={<Megaphone size={24} strokeWidth={1.5} />} message={othersSearch || othersDeptFilter !== 'all' ? 'No matching announcements' : 'No announcements from others yet'} />
                     ) : othersAnnouncements.map((ann, i) => renderAnnouncementCard(ann, i))}
                   </div>
                 </div>
+                )}
               </div>
 
               {/* Right: detail */}
@@ -1729,13 +1749,8 @@ export default function CommunicationView({ renderSidebar, basePath }: {
                     </div>
                   </>
                 ) : (
-                  <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24, background: '#FFFFFF' }}>
-                    <div style={{ textAlign: 'center', color: '#94A3B8' }}>
-                      <div style={{ width: 56, height: 56, borderRadius: 18, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px', color: '#F97316' }}>
-                        <Megaphone size={24} strokeWidth={1.5} />
-                      </div>
-                      <p style={{ margin: 0, fontWeight: 600, fontSize: 14 }}>Select an announcement to read</p>
-                    </div>
+                  <div style={{ flex: 1, background: '#FFFFFF' }}>
+                    <EmptyState variant="iconBox" fill icon={<Megaphone size={24} strokeWidth={1.5} />} message="Select an announcement to read" />
                   </div>
                 )}
               </div>
@@ -1748,6 +1763,29 @@ export default function CommunicationView({ renderSidebar, basePath }: {
 
       <Toast message={successToast} />
       <Toast message={errorToast} variant="error" />
+
+      {/* ── Delete Conversation Confirmation Modal ── */}
+      {deleteConvConfirmId && (
+        <ModalOverlay onClose={() => setDeleteConvConfirmId(null)} maxWidth="400px">
+          <ModalBox>
+            <ModalHeader title="Delete Conversation" icon={<Trash2 size={15} color="#fff" strokeWidth={2.5} />} iconBg="linear-gradient(135deg, #EF4444, #DC2626)" onClose={() => setDeleteConvConfirmId(null)} />
+            <div style={{ padding: '20px 24px 0' }}>
+              <p style={{ fontSize: '0.9375rem', color: '#374151', margin: 0, lineHeight: 1.6 }}>
+                This permanently deletes every message in this conversation for both you and the other person — not just from your own view. This cannot be undone.
+              </p>
+            </div>
+            <div style={{ padding: '20px 24px 20px', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button onClick={() => setDeleteConvConfirmId(null)} disabled={deletingConvId === deleteConvConfirmId}
+                style={{ padding: '7px 16px', background: 'none', border: '1.5px solid #E5E7EB', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#6B7280', cursor: 'pointer' }}>
+                Cancel
+              </button>
+              <button onClick={() => deleteConversation(deleteConvConfirmId)} disabled={deletingConvId === deleteConvConfirmId} style={modalDestructiveButtonStyle(deletingConvId === deleteConvConfirmId)}>
+                {deletingConvId === deleteConvConfirmId ? <Spinner size={13} /> : <Trash2 size={13} />} Delete
+              </button>
+            </div>
+          </ModalBox>
+        </ModalOverlay>
+      )}
 
       {/* ── Delete Confirmation Modal ── */}
       {deleteConfirmId && (
@@ -1814,9 +1852,9 @@ export default function CommunicationView({ renderSidebar, basePath }: {
 
       {/* ── New Announcement Modal ── */}
       {showNewAnnModal && (
-        <ModalOverlay onClose={() => setShowNewAnnModal(false)} maxWidth="500px">
+        <ModalOverlay onClose={closeNewAnnModal} maxWidth="500px">
           <ModalBox>
-            <ModalHeader title="New Announcement" icon={<Megaphone size={15} color="#fff" strokeWidth={2} />} onClose={() => setShowNewAnnModal(false)} />
+            <ModalHeader title="New Announcement" icon={<Megaphone size={15} color="#fff" strokeWidth={2} />} onClose={closeNewAnnModal} />
             <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div>
                 <label style={modalLabelStyle}>Title</label>
@@ -1839,7 +1877,7 @@ export default function CommunicationView({ renderSidebar, basePath }: {
               )}
             </div>
             <div style={{ padding: '0 24px 20px', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button style={modalGhostButtonStyle} onClick={() => setShowNewAnnModal(false)}>Cancel</button>
+              <button style={modalGhostButtonStyle} onClick={closeNewAnnModal}>Cancel</button>
               <button onClick={handlePostAnnouncement} disabled={!communicationReady || posting || !annTitle.trim() || !annContent.trim()}
                 style={modalPrimaryButtonStyle(!communicationReady || posting || !annTitle.trim() || !annContent.trim())}>
                 {posting ? <Spinner size={13} /> : <Megaphone size={13} />} {posting ? 'Posting…' : 'Post Announcement'}

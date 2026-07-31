@@ -1,14 +1,18 @@
 'use client'
 
 // Personal Information card for the Guest User's Profile page. Renders inline (no modal) as a
-// sibling of the Skills / Certificates / Resume cards, using the same card chrome. Reads and
-// writes through the same user APIs the shared OwnerUserBadge modal used.
+// sibling of the Skills / Certificates / Resume cards, using the same card chrome. Writes through
+// the same user API the shared OwnerUserBadge modal used; reads come from the host page's single
+// WorkerProfile fetch (initialProfile prop) rather than its own fetch (2026-07-31 — this card used
+// to be the one card with no skeleton at all, popping blank "—" placeholders in on its own timing).
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useRef } from 'react'
 import { createBrowserClient } from '@supabase/ssr'
 import { User, Check, Pencil, Camera } from 'lucide-react'
 import DatePickerField from '@/components/DatePickerField'
 import { TitledBlock } from '@/components/panel'
+import { isValidImageFile } from '@/lib/imageValidation'
+import type { WorkerProfile } from '@/types/WorkerProfile'
 
 const DATE_DISPLAY_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 function formatDateDisplay(value: string | null | undefined): string {
@@ -42,18 +46,8 @@ function Avatar({ photoUrl, size = 48 }: { photoUrl?: string | null; size?: numb
   )
 }
 
-interface ProfileData {
-  id: string
-  full_name: string
-  email_address: string
-  phone_number: string | null
-  date_of_birth: string | null
-  role: string
-  profile_photo_url?: string | null
-}
-
-export default function GuestPersonalInfoCard({ userId, onToast }: { userId: string; onToast?: (msg: string) => void }) {
-  const [profile, setProfile] = useState<ProfileData | null>(null)
+export default function GuestPersonalInfoCard({ initialProfile, onToast }: { initialProfile: WorkerProfile; onToast?: (msg: string) => void }) {
+  const [profile, setProfile] = useState<WorkerProfile>(initialProfile)
   const [editing, setEditing] = useState(false)
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
@@ -63,23 +57,18 @@ export default function GuestPersonalInfoCard({ userId, onToast }: { userId: str
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
-
-  const fetchProfile = useCallback(async () => {
-    if (!userId) return
-    try {
-      const res = await fetch(`/api/user/me?user_id=${userId}`)
-      const data = await res.json()
-      if (data.success && data.user) setProfile(data.user)
-    } catch {}
-  }, [userId])
-
-  useEffect(() => { void fetchProfile() }, [fetchProfile])
+  const userId = profile.id
 
   const handlePhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
+    e.target.value = ''
     if (!file) return
     setUploadingPhoto(true); setError('')
     try {
+      if (!(await isValidImageFile(file))) {
+        setError('That file is not a valid image. Please choose a photo.')
+        return
+      }
       const supabase = createBrowserClient(
         process.env.NEXT_PUBLIC_SUPABASE_URL!,
         process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,

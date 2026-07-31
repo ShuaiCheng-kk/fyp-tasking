@@ -10,8 +10,10 @@ export const shiftTemplateService = {
     if (!input.company_id || !input.name || !input.start_time || !input.end_time || !input.created_by) {
       throw new Error('Missing required shift template fields')
     }
-    if (input.start_time >= input.end_time) {
-      throw new Error('start_time must be before end_time')
+    // BUG-021: overnight templates (e.g. a Night Shift ending the following day) are valid —
+    // end_time <= start_time is only rejected when they're exactly equal (zero-length, ambiguous).
+    if (input.start_time === input.end_time) {
+      throw new Error('start_time and end_time cannot be the same')
     }
     return shiftTemplateRepository.createTemplate(input)
   },
@@ -39,7 +41,8 @@ export const shiftTemplateService = {
     if (!name) throw new Error('Please name this template.')
     const start_time = fields.start_time ?? existing.start_time
     const end_time = fields.end_time ?? existing.end_time
-    if (start_time >= end_time) throw new Error('start_time must be before end_time')
+    // BUG-021: overnight templates are valid — see createTemplate's comment above.
+    if (start_time === end_time) throw new Error('start_time and end_time cannot be the same')
     return shiftTemplateRepository.updateTemplate(id, { name, start_time, end_time })
   },
 

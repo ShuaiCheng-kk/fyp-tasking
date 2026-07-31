@@ -13,3 +13,4 @@
 export { default as SectionBlock } from './SectionBlock'
 export { default as ShowcaseCard } from './ShowcaseCard'
 export { default as TitledBlock } from './TitledBlock'
+export { default as EmptyState } from './EmptyState'

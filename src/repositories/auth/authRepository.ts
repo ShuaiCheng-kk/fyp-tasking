@@ -128,6 +128,24 @@ export const authRepository = {
     if (error) throw new Error(error.message)
   },
 
+  // Admin-level password update. updateUserById alone (the original BUG-071 fix) rotates the
+  // password but does NOT revoke the user's other existing sessions/refresh tokens — confirmed by
+  // retest, a device signed in before the reset stayed signed in. Also delete the user's rows in
+  // auth.sessions via the revoke_user_sessions() SECURITY DEFINER function (ON DELETE CASCADE takes
+  // auth.refresh_tokens with them), so any other device can no longer silently refresh to a new
+  // access token — it will be forced back to sign-in once its current access token expires.
+  async updateAuthPassword(auth_user_id: string, password: string): Promise<void> {
+    const adminClient = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    )
+    const { error } = await adminClient.auth.admin.updateUserById(auth_user_id, { password })
+    if (error) throw new Error(error.message)
+
+    const { error: revokeError } = await adminClient.rpc('revoke_user_sessions', { target_user_id: auth_user_id })
+    if (revokeError) throw new Error(revokeError.message)
+  },
+
   async updateCompanyId(user_id: string, company_id: string): Promise<void> {
     const { error } = await supabase
       .from('users')

@@ -31,6 +31,7 @@ function TaskingLogo() {
 export default function SignOutPage() {
   useEffect(() => {
     localStorage.removeItem('tasking_user_id')
+    localStorage.removeItem('tasking_user_role')
     localStorage.removeItem('tasking_company_id')
     localStorage.removeItem('tasking_active_session')
     sessionStorage.removeItem('tasking_session_active')
