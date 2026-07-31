@@ -41,7 +41,14 @@ yarn-error.log*
 next-env.d.ts
 
 # Claude Code
-.claude/settings.local.json
+/.claude/
+
+# Codegraph (local code-index cache/tool, not project content)
+/.codegraph/
+
+# Not pushed to main per user request
+/docs/
+/supabase/
 
 # Playwright
 /test-results/
