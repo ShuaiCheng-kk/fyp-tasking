@@ -8,6 +8,7 @@ import OwnerPlanBadge from '@/components/owner/PlanBadge'
 import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
 import DatePickerField from '@/components/DatePickerField'
 import { DEPT_COLORS, deptColor, setDeptColorOverrides } from '@/lib/deptColor'
+import { isFeatureEnabled } from '@/lib/paidFeatures'
 import { ModalOverlay, ModalBox, ModalHeader, modalInputStyle, modalLabelStyle } from '@/components/modal'
 import { SectionBlock, ShowcaseCard } from '@/components/panel'
 import Toast from '@/components/Toast'
@@ -16,7 +17,7 @@ import AnimatedNumber from '@/components/AnimatedNumber'
 import RoleAvatar from '@/components/RoleAvatar'
 import DropdownField from '@/components/DropdownField'
 import { WorkerCertificate } from '@/types/WorkerProfile'
-import { useResourceInvalidation } from '@/components/realtime/RealtimeNotificationsProvider'
+import { useResourceInvalidation, useRealtimeNotifications } from '@/components/realtime/RealtimeNotificationsProvider'
 
 // ─── Department color picker ────────────────────────────────────────────────
 
@@ -1110,7 +1111,9 @@ export default function TeamView({ sidebar, basePath, permissions, hidePlanBadge
   const [ownerEmail, setOwnerEmail] = useState('')
   const [companyName,        setCompanyName]        = useState('')
   const [ownerName,          setOwnerName]          = useState('')
-  const [currentPlan,        setCurrentPlan]        = useState('Free')
+  // Live Free/Paid plan (src/lib/paidFeatures.ts) — sourced from the realtime provider instead of
+  // a local fetch so an upgrade/downgrade reflects here the instant the DB changes, no refresh.
+  const currentPlan = useRealtimeNotifications().plan
   const [companyProfile,     setCompanyProfile]     = useState<{ description: string | null; location: string | null; address: string | null; postal_code: string | null; industry: string | null; size: string | null } | null>(null)
   const [editProfileOpen,    setEditProfileOpen]    = useState(false)
   const [editProfileName,    setEditProfileName]    = useState('')
@@ -1705,7 +1708,6 @@ export default function TeamView({ sidebar, basePath, permissions, hidePlanBadge
           if (!cancelled && companyData.success && companyData.company?.name) {
             setCompanyName(companyData.company.name)
             setCompanyOwnerId(companyData.company.owner_id || '')
-            setCurrentPlan(companyData.company.plan ?? 'Free')
             setCompanyProfile({
               description: companyData.company.description ?? null,
               location: companyData.company.location ?? null,
@@ -3570,7 +3572,7 @@ export default function TeamView({ sidebar, basePath, permissions, hidePlanBadge
               <>
                 <ModalHeader title={departmentModal === 'add' ? 'Add Department' : 'Edit Department'} icon={<Network size={15} color="#fff" strokeWidth={2} />} onClose={() => setDepartmentModal(null)} />
                 <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
-                  {departmentModal === 'add' && (
+                  {departmentModal === 'add' && isFeatureEnabled(currentPlan, 'UC33') && (
                     <div style={{ alignSelf: 'flex-start', marginBottom: 8 }}>
                       <div style={{ display: 'inline-flex', border: '1.5px solid #E5E7EB', borderRadius: 9, overflow: 'hidden' }}>
                         {(['manual', 'import'] as const).map(tab => (
@@ -4141,6 +4143,7 @@ export default function TeamView({ sidebar, basePath, permissions, hidePlanBadge
             </div>
 
             <div style={{ borderTop: '1px solid #F3F4F6', padding: '16px 24px', display: 'flex', justifyContent: 'flex-end' }}>
+              {isFeatureEnabled(currentPlan, 'UC29') && (
               <button
                 type="button"
                 onClick={async () => {
@@ -4207,6 +4210,7 @@ export default function TeamView({ sidebar, basePath, permissions, hidePlanBadge
                   </>
                 )}
               </button>
+              )}
             </div>
           </ModalBox>
         </ModalOverlay>
@@ -4297,7 +4301,7 @@ export default function TeamView({ sidebar, basePath, permissions, hidePlanBadge
             {/* Body */}
             <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14, minHeight: 240 }}>
               {/* Tab switcher */}
-              {permissions.canInviteMembersCsv && (
+              {permissions.canInviteMembersCsv && isFeatureEnabled(currentPlan, 'UC32') && (
                 <div style={{ alignSelf: 'flex-start', marginBottom: 8 }}>
                   <div style={{ display: 'inline-flex', border: '1.5px solid #E5E7EB', borderRadius: 9, overflow: 'hidden' }}>
                     {(['manual', 'import'] as const).map(tab => (

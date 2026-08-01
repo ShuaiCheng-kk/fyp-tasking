@@ -17,12 +17,13 @@ import {
 } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 import { useRealtimeNotifications } from '@/components/realtime/RealtimeNotificationsProvider'
+import { isFeatureEnabled } from '@/lib/paidFeatures'
 
 export type SidebarRole = 'owner' | 'partner' | 'manager' | 'employee'
 
 type DotKey = 'messages' | 'announcements' | 'review' | 'attendance' | 'tasks' | null
 
-function navItemsFor(role: SidebarRole) {
+function navItemsFor(role: SidebarRole, plan: string = 'Paid') {
   const items = [
     { label: 'Dashboard',     Icon: LayoutDashboard, href: `/${role}/dashboard`,     dot: null as DotKey },
     { label: 'Shifts',        Icon: CalendarDays,    href: `/${role}/shifts`,        dot: null as DotKey },
@@ -33,12 +34,14 @@ function navItemsFor(role: SidebarRole) {
     { label: 'Attendance',    Icon: ClipboardList,    href: `/${role}/attendance`,    dot: 'attendance' as DotKey },
     { label: 'Report',        Icon: BarChart2,        href: `/${role}/report`,        dot: null as DotKey },
   ]
-  // Report is O/P-only (UC62-64); Company/Team is O/P-only too — Managers don't manage
+  // Report is O/P-only (UC62-64), and further gated to the Paid plan (UC62-64 are Paid-tier —
+  // see docs/Feature_Tier_List.md); Company/Team is O/P-only too — Managers don't manage
   // members or departments and don't get either menu item. Attendance is folded entirely into
   // the Shifts page for Manager (merged Shift Calendar + My Requests + Swap Requests) — no
   // standalone Attendance nav item, and the alert dot that used to sit on Attendance now sits
   // on Shifts instead (same attendanceAlertCount prop/counter, just relabelled onto Shifts).
-  if (role === 'manager') return items
+  const withPlanGate = items.filter(i => i.label !== 'Report' || isFeatureEnabled(plan, 'UC62'))
+  if (role === 'manager') return withPlanGate
     .filter(i => i.label !== 'Report' && i.label !== 'Company' && i.label !== 'Attendance')
     .map(i => i.label === 'Shifts' ? { ...i, dot: 'attendance' as DotKey } : i)
   // Employee: no Company (O-only), no Recruitment (O/P/M-only), no Report (O/P-only). Attendance
@@ -49,7 +52,7 @@ function navItemsFor(role: SidebarRole) {
   if (role === 'employee') return items
     .filter(i => ['Dashboard', 'Shifts', 'Tasks', 'Communication'].includes(i.label))
     .map(i => i.label === 'Shifts' ? { ...i, dot: 'attendance' as DotKey } : i)
-  return items
+  return withPlanGate
 }
 
 function orderKeyFor(role: SidebarRole): string {
@@ -140,7 +143,8 @@ export default function OwnerSidebar({
   attendanceAlertCount?: number
   role?: SidebarRole
 }) {
-  const NAV_ITEMS = navItemsFor(role)
+  const realtimeNotifications = useRealtimeNotifications()
+  const NAV_ITEMS = navItemsFor(role, realtimeNotifications.plan)
   const NAV_LABELS = NAV_ITEMS.map(i => i.label)
   const ORDER_KEY = orderKeyFor(role)
   const THEME = role === 'partner' ? THEME_DARK : role === 'manager' ? THEME_MANAGER : role === 'employee' ? THEME_EMPLOYEE : THEME_LIGHT
@@ -156,21 +160,25 @@ export default function OwnerSidebar({
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
   const [draggingLabel, setDraggingLabel] = useState<string | null>(null)
   const [dragOverLabel, setDragOverLabel] = useState<string | null>(null)
-  const realtimeNotifications = useRealtimeNotifications()
 
   // ── Nav order ───────────────────────────────────────────────────────────────
   const [navOrder, setNavOrder] = useState<string[]>(NAV_LABELS)
   const navOrderRef = useRef<string[]>(NAV_LABELS)
+  // Re-merges whenever NAV_LABELS itself changes — not just on mount — so a label that only
+  // becomes available after an async fetch resolves (e.g. Report, gated on the company's plan
+  // which loads after first render) still gets picked up once it arrives, instead of navOrder
+  // staying frozen on the pre-fetch label set forever.
   useEffect(() => {
     try {
       const saved = localStorage.getItem(ORDER_KEY)
-      if (saved) {
-        const merged = mergeOrder(JSON.parse(saved), NAV_LABELS)
-        navOrderRef.current = merged
-        setNavOrder(merged)
-      }
-    } catch {}
-  }, [])
+      const merged = mergeOrder(saved ? JSON.parse(saved) : NAV_LABELS, NAV_LABELS)
+      navOrderRef.current = merged
+      setNavOrder(merged)
+    } catch {
+      navOrderRef.current = NAV_LABELS
+      setNavOrder(NAV_LABELS)
+    }
+  }, [NAV_LABELS.join(',')])
 
   // item label → DOM node (for FLIP + midpoint calc)
   const itemRefs = useRef<Map<string, HTMLAnchorElement>>(new Map())

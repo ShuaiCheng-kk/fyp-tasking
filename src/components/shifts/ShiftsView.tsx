@@ -46,6 +46,7 @@ import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
 import DatePickerField from '@/components/DatePickerField'
 import MultiSelectDropdownField from '@/components/MultiSelectDropdownField'
 import { deptColor, setDeptColorOverrides } from '@/lib/deptColor'
+import { isFeatureEnabled } from '@/lib/paidFeatures'
 import { sgtHourMinuteOfInstant, sgtInstant, sgtShiftEndInstant } from '@/lib/singaporeTime'
 import { TimelineRow, TimelineShiftBlock } from '@/types/Timeline'
 import { ShiftTemplate } from '@/types/ShiftTemplate'
@@ -56,7 +57,7 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { useResourceInvalidation } from '@/components/realtime/RealtimeNotificationsProvider'
+import { useResourceInvalidation, useRealtimeNotifications } from '@/components/realtime/RealtimeNotificationsProvider'
 import { useEmployeeClockedOut } from '@/hooks/useEmployeeClockedOut'
 import { AttendanceDashboardRecord, AttendanceRecord } from '@/types/Attendance'
 import { ModalOverlay, ModalBox, ModalHeader } from '@/components/modal'
@@ -864,6 +865,9 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
   const [ownerName, setOwnerName] = useState('Owner')
   const [companyId, setCompanyId] = useState('')
   const [company, setCompany] = useState<Company | null>(null)
+  // Live Free/Paid plan (src/lib/paidFeatures.ts) — sourced from the realtime provider instead of
+  // a local fetch so an upgrade/downgrade reflects here the instant the DB changes, no refresh.
+  const livePlan = useRealtimeNotifications().plan
   const [companies, setCompanies] = useState<Company[]>([])
   const [dropdownOpen, setDropdownOpen] = useState(false)
 
@@ -3719,7 +3723,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
           <div data-owner-header-badges style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
             {internalUserId && <OwnerUserBadge userId={internalUserId} companyId={companyId} />}
             {/* Subscription plan is Owner/Partner-only — Manager/Employee (and every other role) can't switch it. */}
-            {companyId && !scopeToManagerDepartments && !scopeToEmployeeSelf && !hidePlanBadge && <OwnerPlanBadge plan={company?.plan ?? 'Free'} currentCompanyId={companyId} />}
+            {companyId && !scopeToManagerDepartments && !scopeToEmployeeSelf && !hidePlanBadge && <OwnerPlanBadge plan={livePlan ?? 'Free'} currentCompanyId={companyId} />}
           </div>
         </div>
 
@@ -4063,16 +4067,28 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                           <p style={{ margin: 0, ...MEMBER_NAME_STYLE, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{member.full_name}</p>
                         </div>
                       </div>
-                      <button
-                        type="button"
-                        onClick={e => { e.stopPropagation(); router.push(`${basePath}/communication?tab=messages&partner_id=${member.id}`) }}
-                        title="Send message"
-                        style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: `1px solid #E2E8F0`, borderRadius: 9, background: '#F8FAFC', color: '#CBD5E1', width: 30, height: 30, cursor: 'pointer', flexShrink: 0 }}
-                        onMouseEnter={e => { e.currentTarget.style.color = '#F97316'; e.currentTarget.style.borderColor = '#FDBA74'; e.currentTarget.style.background = '#FFF7ED' }}
-                        onMouseLeave={e => { e.currentTarget.style.color = '#CBD5E1'; e.currentTarget.style.borderColor = '#E2E8F0'; e.currentTarget.style.background = '#F8FAFC' }}
-                      >
-                        <MessageCircle size={13} />
-                      </button>
+                      {canManageShifts ? (
+                        <button
+                          type="button"
+                          onClick={e => { e.stopPropagation(); openBatchDrawer(selectedDepartment, member.id, timelineDate) }}
+                          title="Assign Shift"
+                          className="assign-task-btn"
+                          style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 30, height: 30, background: '#FFF7ED', border: '1px solid #FDBA74', borderRadius: 8, color: '#EA580C', cursor: 'pointer', flexShrink: 0 }}
+                        >
+                          <Plus size={15} strokeWidth={2.5} />
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={e => { e.stopPropagation(); router.push(`${basePath}/communication?tab=messages&partner_id=${member.id}`) }}
+                          title="Send message"
+                          style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: `1px solid #E2E8F0`, borderRadius: 9, background: '#F8FAFC', color: '#CBD5E1', width: 30, height: 30, cursor: 'pointer', flexShrink: 0 }}
+                          onMouseEnter={e => { e.currentTarget.style.color = '#F97316'; e.currentTarget.style.borderColor = '#FDBA74'; e.currentTarget.style.background = '#FFF7ED' }}
+                          onMouseLeave={e => { e.currentTarget.style.color = '#CBD5E1'; e.currentTarget.style.borderColor = '#E2E8F0'; e.currentTarget.style.background = '#F8FAFC' }}
+                        >
+                          <MessageCircle size={13} />
+                        </button>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -4220,7 +4236,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                   )
                 })}
               </div>
-              {canManageShifts && (
+              {canManageShifts && isFeatureEnabled(livePlan, 'UC11') && (
               <div style={{ display: 'flex', justifyContent: 'center' }}>
                 <button
                   type="button"
@@ -4236,7 +4252,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
           </div>
         </section>
 
-        {canManageShifts && (
+        {canManageShifts && isFeatureEnabled(livePlan, 'UC2') && (
         <section className="shift-template-panel" style={{ background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, overflow: 'visible' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '16px 18px', borderBottom: `1px solid ${PANEL_BORDER}` }}>
             <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -4351,7 +4367,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                   {redoLoading ? <Spinner size={13} dark /> : <Redo2 size={14} />} Redo
                 </button>
               )}
-              {companyId && canManageShifts && departments.length > 0 && (
+              {companyId && canManageShifts && departments.length > 0 && isFeatureEnabled(livePlan, 'UC10') && (
                 <button
                   type="button"
                   onClick={openBulkEditModal}
@@ -5221,16 +5237,18 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                             )
                           })}
                         </div>
+                        {isFeatureEnabled(livePlan, 'UC2') && (
                         <button type="button" onClick={() => { setTemplateSaveOpen(true); setTemplateSaveName(''); setTemplateSaveError('') }}
                           style={{ marginTop: 10, width: '100%', border: `1px solid ${PANEL_BORDER}`, borderRadius: 8, background: '#FFFFFF', color: OWNER_ORANGE, height: 34, padding: '0 12px', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}
                         >
                           + Create shift template
                         </button>
+                        )}
                       </div>
 
                       {/* Shift Hours */}
                       <div style={{ background: '#FFFFFF', borderRadius: 14, padding: '12px 14px', border: `1px solid ${PANEL_BORDER}`, display: 'flex', flexDirection: 'column', gap: 12 }}>
-                        {(() => {
+                        {isFeatureEnabled(livePlan, 'UC2') && (() => {
                           const deptTemplates = shiftTemplates
                           return (
                             <div>
@@ -5277,6 +5295,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
 
               {isSingleCellRepeatEligible && (
                 <div style={{ marginBottom: 20, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, alignItems: 'stretch' }}>
+                {isFeatureEnabled(livePlan, 'UC7') && (
                 <div style={{ background: '#FFFFFF', borderRadius: 14, padding: '12px', border: `1px solid ${PANEL_BORDER}`, display: 'flex', flexDirection: 'column' }}>
                   <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}>
                     <span style={{ ...modalLabelStyle, display: 'flex', alignItems: 'center', gap: 6, marginBottom: 0 }}>
@@ -5344,6 +5363,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                     </div>
                   )}
                 </div>
+                )}
 
                 <div style={{ background: '#FFFFFF', borderRadius: 14, padding: '12px', border: `1px solid ${PANEL_BORDER}`, display: 'flex', flexDirection: 'column' }}>
                   <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}>
@@ -5524,7 +5544,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                                     }
                                     return (
                                       <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-                                        {deptTemplates.length > 0 && (
+                                        {deptTemplates.length > 0 && isFeatureEnabled(livePlan, 'UC2') && (
                                           <DropdownField
                                             compact
                                             value=""
@@ -5551,7 +5571,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                                       <span>Has {existing.length} shift{existing.length !== 1 ? 's' : ''} ({[...new Set(existing.map(s => s.department_name))].join(', ')})</span>
                                     </div>
                                   )}
-                                  {clopeningConflict && (
+                                  {clopeningConflict && isFeatureEnabled(livePlan, 'UC9') && (
                                     <div style={{ display: 'flex', gap: 4, marginTop: 5, color: '#DC2626', fontSize: '0.68rem', fontWeight: 600, alignItems: 'center', flexWrap: 'wrap' }}>
                                       <AlertTriangle size={11} style={{ flexShrink: 0 }} />
                                       <span>Clopening: this person has another shift {clopeningConflict.direction === 'after' ? `starting in ${clopeningConflict.rest_hours}h` : `that ended ${clopeningConflict.rest_hours}h ago`}</span>
@@ -5982,7 +6002,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                   </div>
 
                   <div style={{ background: '#FFFFFF', borderRadius: 14, padding: '12px 14px', border: `1px solid ${PANEL_BORDER}`, display: 'flex', flexDirection: 'column', gap: 12 }}>
-                    {(() => {
+                    {isFeatureEnabled(livePlan, 'UC2') && (() => {
                       const deptTemplates = shiftTemplates
                       return (
                         <div>
@@ -6014,6 +6034,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                 </div>
 
                 <div style={{ display: 'grid', gridTemplateColumns: selectedShift?.split_group_id ? '1fr' : '1fr 1fr', gap: 12, alignItems: 'stretch' }}>
+                {isFeatureEnabled(livePlan, 'UC7') && (
                 <div style={{ background: '#FFFFFF', borderRadius: 14, padding: '12px', border: `1px solid ${PANEL_BORDER}`, display: 'flex', flexDirection: 'column' }}>
                   <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: editIsRecurrenceOriginal ? 'not-allowed' : 'pointer' }}>
                     <span style={{ ...modalLabelStyle, display: 'flex', alignItems: 'center', gap: 6, marginBottom: 0 }}>
@@ -6086,6 +6107,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                     </div>
                   )}
                 </div>
+                )}
 
                 {!selectedShift?.split_group_id && (
                 <div style={{ background: '#FFFFFF', borderRadius: 14, padding: '12px', border: `1px solid ${PANEL_BORDER}`, display: 'flex', flexDirection: 'column' }}>
@@ -6168,7 +6190,9 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                   </button>
                 ) : (<>
                   <button type="button" onClick={deleteShift} disabled={shiftActionLoading} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, border: 'none', borderRadius: 10, background: shiftActionLoading ? '#F3A8A8' : 'linear-gradient(135deg, #EF4444, #DC2626)', color: '#FFFFFF', height: 36, padding: '0 14px', fontSize: 13, fontWeight: 700, cursor: shiftActionLoading ? 'not-allowed' : 'pointer', marginRight: 'auto' }}>{shiftActionLoading ? <Spinner size={13} /> : <Trash2 size={13} />} Delete</button>
+                  {isFeatureEnabled(livePlan, 'UC6') && (
                   <button type="button" onClick={openDuplicateShiftModal} disabled={shiftActionLoading} style={{ ...secondaryButtonStyle, height: 36, opacity: shiftActionLoading ? 0.65 : 1, cursor: shiftActionLoading ? 'not-allowed' : 'pointer' }}><Copy size={13} /> Duplicate</button>
+                  )}
                   <button type="button" onClick={saveShiftEdit} disabled={shiftActionLoading} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: shiftActionLoading ? '#FDA060' : '#F97316', color: '#FFFFFF', height: 36, padding: '0 18px', fontSize: 13, fontWeight: 700, cursor: shiftActionLoading ? 'not-allowed' : 'pointer', opacity: shiftActionLoading ? 0.65 : 1 }}>{shiftActionLoading ? <Spinner size={13} /> : <Check size={16} />} {selectedShift.publication_status === 'draft' ? 'Save Draft' : 'Save'}</button>
                 </>)}
               </div>

@@ -3,8 +3,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { createBrowserClient } from '@supabase/ssr'
-import { X, Star, Check, Trash2 } from 'lucide-react'
+import { X, Star, Check, Trash2, CreditCard } from 'lucide-react'
 import { ownerStep5 } from '@/app/(auth)/get-started/content'
+
+const fH = 'var(--font-heading)';
+const fB = 'var(--font-body)';
 
 const planKeyframes = `
   @keyframes planOverlayIn { from { opacity: 0 } to { opacity: 1 } }
@@ -166,7 +169,7 @@ export default function OwnerPlanBadge({ plan, currentCompanyId }: { plan: strin
       }}
     >
       <style>{planKeyframes}</style>
-      <div style={{ width: 'min(360px, calc(100% - 32px))' }}>
+      <div style={{ width: 'min(900px, calc(100% - 32px))' }}>
         {/* ModalBox — exact same as team/page.tsx */}
         <div style={{
           background: '#FFFFFF', borderRadius: 20, overflow: 'hidden',
@@ -176,14 +179,12 @@ export default function OwnerPlanBadge({ plan, currentCompanyId }: { plan: strin
         }}>
 
           {/* ── Header ── */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '20px 24px 18px', borderBottom: '1px solid #F3F4F6', flexShrink: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              {effectiveIsPro && (
-                <span style={{ display: 'inline-block', padding: '3px 12px', borderRadius: 999, fontSize: '0.75rem', fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', background: '#059669', color: '#FFFFFF' }}>
-                  Pro
-                </span>
-              )}
-              <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, sans-serif" }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '24px 28px 20px', borderBottom: '1px solid #F3F4F6', flexShrink: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div style={{ width: 36, height: 36, borderRadius: 10, background: ORANGE_GRADIENT, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <CreditCard size={17} color="#fff" strokeWidth={2} />
+              </div>
+              <h2 style={{ fontWeight: 700, fontSize: '1.125rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, sans-serif" }}>
                 Subscription Plan
               </h2>
             </div>
@@ -197,102 +198,196 @@ export default function OwnerPlanBadge({ plan, currentCompanyId }: { plan: strin
             </button>
           </div>
 
-          {/* ── Body ── */}
+          {/* ── Body — same two-card design as Get Started Step 5 ── */}
           {loadingDetails ? (
-            <div style={{ display: 'flex', justifyContent: 'center', padding: '32px 0' }}>
-              <Spinner size={20} dark />
+            <div style={{ display: 'flex', justifyContent: 'center', padding: '56px 0' }}>
+              <Spinner size={22} dark />
             </div>
           ) : (
-            <div style={{ padding: '0 24px 4px', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ padding: '24px 32px 8px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
 
-              {effectiveIsPro ? (
-                <>
-                  {/* Billing amount */}
-                  <div style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6' }}>
-                    <label style={labelSt}>Billing amount</label>
-                    <p style={valueSt}>{ownerStep5.proPlan.price} {ownerStep5.proPlan.priceSub}</p>
-                  </div>
-
-                  {/* Member since */}
-                  <div style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6' }}>
-                    <label style={labelSt}>Member since</label>
-                    <p style={valueSt}>{fmt(subDetails?.plan_started_at ?? null)}</p>
-                  </div>
-
-                  {/* Next payment / expiry */}
-                  <div style={{ padding: '14px 0' }}>
-                    <label style={labelSt}>
-                      {isCancelling ? 'Pro access ends' : 'Next payment'}
-                    </label>
-                    <p style={valueSt}>
-                      {fmt(isCancelling ? subDetails?.plan_cancel_at ?? null : subDetails?.plan_next_billing_at ?? null)}
-                    </p>
-                  </div>
-
-                </>
-              ) : (
-                /* Pro upsell — same copy as Get Started "Choose Pro" */
-                <div style={{ padding: '14px 0' }}>
-                  <label style={labelSt}>Upgrade to Pro — {ownerStep5.proPlan.price} {ownerStep5.proPlan.priceSub}</label>
-                  <p style={{ ...valueSt, color: '#6B7280', fontSize: '0.8125rem', marginBottom: 8 }}>
-                    {ownerStep5.proPlan.featuresIntro}
-                  </p>
-                  <ul style={{ margin: 0, paddingLeft: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    {ownerStep5.proPlan.features.map((f) => (
-                      <li key={f} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: '0.875rem', color: '#111827' }}>
-                        <Check size={14} style={{ color: '#10B981', flexShrink: 0, marginTop: 2 }} />
-                        {f}
-                      </li>
-                    ))}
-                  </ul>
+              {/* Free plan */}
+              <div style={{
+                background: '#FFFFFF',
+                border: !effectiveIsPro ? '2px solid #F97316' : '1.5px solid #F0E8D8',
+                borderRadius: 18,
+                padding: '28px 26px',
+                display: 'flex',
+                flexDirection: 'column',
+                position: 'relative',
+              }}>
+                <p style={{ fontFamily: fH, fontWeight: 700, fontSize: '1.125rem', color: '#1C1917', marginBottom: 10 }}>
+                  Free
+                </p>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 4, marginBottom: 20 }}>
+                  <span style={{ fontFamily: fH, fontWeight: 800, fontSize: '2.25rem', color: '#1C1917' }}>
+                    {ownerStep5.freePlan.price}
+                  </span>
+                  <span style={{ fontFamily: fB, fontSize: '0.875rem', color: '#78716C' }}>
+                    {ownerStep5.freePlan.priceSub}
+                  </span>
                 </div>
-              )}
+                <p style={{ fontFamily: fB, fontWeight: 600, fontSize: '0.8125rem', color: '#9CA3AF', marginBottom: 10 }}>
+                  {ownerStep5.freePlan.featuresIntro}
+                </p>
+                <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 10, flex: 1, marginBottom: 24, padding: 0 }}>
+                  {ownerStep5.freePlan.features.map((f) => (
+                    <li key={f} style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                      <Check size={15} color="#9CA3AF" strokeWidth={2.5} style={{ flexShrink: 0, marginTop: 2 }} />
+                      <span style={{ fontFamily: fB, fontSize: '0.9375rem', color: '#374151' }}>{f}</span>
+                    </li>
+                  ))}
+                </ul>
+                {!effectiveIsPro && (
+                  <div style={{
+                    width: '100%', padding: '13px', textAlign: 'center',
+                    background: '#FFF7ED', border: '1.5px solid #F97316', borderRadius: 10,
+                    fontFamily: fB, fontWeight: 700, fontSize: '0.9375rem', color: '#F97316',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                  }}>
+                    <Check size={16} strokeWidth={2.5} />
+                    Your current plan
+                  </div>
+                )}
+              </div>
+
+              {/* Pro plan */}
+              <div style={{
+                background: '#FFFFFF',
+                border: effectiveIsPro ? '2px solid #F97316' : '1.5px solid #F0E8D8',
+                borderRadius: 18,
+                padding: '28px 26px',
+                display: 'flex',
+                flexDirection: 'column',
+                position: 'relative',
+                boxShadow: effectiveIsPro ? '0 8px 24px rgba(249,115,22,0.12)' : 'none',
+              }}>
+                <span style={{
+                  position: 'absolute', top: 18, right: 18,
+                  background: '#F97316', color: '#FFFFFF',
+                  fontFamily: fB, fontSize: '0.75rem', fontWeight: 700,
+                  padding: '3px 10px', borderRadius: 100,
+                }}>
+                  {ownerStep5.proPlan.badge}
+                </span>
+                <p style={{ fontFamily: fH, fontWeight: 700, fontSize: '1.125rem', color: '#1C1917', marginBottom: 10 }}>
+                  Pro
+                </p>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 4, marginBottom: 20 }}>
+                  <span style={{ fontFamily: fH, fontWeight: 800, fontSize: '2.25rem', color: '#F97316' }}>
+                    {ownerStep5.proPlan.price}
+                  </span>
+                  <span style={{ fontFamily: fB, fontSize: '0.875rem', color: '#78716C' }}>
+                    {ownerStep5.proPlan.priceSub}
+                  </span>
+                </div>
+
+                {effectiveIsPro ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 14, flex: 1, marginBottom: 24 }}>
+                    <div>
+                      <label style={labelSt}>Billing amount</label>
+                      <p style={valueSt}>{ownerStep5.proPlan.price} {ownerStep5.proPlan.priceSub}</p>
+                    </div>
+                    <div>
+                      <label style={labelSt}>Member since</label>
+                      <p style={valueSt}>{fmt(subDetails?.plan_started_at ?? null)}</p>
+                    </div>
+                    <div>
+                      <label style={labelSt}>
+                        {isCancelling ? 'Pro access ends' : 'Next payment'}
+                      </label>
+                      <p style={valueSt}>
+                        {fmt(isCancelling ? subDetails?.plan_cancel_at ?? null : subDetails?.plan_next_billing_at ?? null)}
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <p style={{ fontFamily: fB, fontWeight: 600, fontSize: '0.8125rem', color: '#9CA3AF', marginBottom: 10 }}>
+                      {ownerStep5.proPlan.featuresIntro}
+                    </p>
+                    <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 10, flex: 1, marginBottom: 24, padding: 0 }}>
+                      {ownerStep5.proPlan.features.map((f) => (
+                        <li key={f} style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                          <Check size={15} color="#F97316" strokeWidth={2.5} style={{ flexShrink: 0, marginTop: 2 }} />
+                          <span style={{ fontFamily: fB, fontSize: '0.9375rem', color: '#374151' }}>{f}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+
+                {!effectiveIsPro ? (
+                  <button
+                    type="button"
+                    onClick={handleUpgradeToPro}
+                    disabled={actionLoading}
+                    className="btn-press"
+                    style={{
+                      width: '100%', padding: '13px', background: actionLoading ? '#FDA060' : ORANGE_GRADIENT,
+                      border: 'none', borderRadius: 10, fontFamily: fB, fontWeight: 700, fontSize: '0.9375rem',
+                      color: '#FFFFFF', cursor: actionLoading ? 'not-allowed' : 'pointer',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, opacity: actionLoading ? 0.7 : 1,
+                    }}
+                  >
+                    {actionLoading ? <Spinner size={14} /> : <Star size={14} fill="#fff" />}
+                    Subscribe to Pro
+                  </button>
+                ) : isCancelling ? (
+                  <button
+                    type="button"
+                    onClick={handleResumePro}
+                    disabled={actionLoading}
+                    className="btn-press"
+                    style={{
+                      width: '100%', padding: '13px', background: actionLoading ? '#FDA060' : ORANGE_GRADIENT,
+                      border: 'none', borderRadius: 10, fontFamily: fB, fontWeight: 700, fontSize: '0.9375rem',
+                      color: '#FFFFFF', cursor: actionLoading ? 'not-allowed' : 'pointer',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, opacity: actionLoading ? 0.7 : 1,
+                    }}
+                  >
+                    {actionLoading ? <Spinner size={14} /> : <Check size={14} />}
+                    Resume Pro Plan
+                  </button>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    <div style={{
+                      width: '100%', padding: '13px', textAlign: 'center',
+                      background: '#FFF7ED', border: '1.5px solid #F97316', borderRadius: 10,
+                      fontFamily: fB, fontWeight: 700, fontSize: '0.9375rem', color: '#F97316',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                    }}>
+                      <Check size={16} strokeWidth={2.5} />
+                      Your current plan
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleCancelPro}
+                      disabled={actionLoading}
+                      style={{
+                        width: '100%', padding: '9px', background: 'transparent', border: 'none',
+                        fontFamily: fB, fontWeight: 600, fontSize: '0.8125rem', color: '#DC2626',
+                        cursor: actionLoading ? 'not-allowed' : 'pointer',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, opacity: actionLoading ? 0.6 : 1,
+                      }}
+                    >
+                      {actionLoading ? <Spinner size={13} dark /> : <Trash2 size={13} />}
+                      Cancel Plan
+                    </button>
+                  </div>
+                )}
+              </div>
+
             </div>
           )}
 
           {/* ── Error ── */}
           {error && (
-            <div style={{ margin: '0 24px 8px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', fontSize: '0.875rem', color: '#DC2626' }}>
+            <div style={{ margin: '16px 28px 24px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', fontSize: '0.875rem', color: '#DC2626' }}>
               {error}
             </div>
           )}
-
-          {/* ── Footer — exact same pattern as Edit Company Profile footer ── */}
-          {!loadingDetails && (
-            <div style={{ padding: '0 24px 20px', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-              {!effectiveIsPro ? (
-                <button
-                  type="button"
-                  onClick={handleUpgradeToPro}
-                  disabled={actionLoading}
-                  style={{ padding: '7px 18px', background: actionLoading ? '#FDA060' : ORANGE_GRADIENT, border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: actionLoading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: actionLoading ? 0.65 : 1 }}
-                >
-                  {actionLoading ? <Spinner size={13} /> : <Star size={13} fill="#fff" />}
-                  Subscribe to Pro
-                </button>
-              ) : isCancelling ? (
-                <button
-                  type="button"
-                  onClick={handleResumePro}
-                  disabled={actionLoading}
-                  style={{ padding: '7px 18px', background: actionLoading ? '#FDA060' : ORANGE_GRADIENT, border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: actionLoading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: actionLoading ? 0.65 : 1 }}
-                >
-                  {actionLoading ? <Spinner size={13} /> : <Check size={13} />}
-                  Resume Pro Plan
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={handleCancelPro}
-                  disabled={actionLoading}
-                  style={{ padding: '7px 18px', background: actionLoading ? '#F87171' : 'linear-gradient(135deg, #EF4444, #DC2626)', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: actionLoading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: actionLoading ? 0.65 : 1 }}
-                >
-                  {actionLoading ? <Spinner size={13} /> : <Trash2 size={13} />}
-                  Cancel Plan
-                </button>
-              )}
-            </div>
-          )}
+          {!error && <div style={{ paddingBottom: 28 }} />}
 
         </div>
       </div>

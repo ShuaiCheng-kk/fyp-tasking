@@ -17,6 +17,7 @@ import DatePickerField from '@/components/DatePickerField'
 import RoleAvatar from '@/components/RoleAvatar'
 import { useIsCompactViewport } from '@/hooks/useIsCompactViewport'
 import { deptColor, setDeptColorOverrides } from '@/lib/deptColor'
+import { useRealtimeNotifications } from '@/components/realtime/RealtimeNotificationsProvider'
 import OwnerPlanBadge from '@/components/owner/PlanBadge'
 import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
 import { ShowcaseCard } from '@/components/panel'
@@ -780,7 +781,9 @@ export default function ReportView({ sidebar, hidePlanBadge = false }: { sidebar
   const [companyId, setCompanyId] = useState('')
   const [ownerName, setOwnerName] = useState('')
   const [internalUserId, setInternalUserId] = useState('')
-  const [currentPlan, setCurrentPlan] = useState('Free')
+  // Live Free/Paid plan (src/lib/paidFeatures.ts) — sourced from the realtime provider instead of
+  // a local fetch so an upgrade/downgrade reflects here the instant the DB changes, no refresh.
+  const currentPlan = useRealtimeNotifications().plan
   const [dateFrom, setDateFrom] = useState(DEFAULT_FROM)
   const [dateTo, setDateTo] = useState(YESTERDAY)
   const [report, setReport] = useState<CompanyReport | null>(null)
@@ -929,12 +932,7 @@ export default function ReportView({ sidebar, hidePlanBadge = false }: { sidebar
       const cid = localStorage.getItem(`tasking_company_id_${authId}`) || meData.user.company_id || ''
       if (!cid) return
       setCompanyId(cid)
-      const [companyRes, deptRes] = await Promise.all([
-        fetch(`/api/company/current?user_id=${authId}&company_id=${cid}`),
-        fetch(`/api/company/departments?company_id=${cid}`),
-      ])
-      const companyData = await companyRes.json()
-      if (!cancelled && companyData.success) setCurrentPlan(companyData.company?.plan ?? 'Free')
+      const deptRes = await fetch(`/api/company/departments?company_id=${cid}`)
       // Same department → color mapping the Team page and DepartmentBadge use everywhere else —
       // without this the Cost Distribution pie would fall back to deptColor's hash-only default,
       // which drifts from a company's custom colors set on the Departments page.

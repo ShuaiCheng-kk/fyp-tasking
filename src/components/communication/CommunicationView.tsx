@@ -12,7 +12,7 @@ import DepartmentBadge from '@/components/DepartmentBadge'
 import { EmptyState } from '@/components/panel'
 import { setDeptColorOverrides } from '@/lib/deptColor'
 import { useIsCompactViewport } from '@/hooks/useIsCompactViewport'
-import { useResourceInvalidation } from '@/components/realtime/RealtimeNotificationsProvider'
+import { useResourceInvalidation, useRealtimeNotifications } from '@/components/realtime/RealtimeNotificationsProvider'
 import { useEmployeeClockedOut } from '@/hooks/useEmployeeClockedOut'
 import {
   Plus, X, Trash2, Pencil, Megaphone,
@@ -243,7 +243,9 @@ export default function CommunicationView({ renderSidebar, basePath }: {
   const [companyId, setCompanyId] = useState<string | null>(null)
   const [ownerName, setOwnerName] = useState('')
   const [companyName, setCompanyName] = useState('')
-  const [currentPlan, setCurrentPlan] = useState('Free')
+  // Live Free/Paid plan (src/lib/paidFeatures.ts) — sourced from the realtime provider instead of
+  // a local fetch so an upgrade/downgrade reflects here the instant the DB changes, no refresh.
+  const currentPlan = useRealtimeNotifications().plan
   const [userRole, setUserRole] = useState('')
   const [userDeptId, setUserDeptId] = useState<string | null>(null)
   const [departments, setDepartments] = useState<Department[]>([])
@@ -365,13 +367,6 @@ export default function CommunicationView({ renderSidebar, basePath }: {
       .then(r => r.json())
       .then(d => { if (d.success) { setDepartments(d.departments ?? []); setDeptColorOverrides(d.departments ?? []) } })
       .catch(() => {})
-    const uid = localStorage.getItem('tasking_user_id')
-    if (uid) {
-      fetch(`/api/company/current?user_id=${uid}&company_id=${companyId}`)
-        .then(r => r.json())
-        .then(d => { if (d.success) setCurrentPlan(d.company?.plan ?? 'Free') })
-        .catch(() => {})
-    }
   }, [companyId])
 
   useEffect(() => {

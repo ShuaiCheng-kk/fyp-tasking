@@ -13,6 +13,7 @@ import OwnerPlanBadge from '@/components/owner/PlanBadge'
 import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
 import Spinner from '@/components/Spinner'
 import { deptColor } from '@/lib/deptColor'
+import { isFeatureEnabled } from '@/lib/paidFeatures'
 import { useIsCompactViewport } from '@/hooks/useIsCompactViewport'
 import { useIsCompactContainer } from '@/hooks/useIsCompactContainer'
 import {
@@ -36,7 +37,7 @@ import Toast from '@/components/Toast'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { TimelineRow, TimelineShiftBlock } from '@/types/Timeline'
-import { useResourceInvalidation } from '@/components/realtime/RealtimeNotificationsProvider'
+import { useResourceInvalidation, useRealtimeNotifications } from '@/components/realtime/RealtimeNotificationsProvider'
 import { sgtInstant, sgtTodayKey, sgtHourMinuteOfInstant, sgtShiftEndInstant } from '@/lib/singaporeTime'
 
 const PANEL_BORDER = '#E2E8F0'
@@ -972,7 +973,9 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
   const router = useRouter()
   const [internalUserId, setInternalUserId] = useState('')
   const [companyId, setCompanyId] = useState('')
-  const [currentPlan, setCurrentPlan] = useState('Free')
+  // Live Free/Paid plan (src/lib/paidFeatures.ts) — sourced from the realtime provider instead of
+  // a local fetch so an upgrade/downgrade reflects here the instant the DB changes, no refresh.
+  const currentPlan = useRealtimeNotifications().plan
 
   // top-level tab; ?tab=swaps|fixedoff deep-links from the dashboard's Waiting On You cards.
   // Manager has no 'fixedoff' tab at all, Employee has neither 'swaps' nor 'fixedoff' (see
@@ -1394,9 +1397,6 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
       const cid = localStorage.getItem(`tasking_company_id_${authId}`) || meData.user.company_id || ''
       if (!cid) return
       setCompanyId(cid)
-      const currentRes = await fetch(`/api/company/current?user_id=${authId}&company_id=${cid}`)
-      const currentData = await currentRes.json()
-      if (!cancelled && currentData.success) setCurrentPlan(currentData.company?.plan ?? 'Free')
       if (!cancelled) {
         void fetchWeekRecords(cid, 0)
         void fetchRequestData(cid)
@@ -3054,7 +3054,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                               {reqActionLoading ? <Spinner size={14} /> : <Check size={16} strokeWidth={2.5} />}
                             </button>
                           </>
-                        ) : (
+                        ) : isFeatureEnabled(currentPlan, 'UC57') ? (
                           <button
                             onClick={() => void analyzeFixedOffQueue()}
                             disabled={queueAiLoading || reqActionLoading}
@@ -3062,7 +3062,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                           >
                             {queueAiLoading ? <><Spinner size={13} /> Analyzing…</> : <><Sparkles size={15} strokeWidth={2.5} /> AI Process</>}
                           </button>
-                        )
+                        ) : null
                       )}
                     </div>
                     {fixedOffActionNeeded.length === 0 ? (
@@ -3939,7 +3939,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                         {/* ── Off Day Preview Calendar — the upcoming week only, showing how the AI
                              Process pass split that week: green = safe to approve as requested,
                              amber = collides with a taken day and needs review. ── */}
-                        {!offDayQueueEmpty && (() => {
+                        {!offDayQueueEmpty && isFeatureEnabled(currentPlan, 'UC57') && (() => {
                           const previewDates = Array.from({ length: 7 }, (_, i) => toISODate(addDays(calendarStartDate, 7 + i)))
                           const pendingKeys = new Set(fixedOffActionNeeded.map(g => g.key))
                           const previewCounts = new Map<string, { safe: number; flagged: number }>()

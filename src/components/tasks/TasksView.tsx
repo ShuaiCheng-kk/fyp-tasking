@@ -19,7 +19,7 @@ import DepartmentBadge from '@/components/DepartmentBadge'
 import { Task, TaskInput, KanbanGroup, TaskWorkloadSuggestion, TaskDelayAlert } from '@/types/Task'
 import { TaskTemplate } from '@/types/TaskTemplate'
 import { TimelineRow, TimelineShiftBlock } from '@/types/Timeline'
-import { useResourceInvalidation } from '@/components/realtime/RealtimeNotificationsProvider'
+import { useResourceInvalidation, useRealtimeNotifications } from '@/components/realtime/RealtimeNotificationsProvider'
 import { useEmployeeClockedOut } from '@/hooks/useEmployeeClockedOut'
 import { useSupervisedCasualWorkers, SupervisedWorker } from '@/components/employee/useSupervisedCasualWorkers'
 import SupervisedWorkerDetailModal from '@/components/employee/SupervisedWorkerDetailModal'
@@ -441,6 +441,7 @@ function formatShiftOptionLabel(shift: ShiftOption): string {
 }
 
 import { deptColor, setDeptColorOverrides } from '@/lib/deptColor'
+import { isFeatureEnabled } from '@/lib/paidFeatures'
 function deptCardBorder(deptId: string): string {
   const hex = deptColor(deptId)
   const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16)
@@ -1276,7 +1277,9 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
   const [ownerName,      setOwnerName]      = useState('')
   const [userRole,       setUserRole]       = useState('')
   const [companyName,    setCompanyName]    = useState('')
-  const [currentPlan,    setCurrentPlan]    = useState('Free')
+  // Live Free/Paid plan (src/lib/paidFeatures.ts) — sourced from the realtime provider instead of
+  // a local fetch so an upgrade/downgrade reflects here the instant the DB changes, no refresh.
+  const currentPlan = useRealtimeNotifications().plan
   const [initialReady,   setInitialReady]   = useState(false)
 
   // Once clocked out of every shift today, this whole page locks to read-only — no
@@ -1810,7 +1813,6 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
         if (!cancelled) {
           setCompanyId(cid)
           setCompanyName(data.company.name)
-          setCurrentPlan(data.company.plan ?? 'Free')
           setInitialReady(true)
         }
       } else {
@@ -4549,7 +4551,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                       )
                     })()}
 
-                    {(() => {
+                    {isFeatureEnabled(currentPlan, 'UC22') && (() => {
                       const hasIssue = delayAlerts.length > 0
                       return (
                         <div className="task-side-card" style={{ border: '1px solid #E5E7EB', borderRadius: 12, background: '#F9FAFB', padding: '11px 12px', display: 'flex', alignItems: 'center', gap: 10, animationDelay: '0.18s' }}>
@@ -4766,7 +4768,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                             })}
                           </div>
                           {/* AI Task Assignment Suggestion (UC20) is O/P/M-only. */}
-                          {!scopeToEmployeeSupervised && (
+                          {!scopeToEmployeeSupervised && isFeatureEnabled(currentPlan, 'UC20') && (
                             <div style={{ display: 'flex', justifyContent: 'center' }}>
                               <button
                                 type="button"
@@ -4935,7 +4937,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                     // (confirmed 2026-07-31 for Employee; Manager moved here too on 2026-08-02 —
                     // it used to keep its own smaller inline header button instead, which drifted
                     // out of sync with Employee's placement/size).
-                    const employeeAiAssignButton = (scopeToEmployeeSupervised || scopeToManagerDepartments) && !employeeClockedOut && (
+                    const employeeAiAssignButton = (scopeToEmployeeSupervised || scopeToManagerDepartments) && !employeeClockedOut && isFeatureEnabled(currentPlan, 'UC20') && (
                       <div style={{ display: 'flex', justifyContent: 'center' }}>
                         <button
                           type="button"
@@ -5100,6 +5102,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                         >
                           <Archive size={15} /> Archive
                         </button>
+                        {isFeatureEnabled(currentPlan, 'UC14') && (
                         <button
                           type="button"
                           onClick={() => setTemplatesModalOpen(true)}
@@ -5108,6 +5111,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                         >
                           <LayoutTemplate size={15} /> Templates
                         </button>
+                        )}
                       </>
                     )}
                     {boardViewMode === 'calendar' && (
@@ -5423,9 +5427,11 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                   {/* Duplicate (UC16) / Archive (UC18) are O/P/M-only — Employee only gets Delete (UC15). */}
                   {!scopeToEmployeeSupervised && (
                     <>
+                      {isFeatureEnabled(currentPlan, 'UC16') && (
                       <button type="button" onClick={handleDuplicateTask} style={{ height: 36, border: '1px solid #E5E7EB', borderRadius: 8, background: '#FFFFFF', color: '#334155', fontSize: 12, fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
                         <Copy size={13} /> Duplicate
                       </button>
+                      )}
                       <button type="button" onClick={handleArchiveTask} disabled={taskActionLoading === 'archive'} style={{ height: 36, border: '1px solid #FED7AA', borderRadius: 8, background: '#FFF7ED', color: '#C2410C', fontSize: 12, fontWeight: 700, cursor: taskActionLoading ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
                         {taskActionLoading === 'archive' ? <Spinner size={12} dark /> : <Archive size={13} />} Archive
                       </button>
@@ -5556,7 +5562,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
               <div style={{ borderTop: '1px dashed #E5E7EB' }} />
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                <div style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: 10 }}>
+                <div style={!isFeatureEnabled(currentPlan, 'UC19') ? { display: 'none' } : { border: '1px solid #E5E7EB', borderRadius: 10, padding: 10 }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', flex: 1 }}>
                       <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: '0.8125rem', color: '#374151' }}>
@@ -5617,7 +5623,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                 {/* Set Recurring Task (UC17) is O/P/M-only — hidden via display:none rather than
                     unmounting, so the (always-false-for-Employee) editRecurringEnabled state and
                     its Preview block below stay harmlessly inert without touching this markup. */}
-                <div style={scopeToEmployeeSupervised ? { display: 'none' } : { border: '1px solid #E5E7EB', borderRadius: 10, padding: 10 }}>
+                <div style={(scopeToEmployeeSupervised || !isFeatureEnabled(currentPlan, 'UC17')) ? { display: 'none' } : { border: '1px solid #E5E7EB', borderRadius: 10, padding: 10 }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', flex: 1 }}>
                       <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: '0.8125rem', color: '#374151' }}>
@@ -6065,7 +6071,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
             <div style={{ padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 12 }}>
 
               {/* Use Template */}
-              {templateDropdownOptions.length > 0 && (
+              {templateDropdownOptions.length > 0 && isFeatureEnabled(currentPlan, 'UC14') && (
                 <div>
                   <label style={modalLabelStyle}>Use Template</label>
                   <DropdownField
@@ -6190,7 +6196,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
 
               {/* Sub Task + Recurring toggles */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                <div style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: 10 }}>
+                <div style={!isFeatureEnabled(currentPlan, 'UC19') ? { display: 'none' } : { border: '1px solid #E5E7EB', borderRadius: 10, padding: 10 }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', flex: 1 }}>
                       <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: '0.8125rem', color: '#374151' }}>
@@ -6262,7 +6268,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                 {/* Set Recurring Task (UC17) is O/P/M-only — hidden via display:none rather than
                     unmounting, so the (always-false-for-Employee) newRecurringEnabled state and
                     its Preview block below stay harmlessly inert without touching this markup. */}
-                <div style={scopeToEmployeeSupervised ? { display: 'none' } : { border: '1px solid #E5E7EB', borderRadius: 10, padding: 10 }}>
+                <div style={(scopeToEmployeeSupervised || !isFeatureEnabled(currentPlan, 'UC17')) ? { display: 'none' } : { border: '1px solid #E5E7EB', borderRadius: 10, padding: 10 }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', flex: 1 }}>
                       <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: '0.8125rem', color: '#374151' }}>
