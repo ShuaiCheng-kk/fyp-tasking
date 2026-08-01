@@ -818,7 +818,7 @@ const modalInputStyle: React.CSSProperties = {
   background: '#FFFFFF',
 }
 
-export default function ShiftsView({ sidebar, basePath, canManageShifts = true, scopeToManagerDepartments = false, scopeToEmployeeSelf = false }: {
+export default function ShiftsView({ sidebar, basePath, canManageShifts = true, scopeToManagerDepartments = false, scopeToEmployeeSelf = false, hidePlanBadge = false }: {
   sidebar: React.ReactNode
   basePath: string
   // UC1-11 are O/P-only: false renders the schedule read-only (no create/edit/publish/bulk/AI/templates).
@@ -830,6 +830,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
   // row plus any Casual Worker shift blocks they currently supervise (see shiftService's
   // getTimelineShifts Employee branch), never their whole department.
   scopeToEmployeeSelf?: boolean
+  hidePlanBadge?: boolean
 }) {
   // Manager/Employee only ever see their own scoped slice of people on this page, so department
   // color-coding is meaningless — fall back to the brand orange instead of deptColor().
@@ -851,9 +852,10 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
   const [initialReady, setInitialReady] = useState(false)
   const [authUserId, setAuthUserId] = useState('')
   const [internalUserId, setInternalUserId] = useState('')
-  // Employee-only (2026-08-02): once clocked out of every shift today, My Requests locks to
-  // read-only — same rule as the Tasks page and Dashboard's My Tasks board.
-  const employeeClockedOut = useEmployeeClockedOut(scopeToEmployeeSelf ? internalUserId : '')
+  // Once clocked out of every shift today, My Requests locks to read-only — same rule as the
+  // Tasks page and Dashboard's My Tasks board (2026-08-02), extended to Manager's own My
+  // Requests and Swap Requests approval queue (2026-08-03).
+  const employeeClockedOut = useEmployeeClockedOut((scopeToEmployeeSelf || scopeToManagerDepartments) ? internalUserId : '')
   const viewerParams = scopeToManagerDepartments && internalUserId
     ? `&viewer_role=Manager&viewer_user_id=${internalUserId}`
     : scopeToEmployeeSelf && internalUserId
@@ -1039,6 +1041,11 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
   const [arRecordsLoading, setArRecordsLoading] = useState(false)
   const [reviewRecord, setReviewRecord] = useState<AttendanceDashboardRecord | null>(null)
   const [calSearchKeyword, setCalSearchKeyword] = useState('')
+  // Manager-only: the Shift Calendar used to merge Internal Members and Casual Workers into one
+  // continuous table with an inline section break — cramped, and every idle-this-week Casual
+  // Worker still took up a full row of "OFF" cells. Toggle between the two groups instead
+  // (2026-08-02), default to Internal Members.
+  const [calShowCasualWorkers, setCalShowCasualWorkers] = useState(false)
   const [calExportOpen, setCalExportOpen] = useState(false)
   const [calExportFrom, setCalExportFrom] = useState('')
   const [calExportTo, setCalExportTo] = useState('')
@@ -3347,17 +3354,24 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
     const todayStr = formatDateKey(new Date())
 
     // Build per-user rows, filtered to selected dept if any, excluding open shifts.
-    // Manager merges Casual Workers into the same calendar as internal staff (matching the old
-    // Attendance Records block's "Internal Members" + "Casual Workers" sections) — Owner/Partner
-    // keep the existing internal-staff-only Weekly Shift view. Employee never gets a Casual
-    // Workers section at all here (confirmed 2026-07-31) — Employee's Shift Calendar is about
-    // their own schedule, not supervising Casual Workers' attendance (that's the Dashboard's job).
+    // Manager toggles between Internal Members and Casual Workers (calShowCasualWorkers,
+    // 2026-08-02 — used to merge both into one continuous table with an inline section break,
+    // cramped and with idle-this-week Casual Workers cluttering it) — Owner/Partner keep the
+    // existing internal-staff-only Weekly Shift view. Employee never gets a Casual Workers section
+    // at all here (confirmed 2026-07-31) — Employee's Shift Calendar is about their own schedule,
+    // not supervising Casual Workers' attendance (that's the Dashboard's job).
     const deptFilter = selectedDepartment?.id
     const filteredRows = calWeekRows.filter(r =>
       r.user_id !== null &&
       r.department_id &&
-      (r.role === 'Manager' || r.role === 'Employee' || (scopeToManagerDepartments && r.role === 'Casual Worker')) &&
-      (!deptFilter || r.department_id === deptFilter)
+      (scopeToManagerDepartments && calShowCasualWorkers
+        ? r.role === 'Casual Worker'
+        : (r.role === 'Manager' || r.role === 'Employee')) &&
+      (!deptFilter || r.department_id === deptFilter) &&
+      // Nothing to show for someone with zero shifts anywhere in the displayed week — a full row
+      // of "OFF" cells was pure clutter, especially in the Casual Workers view where most of the
+      // pool is inactive on any given week (2026-08-02).
+      r.shifts.length > 0
     )
     // Sort: Manager → Employee → Casual Worker, then alpha
     const searchedRows = scopeToManagerDepartments && calSearchKeyword.trim()
@@ -3394,12 +3408,22 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
           {/* Header row */}
           <div style={{ display: 'grid', gridTemplateColumns: `${NAME_COL}px repeat(7, 1fr)`, background: 'linear-gradient(135deg, #0F172A 0%, #1E293B 100%)', height: 54, position: 'sticky', top: 0, zIndex: 5 }}>
             <div style={{ padding: '10px 14px 10px 20px', borderRight: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center' }}>
-              {/* "Internal Members" only makes sense as a label distinguishing it from the Casual
-                  Workers section below it — Manager still has both, but Employee's calendar has no
-                  Casual Workers section anymore (confirmed 2026-07-31), so the label is dropped. */}
-              {scopeToManagerDepartments && (
-                <span style={{ fontSize: 14, fontWeight: 700, color: 'rgba(255,255,255,0.85)', letterSpacing: '0.01em' }}>Internal Members</span>
-              )}
+              {/* Manager toggles Internal Members ⇄ Casual Workers (2026-08-02, replacing the old
+                  merged-table layout — see calShowCasualWorkers above). Employee's calendar has no
+                  Casual Workers section at all (confirmed 2026-07-31), so it's just a static label. */}
+              {scopeToManagerDepartments ? (
+                <button
+                  type="button"
+                  onClick={() => setCalShowCasualWorkers(v => !v)}
+                  title={calShowCasualWorkers ? 'Switch to Internal Members' : 'Switch to Casual Workers'}
+                  style={{ display: 'flex', alignItems: 'center', gap: 6, border: 'none', background: 'transparent', padding: 0, cursor: 'pointer' }}
+                >
+                  <span style={{ fontSize: 14, fontWeight: 700, color: 'rgba(255,255,255,0.85)', letterSpacing: '0.01em', whiteSpace: 'nowrap' }}>
+                    {calShowCasualWorkers ? 'Casual Workers' : 'Internal Members'}
+                  </span>
+                  <ChevronRight size={15} style={{ color: OWNER_ORANGE, flexShrink: 0, transform: calShowCasualWorkers ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+                </button>
+              ) : null}
             </div>
             {weekDates.map(date => {
               const d = new Date(`${date}T00:00:00`)
@@ -3432,22 +3456,14 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                   const borderTop = isDeptBoundary ? EDGE : `1px solid ${BORDER}`
                   const maxShiftsInRow = Math.max(1, ...weekDates.map(date => row.shifts.filter((s: TimelineShiftBlock) => s.shift_date === date).length))
                   const rowHeight = Math.min(104, Math.max(58, maxShiftsInRow * 28 + (maxShiftsInRow - 1) * 4 + 24))
-                  // Manager merges internal staff and Casual Workers into one table — a labelled
-                  // section break marks where internal staff ends and CW rows begin. Employee
-                  // never has CW rows at all (filtered out above), so this never fires for them.
-                  const showCwSectionHeader = scopeToManagerDepartments && row.role === 'Casual Worker'
-                    && (rowIdx === 0 || deptRowsCal[deptId][rowIdx - 1].role !== 'Casual Worker')
+                  // A peer Manager's row is view-only here — same reasoning as hiding their
+                  // clock-in detail above (managerCanSeeAttendance): a Manager doesn't get to
+                  // manage another Manager's schedule either, just see the plain shift time
+                  // (2026-08-02).
+                  const rowManageable = canManageShifts && !(scopeToManagerDepartments && isManager && row.user_id !== internalUserId)
                   return (
                     <div key={row.user_id ?? `r-${deptIdx}-${rowIdx}`}>
-                    {showCwSectionHeader && (
-                      <div style={{ display: 'grid', gridTemplateColumns: `${NAME_COL}px repeat(7, 1fr)`, height: 54, background: 'linear-gradient(135deg, #0F172A 0%, #1E293B 100%)', borderTop: `1px solid ${BORDER}` }}>
-                        <div style={{ padding: '10px 14px 10px 20px', borderRight: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center' }}>
-                          <span style={{ fontSize: 14, fontWeight: 700, color: 'rgba(255,255,255,0.85)', letterSpacing: '0.01em' }}>Casual Workers</span>
-                        </div>
-                        {weekDates.map(date => <div key={date} style={{ borderRight: '1px solid rgba(255,255,255,0.08)' }} />)}
-                      </div>
-                    )}
-                    <div style={{ display: 'grid', gridTemplateColumns: `${NAME_COL}px repeat(7, 1fr)`, borderTop: showCwSectionHeader ? 'none' : borderTop, background: '#FFFFFF', height: rowHeight }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: `${NAME_COL}px repeat(7, 1fr)`, borderTop, background: '#FFFFFF', height: rowHeight }}>
                       {/* Color bar + Name cell — Manager drops the color bar entirely (every row
                           is already their own department, so it adds nothing to look at). */}
                       <div style={{ display: 'flex', alignItems: 'center', borderRight: `1px solid ${BORDER}`, overflow: 'hidden', height: rowHeight }}>
@@ -3475,12 +3491,21 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                         const employeeCanSeeAttendance = !scopeToEmployeeSelf
                           || row.user_id === internalUserId
                           || (row.role === 'Casual Worker' && dayShifts.some(s => s.supervisor_employee_id === internalUserId))
+                        // Manager sees full attendance detail for themselves and the Employees/
+                        // Casual Workers they supervise (UC56's edit scope) — but a PEER Manager's
+                        // clock-in/out stays private, same reasoning as Employee's own rule above.
+                        // This used to be unconditionally true for the whole Manager scope
+                        // (employeeCanSeeAttendance short-circuits on !scopeToEmployeeSelf), which
+                        // let a Manager see another Manager's clock status (2026-08-02).
+                        const managerCanSeeAttendance = !scopeToManagerDepartments
+                          || row.user_id === internalUserId
+                          || row.role !== 'Manager'
                         // Manager/Employee: past/today cells with an actual attendance record (a
                         // shift existed that day) render in the Attendance Records status-pill
                         // style instead of the plain shift-time bar — clicking opens the same
                         // UC56 review modal the old Attendance page used (read-only for Employee,
                         // see the EditAttendanceRecordModal's canModifyClockTimes prop below).
-                        const arRecordsForCell = (scopeToManagerDepartments || scopeToEmployeeSelf) && employeeCanSeeAttendance && date <= todayStr && row.user_id
+                        const arRecordsForCell = (scopeToManagerDepartments || scopeToEmployeeSelf) && employeeCanSeeAttendance && managerCanSeeAttendance && date <= todayStr && row.user_id
                           ? arByUserDate.get(`${row.user_id}|${date}`) ?? []
                           : []
                         if (arRecordsForCell.length > 0) {
@@ -3535,16 +3560,16 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                                   <span style={{ fontSize: 10, fontWeight: 600, color: '#7C3AED', whiteSpace: 'nowrap' }}>Off Day</span>
                                 </div>
                               ) : (
-                              <div style={{ borderRadius: 999, background: '#E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'center', height: 24, cursor: (canManageShifts && !isPastDate) ? 'pointer' : 'default', transition: 'background 0.15s' }}
+                              <div style={{ borderRadius: 999, background: '#E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'center', height: 24, cursor: (rowManageable && !isPastDate) ? 'pointer' : 'default', transition: 'background 0.15s' }}
                                 onClick={() => {
-                                  if (isPastDate) return
+                                  if (isPastDate || !rowManageable) return
                                   const dept = departments.find(d => d.id === row.department_id)
                                   if (!dept) return
                                   openBatchDrawer(dept, row.user_id!, date)
                                 }}
-                                onMouseEnter={e => { if (canManageShifts && !isPastDate) e.currentTarget.style.background = '#CBD5E1' }}
+                                onMouseEnter={e => { if (rowManageable && !isPastDate) e.currentTarget.style.background = '#CBD5E1' }}
                                 onMouseLeave={e => { e.currentTarget.style.background = '#E2E8F0' }}
-                                title={(canManageShifts && !isPastDate) ? `Assign shift to ${row.full_name} on ${date}` : undefined}
+                                title={(rowManageable && !isPastDate) ? `Assign shift to ${row.full_name} on ${date}` : undefined}
                               >
                                 <span style={{ fontSize: 10, fontWeight: 600, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Off</span>
                               </div>
@@ -3554,17 +3579,17 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                                 return (
                                 <button
                                   key={shift.id}
-                                  onClick={() => openShiftDetail(shift, row, isPastDate)}
+                                  onClick={() => { if (rowManageable) openShiftDetail(shift, row, isPastDate) }}
                                   title={`${formatShiftHour(shift.start_time)} – ${formatShiftHour(shift.end_time)}${isDraft ? ' (Draft)' : ''}`}
                                   style={{
                                     display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
                                     padding: '0 8px', height: 28, flexShrink: 0,
                                     background: barColor,
                                     border: isDraft ? '1.5px dashed rgba(255,255,255,0.85)' : 'none', borderRadius: 999,
-                                    cursor: (canManageShifts && !isPastDate) ? 'pointer' : 'default', width: '100%',
+                                    cursor: (rowManageable && !isPastDate) ? 'pointer' : 'default', width: '100%',
                                     opacity: isPastDate ? 0.7 : (isDraft ? 0.72 : 1),
                                   }}
-                                  onMouseEnter={e => { if (canManageShifts && !isPastDate) e.currentTarget.style.filter = 'brightness(1.08)' }}
+                                  onMouseEnter={e => { if (rowManageable && !isPastDate) e.currentTarget.style.filter = 'brightness(1.08)' }}
                                   onMouseLeave={e => { e.currentTarget.style.filter = 'none' }}
                                 >
                                   <span style={{ fontSize: 10.5, fontWeight: 600, color: '#FFFFFF', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -3694,7 +3719,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
           <div data-owner-header-badges style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
             {internalUserId && <OwnerUserBadge userId={internalUserId} companyId={companyId} />}
             {/* Subscription plan is Owner/Partner-only — Manager/Employee (and every other role) can't switch it. */}
-            {companyId && !scopeToManagerDepartments && !scopeToEmployeeSelf && <OwnerPlanBadge plan={company?.plan ?? 'Free'} currentCompanyId={companyId} />}
+            {companyId && !scopeToManagerDepartments && !scopeToEmployeeSelf && !hidePlanBadge && <OwnerPlanBadge plan={company?.plan ?? 'Free'} currentCompanyId={companyId} />}
           </div>
         </div>
 
@@ -3796,7 +3821,10 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                   and fetched. Unmounting the inactive tab meant its count (and the Swap Requests
                   tab's own red dot) stayed at 0 until the user actually clicked into it. */}
               <div style={{ display: managerShiftTab === 'schedule' ? 'flex' : 'none', flexDirection: 'column', gap: 16, flex: 1, minHeight: 0 }}>
-                  <section className="shift-calendar-panel" style={{ background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, display: 'flex', flexDirection: 'column', flex: '1 1 0', minHeight: 0 }}>
+                  {/* Sized to its actual content, capped at half the available height — matches
+                      Employee's calendar section exactly (2026-08-02, this used to always claim an
+                      equal flex share regardless of content, unlike Employee's content-sized panel). */}
+                  <section className="shift-calendar-panel" style={{ background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, display: 'flex', flexDirection: 'column', flex: '0 1 auto', maxHeight: '50%', minHeight: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '14px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, flexWrap: 'wrap', flexShrink: 0 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -3868,6 +3896,13 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                       showSuccessToast={showSuccessToast}
                       showErrorToast={showErrorToast}
                       onAttentionCount={setMyReqAlertCount}
+                      // Matches Employee's call site (2026-08-02) — this used to default to
+                      // autoSelectFirst=true (no empty state, always jumps straight into the
+                      // first request) and the narrower non-wide grid, both silently different
+                      // from Employee's since Manager's call site never set them.
+                      autoSelectFirst={false}
+                      wideEmployeeLayout
+                      readOnly={employeeClockedOut}
                     />
                   </div>
               </div>
@@ -3885,6 +3920,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                       showSuccessToast={showSuccessToast}
                       showErrorToast={showErrorToast}
                       onAttentionCount={setSwapAlertCount}
+                      readOnly={employeeClockedOut}
                     />
                   </div>
               </div>
@@ -3923,6 +3959,10 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                       <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
                         <ARStatusIcon status="absent" />
                         <span style={{ fontSize: 13, fontWeight: 600, color: '#374151' }}>Absent</span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                        <span style={{ width: 16, height: 16, borderRadius: '50%', background: '#F97316', color: '#fff', fontSize: 9, fontWeight: 800, lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>M</span>
+                        <span style={{ fontSize: 13, fontWeight: 600, color: '#374151' }}>Modified</span>
                       </div>
                     </div>
                   </div>

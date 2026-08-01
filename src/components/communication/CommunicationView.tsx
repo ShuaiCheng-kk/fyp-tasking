@@ -13,10 +13,11 @@ import { EmptyState } from '@/components/panel'
 import { setDeptColorOverrides } from '@/lib/deptColor'
 import { useIsCompactViewport } from '@/hooks/useIsCompactViewport'
 import { useResourceInvalidation } from '@/components/realtime/RealtimeNotificationsProvider'
+import { useEmployeeClockedOut } from '@/hooks/useEmployeeClockedOut'
 import {
   Plus, X, Trash2, Pencil, Megaphone,
   Send, Search, SquarePen, MessageSquare, Crown,
-  Users, Globe, UserCog, UserRound, Pin, PinOff,
+  Globe, UserCog, UserRound, Pin, PinOff,
   ImagePlus, Paperclip, FileText, ChevronDown,
 } from 'lucide-react'
 
@@ -253,10 +254,13 @@ export default function CommunicationView({ renderSidebar, basePath }: {
   const [selectedAnn, setSelectedAnn] = useState<Announcement | null>(null)
   const [readIds, setReadIds] = useState<Set<string>>(new Set())
   const [annSearch, setAnnSearch] = useState('')
-  const [othersSearch, setOthersSearch] = useState('')
-  const [othersDeptFilter, setOthersDeptFilter] = useState<string>('all')
-  const [othersDeptFilterOpen, setOthersDeptFilterOpen] = useState(false)
-  const othersDeptFilterRef = useRef<HTMLDivElement>(null)
+  // Manager-only: "My Announcements"/"From Others" used to be two separate blocks; merged into
+  // one "Announcements" block with a title-dropdown filter (2026-08-01, same pattern as
+  // MyRequestsPanel's "My Requests" dropdown). Owner/Partner never had a "From Others" concept
+  // (see isManagerRole comment near canPostCompanyWide) so their block is untouched.
+  const [managerAnnFilter, setManagerAnnFilter] = useState<'all' | 'mine' | 'others'>('all')
+  const [managerAnnFilterOpen, setManagerAnnFilterOpen] = useState(false)
+  const managerAnnFilterRef = useRef<HTMLDivElement>(null)
 
   const [showNewAnnModal, setShowNewAnnModal] = useState(false)
   const [annTitle, setAnnTitle] = useState('')
@@ -371,11 +375,11 @@ export default function CommunicationView({ renderSidebar, basePath }: {
   }, [companyId])
 
   useEffect(() => {
-    if (!othersDeptFilterOpen) return
-    const handler = (e: MouseEvent) => { if (!othersDeptFilterRef.current?.contains(e.target as Node)) setOthersDeptFilterOpen(false) }
+    if (!managerAnnFilterOpen) return
+    const handler = (e: MouseEvent) => { if (!managerAnnFilterRef.current?.contains(e.target as Node)) setManagerAnnFilterOpen(false) }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
-  }, [othersDeptFilterOpen])
+  }, [managerAnnFilterOpen])
 
   const fetchUnreadCount = useCallback(() => {
     if (!internalUserId || !companyId) return
@@ -498,7 +502,13 @@ export default function CommunicationView({ renderSidebar, basePath }: {
     const sorted = [...base].sort((a, b) => {
       const aPin = pinnedIds.has(a.partnerId) ? 0 : 1
       const bPin = pinnedIds.has(b.partnerId) ? 0 : 1
-      return aPin - bPin
+      if (aPin !== bPin) return aPin - bPin
+      // Unread floats to the top, newest-first within each group — same rule as the
+      // Announcements list above (2026-08-01).
+      const aUnread = a.unreadCount > 0 ? 0 : 1
+      const bUnread = b.unreadCount > 0 ? 0 : 1
+      if (aUnread !== bUnread) return aUnread - bUnread
+      return new Date(b.lastTime).getTime() - new Date(a.lastTime).getTime()
     })
     setFilteredConversations(sorted)
   }, [search, conversations, pinnedIds])
@@ -623,7 +633,7 @@ export default function CommunicationView({ renderSidebar, basePath }: {
   }
 
   async function handlePostAnnouncement() {
-    if (!internalUserId || !companyId) return
+    if (managerClockedOut || !internalUserId || !companyId) return
     setPosting(true)
     try {
       const res = await fetch('/api/inbox/announcements', {
@@ -661,7 +671,7 @@ export default function CommunicationView({ renderSidebar, basePath }: {
   }
 
   async function handleDeleteAnnouncement(announcementId: string) {
-    if (!internalUserId) return
+    if (managerClockedOut || !internalUserId) return
     setDeleting(true)
     try {
       setAnnouncements(prev => prev.filter(a => a.id !== announcementId))
@@ -728,11 +738,13 @@ export default function CommunicationView({ renderSidebar, basePath }: {
   const canPostCompanyWide = ['owner', 'partner'].includes(userRole?.toLowerCase())
   // Managers may only broadcast within their own department — never company-wide, never another department.
   const isManagerRole = userRole === 'Manager'
+  // Once a Manager has clocked out of every shift today, sending chat messages locks — same rule
+  // already applied to Employee's Communication page, Tasks page and My Requests (2026-08-03).
+  const managerClockedOut = useEmployeeClockedOut(isManagerRole && internalUserId ? internalUserId : '')
   // O/P never see Manager-posted announcements (ownerAnnouncementRepository's isOwnerOrPartner
-  // branch already filters those out server-side) and don't post to each other in practice, so
-  // "From Others" never has anything meaningful to show them — only Manager needs it (sees O/P's
-  // company-wide posts here, posts their own department ones in "My Announcements").
-  const isOwnerOrPartnerRole = userRole === 'Owner' || userRole === 'Partner'
+  // branch already filters those out server-side) and don't post to each other in practice, so a
+  // "From Others" filter never has anything meaningful to show them — only Manager's merged
+  // Announcements block needs it (sees O/P's company-wide posts there too).
   const isManagerCompact = useIsCompactViewport(1180)
   const managerCommGridStyle: React.CSSProperties = isManagerRole && isManagerCompact
     ? { flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gridTemplateRows: 'minmax(240px, 0.48fr) minmax(320px, 0.52fr)', gap: 12, overflow: 'hidden' }
@@ -879,7 +891,7 @@ export default function CommunicationView({ renderSidebar, basePath }: {
   async function handleSendMessage(partnerId: string) {
     const conv = conversations.find(c => c.partnerId === partnerId)
     const content = (panelInputs[partnerId] ?? '').trim()
-    if (!content || !conv || !internalUserId || !companyId) return
+    if (managerClockedOut || !content || !conv || !internalUserId || !companyId) return
     setPanelSending(prev => ({ ...prev, [partnerId]: true }))
     const optimistic: Message = {
       id: `tmp-${Date.now()}`, from_user_id: internalUserId, to_user_id: partnerId,
@@ -941,7 +953,7 @@ export default function CommunicationView({ renderSidebar, basePath }: {
   async function uploadAndSendPanelAttachment(partnerId: string) {
     const files = panelAttachFiles[partnerId] ?? []
     const conv = conversations.find(c => c.partnerId === partnerId)
-    if (files.length === 0 || !conv || !internalUserId || !companyId) return
+    if (managerClockedOut || files.length === 0 || !conv || !internalUserId || !companyId) return
     setPanelUploading(prev => ({ ...prev, [partnerId]: true }))
     try {
       for (const file of files) {
@@ -994,22 +1006,33 @@ export default function CommunicationView({ renderSidebar, basePath }: {
       (ann.created_by_name ?? '').toLowerCase().includes(term.toLowerCase())
   }
 
-  const filteredAnnouncements = annSearch
+  // Unread always floats to the top, newest-first within each group — same rule as the Chatbox
+  // conversation list below and Employee's mirrored panels (2026-08-01).
+  function isAnnUnread(ann: Announcement) {
+    return ann.user_id !== internalUserId && !readIds.has(ann.id)
+  }
+  function compareAnnouncements(a: Announcement, b: Announcement) {
+    const aUnread = isAnnUnread(a) ? 0 : 1
+    const bUnread = isAnnUnread(b) ? 0 : 1
+    if (aUnread !== bUnread) return aUnread - bUnread
+    return new Date(b.updated_at ?? b.created_at).getTime() - new Date(a.updated_at ?? a.created_at).getTime()
+  }
+
+  const filteredAnnouncements = (annSearch
     ? announcements.filter(ann => matchesAnnSearch(ann, annSearch))
     : announcements
+  ).slice().sort(compareAnnouncements)
 
   const myAnnouncements = filteredAnnouncements.filter(ann => ann.user_id === internalUserId)
 
-  const othersAnnouncements = announcements
-    .filter(ann => ann.user_id !== internalUserId)
-    .filter(ann => !othersSearch || matchesAnnSearch(ann, othersSearch))
-    // Matches the badge on the card, which shows the announcement's audience scope.
-    .filter(ann => othersDeptFilter === 'all' || ann.audience_department_id === othersDeptFilter)
+  // Manager-only merged block (see managerAnnFilter above) — 'all' is everything this Manager can
+  // see (their own posts + Owner/Partner's company-wide/department ones), 'mine'/'others' narrow it.
+  const managerAnnouncements = managerAnnFilter === 'mine' ? myAnnouncements
+    : managerAnnFilter === 'others' ? filteredAnnouncements.filter(ann => ann.user_id !== internalUserId)
+    : filteredAnnouncements
 
   function renderAnnouncementCard(ann: Announcement, i: number) {
-    // Same "own posts are never unread" rule as unreadAnnCount — otherwise every card in My
-    // Announcements stayed permanently bold, since posting never adds it to readIds.
-    const unread = ann.user_id !== internalUserId && !readIds.has(ann.id)
+    const unread = isAnnUnread(ann)
     const selected = selectedAnn?.id === ann.id
     const deptName = ann.audience_department_id ? (departments.find(d => d.id === ann.audience_department_id)?.name ?? 'Dept') : null
     const isMine = ann.user_id === internalUserId
@@ -1028,10 +1051,21 @@ export default function CommunicationView({ renderSidebar, basePath }: {
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-          {/* Always shows the announcement's own audience/scope (department or Company-wide) — never
-              the poster's department, which is a different concept (who posted it, not who can see
-              it) and was showing "Owner/Partner" instead of "Company-wide" for company-wide posts. */}
-          <DepartmentBadge departmentId={ann.audience_department_id} departmentName={deptName} fallbackIcon={<Globe size={9} />} />
+          {isManagerRole ? (
+            // Manager-only (2026-08-01): the audience/scope badge always said "Company-wide" or
+            // this Manager's own single department (server-side scoped, see comment on
+            // isManagerRole near canPostCompanyWide) — no information. A "Posted by" badge is
+            // useful instead, same style as Employee's Announcements card, and keeps every card
+            // the same shape/height whether it's this Manager's own post or someone else's.
+            <span style={{ display: 'inline-flex', alignItems: 'center', fontSize: '0.72rem', fontWeight: 700, color: '#475569', background: '#F1F5F9', borderRadius: 999, padding: '4px 10px' }}>
+              Posted by {isMine ? (ann.created_by_name ?? 'Me') : (ann.created_by_name ?? 'Unknown')}
+            </span>
+          ) : (
+            // Always shows the announcement's own audience/scope (department or Company-wide) — never
+            // the poster's department, which is a different concept (who posted it, not who can see
+            // it) and was showing "Owner/Partner" instead of "Company-wide" for company-wide posts.
+            <DepartmentBadge departmentId={ann.audience_department_id} departmentName={deptName} fallbackIcon={<Globe size={9} />} />
+          )}
           <span style={{ fontSize: 11.5, color: '#9CA3AF', fontWeight: 500, flexShrink: 0 }}>{formatAnnouncementTimestamp(ann)}</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
@@ -1147,7 +1181,7 @@ export default function CommunicationView({ renderSidebar, basePath }: {
           <div data-owner-header-badges style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
             {internalUserId && <OwnerUserBadge userId={internalUserId} companyId={companyId ?? ''} />}
             {/* Subscription plan is Owner/Partner-only — Manager (and every other role) can't switch it. */}
-            {companyId && (userRole === 'Owner' || userRole === 'Partner') && <OwnerPlanBadge plan={currentPlan} currentCompanyId={companyId} />}
+            {companyId && userRole === 'Owner' && <OwnerPlanBadge plan={currentPlan} currentCompanyId={companyId} />}
           </div>
         </div>
 
@@ -1544,7 +1578,7 @@ export default function CommunicationView({ renderSidebar, basePath }: {
                               ref={el => { panelFileRefs.current[partnerId] = el }}
                               onChange={e => { const files = Array.from(e.target.files ?? []); if (files.length) pickPanelAttachments(partnerId, files); e.target.value = '' }}
                             />
-                            {!conv.partnerDeleted && (
+                            {!conv.partnerDeleted && !managerClockedOut && (
                               <button onClick={() => panelPhotoRefs.current[partnerId]?.click()} title="Send photo"
                                 style={{ flexShrink: 0, width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#FFF7ED', border: '1.5px solid rgba(249,115,22,0.25)', borderRadius: 10, cursor: 'pointer', color: '#F97316', transition: 'all 0.15s' }}
                                 onMouseEnter={e => { e.currentTarget.style.background = '#FFEDD5'; e.currentTarget.style.borderColor = 'rgba(249,115,22,0.45)' }}
@@ -1552,7 +1586,7 @@ export default function CommunicationView({ renderSidebar, basePath }: {
                                 <ImagePlus size={18} strokeWidth={2} />
                               </button>
                             )}
-                            {!conv.partnerDeleted && (
+                            {!conv.partnerDeleted && !managerClockedOut && (
                               <button onClick={() => panelFileRefs.current[partnerId]?.click()} title="Send file"
                                 style={{ flexShrink: 0, width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#EFF6FF', border: '1.5px solid rgba(59,130,246,0.25)', borderRadius: 10, cursor: 'pointer', color: '#3B82F6', transition: 'all 0.15s' }}
                                 onMouseEnter={e => { e.currentTarget.style.background = '#DBEAFE'; e.currentTarget.style.borderColor = 'rgba(59,130,246,0.45)' }}
@@ -1564,13 +1598,13 @@ export default function CommunicationView({ renderSidebar, basePath }: {
                               value={input}
                               autoFocus={!conv.partnerDeleted}
                               onChange={e => setPanelInputs(p => ({ ...p, [partnerId]: e.target.value }))}
-                              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !conv.partnerDeleted) { e.preventDefault(); if (attachFiles.length > 0) uploadAndSendPanelAttachment(partnerId); else handleSendMessage(partnerId) } }}
-                              placeholder={conv.partnerDeleted ? "Account removed" : 'Type a message…'}
-                              disabled={conv.partnerDeleted}
+                              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !conv.partnerDeleted && !managerClockedOut) { e.preventDefault(); if (attachFiles.length > 0) uploadAndSendPanelAttachment(partnerId); else handleSendMessage(partnerId) } }}
+                              placeholder={conv.partnerDeleted ? "Account removed" : managerClockedOut ? "You've clocked out — messaging is locked" : 'Type a message…'}
+                              disabled={conv.partnerDeleted || managerClockedOut}
                               className="comm-input"
-                              style={{ flex: 1, height: 42, padding: '0 14px', border: '1.5px solid #E2E8F0', borderRadius: 10, fontSize: 14, fontWeight: 500, outline: 'none', background: conv.partnerDeleted ? '#F8FAFC' : '#FFFFFF', color: conv.partnerDeleted ? '#94A3B8' : '#0F172A', cursor: conv.partnerDeleted ? 'not-allowed' : undefined, transition: 'border-color 0.15s, box-shadow 0.15s' }}
+                              style={{ flex: 1, height: 42, padding: '0 14px', border: '1.5px solid #E2E8F0', borderRadius: 10, fontSize: 14, fontWeight: 500, outline: 'none', background: (conv.partnerDeleted || managerClockedOut) ? '#F8FAFC' : '#FFFFFF', color: (conv.partnerDeleted || managerClockedOut) ? '#94A3B8' : '#0F172A', cursor: conv.partnerDeleted ? 'not-allowed' : undefined, transition: 'border-color 0.15s, box-shadow 0.15s' }}
                             />
-                            {!conv.partnerDeleted && (
+                            {!conv.partnerDeleted && !managerClockedOut && (
                               <button
                                 onClick={() => { if (attachFiles.length > 0) uploadAndSendPanelAttachment(partnerId); else handleSendMessage(partnerId) }}
                                 disabled={sending || uploading || (!input.trim() && attachFiles.length === 0)}
@@ -1594,10 +1628,74 @@ export default function CommunicationView({ renderSidebar, basePath }: {
           {activeTab === 'announcements' && (
             <div style={managerCommGridStyle}>
 
-              {/* Left: list — two stacked blocks, each sized to fit its content */}
+              {/* Left: list — Manager gets one merged "Announcements" block with a title-dropdown
+                  filter (Mine/Others/All), same pattern as MyRequestsPanel's "My Requests"
+                  dropdown; Owner/Partner keep their original single "My Announcements" block since
+                  they have no "From Others" concept (see isManagerRole comment above). */}
               <div style={{ maxHeight: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 12, overflowY: 'auto' }}>
 
-                {/* My Announcements */}
+                {isManagerRole ? (
+                <div style={{ alignSelf: 'start', maxHeight: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', background: '#FFFFFF', borderRadius: 14, border: '1px solid #E5E7EB', boxShadow: '0 1px 4px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '16px 18px', borderBottom: '1px solid #E2E8F0', flexShrink: 0 }}>
+                    <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <Megaphone size={15} style={{ color: '#F97316' }} />
+                    </div>
+                    <div ref={managerAnnFilterRef} style={{ position: 'relative', minWidth: 0 }}>
+                      <button type="button" onClick={() => setManagerAnnFilterOpen(o => !o)}
+                        style={{ display: 'flex', alignItems: 'center', gap: 6, border: 'none', background: 'transparent', padding: 0, cursor: 'pointer' }}>
+                        <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2, whiteSpace: 'nowrap' }}>
+                          {managerAnnFilter === 'mine' ? 'My Announcements' : managerAnnFilter === 'others' ? 'From Others' : 'Announcements'}
+                        </span>
+                        <ChevronDown size={15} style={{ color: '#9CA3AF', flexShrink: 0, transform: managerAnnFilterOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+                      </button>
+                      {managerAnnFilterOpen && (
+                        <div style={{ position: 'absolute', top: 'calc(100% + 8px)', left: 0, minWidth: 160, background: '#FFFFFF', border: '1.5px solid #E5E7EB', borderRadius: 10, boxShadow: '0 8px 24px rgba(15,23,42,0.12)', zIndex: 50, padding: '4px 0', overflow: 'hidden' }}>
+                          {([
+                            { key: 'all' as const, label: 'Announcements' },
+                            { key: 'mine' as const, label: 'My Announcements' },
+                            { key: 'others' as const, label: 'From Others' },
+                          ]).map(f => {
+                            const active = managerAnnFilter === f.key
+                            return (
+                              <button key={f.key} type="button"
+                                onClick={() => { setManagerAnnFilter(f.key); setManagerAnnFilterOpen(false) }}
+                                style={{ display: 'block', width: '100%', padding: '8px 14px', textAlign: 'left', border: 'none', background: active ? '#FFF7ED' : 'transparent', color: active ? '#EA580C' : '#374151', fontWeight: active ? 700 : 500, fontSize: 13, cursor: 'pointer' }}
+                                onMouseEnter={e => { if (!active) e.currentTarget.style.background = '#F9FAFB' }}
+                                onMouseLeave={e => { if (!active) e.currentTarget.style.background = 'transparent' }}
+                              >
+                                {f.label}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <div style={{ padding: '10px 12px 0', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div style={{ flex: 1, minWidth: 0, height: 36, display: 'flex', alignItems: 'center', gap: 8, background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 10, padding: '0 13px' }}>
+                      <Search size={15} color="#94A3B8" style={{ flexShrink: 0 }} />
+                      <input
+                        value={annSearch}
+                        onChange={e => setAnnSearch(e.target.value)}
+                        placeholder="Search"
+                        style={{ flex: 1, minWidth: 0, border: 'none', background: 'transparent', outline: 'none', fontSize: 13, color: '#0F172A', fontWeight: 500 }}
+                      />
+                    </div>
+                    <button onClick={() => { setAnnDeptId(userDeptId ?? ''); setShowNewAnnModal(true) }} disabled={managerClockedOut} title={managerClockedOut ? "You've clocked out — posting is locked" : 'Post announcement'}
+                      className="comm-action-btn"
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 36, height: 36, background: managerClockedOut ? '#E5E7EB' : '#F97316', border: 'none', borderRadius: 10, color: managerClockedOut ? '#9CA3AF' : '#fff', cursor: managerClockedOut ? 'default' : 'pointer', flexShrink: 0 }}
+                    >
+                      <Plus size={18} strokeWidth={2.5} />
+                    </button>
+                  </div>
+
+                  <div style={{ overflowY: 'auto', flex: 1, minHeight: 0, padding: '14px 10px 10px' }}>
+                    {managerAnnouncements.length === 0 ? (
+                      <EmptyState icon={<Megaphone size={24} strokeWidth={1.5} />} message={annSearch ? 'No matching announcements' : managerAnnFilter === 'others' ? 'No announcements from others yet' : 'No announcements yet'} />
+                    ) : managerAnnouncements.map((ann, i) => renderAnnouncementCard(ann, i))}
+                  </div>
+                </div>
+                ) : (
                 <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', background: '#FFFFFF', borderRadius: 14, border: '1px solid #E5E7EB', boxShadow: '0 1px 4px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '16px 18px', borderBottom: '1px solid #E2E8F0', flexShrink: 0 }}>
                     <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -1615,7 +1713,7 @@ export default function CommunicationView({ renderSidebar, basePath }: {
                         style={{ flex: 1, minWidth: 0, border: 'none', background: 'transparent', outline: 'none', fontSize: 13, color: '#0F172A', fontWeight: 500 }}
                       />
                     </div>
-                    <button onClick={() => { setAnnDeptId(isManagerRole ? (userDeptId ?? '') : 'company-wide'); setShowNewAnnModal(true) }} title="Post announcement"
+                    <button onClick={() => { setAnnDeptId('company-wide'); setShowNewAnnModal(true) }} title="Post announcement"
                       className="comm-action-btn"
                       style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 36, height: 36, background: '#F97316', border: 'none', borderRadius: 10, color: '#fff', cursor: 'pointer', flexShrink: 0 }}
                     >
@@ -1627,67 +1725,6 @@ export default function CommunicationView({ renderSidebar, basePath }: {
                     {myAnnouncements.length === 0 ? (
                       <EmptyState icon={<Megaphone size={24} strokeWidth={1.5} />} message={annSearch ? 'No matching announcements' : 'No announcements yet'} />
                     ) : myAnnouncements.map((ann, i) => renderAnnouncementCard(ann, i))}
-                  </div>
-                </div>
-
-                {/* From Others (Partners, Managers, etc.) — Manager-only, see isOwnerOrPartnerRole above */}
-                {!isOwnerOrPartnerRole && (
-                <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', background: '#FFFFFF', borderRadius: 14, border: '1px solid #E5E7EB', boxShadow: '0 1px 4px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '16px 18px', borderBottom: '1px solid #E2E8F0', flexShrink: 0 }}>
-                    <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                      <Users size={15} style={{ color: '#F97316' }} />
-                    </div>
-                    <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>From Others</span>
-                  </div>
-                  <div style={{ padding: '10px 12px 0', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <div style={{ flex: 1, minWidth: 0, height: 36, display: 'flex', alignItems: 'center', gap: 8, background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 10, padding: '0 13px' }}>
-                      <Search size={15} color="#94A3B8" style={{ flexShrink: 0 }} />
-                      <input
-                        value={othersSearch}
-                        onChange={e => setOthersSearch(e.target.value)}
-                        placeholder="Search"
-                        style={{ flex: 1, minWidth: 0, border: 'none', background: 'transparent', outline: 'none', fontSize: 13, color: '#0F172A', fontWeight: 500 }}
-                      />
-                    </div>
-                    {/* Manager is already scoped server-side to company-wide + their own single
-                        department (see fetchAnnouncements' audience_department_id param) — a filter that
-                        lists every department in the company would just be dead options that
-                        always return empty, so it's Owner/Partner only (they get every department
-                        at once and actually need to narrow it down). */}
-                    {!isManagerRole && (
-                    <div ref={othersDeptFilterRef} style={{ position: 'relative', flexShrink: 0 }}>
-                      <button
-                        type="button"
-                        onClick={() => setOthersDeptFilterOpen(o => !o)}
-                        style={{ display: 'flex', alignItems: 'center', gap: 5, height: 36, padding: '0 12px', border: `1.5px solid ${othersDeptFilterOpen ? '#F97316' : '#E5E7EB'}`, borderRadius: 10, background: '#FFFFFF', color: '#374151', fontSize: 13, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap', boxShadow: othersDeptFilterOpen ? '0 0 0 3px rgba(249,115,22,0.10)' : 'none', transition: 'border-color 0.15s' }}
-                      >
-                        {othersDeptFilter === 'all' ? 'All Departments' : (departments.find(d => d.id === othersDeptFilter)?.name ?? 'All Departments')}
-                        <ChevronDown size={12} style={{ color: '#9CA3AF', flexShrink: 0, transform: othersDeptFilterOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
-                      </button>
-                      {othersDeptFilterOpen && (
-                        <div style={{ position: 'absolute', top: 'calc(100% + 4px)', right: 0, minWidth: 170, background: '#FFFFFF', border: '1.5px solid #E5E7EB', borderRadius: 10, boxShadow: '0 8px 24px rgba(15,23,42,0.12)', zIndex: 50, padding: '4px 0', overflow: 'hidden' }}>
-                          {[{ id: 'all', name: 'All Departments' }, ...departments].map(dept => {
-                            const active = othersDeptFilter === dept.id
-                            return (
-                              <button key={dept.id} type="button"
-                                onClick={() => { setOthersDeptFilter(dept.id); setOthersDeptFilterOpen(false) }}
-                                style={{ display: 'block', width: '100%', padding: '8px 14px', textAlign: 'left', border: 'none', background: active ? '#FFF7ED' : 'transparent', color: active ? '#EA580C' : '#374151', fontWeight: active ? 700 : 400, fontSize: 13, cursor: 'pointer' }}
-                                onMouseEnter={e => { if (!active) e.currentTarget.style.background = '#F9FAFB' }}
-                                onMouseLeave={e => { if (!active) e.currentTarget.style.background = 'transparent' }}
-                              >
-                                {dept.name}
-                              </button>
-                            )
-                          })}
-                        </div>
-                      )}
-                    </div>
-                    )}
-                  </div>
-                  <div style={{ overflowY: 'auto', flex: 1, minHeight: 0, padding: '10px 10px 10px' }}>
-                    {othersAnnouncements.length === 0 ? (
-                      <EmptyState icon={<Megaphone size={24} strokeWidth={1.5} />} message={othersSearch || othersDeptFilter !== 'all' ? 'No matching announcements' : 'No announcements from others yet'} />
-                    ) : othersAnnouncements.map((ann, i) => renderAnnouncementCard(ann, i))}
                   </div>
                 </div>
                 )}
@@ -1716,9 +1753,14 @@ export default function CommunicationView({ renderSidebar, basePath }: {
                             </div>
                           )
                         ) : (
-                          <div style={{ width: 40, height: 40, borderRadius: 12, background: '#FFF7ED', color: '#F97316', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                            <Megaphone size={18} />
-                          </div>
+                          // Manager-only (2026-08-01): no icon at all for their own post — the
+                          // megaphone box read as redundant filler once the title/badge already
+                          // carry the info. Owner/Partner keep the original icon box, untouched.
+                          !isManagerRole && (
+                            <div style={{ width: 40, height: 40, borderRadius: 12, background: '#FFF7ED', color: '#F97316', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                              <Megaphone size={18} />
+                            </div>
+                          )
                         )}
                         <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 4, flex: 1, minWidth: 0 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
@@ -1749,9 +1791,12 @@ export default function CommunicationView({ renderSidebar, basePath }: {
                     </div>
                   </>
                 ) : (
-                  <div style={{ flex: 1, background: '#FFFFFF' }}>
-                    <EmptyState variant="iconBox" fill icon={<Megaphone size={24} strokeWidth={1.5} />} message="Select an announcement to read" />
-                  </div>
+                  // No wrapping div here — EmptyState's own `fill` flex:1 needs its immediate
+                  // parent to be the flex column above, or it can't stretch/center vertically
+                  // (matches Employee's EmployeeAnnouncementsPanel structure exactly, 2026-08-01;
+                  // the previous non-flex wrapper div silently broke fill and left the icon
+                  // stuck near the top instead of centered).
+                  <EmptyState variant="iconBox" fill icon={<Megaphone size={24} strokeWidth={1.5} />} message="Select an announcement to read" />
                 )}
               </div>
             </div>

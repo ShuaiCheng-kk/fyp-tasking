@@ -36,6 +36,18 @@ export const employeeAttendanceService = {
     }
   },
 
+  // "Clocked out, locked to read-only until next Clock In" (2026-08-03) — locked iff the user's
+  // most recently-started shift has been clocked out of and they haven't clocked into a newer
+  // one since. Deliberately NOT date-based: stays locked across a midnight rollover and through
+  // any off-days with no shift scheduled at all, only clearing on the next actual Clock In.
+  async getClockLockStatus(authId: string): Promise<boolean> {
+    if (!authId) return false
+    const user = await employeeAttendanceRepository.getUserByAuthId(authId)
+    if (!user) return false
+    const latest = await employeeAttendanceRepository.getLatestClockedRecord(user.id)
+    return !!latest?.clock_out_time
+  },
+
   // Shared by Manager and Employee — both are scheduled internal staff who clock in/out
   // against their own shift_assignment the same way (see CLAUDE.md: Manager ⊇ Employee).
   async clockIn(input: { authId: string; shift_assignment_id: string; clock_time?: string }) {

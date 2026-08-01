@@ -33,6 +33,24 @@ function isDueWithinHours(due: string, hours: number): boolean {
   return msRemaining > 0 && msRemaining <= hours * 60 * 60 * 1000
 }
 
+// Same "DD Mon, HH:MMAM/PM" format as Manager's My Tasks tab (TasksView.tsx's
+// formatDeadlineTime/formatDeadlineDisplay) — this widget previously used
+// Date.toLocaleString's "Mon D, HH:MM AM/PM" instead, a visibly different format for the same
+// deadline (2026-08-01).
+function formatDeadlineTime(value: string): string {
+  const date = new Date(value)
+  const hours = date.getHours()
+  const minutes = date.getMinutes()
+  const hour12 = hours % 12 || 12
+  const suffix = hours < 12 ? 'AM' : 'PM'
+  return `${String(hour12).padStart(2, '0')}:${String(minutes).padStart(2, '0')}${suffix}`
+}
+function formatDeadlineDisplay(value: string): string {
+  const d = new Date(value)
+  const dayMonth = `${String(d.getDate()).padStart(2, '0')} ${d.toLocaleDateString('en-US', { month: 'short' })}`
+  return `${dayMonth}, ${formatDeadlineTime(value)}`
+}
+
 const PRIORITY_COLORS: Record<string, { bg: string; text: string }> = {
   Low: { bg: '#F1F5F9', text: '#475569' },
   Medium: { bg: '#DBEAFE', text: '#1D4ED8' },
@@ -63,6 +81,49 @@ export default function EmployeeMyTasksBoard({ companyId, internalUserId, clocke
   const [dragOverCol, setDragOverCol] = useState<Task['status'] | null>(null)
   const [detailTask, setDetailTask] = useState<Task | null>(null)
   const [expandedTaskIds, setExpandedTaskIds] = useState<Set<string>>(new Set())
+
+  // "New task" red dot — same mechanics as Manager's My Tasks tab (TasksView.tsx: myTaskSignature/
+  // seenMyTaskSigs/isUnseenMyTaskAlert), this widget never had it (2026-08-02). Keyed on
+  // id + rejected_at so a rework (a new rejected_at) re-flags a task the Employee already saw
+  // once, the same as a brand-new assignment would. Only Assigned carries the dot — once dragged
+  // past it the Employee has necessarily already acted on it; a rework is the one case an
+  // In Progress card still counts as "unseen" (see needsRework badge for the always-visible
+  // rework flag, separate from this dot).
+  const taskSignature = (task: Task) => `${task.id}::${task.rejected_at ?? ''}`
+  const [seenTaskSigs, setSeenTaskSigs] = useState<Set<string>>(new Set())
+  const seenKey = companyId && internalUserId ? `employee_mytasks_seen_${companyId}_${internalUserId}` : null
+  const markTaskSeen = (task: Task) => {
+    const sig = taskSignature(task)
+    setSeenTaskSigs(prev => {
+      if (prev.has(sig)) return prev
+      const next = new Set(prev); next.add(sig)
+      if (seenKey) { try { localStorage.setItem(seenKey, JSON.stringify([...next])) } catch {} }
+      return next
+    })
+  }
+  useEffect(() => {
+    if (!seenKey) return
+    try {
+      const raw = localStorage.getItem(seenKey)
+      if (raw) setSeenTaskSigs(new Set(JSON.parse(raw)))
+    } catch {}
+  }, [seenKey])
+  // Garbage-collect signatures no longer on the board (completed/reassigned, or a stale
+  // pre-rejection signature superseded by the task's current one).
+  useEffect(() => {
+    if (tasks.length === 0 || !seenKey) return
+    const liveSigs = new Set(tasks.map(taskSignature))
+    setSeenTaskSigs(prev => {
+      const pruned = new Set([...prev].filter(sig => liveSigs.has(sig)))
+      if (pruned.size === prev.size) return prev
+      try { localStorage.setItem(seenKey, JSON.stringify([...pruned])) } catch {}
+      return pruned
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasks, seenKey])
+  const isUnseenTaskAlert = (task: Task): boolean =>
+    !seenTaskSigs.has(taskSignature(task)) &&
+    (task.status === 'Assigned' || (task.status === 'In Progress' && !!task.rejection_reason && !!task.rejected_at))
 
   const lastLoadedAtRef = useRef(0)
   const load = async () => {
@@ -209,7 +270,7 @@ export default function EmployeeMyTasksBoard({ companyId, internalUserId, clocke
         // as the Casual Worker's own board once its readOnly kicks in (2026-08-02).
         !clockedOut && (
           <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.7rem', fontWeight: 600, color: '#9CA3AF', background: '#F3F4F6', padding: '3px 8px', borderRadius: 999, whiteSpace: 'nowrap', flexShrink: 0 }}>
-            <GripVertical size={11} /> Drag to move
+            <GripVertical size={11} /> Drag cards to move
           </span>
         )
       }
@@ -246,7 +307,12 @@ export default function EmployeeMyTasksBoard({ companyId, internalUserId, clocke
           `}</style>
           {COLUMNS.map((col, colIdx) => {
             const cfg = STATUS_CONFIG[col]
-            const items = tasks.filter(t => t.status === col && !t.parent_task_id)
+            // Unseen (new-task dot) cards float to the top of their column — same rule as
+            // Manager's My Tasks tab (2026-08-02).
+            const items = tasks
+              .filter(t => t.status === col && !t.parent_task_id)
+              .slice()
+              .sort((a, b) => (isUnseenTaskAlert(b) ? 1 : 0) - (isUnseenTaskAlert(a) ? 1 : 0))
             const isOver = dragOverCol === col
             return (
               <Fragment key={col}>
@@ -289,7 +355,15 @@ export default function EmployeeMyTasksBoard({ companyId, internalUserId, clocke
                   </div>
 
                   <div style={{ flex: 1, minHeight: 96, overflowY: 'auto', padding: '10px 18px 12px', display: 'flex', flexDirection: 'column' }}>
-                    {items.map(task => {
+                    {items.length === 0 ? (
+                      // Same empty-state placeholder as Manager's My Tasks tab
+                      // (TasksView.tsx renderMyTasksView) — this widget never had one, so an
+                      // empty column just rendered blank instead (2026-08-02).
+                      <div style={{ flex: 1, minHeight: 164, margin: '8px 0', padding: '32px 0', textAlign: 'center', background: '#F8FAFC', borderRadius: 14, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                        {{ Assigned: <Layers size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />, 'In Progress': <Clock size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />, Review: <Eye size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />, Complete: <CheckCircle size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} /> }[col]}
+                        <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>No {cfg.label.toLowerCase()} tasks</p>
+                      </div>
+                    ) : items.map(task => {
                       const draggable = canDragTask(task)
                       const priority = task.priority ? PRIORITY_COLORS[task.priority] : null
                       const needsRework = !!task.rejection_reason && task.status === 'In Progress'
@@ -301,6 +375,7 @@ export default function EmployeeMyTasksBoard({ companyId, internalUserId, clocke
                       // Card height/font/spacing now matches Manager's My Tasks tab TaskCard exactly
                       // (showAssignee=false path in TasksView.tsx) instead of this widget's own
                       // one-off smaller sizing (2026-08-02).
+                      const isNew = isUnseenTaskAlert(task)
                       return (
                         <div key={task.id} style={{ position: 'relative', marginBottom: showStack ? 22 : 14 }}>
                         {showStack && (
@@ -309,11 +384,17 @@ export default function EmployeeMyTasksBoard({ companyId, internalUserId, clocke
                             <div style={{ position: 'absolute', left: 6, right: 6, bottom: -4, height: 14, background: '#F7F9FB', border: '1px solid #E5E7EB', borderRadius: 10, zIndex: 1 }} />
                           </>
                         )}
+                        {/* zIndex 3: above the card's own white box (zIndex 2 below), so it sits
+                            visibly on the card's white surface instead of getting covered by it —
+                            same as Manager's My Tasks tab (2026-08-02). */}
+                        {isNew && (
+                          <span title="New task" style={{ position: 'absolute', top: 10, right: 10, width: 8, height: 8, borderRadius: '50%', background: '#EF4444', zIndex: 3 }} />
+                        )}
                         <div
                           draggable={draggable}
-                          onDragStart={() => draggable && setDraggingTaskId(task.id)}
+                          onDragStart={() => { if (draggable) { setDraggingTaskId(task.id); markTaskSeen(task) } }}
                           onDragEnd={() => { setDraggingTaskId(null); setDragOverCol(null) }}
-                          onClick={() => setDetailTask(task)}
+                          onClick={() => { markTaskSeen(task); setDetailTask(task) }}
                           className="task-card"
                           style={{
                             position: 'relative',
@@ -366,7 +447,7 @@ export default function EmployeeMyTasksBoard({ companyId, internalUserId, clocke
                               <div style={{ display: 'flex', alignItems: 'center', gap: 5, margin: '0 0 8px' }}>
                                 {deadlineWarning ? <AlertCircle size={13} color="#EF4444" /> : <Clock size={13} color="#9CA3AF" />}
                                 <span style={{ fontSize: '0.8125rem', fontWeight: 700, color: deadlineWarning ? '#EF4444' : '#6B7280', whiteSpace: 'nowrap' }}>
-                                  {new Date(task.due_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                  {formatDeadlineDisplay(task.due_at)}
                                 </span>
                               </div>
                             )
@@ -374,7 +455,7 @@ export default function EmployeeMyTasksBoard({ companyId, internalUserId, clocke
                         </div>
 
                         {expanded && subTasks.length > 0 && (
-                          <div className="emp-subtasks-in" style={{ marginTop: 8, paddingLeft: 14 }}>
+                          <div className="emp-subtasks-in" style={{ marginTop: 8, paddingLeft: 14, paddingRight: 20 }}>
                             {subTasks.map((sub, idx) => {
                               const done = sub.is_completed
                               const canToggle = canToggleSubTask(sub)
@@ -394,8 +475,7 @@ export default function EmployeeMyTasksBoard({ companyId, internalUserId, clocke
                                   {idx < subTasks.length - 1 && <div style={{ width: 1, flex: 1, background: '#E2E8F0' }} />}
                                 </div>
                                 <div
-                                  onClick={() => setDetailTask(sub)}
-                                  style={{ flex: 1, minWidth: 0, marginBottom: 8, padding: '9px 12px', borderRadius: 8, background: '#FFFFFF', border: '1px solid #EEF0F2', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}
+                                  style={{ flex: 1, minWidth: 0, marginBottom: 8, padding: '9px 12px', borderRadius: 8, background: '#FFFFFF', border: '1px solid #EEF0F2', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}
                                 >
                                   <p style={{ margin: 0, flex: 1, minWidth: 0, fontSize: '0.75rem', fontWeight: 600, color: done ? '#9CA3AF' : '#111827' }}>
                                     {sub.title}
@@ -407,12 +487,17 @@ export default function EmployeeMyTasksBoard({ companyId, internalUserId, clocke
                                     title={toggleTitle}
                                     style={{
                                       width: 22, height: 22, borderRadius: '50%', flexShrink: 0,
-                                      border: done ? 'none' : '1.5px solid #D1D5DB',
-                                      background: done ? '#16A34A' : '#FFFFFF',
+                                      // Three distinct states, not two + opacity: done (green,
+                                      // checked), unlocked (white ring, ready to tick), locked
+                                      // (solid grey disc — sequence hasn't reached it yet). The
+                                      // previous dimmed-white-ring look for "locked" read as a
+                                      // rendering glitch rather than an intentional state
+                                      // (2026-08-02).
+                                      border: !done && canToggle ? '1.5px solid #D1D5DB' : 'none',
+                                      background: done ? '#16A34A' : canToggle ? '#FFFFFF' : '#D1D5DB',
                                       color: '#FFFFFF',
                                       display: 'flex', alignItems: 'center', justifyContent: 'center',
                                       cursor: canToggle ? 'pointer' : 'not-allowed',
-                                      opacity: !done && !canToggle ? 0.5 : 1,
                                       padding: 0,
                                     }}
                                   >

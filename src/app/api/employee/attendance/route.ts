@@ -19,6 +19,10 @@ export async function GET(req: NextRequest) {
       const queue = await employeeAttendanceService.getClockOutReleaseQueue(user_id)
       return NextResponse.json({ success: true, queue })
     }
+    if (resource === 'clock_lock_status') {
+      const locked = await employeeAttendanceService.getClockLockStatus(user_id)
+      return NextResponse.json({ success: true, locked })
+    }
     const records = await employeeAttendanceService.getAttendanceRecords(user_id)
     return NextResponse.json({ success: true, records })
   } catch (err) {

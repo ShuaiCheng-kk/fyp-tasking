@@ -8,6 +8,7 @@ export default function PartnerTeamPage() {
     <TeamView
       sidebar={<PartnerSidebar />}
       basePath="/partner"
+      hidePlanBadge
       permissions={{
         canManageDepartments: false,
         canInviteMembers: true,

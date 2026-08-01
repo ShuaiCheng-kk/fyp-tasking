@@ -50,6 +50,24 @@ export const employeeAttendanceRepository = {
     return (data as AttendanceRecord | null) ?? null
   },
 
+  // Most recently-started clock-in for this user, regardless of its shift's date (past, today, or
+  // future) — used to decide whether the "clocked out, locked to read-only" state should still
+  // apply. Unlike getUpcomingAssignments (shift_date >= today only), this has no date floor: the
+  // lock must survive a calendar-day rollover and any number of off-days with no shift at all in
+  // between, only clearing on the user's next actual Clock In (2026-08-03).
+  async getLatestClockedRecord(userId: string): Promise<{ clock_in_time: string | null; clock_out_time: string | null } | null> {
+    const { data, error } = await supabase
+      .from('attendance_records')
+      .select('clock_in_time, clock_out_time')
+      .eq('user_id', userId)
+      .not('clock_in_time', 'is', null)
+      .order('clock_in_time', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (error) throw new Error(error.message)
+    return data
+  },
+
   async createAttendanceRecord(input: AttendanceRecordCreate): Promise<AttendanceRecord> {
     const { data, error } = await supabase
       .from('attendance_records')

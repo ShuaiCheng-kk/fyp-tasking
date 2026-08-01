@@ -959,7 +959,6 @@ function TeamOverviewBlock({ summary, loading, teamDetails, detailsLoading, onMe
         <EmptyRow text={detailsLoading ? 'Loading team...' : 'No team data yet'} />
       ) : (
         <div className="manager-dashboard-content-in" style={{ display: 'flex', flexDirection: 'column', gap: 12, height: '100%', minHeight: 0 }}>
-          {detailsLoading && <EmptyRow text="Loading team..." />}
           <ManagerTeamRoleSection title="Internal" members={internalMembers} emptyText="No internal members found" onMemberClick={onMemberClick} />
           <ManagerTeamRoleSection title="Casual Worker" members={teamDetails.casualWorkers} emptyText="No casual workers in this department yet" onMemberClick={onMemberClick} />
         </div>
@@ -983,11 +982,12 @@ const pageKeyframes = `
   .manager-dashboard-content-in { animation: managerDashboardContentIn 0.34s cubic-bezier(0.22,1,0.36,1) both; }
 `
 
-export default function DashboardView({ sidebar, basePath, viewerRole }: {
+export default function DashboardView({ sidebar, basePath, viewerRole, hidePlanBadge = false }: {
   sidebar: ReactNode
   basePath: string
   // 'Manager' scopes the summary to the viewer's departments and drops O/P-only cards.
   viewerRole?: 'Manager'
+  hidePlanBadge?: boolean
 }) {
   const router = useRouter()
   const isCompact = useIsCompactViewport(1200)
@@ -1363,8 +1363,8 @@ export default function DashboardView({ sidebar, basePath, viewerRole }: {
           </h1>
           <div data-owner-header-badges style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
             {internalUserId && <OwnerUserBadge userId={internalUserId} companyId={companyId} />}
-            {/* Subscription plan is Owner/Partner-only — Manager (and every other role) can't switch it. */}
-            {companyId && !viewerRole && <OwnerPlanBadge plan={currentPlan} currentCompanyId={companyId} />}
+            {/* Subscription plan is Owner-only — Partner/Manager (and every other role) don't see it. */}
+            {companyId && !viewerRole && !hidePlanBadge && <OwnerPlanBadge plan={currentPlan} currentCompanyId={companyId} />}
           </div>
         </div>
 
@@ -1406,7 +1406,7 @@ export default function DashboardView({ sidebar, basePath, viewerRole }: {
                 )}
               </div>
               {(dashboardLoading || myTodayShifts.length > 0) && (
-                <div style={{ width: isCompact ? '100%' : 'auto', flex: isCompact ? undefined : '1 1 0', minWidth: isCompact ? undefined : 0, maxWidth: '100%', height: 92, boxSizing: 'border-box', background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 14, overflow: 'hidden', padding: '0 18px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, ...managerEntranceStyle(90) }}>
+                <div style={{ width: isCompact ? '100%' : 'fit-content', maxWidth: '100%', flexShrink: 0, height: 92, boxSizing: 'border-box', background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 14, overflow: 'hidden', padding: '0 18px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, ...managerEntranceStyle(90) }}>
                   {dashboardLoading ? (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 20, width: '100%', justifyContent: 'center' }}>
                       <SkeletonLine width={152} height={62} radius={12} />
