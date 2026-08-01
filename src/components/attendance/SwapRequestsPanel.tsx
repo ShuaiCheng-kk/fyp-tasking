@@ -408,6 +408,237 @@ function TaskChangeBlock({ title, show, request, panelBorder, useCounterpartTask
   )
 }
 
+// Hoisted to module scope (2026-08-02) — this used to be defined INSIDE SwapRequestsPanel's own
+// body ("const SwapCard = (...) => {...}"), which is a classic React anti-pattern: a component
+// defined inside another component gets a brand-new function identity on every single render of
+// the parent, so React treats every <SwapCard/> as a different component TYPE each time and
+// fully unmounts + remounts it — replaying every entrance animation (att-fade-in/att-list-in) in
+// the process. That's why Review Request and Completed Requests visibly "flashed" on literally
+// any interaction in the parent (Settings, Reject, calendar nav, anything that causes a
+// re-render), even when the swap-request data itself hadn't changed at all. Passing fresh
+// callback props on every render (onApprove/onReject/onSelectIndex below) is fine and does NOT
+// cause remounting — only the component's own declaration identity does, and that's now fixed
+// forever by being declared once at module load.
+function SwapCard({
+  req, compact, newlyProcessedId, actionNeeded, actionIndex, reqActionLoading,
+  onSelectIndex, onApprove, onReject,
+}: {
+  req: ShiftSwapRequestView
+  compact?: boolean
+  newlyProcessedId: string | null
+  actionNeeded: ShiftSwapRequestView[]
+  actionIndex: number
+  reqActionLoading: boolean
+  onSelectIndex: (idx: number) => void
+  onApprove: (req: ShiftSwapRequestView) => void
+  onReject: (req: ShiftSwapRequestView) => void
+}) {
+  const isReadyForDecision = req.counterpart_status === 'approved' && req.status === 'pending'
+
+  const [rejectReasonRevealed, setRejectReasonRevealed] = useState(false)
+
+  if (compact) {
+    const isNew = req.id === newlyProcessedId
+    const isPending = req.status === 'pending'
+    const approved = req.status === 'approved'
+    const StatusIcon = approved ? Check : X
+    const statusTone = approved
+      ? { bg: '#ECFDF5', text: '#047857', border: '#86EFAC' }
+      : { bg: '#FEF2F2', text: '#B91C1C', border: '#FCA5A5' }
+    const isSelected = isPending && actionNeeded.indexOf(req) === Math.min(actionIndex, Math.max(actionNeeded.length - 1, 0))
+    const miniShiftCard = (name: string, role: string, photoUrl: string | null, shiftDate: string | null, startTime: string | null, endTime: string | null, mirror = false) => (
+      <div style={{ flex: 1, minWidth: 0, border: '1px solid #E5E7EB', borderRadius: 12, padding: '12px 10px', display: 'flex', alignItems: 'center', justifyContent: mirror ? 'flex-end' : undefined, gap: 16, background: '#FFFFFF' }}>
+        {mirror && (
+          <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
+            <div style={{ fontSize: '1rem', fontWeight: 800, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100%' }}>{name}</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#64748B', minWidth: 0, maxWidth: '100%' }}>
+              <span style={{ fontSize: '0.75rem', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{formatSwapDate(shiftDate)}</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#64748B', minWidth: 0, maxWidth: '100%' }}>
+              <Clock size={12} style={{ flexShrink: 0 }} />
+              <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#334155', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{formatTime(startTime)} – {formatTime(endTime)}</span>
+            </div>
+          </div>
+        )}
+        <RoleAvatar role={role} size={54} photoUrl={photoUrl} />
+        {!mirror && (
+          <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <div style={{ fontSize: '1rem', fontWeight: 800, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#64748B', minWidth: 0, maxWidth: '100%' }}>
+              <span style={{ fontSize: '0.75rem', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{formatSwapDate(shiftDate)}</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#64748B', minWidth: 0, maxWidth: '100%' }}>
+              <Clock size={12} style={{ flexShrink: 0 }} />
+              <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#334155', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{formatTime(startTime)} – {formatTime(endTime)}</span>
+            </div>
+          </div>
+        )}
+      </div>
+    )
+    return (
+      <div
+        className={`att-request-card att-list-in${isNew ? ' att-request-card-new' : ''}`}
+        onClick={isPending ? () => onSelectIndex(actionNeeded.indexOf(req)) : undefined}
+        style={{
+          background: isSelected ? '#FFF7ED' : '#F9FAFB',
+          border: `1.5px solid ${isSelected ? '#F97316' : isNew ? '#FED7AA' : PANEL_BORDER}`,
+          borderRadius: 14, padding: '12px 14px 14px', display: 'flex', flexDirection: 'column', gap: 12, flexShrink: 0,
+          cursor: isPending ? 'pointer' : 'default',
+          boxShadow: isSelected ? '0 4px 16px rgba(249,115,22,0.14)' : 'none',
+          transition: 'border-color 0.15s, background 0.15s, box-shadow 0.15s',
+          overflow: 'hidden',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', rowGap: 6 }}>
+          {!approved && req.reviewer_name && (
+            <span
+              onClick={e => { e.stopPropagation(); setRejectReasonRevealed(v => !v) }}
+              title={req.owner_review_reason ? 'Click to view reason' : undefined}
+              style={{ fontSize: '0.68rem', fontWeight: 700, color: '#B91C1C', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 999, padding: '3px 10px', whiteSpace: 'nowrap', flexShrink: 0, cursor: req.owner_review_reason ? 'pointer' : 'default' }}
+            >
+              Rejected by {req.reviewer_name}
+            </span>
+          )}
+          {approved && req.reviewer_name && (
+            <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#047857', background: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: 999, padding: '3px 10px', whiteSpace: 'nowrap', flexShrink: 0 }}>Approved by {req.reviewer_name}</span>
+          )}
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, minWidth: 0, flexWrap: 'wrap', rowGap: 6 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+              <span style={{ fontSize: '0.76rem', fontWeight: 800, color: '#64748B', whiteSpace: 'nowrap' }}>
+                {isPending ? formatOwnerDecisionTime(req.created_at) : formatOwnerDecisionTime(req.reviewed_at)}
+              </span>
+            </div>
+            {isPending ? (
+              <div onClick={e => e.stopPropagation()} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                {req.counterpart_status === 'approved' && (
+                  <>
+                    <button onClick={() => onReject(req)} disabled={reqActionLoading} title="Reject" style={{ width: 28, height: 28, borderRadius: 8, border: '1.5px solid #FECACA', background: '#FFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: reqActionLoading ? 'default' : 'pointer', opacity: reqActionLoading ? 0.5 : 1 }}>
+                      <X size={13} style={{ color: '#DC2626' }} />
+                    </button>
+                    <button onClick={() => onApprove(req)} disabled={reqActionLoading} title="Approve" style={{ width: 28, height: 28, borderRadius: 8, border: 'none', background: '#F97316', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: reqActionLoading ? 'default' : 'pointer', opacity: reqActionLoading ? 0.5 : 1 }}>
+                      <Check size={13} style={{ color: '#FFFFFF' }} />
+                    </button>
+                  </>
+                )}
+              </div>
+            ) : (
+              <>
+                {approved && req.reviewed_by === null && (
+                  <span title="Approved automatically by the Shift Swap auto-approval rules" style={{ fontSize: '0.62rem', fontWeight: 800, color: '#7C3AED', background: '#F5F3FF', borderRadius: 999, padding: '3px 8px', whiteSpace: 'nowrap' }}>Auto-Approved</span>
+                )}
+                <span title={req.status === 'approved' ? 'Approved' : 'Rejected'} style={{ width: 30, height: 30, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: statusTone.bg, color: statusTone.text, border: `1.5px solid ${statusTone.border}`, borderRadius: 999, flexShrink: 0 }}>
+                  <StatusIcon size={12} strokeWidth={3} />
+                </span>
+              </>
+            )}
+          </div>
+        </div>
+        {rejectReasonRevealed && req.owner_review_reason && (
+          <div onClick={e => e.stopPropagation()} style={{ fontSize: '0.72rem', fontWeight: 600, color: '#57534E', background: '#F5F5F4', border: '1px solid #E7E5E4', borderRadius: 10, padding: '6px 10px' }}>
+            <strong style={{ fontWeight: 800 }}>Reason:</strong> {req.owner_review_reason}
+          </div>
+        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {miniShiftCard(req.requester_name, req.requester_role, req.requester_photo_url, req.requester_shift_date, req.requester_start_time, req.requester_end_time, true)}
+          <div className="swap-arrows" style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, color: '#94A3B8' }}>
+            <svg width="24" height="8" viewBox="0 0 24 8" fill="none">
+              <line x1="1" y1="4" x2="19" y2="4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
+              <polyline points="16,1 22,4 16,7" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+            <svg width="24" height="8" viewBox="0 0 24 8" fill="none">
+              <line x1="23" y1="4" x2="5" y2="4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
+              <polyline points="8,1 2,4 8,7" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </div>
+          {miniShiftCard(req.counterpart_name, req.counterpart_role, req.counterpart_photo_url, req.counterpart_shift_date, req.counterpart_start_time, req.counterpart_end_time)}
+        </div>
+      </div>
+    )
+  }
+
+  const dividerStyle: React.CSSProperties = { width: 1, alignSelf: 'stretch', background: '#E5E7EB', flexShrink: 0 }
+  const ruleConfigured = req.limit_exceeded != null || req.deadline_exceeded != null
+  const rulePill = (ok: boolean, label: string) => (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.76rem', fontWeight: 700, color: ok ? '#15803D' : '#B91C1C', background: ok ? '#F0FDF4' : '#FEF2F2', border: `1px solid ${ok ? '#BBF7D0' : '#FECACA'}`, borderRadius: 999, padding: '4px 12px', whiteSpace: 'nowrap' }}>
+      {ok ? <Check size={11} strokeWidth={3} style={{ flexShrink: 0 }} /> : <X size={11} strokeWidth={3} style={{ flexShrink: 0 }} />}
+      {label}
+    </span>
+  )
+  const personBlock = (name: string, role: string, photo: string | null, swapsLeft: number | null | undefined, mirror: boolean) => (
+    <div style={{ display: 'flex', flexDirection: mirror ? 'row-reverse' : 'row', alignItems: 'center', gap: 12, flexShrink: 0 }}>
+      <RoleAvatar role={role} size={56} photoUrl={photo} />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 5, alignItems: mirror ? 'flex-end' : 'flex-start' }}>
+        <span style={{ fontSize: '0.95rem', fontWeight: 800, color: '#111827', whiteSpace: 'nowrap' }}>{name}</span>
+        {swapsLeft != null && (
+          <span style={{ fontSize: '0.72rem', fontWeight: 800, color: swapsLeft <= 0 ? '#B91C1C' : '#15803D', whiteSpace: 'nowrap' }}>
+            {swapsLeft}/{req.monthly_swap_limit} swaps left
+          </span>
+        )}
+      </div>
+    </div>
+  )
+  return (
+    <div className="att-request-card att-fade-in" style={{ width: '100%', boxSizing: 'border-box', background: '#FFFFFF', border: `1.5px solid ${PANEL_BORDER}`, borderRadius: 16, padding: '18px 22px 22px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {req.reason && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: '0.72rem', fontWeight: 600, color: '#57534E', background: '#F5F5F4', border: '1px solid #E7E5E4', borderRadius: 999, padding: '4px 10px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 480 }}>
+            <strong style={{ fontWeight: 800 }}>Reason:</strong> {req.reason}
+          </span>
+        </div>
+      )}
+      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', rowGap: 12, gap: 20 }}>
+        {personBlock(req.requester_name, req.requester_role, req.requester_photo_url, req.requester_swaps_left, false)}
+        <svg className="swap-arrow-duo" width="26" height="14" viewBox="0 0 24 14" fill="none" style={{ flexShrink: 0, color: '#94A3B8' }}>
+          <line x1="2" y1="4" x2="19" y2="4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+          <polyline points="16,1 22,4 16,7" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+          <line x1="22" y1="10" x2="5" y2="10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+          <polyline points="8,7 2,10 8,13" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+        {personBlock(req.counterpart_name, req.counterpart_role, req.counterpart_photo_url, req.counterpart_swaps_left, true)}
+
+        {ruleConfigured && (
+          <>
+            <div style={dividerStyle} />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0 }}>
+              <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#374151', margin: 0 }}>Rule Check</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                {req.limit_exceeded != null && rulePill(!req.limit_exceeded, req.limit_exceeded ? 'Monthly limit exceeded' : 'Within monthly limit')}
+                {req.deadline_exceeded != null && rulePill(!req.deadline_exceeded, req.deadline_exceeded ? 'Submitted after deadline' : 'Before deadline')}
+              </div>
+            </div>
+          </>
+        )}
+
+        <div style={dividerStyle} />
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0 }}>
+          <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#374151', margin: 0 }}>Submitted</label>
+          <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#374151', whiteSpace: 'nowrap' }}>{formatOwnerDecisionTime(req.created_at)}</span>
+        </div>
+
+        {isReadyForDecision && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginLeft: 'auto', flexShrink: 0 }}>
+            <button
+              onClick={() => onApprove(req)}
+              disabled={reqActionLoading}
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: '0.78rem', fontWeight: 700, color: '#15803D', background: '#F0FDF4', border: '1.5px solid #BBF7D0', borderRadius: 999, padding: '6px 16px', cursor: reqActionLoading ? 'default' : 'pointer', opacity: reqActionLoading ? 0.6 : 1, transition: 'background 0.15s, border-color 0.15s' }}
+            >
+              <Check size={13} /> Approve
+            </button>
+            <button
+              onClick={() => onReject(req)}
+              disabled={reqActionLoading}
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: '0.78rem', fontWeight: 700, color: '#B91C1C', background: '#FEF2F2', border: '1.5px solid #FECACA', borderRadius: 999, padding: '6px 16px', cursor: reqActionLoading ? 'default' : 'pointer', opacity: reqActionLoading ? 0.6 : 1, transition: 'background 0.15s, border-color 0.15s' }}
+            >
+              <X size={13} /> Reject
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function SwapRequestsPanel({
   companyId, internalUserId, showSuccessToast, showErrorToast, onAttentionCount,
 }: {
@@ -433,9 +664,16 @@ export default function SwapRequestsPanel({
   // scope the Current Schedule preview.
   const fixedOffByUserDate = useState(() => new Map<string, boolean>())[0]
 
-  const fetchSwapRequests = useCallback(async (cid: string) => {
+  // silent skips the reqLoading flip — reqLoading swaps the entire Review Request/Completed
+  // Requests area out for a "Loading..." placeholder and back, which replays every entrance
+  // animation in it (att-fade-in/att-list-in). That's fine for the true first mount, but every
+  // other caller here is a background refresh (the realtime invalidation below fires on ANY
+  // attendance/shift change, not just this panel's own actions) — those should update the data
+  // quietly, not visibly flash the whole panel (2026-08-02).
+  const fetchSwapRequests = useCallback(async (cid: string, silent = false) => {
     if (!cid || !internalUserId) return
-    setReqLoading(true); setReqError('')
+    if (!silent) setReqLoading(true)
+    setReqError('')
     try {
       const res = await fetch(`/api/attendance?company_id=${cid}&resource=shift_swaps&manager_id=${internalUserId}`)
       const data = await res.json()
@@ -443,7 +681,7 @@ export default function SwapRequestsPanel({
       setSwapRequests(data.requests ?? [])
     } catch (err) {
       setReqError(err instanceof Error ? err.message : 'Failed to fetch requests')
-    } finally { setReqLoading(false) }
+    } finally { if (!silent) setReqLoading(false) }
   }, [internalUserId])
 
   useEffect(() => {
@@ -451,7 +689,7 @@ export default function SwapRequestsPanel({
   }, [companyId, fetchSwapRequests])
 
   useResourceInvalidation(['attendance', 'shifts'], () => {
-    if (companyId) void fetchSwapRequests(companyId)
+    if (companyId) void fetchSwapRequests(companyId, true)
   })
 
   const pendingCount = swapRequests.filter(r => r.status === 'pending').length
@@ -483,7 +721,7 @@ export default function SwapRequestsPanel({
       // changed the underlying shift_assignments, so that cache is now stale regardless of
       // whether the next active request happens to share the same department+range.
       csFetchedRangeRef.current = null
-      await fetchSwapRequests(companyId)
+      await fetchSwapRequests(companyId, true)
       showSuccessToast(decision === 'approved' ? 'Shift swap approved.' : 'Shift swap rejected.')
       return true
     } catch (err) {
@@ -659,204 +897,6 @@ export default function SwapRequestsPanel({
     }
   }
 
-  // ── Card renderer — compact (queue/processed list) or full (Review Request detail) ──
-  const SwapCard = ({ req, compact }: { req: ShiftSwapRequestView; compact?: boolean }) => {
-    const isReadyForDecision = req.counterpart_status === 'approved' && req.status === 'pending'
-
-    if (compact) {
-      const isNew = req.id === newlyProcessedId
-      const isPending = req.status === 'pending'
-      const approved = req.status === 'approved'
-      const StatusIcon = approved ? Check : X
-      const statusTone = approved
-        ? { bg: '#ECFDF5', text: '#047857', border: '#86EFAC' }
-        : { bg: '#FEF2F2', text: '#B91C1C', border: '#FCA5A5' }
-      const isSelected = isPending && actionNeeded.indexOf(req) === Math.min(actionIndex, Math.max(actionNeeded.length - 1, 0))
-      const miniShiftCard = (name: string, role: string, photoUrl: string | null, shiftDate: string | null, startTime: string | null, endTime: string | null, mirror = false) => (
-        <div style={{ flex: 1, minWidth: 0, border: '1px solid #E5E7EB', borderRadius: 12, padding: '12px 10px', display: 'flex', alignItems: 'center', justifyContent: mirror ? 'flex-end' : undefined, gap: 16, background: '#FFFFFF' }}>
-          {mirror && (
-            <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
-              <div style={{ fontSize: '1rem', fontWeight: 800, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100%' }}>{name}</div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#64748B', minWidth: 0, maxWidth: '100%' }}>
-                <span style={{ fontSize: '0.75rem', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{formatSwapDate(shiftDate)}</span>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#64748B', minWidth: 0, maxWidth: '100%' }}>
-                <Clock size={12} style={{ flexShrink: 0 }} />
-                <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#334155', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{formatTime(startTime)} – {formatTime(endTime)}</span>
-              </div>
-            </div>
-          )}
-          <RoleAvatar role={role} size={54} photoUrl={photoUrl} />
-          {!mirror && (
-            <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <div style={{ fontSize: '1rem', fontWeight: 800, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#64748B', minWidth: 0, maxWidth: '100%' }}>
-                <span style={{ fontSize: '0.75rem', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{formatSwapDate(shiftDate)}</span>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#64748B', minWidth: 0, maxWidth: '100%' }}>
-                <Clock size={12} style={{ flexShrink: 0 }} />
-                <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#334155', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{formatTime(startTime)} – {formatTime(endTime)}</span>
-              </div>
-            </div>
-          )}
-        </div>
-      )
-      return (
-        <div
-          className={`att-request-card att-list-in${isNew ? ' att-request-card-new' : ''}`}
-          onClick={isPending ? () => setActionIndex(actionNeeded.indexOf(req)) : undefined}
-          style={{
-            background: isSelected ? '#FFF7ED' : '#F9FAFB',
-            border: `1.5px solid ${isSelected ? '#F97316' : isNew ? '#FED7AA' : PANEL_BORDER}`,
-            borderRadius: 14, padding: '12px 14px 14px', display: 'flex', flexDirection: 'column', gap: 12, flexShrink: 0,
-            cursor: isPending ? 'pointer' : 'default',
-            boxShadow: isSelected ? '0 4px 16px rgba(249,115,22,0.14)' : 'none',
-            transition: 'border-color 0.15s, background 0.15s, box-shadow 0.15s',
-            overflow: 'hidden',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', rowGap: 6 }}>
-            {req.owner_review_reason && (
-              <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#B91C1C', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 999, padding: '3px 10px', whiteSpace: 'nowrap', flexShrink: 0 }}>{req.owner_review_reason}</span>
-            )}
-            {approved && req.reviewer_name && (
-              <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#047857', background: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: 999, padding: '3px 10px', whiteSpace: 'nowrap', flexShrink: 0 }}>Approved by {req.reviewer_name}</span>
-            )}
-            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, minWidth: 0, flexWrap: 'wrap', rowGap: 6 }}>
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
-                <span style={{ fontSize: '0.76rem', fontWeight: 800, color: '#64748B', whiteSpace: 'nowrap' }}>
-                  {isPending ? formatOwnerDecisionTime(req.created_at) : formatOwnerDecisionTime(req.reviewed_at)}
-                </span>
-                {!isPending && !approved && req.reviewer_name && (
-                  <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#94A3B8', whiteSpace: 'nowrap' }}>by {req.reviewer_name}</span>
-                )}
-              </div>
-              {isPending ? (
-                <div onClick={e => e.stopPropagation()} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  {req.counterpart_status === 'approved' && (
-                    <>
-                      <button onClick={() => setRejectSwapTarget({ id: req.id, requesterName: req.requester_name })} disabled={reqActionLoading} title="Reject" style={{ width: 28, height: 28, borderRadius: 8, border: '1.5px solid #FECACA', background: '#FFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: reqActionLoading ? 'default' : 'pointer', opacity: reqActionLoading ? 0.5 : 1 }}>
-                        <X size={13} style={{ color: '#DC2626' }} />
-                      </button>
-                      <button onClick={() => void decideRequest(req.id, 'approved', req.requester_name)} disabled={reqActionLoading} title="Approve" style={{ width: 28, height: 28, borderRadius: 8, border: 'none', background: '#F97316', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: reqActionLoading ? 'default' : 'pointer', opacity: reqActionLoading ? 0.5 : 1 }}>
-                        <Check size={13} style={{ color: '#FFFFFF' }} />
-                      </button>
-                    </>
-                  )}
-                </div>
-              ) : (
-                <>
-                  {approved && req.reviewed_by === null && (
-                    <span title="Approved automatically by the Shift Swap auto-approval rules" style={{ fontSize: '0.62rem', fontWeight: 800, color: '#7C3AED', background: '#F5F3FF', borderRadius: 999, padding: '3px 8px', whiteSpace: 'nowrap' }}>Auto-Approved</span>
-                  )}
-                  <span title={req.status === 'approved' ? 'Approved' : 'Rejected'} style={{ width: 30, height: 30, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: statusTone.bg, color: statusTone.text, border: `1.5px solid ${statusTone.border}`, borderRadius: 999, flexShrink: 0 }}>
-                    <StatusIcon size={12} strokeWidth={3} />
-                  </span>
-                </>
-              )}
-            </div>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            {miniShiftCard(req.requester_name, req.requester_role, req.requester_photo_url, req.requester_shift_date, req.requester_start_time, req.requester_end_time, true)}
-            <div className="swap-arrows" style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, color: '#94A3B8' }}>
-              <svg width="24" height="8" viewBox="0 0 24 8" fill="none">
-                <line x1="1" y1="4" x2="19" y2="4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
-                <polyline points="16,1 22,4 16,7" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-              <svg width="24" height="8" viewBox="0 0 24 8" fill="none">
-                <line x1="23" y1="4" x2="5" y2="4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
-                <polyline points="8,1 2,4 8,7" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-            </div>
-            {miniShiftCard(req.counterpart_name, req.counterpart_role, req.counterpart_photo_url, req.counterpart_shift_date, req.counterpart_start_time, req.counterpart_end_time)}
-          </div>
-        </div>
-      )
-    }
-
-    const dividerStyle: React.CSSProperties = { width: 1, alignSelf: 'stretch', background: '#E5E7EB', flexShrink: 0 }
-    const ruleConfigured = req.limit_exceeded != null || req.deadline_exceeded != null
-    const rulePill = (ok: boolean, label: string) => (
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.76rem', fontWeight: 700, color: ok ? '#15803D' : '#B91C1C', background: ok ? '#F0FDF4' : '#FEF2F2', border: `1px solid ${ok ? '#BBF7D0' : '#FECACA'}`, borderRadius: 999, padding: '4px 12px', whiteSpace: 'nowrap' }}>
-        {ok ? <Check size={11} strokeWidth={3} style={{ flexShrink: 0 }} /> : <X size={11} strokeWidth={3} style={{ flexShrink: 0 }} />}
-        {label}
-      </span>
-    )
-    const personBlock = (name: string, role: string, photo: string | null, swapsLeft: number | null | undefined, mirror: boolean) => (
-      <div style={{ display: 'flex', flexDirection: mirror ? 'row-reverse' : 'row', alignItems: 'center', gap: 12, flexShrink: 0 }}>
-        <RoleAvatar role={role} size={56} photoUrl={photo} />
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 5, alignItems: mirror ? 'flex-end' : 'flex-start' }}>
-          <span style={{ fontSize: '0.95rem', fontWeight: 800, color: '#111827', whiteSpace: 'nowrap' }}>{name}</span>
-          {swapsLeft != null && (
-            <span style={{ fontSize: '0.72rem', fontWeight: 800, color: swapsLeft <= 0 ? '#B91C1C' : '#15803D', whiteSpace: 'nowrap' }}>
-              {swapsLeft}/{req.monthly_swap_limit} swaps left
-            </span>
-          )}
-        </div>
-      </div>
-    )
-    return (
-      <div className="att-request-card att-fade-in" style={{ width: '100%', boxSizing: 'border-box', background: '#FFFFFF', border: `1.5px solid ${PANEL_BORDER}`, borderRadius: 16, padding: '18px 22px 22px', display: 'flex', flexDirection: 'column', gap: 14 }}>
-        {req.reason && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '0.72rem', fontWeight: 600, color: '#57534E', background: '#F5F5F4', border: '1px solid #E7E5E4', borderRadius: 999, padding: '4px 10px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 480 }}>
-              <strong style={{ fontWeight: 800 }}>Reason:</strong> {req.reason}
-            </span>
-          </div>
-        )}
-        <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', rowGap: 12, gap: 20 }}>
-          {personBlock(req.requester_name, req.requester_role, req.requester_photo_url, req.requester_swaps_left, false)}
-          <svg className="swap-arrow-duo" width="26" height="14" viewBox="0 0 24 14" fill="none" style={{ flexShrink: 0, color: '#94A3B8' }}>
-            <line x1="2" y1="4" x2="19" y2="4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-            <polyline points="16,1 22,4 16,7" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-            <line x1="22" y1="10" x2="5" y2="10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-            <polyline points="8,7 2,10 8,13" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-          {personBlock(req.counterpart_name, req.counterpart_role, req.counterpart_photo_url, req.counterpart_swaps_left, true)}
-
-          {ruleConfigured && (
-            <>
-              <div style={dividerStyle} />
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0 }}>
-                <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#374151', margin: 0 }}>Rule Check</label>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                  {req.limit_exceeded != null && rulePill(!req.limit_exceeded, req.limit_exceeded ? 'Monthly limit exceeded' : 'Within monthly limit')}
-                  {req.deadline_exceeded != null && rulePill(!req.deadline_exceeded, req.deadline_exceeded ? 'Submitted after deadline' : 'Before deadline')}
-                </div>
-              </div>
-            </>
-          )}
-
-          <div style={dividerStyle} />
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0 }}>
-            <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#374151', margin: 0 }}>Submitted</label>
-            <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#374151', whiteSpace: 'nowrap' }}>{formatOwnerDecisionTime(req.created_at)}</span>
-          </div>
-
-          {isReadyForDecision && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginLeft: 'auto', flexShrink: 0 }}>
-              <button
-                onClick={() => void decideRequest(req.id, 'approved', req.requester_name)}
-                disabled={reqActionLoading}
-                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: '0.78rem', fontWeight: 700, color: '#15803D', background: '#F0FDF4', border: '1.5px solid #BBF7D0', borderRadius: 999, padding: '6px 16px', cursor: reqActionLoading ? 'default' : 'pointer', opacity: reqActionLoading ? 0.6 : 1, transition: 'background 0.15s, border-color 0.15s' }}
-              >
-                <Check size={13} /> Approve
-              </button>
-              <button
-                onClick={() => { setRejectSwapTarget({ id: req.id, requesterName: req.requester_name }); setRejectSwapReason(''); setRejectSwapError('') }}
-                disabled={reqActionLoading}
-                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: '0.78rem', fontWeight: 700, color: '#B91C1C', background: '#FEF2F2', border: '1.5px solid #FECACA', borderRadius: 999, padding: '6px 16px', cursor: reqActionLoading ? 'default' : 'pointer', opacity: reqActionLoading ? 0.6 : 1, transition: 'background 0.15s, border-color 0.15s' }}
-              >
-                <X size={13} /> Reject
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-    )
-  }
-
   const clampedIndex = Math.min(actionIndex, Math.max(actionNeeded.length - 1, 0))
   const currentSwap = actionNeeded[clampedIndex] ?? null
 
@@ -954,7 +994,16 @@ export default function SwapRequestsPanel({
               </div>
               {currentSwap ? (
                 <div key={currentSwap.id} className="att-fade-in" style={{ padding: '14px 16px' }}>
-                  <SwapCard req={currentSwap} />
+                  <SwapCard
+                    req={currentSwap}
+                    newlyProcessedId={newlyProcessedId}
+                    actionNeeded={actionNeeded}
+                    actionIndex={actionIndex}
+                    reqActionLoading={reqActionLoading}
+                    onSelectIndex={setActionIndex}
+                    onApprove={r => void decideRequest(r.id, 'approved', r.requester_name)}
+                    onReject={r => { setRejectSwapTarget({ id: r.id, requesterName: r.requester_name }); setRejectSwapReason(''); setRejectSwapError('') }}
+                  />
                 </div>
               ) : (
                 <EmptyState fill variant="plain" icon={<CheckCheck size={22} strokeWidth={1.5} />} message="All caught up — nothing needs action" />
@@ -1008,7 +1057,17 @@ export default function SwapRequestsPanel({
                 ? <EmptyState variant="plain" icon={<CheckCheck size={20} strokeWidth={1.5} />} message="No processed requests" />
                 : processed.map(req => (
                     <div key={req.id} className="att-list-in" style={{ animationDelay: '0ms', flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
-                      <SwapCard req={req} compact />
+                      <SwapCard
+                        req={req}
+                        compact
+                        newlyProcessedId={newlyProcessedId}
+                        actionNeeded={actionNeeded}
+                        actionIndex={actionIndex}
+                        reqActionLoading={reqActionLoading}
+                        onSelectIndex={setActionIndex}
+                        onApprove={r => void decideRequest(r.id, 'approved', r.requester_name)}
+                        onReject={r => setRejectSwapTarget({ id: r.id, requesterName: r.requester_name })}
+                      />
                     </div>
                   ))}
             </div>

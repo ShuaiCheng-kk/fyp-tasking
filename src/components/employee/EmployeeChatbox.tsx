@@ -17,6 +17,7 @@ import {
 import RoleAvatar from '@/components/RoleAvatar'
 import Spinner from '@/components/Spinner'
 import { ModalOverlay, ModalBox, ModalHeader, modalLabelStyle, modalDestructiveButtonStyle } from '@/components/modal'
+import { EmptyState } from '@/components/panel'
 import { useResourceInvalidation } from '@/components/realtime/RealtimeNotificationsProvider'
 import { DASHBOARD_SKELETON_KEYFRAMES, SkeletonLine } from '@/components/dashboard/ClockFlow'
 
@@ -152,7 +153,13 @@ export default function EmployeeChatbox({ companyId, internalUserId, onUnreadCou
     const sorted = [...base].sort((a, b) => {
       const aPin = pinnedIds.has(a.partnerId) ? 0 : 1
       const bPin = pinnedIds.has(b.partnerId) ? 0 : 1
-      return aPin - bPin
+      if (aPin !== bPin) return aPin - bPin
+      // Unread floats to the top, newest-first within each group — same rule as
+      // CommunicationView's Chatbox/Announcements lists (2026-08-01).
+      const aUnread = a.unreadCount > 0 ? 0 : 1
+      const bUnread = b.unreadCount > 0 ? 0 : 1
+      if (aUnread !== bUnread) return aUnread - bUnread
+      return new Date(b.lastTime).getTime() - new Date(a.lastTime).getTime()
     })
     setFilteredConversations(sorted)
   }, [search, conversations, pinnedIds])
@@ -442,7 +449,7 @@ export default function EmployeeChatbox({ companyId, internalUserId, onUnreadCou
           padding+overflowY:auto wrapper, which both narrowed the list column to 300px vs Manager's
           400px and broke the height chain down to the message panel, cutting off content that
           Manager's page showed in full for the exact same conversation). */}
-      <div style={{ maxHeight: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', background: '#FFFFFF', borderRadius: 14, border: '1px solid #E5E7EB', boxShadow: '0 1px 4px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
+      <div style={{ alignSelf: 'start', maxHeight: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', background: '#FFFFFF', borderRadius: 14, border: '1px solid #E5E7EB', boxShadow: '0 1px 4px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '16px 18px', borderBottom: '1px solid #E2E8F0', flexShrink: 0 }}>
           <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
             <MessageSquare size={15} style={{ color: '#F97316' }} />
@@ -547,10 +554,9 @@ export default function EmployeeChatbox({ companyId, internalUserId, onUnreadCou
         </div>
       </div>
 
-      {/* Right: multi-panel chat area — no padding here (matches Manager/Owner's Chatbox), so a
-          solo conversation's header lines up on the same horizontal line as the conversation
-          list's search bar; multi-panel breathing room instead comes from each sub-card's own
-          92%-width auto-margin centering. */}
+      {/* Right: multi-panel chat area — no padding here (matches Manager/Owner's Chatbox); every
+          open panel (solo or multi) always gets its own outer floating card, same as Manager's,
+          with the header/messages/input sub-cards centered at 92% width inside it. */}
       <div style={{ minWidth: 0, minHeight: 0, flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         {openPanelIds.length === 0 ? (
           <div
@@ -560,14 +566,14 @@ export default function EmployeeChatbox({ companyId, internalUserId, onUnreadCou
               const draggedListId = e.dataTransfer.getData('listPartnerId')
               if (draggedListId) openPanel(draggedListId)
             }}
-            style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#FFFFFF', borderRadius: 14, border: '1px solid #E5E7EB', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
-            <div style={{ textAlign: 'center', color: '#94A3B8' }}>
-              <div style={{ width: 48, height: 48, borderRadius: 16, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px', color: '#F97316' }}>
-                <MessageSquare size={20} strokeWidth={1.5} />
-              </div>
-              <p style={{ margin: 0, fontWeight: 700, fontSize: 13, color: '#374151' }}>Select a conversation to start chatting</p>
-              <p style={{ margin: '5px 0 0', fontSize: 11.5, color: '#9CA3AF', fontWeight: 500 }}>Drag a conversation onto an open one to view up to 4 side by side</p>
-            </div>
+            style={{ flex: 1, display: 'flex', background: '#FFFFFF', borderRadius: 14, border: '1px solid #E5E7EB', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
+            <EmptyState
+              variant="iconBox"
+              fill
+              icon={<MessageSquare size={24} strokeWidth={1.5} />}
+              message="Select a conversation to start chatting"
+              subtitle="Drag a conversation onto an open one to view up to 4 side by side"
+            />
           </div>
         ) : (
           <div style={{
@@ -588,11 +594,6 @@ export default function EmployeeChatbox({ companyId, internalUserId, onUnreadCou
               const uploading = panelUploading[partnerId] ?? false
               const isPinned = pinnedIds.has(partnerId)
               const spanStyle: React.CSSProperties = openPanelIds.length === 3 && idx === 0 ? { gridRow: '1 / 3' } : {}
-              // A single open conversation doesn't need the outer floating-card border/shadow —
-              // that's only there to visually separate multiple side-by-side panels — so its
-              // header/messages/input sub-cards can use the full width instead of being centered
-              // at 92% inside a card that no longer exists.
-              const solo = openPanelIds.length === 1
 
               return (
                 <div
@@ -600,10 +601,10 @@ export default function EmployeeChatbox({ companyId, internalUserId, onUnreadCou
                   ref={el => { panelContainerRefs.current[partnerId] = el }}
                   style={{
                     ...spanStyle,
-                    display: 'flex', flexDirection: 'column', overflow: 'hidden', gap: solo ? 10 : 0,
-                    background: solo ? 'transparent' : '#FFFFFF', borderRadius: solo ? 0 : 14,
-                    border: dragOver === partnerId ? '2px dashed #F97316' : solo ? 'none' : '1px solid #E5E7EB',
-                    boxShadow: solo ? 'none' : '0 1px 4px rgba(0,0,0,0.05)',
+                    display: 'flex', flexDirection: 'column', overflow: 'hidden',
+                    background: '#FFFFFF', borderRadius: 14,
+                    border: dragOver === partnerId ? '2px dashed #F97316' : '1px solid #E5E7EB',
+                    boxShadow: '0 1px 4px rgba(0,0,0,0.05)',
                     opacity: draggingPanel === partnerId ? 0.45 : 1,
                     transform: dragOver === partnerId ? 'scale(1.015)' : 'scale(1)',
                     transition: 'border-color 0.15s, opacity 0.15s, transform 0.15s',
@@ -625,48 +626,54 @@ export default function EmployeeChatbox({ companyId, internalUserId, onUnreadCou
                     draggable
                     onDragStart={e => { e.dataTransfer.setData('panelId', partnerId); setDraggingPanel(partnerId) }}
                     onDragEnd={() => setDraggingPanel(null)}
-                    style={{ width: solo ? '100%' : '92%', margin: solo ? 0 : '10px auto 0', padding: '9px 10px', background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 11, display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, cursor: openPanelIds.length > 1 ? 'grab' : 'default', userSelect: 'none' }}
+                    style={{ width: '92%', margin: '12px auto 0', padding: '10px 12px', background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 12, display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, cursor: openPanelIds.length > 1 ? 'grab' : 'default', userSelect: 'none' }}
                     title={openPanelIds.length > 1 ? 'Drag to swap panels' : undefined}
                   >
-                    <RoleAvatar role={conv.partnerRole} size={34} photoUrl={conv.partnerPhotoUrl ?? null} />
+                    <RoleAvatar role={conv.partnerRole} size={38} photoUrl={conv.partnerPhotoUrl ?? null} />
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                        <span style={{ fontWeight: 800, fontSize: 14, color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{conv.partnerName}</span>
-                        {conv.partnerDeleted && <span style={{ background: '#F1F5F9', color: '#64748B', fontSize: 9, padding: '2px 5px', borderRadius: 999, fontWeight: 700, flexShrink: 0 }}>removed</span>}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ fontWeight: 800, fontSize: 15.5, color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{conv.partnerName}</span>
+                        {conv.partnerDeleted && <span style={{ background: '#F1F5F9', color: '#64748B', fontSize: 10, padding: '2px 6px', borderRadius: 999, fontWeight: 700, flexShrink: 0 }}>removed</span>}
                         {isPinned && <Pin size={11} strokeWidth={2.5} style={{ color: '#F97316', flexShrink: 0 }} />}
                       </div>
                     </div>
                     <button
                       onClick={() => togglePin(partnerId)}
                       title={isPinned ? 'Unpin' : 'Pin'}
-                      style={{ flexShrink: 0, width: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#FFF7ED', border: isPinned ? '1.5px solid rgba(249,115,22,0.45)' : '1.5px solid rgba(249,115,22,0.25)', borderRadius: 8, cursor: 'pointer', color: '#F97316' }}
+                      style={{ flexShrink: 0, width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#FFF7ED', border: isPinned ? '1.5px solid rgba(249,115,22,0.45)' : '1.5px solid rgba(249,115,22,0.25)', borderRadius: 9, cursor: 'pointer', color: '#F97316', transition: 'all 0.15s' }}
+                      onMouseEnter={e => { e.currentTarget.style.background = '#FFEDD5'; e.currentTarget.style.borderColor = 'rgba(249,115,22,0.55)' }}
+                      onMouseLeave={e => { e.currentTarget.style.background = '#FFF7ED'; e.currentTarget.style.borderColor = isPinned ? 'rgba(249,115,22,0.45)' : 'rgba(249,115,22,0.25)' }}
                     >
-                      {isPinned ? <PinOff size={14} strokeWidth={2.5} /> : <Pin size={14} strokeWidth={2.5} />}
+                      {isPinned ? <PinOff size={15} strokeWidth={2.5} /> : <Pin size={15} strokeWidth={2.5} />}
                     </button>
                     <button
                       onClick={() => setDeleteConvConfirmId(partnerId)}
                       title="Delete conversation"
                       disabled={deletingConvId === partnerId}
-                      style={{ flexShrink: 0, width: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#FEF2F2', border: '1.5px solid rgba(220,38,38,0.3)', borderRadius: 8, cursor: 'pointer', color: '#DC2626' }}
+                      style={{ flexShrink: 0, width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#FEF2F2', border: '1.5px solid rgba(220,38,38,0.3)', borderRadius: 9, cursor: 'pointer', color: '#DC2626', transition: 'all 0.15s' }}
+                      onMouseEnter={e => { e.currentTarget.style.background = '#FEE2E2'; e.currentTarget.style.color = '#B91C1C'; e.currentTarget.style.borderColor = 'rgba(220,38,38,0.45)' }}
+                      onMouseLeave={e => { e.currentTarget.style.background = '#FEF2F2'; e.currentTarget.style.color = '#DC2626'; e.currentTarget.style.borderColor = 'rgba(220,38,38,0.3)' }}
                     >
-                      {deletingConvId === partnerId ? <Spinner size={13} /> : <Trash2 size={14} strokeWidth={2.5} />}
+                      {deletingConvId === partnerId ? <Spinner size={13} /> : <Trash2 size={15} strokeWidth={2.5} />}
                     </button>
                     <button
                       onClick={() => handleClosePanel(partnerId)}
                       title="Close"
-                      style={{ flexShrink: 0, width: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F8FAFC', border: '1.5px solid #E2E8F0', borderRadius: 8, cursor: 'pointer', color: '#94A3B8' }}
+                      style={{ flexShrink: 0, width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F8FAFC', border: '1.5px solid #E2E8F0', borderRadius: 9, cursor: 'pointer', color: '#94A3B8', transition: 'all 0.15s' }}
+                      onMouseEnter={e => { e.currentTarget.style.background = '#FEF2F2'; e.currentTarget.style.color = '#DC2626'; e.currentTarget.style.borderColor = 'rgba(220,38,38,0.3)' }}
+                      onMouseLeave={e => { e.currentTarget.style.background = '#F8FAFC'; e.currentTarget.style.color = '#94A3B8'; e.currentTarget.style.borderColor = '#E2E8F0' }}
                     >
-                      <X size={14} strokeWidth={2.5} />
+                      <X size={15} strokeWidth={2.5} />
                     </button>
                   </div>
 
                   {/* Messages */}
-                  <div style={{ flex: 1, minHeight: 0, width: solo ? '100%' : '92%', margin: solo ? 0 : '8px auto', background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 12, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                  <div style={{ flex: 1, minHeight: 0, width: '92%', margin: '10px auto', background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 12, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
                     <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 7 }}>
                       {msgs.length === 0 && (
                         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
-                          <RoleAvatar role={conv.partnerRole} size={56} photoUrl={conv.partnerPhotoUrl ?? null} />
-                          <p style={{ margin: '14px 0 0', fontWeight: 700, fontSize: 15, color: '#374151' }}>No messages yet</p>
+                          <RoleAvatar role={conv.partnerRole} size={64} photoUrl={conv.partnerPhotoUrl ?? null} />
+                          <p style={{ margin: '16px 0 0', fontWeight: 700, fontSize: 15, color: '#374151' }}>No messages yet</p>
                           <p style={{ margin: '5px 0 0', fontSize: 12.5, color: '#9CA3AF', fontWeight: 500 }}>Send a message to start chatting with {conv.partnerName}</p>
                         </div>
                       )}
@@ -709,7 +716,7 @@ export default function EmployeeChatbox({ companyId, internalUserId, onUnreadCou
                   </div>
 
                   {/* Attachments + input */}
-                  <div style={{ width: solo ? '100%' : '92%', margin: solo ? 0 : '0 auto 10px', background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 12, flexShrink: 0, overflow: 'hidden' }}>
+                  <div style={{ width: '92%', margin: '0 auto 12px', background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 12, flexShrink: 0, overflow: 'hidden' }}>
                     {attachFiles.length > 0 && (
                       <div style={{ padding: '10px 12px 0', display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                         {attachFiles.map((file, i) => (
@@ -726,7 +733,7 @@ export default function EmployeeChatbox({ companyId, internalUserId, onUnreadCou
                       </div>
                     )}
 
-                    <div style={{ padding: '8px 10px', display: 'flex', alignItems: 'center', gap: 7, flexShrink: 0 }}>
+                    <div style={{ padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 9, flexShrink: 0 }}>
                       <input
                         type="file" accept="image/*" multiple style={{ display: 'none' }}
                         ref={el => { panelPhotoRefs.current[partnerId] = el }}
@@ -739,14 +746,18 @@ export default function EmployeeChatbox({ companyId, internalUserId, onUnreadCou
                       />
                       {!conv.partnerDeleted && !readOnly && (
                         <button onClick={() => panelPhotoRefs.current[partnerId]?.click()} title="Send photo"
-                          style={{ flexShrink: 0, width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#FFF7ED', border: '1.5px solid rgba(249,115,22,0.25)', borderRadius: 9, cursor: 'pointer', color: '#F97316' }}>
-                          <ImagePlus size={16} strokeWidth={2} />
+                          style={{ flexShrink: 0, width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#FFF7ED', border: '1.5px solid rgba(249,115,22,0.25)', borderRadius: 10, cursor: 'pointer', color: '#F97316', transition: 'all 0.15s' }}
+                          onMouseEnter={e => { e.currentTarget.style.background = '#FFEDD5'; e.currentTarget.style.borderColor = 'rgba(249,115,22,0.45)' }}
+                          onMouseLeave={e => { e.currentTarget.style.background = '#FFF7ED'; e.currentTarget.style.borderColor = 'rgba(249,115,22,0.25)' }}>
+                          <ImagePlus size={18} strokeWidth={2} />
                         </button>
                       )}
                       {!conv.partnerDeleted && !readOnly && (
                         <button onClick={() => panelFileRefs.current[partnerId]?.click()} title="Send file"
-                          style={{ flexShrink: 0, width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#EFF6FF', border: '1.5px solid rgba(59,130,246,0.25)', borderRadius: 9, cursor: 'pointer', color: '#3B82F6' }}>
-                          <Paperclip size={15} strokeWidth={2} />
+                          style={{ flexShrink: 0, width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#EFF6FF', border: '1.5px solid rgba(59,130,246,0.25)', borderRadius: 10, cursor: 'pointer', color: '#3B82F6', transition: 'all 0.15s' }}
+                          onMouseEnter={e => { e.currentTarget.style.background = '#DBEAFE'; e.currentTarget.style.borderColor = 'rgba(59,130,246,0.45)' }}
+                          onMouseLeave={e => { e.currentTarget.style.background = '#EFF6FF'; e.currentTarget.style.borderColor = 'rgba(59,130,246,0.25)' }}>
+                          <Paperclip size={17} strokeWidth={2} />
                         </button>
                       )}
                       <input
@@ -755,15 +766,15 @@ export default function EmployeeChatbox({ companyId, internalUserId, onUnreadCou
                         onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !conv.partnerDeleted && !readOnly) { e.preventDefault(); if (attachFiles.length > 0) void uploadAndSendPanelAttachment(partnerId); else void handleSendMessage(partnerId) } }}
                         placeholder={conv.partnerDeleted ? 'Account removed' : readOnly ? "You've clocked out — messaging is locked" : 'Type a message…'}
                         disabled={conv.partnerDeleted || readOnly}
-                        style={{ flex: 1, minWidth: 0, height: 38, padding: '0 12px', border: '1.5px solid #E2E8F0', borderRadius: 9, fontSize: 13.5, fontWeight: 500, outline: 'none', background: (conv.partnerDeleted || readOnly) ? '#F8FAFC' : '#FFFFFF', color: (conv.partnerDeleted || readOnly) ? '#94A3B8' : '#0F172A' }}
+                        style={{ flex: 1, minWidth: 0, height: 42, padding: '0 14px', border: '1.5px solid #E2E8F0', borderRadius: 10, fontSize: 14, fontWeight: 500, outline: 'none', background: (conv.partnerDeleted || readOnly) ? '#F8FAFC' : '#FFFFFF', color: (conv.partnerDeleted || readOnly) ? '#94A3B8' : '#0F172A', transition: 'border-color 0.15s, box-shadow 0.15s' }}
                       />
                       {!conv.partnerDeleted && !readOnly && (
                         <button
                           onClick={() => { if (attachFiles.length > 0) void uploadAndSendPanelAttachment(partnerId); else void handleSendMessage(partnerId) }}
                           disabled={sending || uploading || (!input.trim() && attachFiles.length === 0)}
-                          style={{ height: 38, padding: '0 12px', background: (sending || uploading || (!input.trim() && attachFiles.length === 0)) ? '#E5E7EB' : '#F97316', color: (sending || uploading || (!input.trim() && attachFiles.length === 0)) ? '#9CA3AF' : '#fff', border: 'none', borderRadius: 9, cursor: (sending || uploading || (!input.trim() && attachFiles.length === 0)) ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 5, fontWeight: 700, fontSize: 13, flexShrink: 0 }}
+                          style={{ height: 42, padding: '0 16px', background: (sending || uploading || (!input.trim() && attachFiles.length === 0)) ? '#E5E7EB' : '#F97316', color: (sending || uploading || (!input.trim() && attachFiles.length === 0)) ? '#9CA3AF' : '#fff', border: 'none', borderRadius: 10, cursor: (sending || uploading || (!input.trim() && attachFiles.length === 0)) ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 14, transition: 'background 0.15s', flexShrink: 0 }}
                         >
-                          {(sending || uploading) ? <Spinner size={13} /> : <Send size={13} />} Send
+                          {(sending || uploading) ? <Spinner size={14} /> : <Send size={14} />} Send
                         </button>
                       )}
                     </div>

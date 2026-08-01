@@ -82,12 +82,20 @@ export default function EmployeeAnnouncementsPanel({ companyId, internalUserId, 
     onUnreadCount?.(announcements.filter(a => a.user_id !== internalUserId && !readIds.has(a.id)).length)
   }, [announcements, readIds, internalUserId, onUnreadCount])
 
-  const filtered = search
+  const filtered = (search
     ? announcements.filter(a =>
         a.title.toLowerCase().includes(search.toLowerCase()) ||
         a.content.toLowerCase().includes(search.toLowerCase()) ||
         (a.created_by_name ?? '').toLowerCase().includes(search.toLowerCase()))
     : announcements
+  ).slice().sort((a, b) => {
+    // Unread floats to the top, newest-first within each group — same rule as
+    // CommunicationView's Announcements/Chatbox lists (2026-08-01).
+    const aUnread = readIds.has(a.id) ? 1 : 0
+    const bUnread = readIds.has(b.id) ? 1 : 0
+    if (aUnread !== bUnread) return aUnread - bUnread
+    return new Date(b.updated_at ?? b.created_at).getTime() - new Date(a.updated_at ?? a.created_at).getTime()
+  })
 
   const selected = announcements.find(a => a.id === selectedId) ?? null
 
@@ -107,7 +115,7 @@ export default function EmployeeAnnouncementsPanel({ companyId, internalUserId, 
       {/* Left: list — same card/header structure as Manager's CommunicationView Announcements
           tab (confirmed 2026-07-31: matches Chat tab's header exactly, per Manager's own
           "My Announcements"/"From Others" cards, rather than an approximated height match). */}
-      <div style={{ minHeight: 0, display: 'flex', flexDirection: 'column', background: '#FFFFFF', borderRadius: 14, border: '1px solid #E5E7EB', boxShadow: '0 1px 4px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
+      <div style={{ alignSelf: 'start', maxHeight: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', background: '#FFFFFF', borderRadius: 14, border: '1px solid #E5E7EB', boxShadow: '0 1px 4px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '16px 18px', borderBottom: '1px solid #E2E8F0', flexShrink: 0 }}>
           <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
             <Megaphone size={15} style={{ color: '#F97316' }} />
@@ -168,7 +176,7 @@ export default function EmployeeAnnouncementsPanel({ companyId, internalUserId, 
                 </div>
                 <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
                   {unread && <span aria-hidden="true" style={{ width: 7, height: 7, borderRadius: '50%', background: '#EF4444', flexShrink: 0 }} />}
-                  <span style={{ fontWeight: unread ? 800 : 600, fontSize: 15, lineHeight: '18px', color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
+                  <span style={{ fontWeight: unread ? 800 : 600, fontSize: 13, lineHeight: '15px', color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
                     {ann.title}
                   </span>
                 </span>

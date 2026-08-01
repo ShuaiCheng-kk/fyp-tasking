@@ -66,7 +66,10 @@ export default function EmployeeCommunicationPage() {
     const containerRect = container.getBoundingClientRect()
     const activeRect = activeButton.getBoundingClientRect()
     setTabIndicator({ left: activeRect.left - containerRect.left, width: activeRect.width, opacity: 1 })
-  }, [activeTab])
+    // Unread counts arrive async and change each pill's width (the badge dot adds itself + an
+    // 8px gap) — recompute whenever they change too, not just on tab switch, or the black
+    // indicator stays sized to the pre-badge width and the dot pokes out past its edge.
+  }, [activeTab, unreadMessages, unreadAnnCount])
 
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: '#F1F5F9' }}>

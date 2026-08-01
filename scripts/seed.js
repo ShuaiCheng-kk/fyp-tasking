@@ -789,6 +789,87 @@ async function main() {
       counterpartStatus: 'pending',
       createdAt: minutesAgo(20),
     },
+    // David Lim (manager1) / Wendy Ho (manager5) Manager-tier swaps — same status spread as Ben
+    // Seah's Employee-tier set above (2 pending / 1 approved / 1 rejected / 1 hidden-awaiting-
+    // counterpart), so manager1's own Shifts page has as much real Swap Requests data as
+    // employee1's to compare against, instead of the "left empty for manual testing" placeholder
+    // this used to be (2026-08-02). Manager-tier swaps are Owner/Partner-reviewed, not peer-Manager
+    // — matches the Rachel↔Kelvin pair above, just for Operations. Day offsets 13-22 stay clear of
+    // every other offset already used in this file (3-12) so neither Manager double-books.
+    {
+      label: 'pending-david-wendy-morning',
+      requesterEmail: 'manager1@test.com',
+      counterpartEmail: 'manager5@test.com',
+      department: opsDept,
+      requesterDayOffset: 13,
+      counterpartDayOffset: 14,
+      title: 'Operations Manager Floor Cover',
+      reason: 'David has a supplier meeting that morning and Wendy already agreed to trade.',
+      status: 'pending',
+      counterpartStatus: 'approved',
+      counterpartReviewedAt: minutesAgo(42),
+      createdAt: minutesAgo(55),
+    },
+    {
+      label: 'pending-wendy-david-weekend',
+      requesterEmail: 'manager5@test.com',
+      counterpartEmail: 'manager1@test.com',
+      department: opsDept,
+      requesterDayOffset: 15,
+      counterpartDayOffset: 16,
+      title: 'Operations Weekend Manager Cover',
+      reason: 'Wendy is covering a family event and David can take the weekend slot.',
+      status: 'pending',
+      counterpartStatus: 'approved',
+      counterpartReviewedAt: minutesAgo(30),
+      createdAt: minutesAgo(40),
+    },
+    {
+      label: 'approved-david-wendy-evening',
+      requesterEmail: 'manager1@test.com',
+      counterpartEmail: 'manager5@test.com',
+      department: opsDept,
+      requesterDayOffset: 17,
+      counterpartDayOffset: 18,
+      title: 'Operations Manager Evening Handover',
+      reason: 'David and Wendy swapped to balance opening and closing coverage.',
+      status: 'approved',
+      counterpartStatus: 'approved',
+      counterpartReviewedAt: minutesAgo(100),
+      reviewedBy: ownerUser.id,
+      reviewedAt: minutesAgo(75),
+      createdAt: minutesAgo(130),
+    },
+    {
+      label: 'rejected-wendy-david-coverage',
+      requesterEmail: 'manager5@test.com',
+      counterpartEmail: 'manager1@test.com',
+      department: opsDept,
+      requesterDayOffset: 19,
+      counterpartDayOffset: 20,
+      title: 'Operations Manager Service Shift',
+      reason: 'Wendy wanted to move her service shift to David.',
+      status: 'rejected',
+      counterpartStatus: 'approved',
+      counterpartReviewedAt: minutesAgo(90),
+      reviewedBy: ownerUser.id,
+      reviewedAt: minutesAgo(65),
+      ownerReviewReason: 'Coverage would be too light during the Friday service window.',
+      createdAt: minutesAgo(118),
+    },
+    {
+      label: 'hidden-david-awaiting-wendy',
+      requesterEmail: 'manager1@test.com',
+      counterpartEmail: 'manager5@test.com',
+      department: opsDept,
+      requesterDayOffset: 21,
+      counterpartDayOffset: 22,
+      title: 'Operations Manager Standby Shift',
+      reason: 'This one is still waiting for Wendy, so the Owner/Partner queue should not show it yet.',
+      status: 'pending',
+      counterpartStatus: 'pending',
+      createdAt: minutesAgo(15),
+    },
   ]
   let seededSwapCount = 0
   for (const def of swapSeedDefs) {
@@ -2203,10 +2284,11 @@ async function main() {
   if (swapSettingsErr) console.warn(`  ⚠ 创建 shift_swap_settings 失败: ${swapSettingsErr.message}`)
   else console.log('  ✓ Shift Swap Settings：月度上限 3 次/人，提前 24 小时截止（Rule Check 胶囊现在会显示）')
 
-  // David Lim (manager1) / Wendy Ho (manager5) 故意不种 pending swap request——两人是留给 Manager
-  // 自己在 UI 上测 Submit Shift Swap 用的干净数据（futMgr1Assign / futMgr5Assign 都已建好未来班次，
-  // 同部门 Operations，随时可以互选对方提交）。O/P 审批队列改用 Rachel Koh (manager2) ↔
-  // Kelvin Ang (manager6) 顶上，覆盖 UC53。
+  // Rachel Koh (manager2) ↔ Kelvin Ang (manager6)，覆盖 UC53 的 O/P 审批队列基础用例。
+  // David Lim (manager1) / Wendy Ho (manager5) 的完整一套（2 pending/1 approved/1 rejected/1
+  // hidden）已经在上面的 swapSeedDefs 里种好了（2026-08-02，不再是"留给 Manager 自己手动测"的空
+  // 数据）——futMgr1Assign / futMgr5Assign 这两个未来班次仍然保留，只是不再是唯一的 Operations
+  // Manager 班次了。
   if (futMgr2Assign && futMgr6Assign) {
     const { error } = await supabase.from('shift_swap_requests').insert({
       company_id: company.id,
@@ -2289,6 +2371,21 @@ async function main() {
   })
   if (offMgrErr) console.warn(`  ⚠ 创建 pending Off Day 失败 (manager3): ${offMgrErr.message}`)
   else console.log(`  ✓ Off Day（待审批）：Aaron Wong → ${dateKey(NEXT_TUE)}（Manager 自己的申请，同样是 O/P 审批；Engineering 现在有 manager3+manager7 两个 Manager，AI Process 应判定 safe——覆盖"Manager 自己申请 Off Day"这个提交路径，跟 Ben/Grace 那组 Employee 场景分开测）`)
+
+  // David Lim (manager1) 自己的 Fixed Day Off 申请——之前 manager1 这块完全没有 Off Day 数据，
+  // 留给他自己手动提交；现在补上一条 pending，和 employee1（Ben Seah）的那条一一对应，方便对比
+  // Manager 和 Employee 两个 Shifts 页面的 My Requests（2026-08-02）。Operations 现在有
+  // manager1+manager5 两个 Manager，跟 Aaron Wong 那条同理，AI Process 应判定 safe。
+  const { error: offDavidErr } = await supabase.from('off_day_requests').insert({
+    user_id: userIdMap['manager1@test.com'].internalId,
+    company_id: company.id,
+    requested_date: dateKey(addDays(NEXT_MON, 3)),
+    requested_week: weekStartNext,
+    source: 'submitted',
+    status: 'pending',
+  })
+  if (offDavidErr) console.warn(`  ⚠ 创建 pending Off Day 失败 (manager1): ${offDavidErr.message}`)
+  else console.log(`  ✓ Off Day（待审批）：David Lim → ${dateKey(addDays(NEXT_MON, 3))}（Manager 自己的申请，Operations 现有 manager1+manager5 两个 Manager，AI Process 应判定 safe——manager1 现在和 employee1 一样有真实的 pending Off Day 数据）`)
 
   const { error: offConflictErr } = await supabase.from('off_day_requests').insert({
     user_id: userIdMap['employee4@test.com'].internalId,
@@ -2900,6 +2997,41 @@ async function main() {
     assigned_user_id: userIdMap['manager1@test.com'].internalId, assigned_by: userIdMap['partner1@test.com'].internalId,
     status: 'Assigned', due_at: dueAtOn(addDays(TODAY, 2)), priority: 'Medium',
   })
+  // David Lim (manager1) 的 My Tasks 板之前只有 Assigned/In Progress 两种状态、没有子任务——
+  // Review/Complete 两列一直是空的，子任务展开/堆叠效果也测不到（2026-08-01）。
+  await createTask({
+    company_id: company.id, department_id: depts[0].id, title: 'Submit Q3 headcount forecast',
+    description: 'Compile the Operations headcount forecast for Q3 and submit for Owner sign-off.',
+    assigned_user_id: userIdMap['manager1@test.com'].internalId, assigned_by: ownerUser.id,
+    status: 'Review', due_at: dueAtOn(TODAY), priority: 'High',
+  })
+  await createTask({
+    company_id: company.id, department_id: depts[0].id, title: 'Confirm holiday roster coverage',
+    description: 'Confirm every shift over the holiday weekend has coverage confirmed.',
+    assigned_user_id: userIdMap['manager1@test.com'].internalId, assigned_by: userIdMap['partner1@test.com'].internalId,
+    status: 'Complete', due_at: dueAtOn(TWO_DAYS_AGO), completed_at: dueAtOn(TWO_DAYS_AGO), priority: 'Medium',
+  })
+  const mgr1SubtaskParent = await createTask({
+    company_id: company.id, department_id: depts[0].id, title: 'Prepare weekend event staffing pack',
+    description: 'Pull together everything the weekend event crew needs before Saturday.',
+    assigned_user_id: userIdMap['manager1@test.com'].internalId, assigned_by: ownerUser.id,
+    status: 'In Progress', due_at: dueAtOn(TOMORROW), priority: 'High',
+  })
+  if (mgr1SubtaskParent) {
+    await createTask({
+      company_id: company.id, department_id: depts[0].id, title: 'Confirm crew contact list',
+      parent_task_id: mgr1SubtaskParent.id, sequence_order: 1,
+      assigned_user_id: userIdMap['manager1@test.com'].internalId, assigned_by: ownerUser.id,
+      status: 'Complete',
+    })
+    await createTask({
+      company_id: company.id, department_id: depts[0].id, title: 'Print floor plan handouts',
+      parent_task_id: mgr1SubtaskParent.id, sequence_order: 2,
+      assigned_user_id: userIdMap['manager1@test.com'].internalId, assigned_by: ownerUser.id,
+      status: 'Assigned', due_at: dueAtOn(TOMORROW),
+    })
+  }
+  console.log('  ✓ David Lim（manager1）My Tasks 补齐 Review/Complete 状态 + 1 条带 2 子任务的 Task，四种状态+子任务展开都有真实数据可测')
   await createTask({
     company_id: company.id, department_id: depts[2].id, title: 'Review new hire onboarding checklist',
     description: 'Make sure the onboarding checklist is up to date before the next intake.',
@@ -3181,10 +3313,11 @@ async function main() {
   console.log('    今天：Daniel Tay 已批准 Off Day（紫色胶囊）')
   console.log('    Shift Swap：Rachel Koh ↔ Kelvin Ang（对方已同意，Owner/Partner 可直接 Approve/Reject，UC53）')
   console.log('               Ben Seah ↔ Chloe Yeo（Employee 之间，应只在 Manager 队列可见，验证隔离规则）')
-  console.log('               David Lim (manager1) / Wendy Ho (manager5) 故意不种 pending —— 两人都有未来班次，Operations 同部门，留给 Manager 自己在 UI 上测 Submit Shift Swap')
-  console.log('    Off Day 待提交：David Lim / Wendy Ho 都没有现成 pending/approved 记录，留给 Manager 自己测 Submit Fixed Day Off')
+  console.log('               David Lim (manager1) ↔ Wendy Ho (manager5)：2 pending/1 approved/1 rejected/1 hidden-awaiting-counterpart（Manager-tier，Owner/Partner 审批，和 employee1 的那一套一一对应，2026-08-02）')
+  console.log('    Off Day 待提交：Wendy Ho 还没有现成 pending/approved 记录，留给她自己测 Submit Fixed Day Off；David Lim 已有 1 条 pending（见下）')
   console.log('    Off Day 待审批：Ben Seah + Grace Lim 撞同一天（Operations 2 人）—— AI Process 应判 Ben 为 safe、Grace 为 flagged 并给出替代日建议')
   console.log('                   Aaron Wong（Manager 自己的申请；Engineering 现有 manager3+manager7 两个 Manager，AI Process 应判 safe）')
+  console.log('                   David Lim（同理，Operations 现有 manager1+manager5 两个 Manager，AI Process 应判 safe——和 employee1 的 pending Off Day 一一对应）')
   console.log('                   Elaine Chua（当天已有排班冲突，仅供手动测试，AI Process 不检查排班）')
   console.log('  Casual Worker Clock In：casual1@test.com 登录后 Dashboard 有 Same-Day Café Cover Shift（One-off，无 Break）可直接 Clock In（UC49），Clock Out 需 employee1@test.com 在其 Dashboard Approve 放行')
   console.log('  Templates：Job Template ×2（Standard Event Crew / Weekend Warehouse Shift）+ Shift Template ×2')

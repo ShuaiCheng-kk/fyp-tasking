@@ -804,14 +804,23 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
   // withdrawn — are dropped from Applicants (Confirmed hires live in their own panel).
   const isConfirmedApplicant = (a: JobApplicant) => a.status === 'accepted' && a.invitation_status === 'accepted'
   const confirmedApplicants = useMemo(() => applicants.filter(isConfirmedApplicant), [applicants])
-  const pendingApplicants = useMemo(
-    () => applicants
+  const pendingApplicants = useMemo(() => {
+    // Recommendations is empty until AI Assessment has been run, so scoreFor returns -1 for
+    // everyone and the secondary sort key is a no-op (Array.sort is stable) — applicants stay in
+    // API order until AI Assessment ranks them by score, highest first.
+    const scoreFor = (a: JobApplicant) => {
+      const rec = recommendations.find(r => r.applicant_id === a.id)
+      return !rec || rec.insufficient ? -1 : rec.score
+    }
+    return applicants
       .filter(a => a.status === 'pending' || (a.status === 'accepted' && a.invitation_status !== 'accepted'))
-      // Already-accepted (awaiting the worker's reply) float to the top — we've committed to them and
-      // are just waiting on their side, so they should be seen first.
-      .sort((a, b) => (a.status === 'accepted' ? 0 : 1) - (b.status === 'accepted' ? 0 : 1)),
-    [applicants],
-  )
+      .sort((a, b) => {
+        // Already-accepted (awaiting the worker's reply) float to the top — we've committed to
+        // them and are just waiting on their side, so they should be seen first.
+        const groupDiff = (a.status === 'accepted' ? 0 : 1) - (b.status === 'accepted' ? 0 : 1)
+        return groupDiff !== 0 ? groupDiff : scoreFor(b) - scoreFor(a)
+      })
+  }, [applicants, recommendations])
   // ui state
   const [activeTab, setActiveTab] = useState<Tab>('jobs')
   const [postView, setPostView] = useState<'none' | 'archived' | 'template' | 'pending'>('none')
