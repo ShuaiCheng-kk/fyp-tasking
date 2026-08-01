@@ -1253,7 +1253,7 @@ function TaskCard({
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToManagerDepartments = false, scopeToEmployeeSupervised = false }: {
+export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToManagerDepartments = false, scopeToEmployeeSupervised = false, hidePlanBadge = false }: {
   sidebar: React.ReactNode
   // Task assignment is strictly one level down: Owner/Partner assign to Managers, a Manager
   // assigns to Employees, an Employee assigns to the Casual Workers they supervise.
@@ -1267,6 +1267,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
   // AI Assign (UC20) was extended to Employee on 2026-07-27, scoped to their supervised Casual
   // Workers only (see openAiAssign / employeeDashboardService.getSupervisedTaskScope).
   scopeToEmployeeSupervised?: boolean
+  hidePlanBadge?: boolean
 }) {
   const router = useRouter()
 
@@ -1278,10 +1279,15 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
   const [currentPlan,    setCurrentPlan]    = useState('Free')
   const [initialReady,   setInitialReady]   = useState(false)
 
-  // Employee-only (2026-08-02): once clocked out of every shift today, this whole page locks to
-  // read-only — no creating/editing/reassigning/approving/rejecting/deleting a task. Matches the
-  // same rule already applied to the Dashboard's My Tasks board and the Casual Worker's own board.
-  const employeeClockedOut = useEmployeeClockedOut(scopeToEmployeeSupervised ? internalUserId : '')
+  // Once clocked out of every shift today, this whole page locks to read-only — no
+  // creating/editing/reassigning/approving/rejecting/deleting/dragging a task. Matches the same
+  // rule already applied to the Dashboard's My Tasks board and the Casual Worker's own board
+  // (2026-08-02), extended to Manager's own Tasks page — both its Team Tasks board (supervising
+  // Employees, same as Employee supervising Casual Workers below) and its My Tasks tab (2026-08-03).
+  const employeeClockedOut = useEmployeeClockedOut((scopeToEmployeeSupervised || scopeToManagerDepartments) ? internalUserId : '')
+  // True on any surface this page locks for once clocked out — Employee's Team Tasks (supervised)
+  // board or Manager's Team Tasks/My Tasks (both tabs share the Manager's own clock status).
+  const viewerClockedOutLock = (scopeToEmployeeSupervised || scopeToManagerDepartments) && employeeClockedOut
 
   const [departments, setDepartments] = useState<Department[]>([])
   const [members,     setMembers]     = useState<Member[]>([])
@@ -2146,7 +2152,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
   // ── Save task ─────────────────────────────────────────────────────────────
 
   const handleSaveTask = async () => {
-    if (scopeToEmployeeSupervised && employeeClockedOut) return
+    if (viewerClockedOutLock) return
     if (!selectedTask || !editTitle.trim() || !editDeptId || !editStartDate || !editPriority || !editDueAt || !editDeadlineTime) {
       setPanelError('Title, department, start date, priority, and deadline are required')
       return
@@ -2298,7 +2304,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
   // ── Delete task ────────────────────────────────────────────────────────────
 
   const handleDeleteTask = async () => {
-    if (scopeToEmployeeSupervised && employeeClockedOut) return
+    if (viewerClockedOutLock) return
     if (!selectedTask) return
     setDeleteLoading(true)
     const taskId = selectedTask.id
@@ -2319,7 +2325,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
   }
 
   const handleDeleteTaskDirect = async () => {
-    if (scopeToEmployeeSupervised && employeeClockedOut) return
+    if (viewerClockedOutLock) return
     if (!deleteTaskModal) return
     setDeleteTaskLoading(true); setDeleteTaskError('')
     const taskId = deleteTaskModal.id
@@ -2411,7 +2417,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
   // ── Review sign-off: Approve → Complete, Reject (with reason) → back to In Progress ──
 
   const handleApproveTask = async () => {
-    if (scopeToEmployeeSupervised && employeeClockedOut) return
+    if (viewerClockedOutLock) return
     if (!selectedTask) return
     setTaskActionLoading('approve'); setPanelError('')
     try {
@@ -2434,7 +2440,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
   }
 
   const handleRejectTask = async () => {
-    if (scopeToEmployeeSupervised && employeeClockedOut) return
+    if (viewerClockedOutLock) return
     if (!selectedTask || !rejectReason.trim()) return
     setTaskActionLoading('reject'); setPanelError('')
     try {
@@ -2462,7 +2468,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
   // Employee/Casual Worker boards, so no new server work. Dragging is the only way a My Tasks
   // card advances — there is no status-advance button in the detail panel (2026-08-01, matching
   // Employee's own My Tasks popup, see BUG-025 note in EmployeeMyTasksBoard.tsx).
-  const canDragMyTask = (task: Task): boolean => task.status !== 'Review' && task.status !== 'Complete'
+  const canDragMyTask = (task: Task): boolean => !employeeClockedOut && task.status !== 'Review' && task.status !== 'Complete'
 
   // A card can only ever move exactly one column forward — never backward, never skip a column.
   // Shared by the actual drop handler and by the column highlight on drag-over, so a column that
@@ -2515,6 +2521,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
   // Tasks widget (EmployeeMyTasksBoard.tsx) — a Manager works through their own Owner/Partner-
   // assigned tasks the same way (2026-08-02).
   const canToggleMyTaskSubTask = (sub: Task): boolean => {
+    if (employeeClockedOut) return false
     if (sub.is_completed) return false
     const allTasks = COLUMNS.flatMap(col => myTasksKanban?.[col] ?? [])
     const parent = allTasks.find(t => t.id === sub.parent_task_id)
@@ -2959,7 +2966,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
   }
 
   const openAiAssign = () => {
-    if (scopeToEmployeeSupervised && employeeClockedOut) return
+    if (viewerClockedOutLock) return
     setAiModal(true)
     resetAiAssignInput()
   }
@@ -3009,7 +3016,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
   // Kanban tab: pre-fill with the selected day, clamped to today (a task can't start in the past).
   // Calendar tab shows a whole week, not one day, so the user must pick the start date themselves — leave it blank.
   const openNewTaskFor = (memberId: string, deptId: string) => {
-    if (scopeToEmployeeSupervised && employeeClockedOut) return
+    if (viewerClockedOutLock) return
     // Manager only ever has one department — force it regardless of the caller's deptId (e.g. a
     // company-wide template passes '', which would otherwise leave the form's only-ever-valid
     // department unset with no picker to fix it, since the field is hidden for Manager below).
@@ -3620,9 +3627,11 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
               <Layers size={15} style={{ color: '#F97316' }} />
             </div>
             <span style={{ fontWeight: 700, fontSize: '1rem', color: '#0F172A' }}>My Tasks</span>
-            <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', fontWeight: 600, color: '#9CA3AF', background: '#F3F4F6', padding: '3px 9px', borderRadius: 999, whiteSpace: 'nowrap', flexShrink: 0 }}>
-              <GripVertical size={12} /> Drag cards to move
-            </span>
+            {!employeeClockedOut && (
+              <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', fontWeight: 600, color: '#9CA3AF', background: '#F3F4F6', padding: '3px 9px', borderRadius: 999, whiteSpace: 'nowrap', flexShrink: 0 }}>
+                <GripVertical size={12} /> Drag cards to move
+              </span>
+            )}
           </div>
           <div className="task-tab-content" style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'row', alignItems: 'stretch', padding: '16px 16px 20px', gap: 0 }}>
             {COLUMNS.map((col, colIdx) => {
@@ -4165,7 +4174,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
           <div data-owner-header-badges style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
             {internalUserId && <OwnerUserBadge userId={internalUserId} companyId={companyId} />}
             {/* Subscription plan is Owner/Partner-only — Manager (and every other role) can't switch it. */}
-            {companyId && !scopeToManagerDepartments && !scopeToEmployeeSupervised && <OwnerPlanBadge plan={currentPlan} currentCompanyId={companyId} />}
+            {companyId && !scopeToManagerDepartments && !scopeToEmployeeSupervised && !hidePlanBadge && <OwnerPlanBadge plan={currentPlan} currentCompanyId={companyId} />}
           </div>
         </div>
 
@@ -4926,7 +4935,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                     // (confirmed 2026-07-31 for Employee; Manager moved here too on 2026-08-02 —
                     // it used to keep its own smaller inline header button instead, which drifted
                     // out of sync with Employee's placement/size).
-                    const employeeAiAssignButton = (scopeToEmployeeSupervised ? !employeeClockedOut : scopeToManagerDepartments) && (
+                    const employeeAiAssignButton = (scopeToEmployeeSupervised || scopeToManagerDepartments) && !employeeClockedOut && (
                       <div style={{ display: 'flex', justifyContent: 'center' }}>
                         <button
                           type="button"
@@ -5196,7 +5205,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                                       // board already only shows tasks either of them assigned.
                                       viewerId={(scopeToManagerDepartments || scopeToEmployeeSupervised) ? internalUserId : undefined}
                                       alwaysRedDeadline={scopeToEmployeeSupervised}
-                                      readOnly={scopeToEmployeeSupervised && employeeClockedOut}
+                                      readOnly={viewerClockedOutLock}
                                     />
                                     {isExpanded && subTasks.length > 0 && (
                                       <div style={{ marginTop: -6, marginBottom: 14, paddingLeft: 6, paddingRight: 20 }}>
@@ -5372,7 +5381,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                   Manager or a fellow Manager) — assertCanActOnTaskAsPeer would reject the request
                   server-side anyway, but the button must not even be offered: reviewing your own
                   submitted work is exactly what the Review checkpoint exists to prevent. */}
-              {selectedTask.status === 'Review' && boardViewMode !== 'mytasks' && !(scopeToEmployeeSupervised && employeeClockedOut) && (
+              {selectedTask.status === 'Review' && boardViewMode !== 'mytasks' && !(viewerClockedOutLock) && (
                 <div style={{ padding: '0 20px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {rejectReasonOpen ? (
                     <>
@@ -5409,7 +5418,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
               {/* Footer — only the user who assigned this task may operate on it. Hidden entirely
                   once the task reached Review/Complete: submitted/approved work only offers the
                   Approve/Reject sign-off above, no Duplicate/Archive/Delete. */}
-              {isOwner && selectedTask.status !== 'Review' && selectedTask.status !== 'Complete' && !(scopeToEmployeeSupervised && employeeClockedOut) && (
+              {isOwner && selectedTask.status !== 'Review' && selectedTask.status !== 'Complete' && !(viewerClockedOutLock) && (
                 <div style={{ padding: '0 20px 18px', display: 'grid', gridTemplateColumns: scopeToEmployeeSupervised ? '1fr' : 'repeat(3, 1fr)', gap: 8 }}>
                   {/* Duplicate (UC16) / Archive (UC18) are O/P/M-only — Employee only gets Delete (UC15). */}
                   {!scopeToEmployeeSupervised && (

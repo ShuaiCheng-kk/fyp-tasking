@@ -818,7 +818,7 @@ const modalInputStyle: React.CSSProperties = {
   background: '#FFFFFF',
 }
 
-export default function ShiftsView({ sidebar, basePath, canManageShifts = true, scopeToManagerDepartments = false, scopeToEmployeeSelf = false }: {
+export default function ShiftsView({ sidebar, basePath, canManageShifts = true, scopeToManagerDepartments = false, scopeToEmployeeSelf = false, hidePlanBadge = false }: {
   sidebar: React.ReactNode
   basePath: string
   // UC1-11 are O/P-only: false renders the schedule read-only (no create/edit/publish/bulk/AI/templates).
@@ -830,6 +830,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
   // row plus any Casual Worker shift blocks they currently supervise (see shiftService's
   // getTimelineShifts Employee branch), never their whole department.
   scopeToEmployeeSelf?: boolean
+  hidePlanBadge?: boolean
 }) {
   // Manager/Employee only ever see their own scoped slice of people on this page, so department
   // color-coding is meaningless — fall back to the brand orange instead of deptColor().
@@ -851,9 +852,10 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
   const [initialReady, setInitialReady] = useState(false)
   const [authUserId, setAuthUserId] = useState('')
   const [internalUserId, setInternalUserId] = useState('')
-  // Employee-only (2026-08-02): once clocked out of every shift today, My Requests locks to
-  // read-only — same rule as the Tasks page and Dashboard's My Tasks board.
-  const employeeClockedOut = useEmployeeClockedOut(scopeToEmployeeSelf ? internalUserId : '')
+  // Once clocked out of every shift today, My Requests locks to read-only — same rule as the
+  // Tasks page and Dashboard's My Tasks board (2026-08-02), extended to Manager's own My
+  // Requests and Swap Requests approval queue (2026-08-03).
+  const employeeClockedOut = useEmployeeClockedOut((scopeToEmployeeSelf || scopeToManagerDepartments) ? internalUserId : '')
   const viewerParams = scopeToManagerDepartments && internalUserId
     ? `&viewer_role=Manager&viewer_user_id=${internalUserId}`
     : scopeToEmployeeSelf && internalUserId
@@ -3717,7 +3719,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
           <div data-owner-header-badges style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
             {internalUserId && <OwnerUserBadge userId={internalUserId} companyId={companyId} />}
             {/* Subscription plan is Owner/Partner-only — Manager/Employee (and every other role) can't switch it. */}
-            {companyId && !scopeToManagerDepartments && !scopeToEmployeeSelf && <OwnerPlanBadge plan={company?.plan ?? 'Free'} currentCompanyId={companyId} />}
+            {companyId && !scopeToManagerDepartments && !scopeToEmployeeSelf && !hidePlanBadge && <OwnerPlanBadge plan={company?.plan ?? 'Free'} currentCompanyId={companyId} />}
           </div>
         </div>
 
@@ -3900,6 +3902,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                       // from Employee's since Manager's call site never set them.
                       autoSelectFirst={false}
                       wideEmployeeLayout
+                      readOnly={employeeClockedOut}
                     />
                   </div>
               </div>
@@ -3917,6 +3920,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                       showSuccessToast={showSuccessToast}
                       showErrorToast={showErrorToast}
                       onAttentionCount={setSwapAlertCount}
+                      readOnly={employeeClockedOut}
                     />
                   </div>
               </div>

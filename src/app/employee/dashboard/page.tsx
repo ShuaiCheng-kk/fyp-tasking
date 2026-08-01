@@ -14,6 +14,7 @@ import {
 } from '@/components/dashboard/ClockFlow'
 import { sgtTodayKey } from '@/lib/singaporeTime'
 import EmployeeMyTasksBoard from '@/components/employee/EmployeeMyTasksBoard'
+import { useEmployeeClockedOut } from '@/hooks/useEmployeeClockedOut'
 
 const TEXT   = '#111827'
 const MUTED  = '#6B7280'
@@ -127,10 +128,11 @@ export default function EmployeeDashboard() {
   // "today" only by one of those would either vanish or double up against a genuinely different
   // day's shift (see project memory module5-clockin-timezone-bug).
   const myTodayShifts = myShifts.filter(s => s.shift.shift_date === sgtTodayKey())
-  // Clocked out of every shift scheduled today = gone for the day, so My Tasks below locks to
-  // read-only (2026-08-02) — same rule as the Casual Worker's own board once its shift's
-  // clock_out_time is set. No shifts at all today isn't "clocked out", so it stays editable.
-  const clockedOutForToday = myTodayShifts.length > 0 && myTodayShifts.every(s => !!s.record?.clock_out_time)
+  // Clocked out and not yet clocked back in = My Tasks below locks to read-only (2026-08-02) —
+  // same rule as the Casual Worker's own board. Locked until the next actual Clock In, not just
+  // until the calendar date rolls over — an off-day with no shift stays locked too (2026-08-03,
+  // see useEmployeeClockedOut).
+  const clockedOutForToday = useEmployeeClockedOut(userId)
 
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: '#F1F5F9' }}>

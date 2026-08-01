@@ -640,13 +640,17 @@ function SwapCard({
 }
 
 export default function SwapRequestsPanel({
-  companyId, internalUserId, showSuccessToast, showErrorToast, onAttentionCount,
+  companyId, internalUserId, showSuccessToast, showErrorToast, onAttentionCount, readOnly = false,
 }: {
   companyId: string
   internalUserId: string
   showSuccessToast: (message: string) => void
   showErrorToast: (message: string) => void
   onAttentionCount?: (count: number) => void
+  // Once the Manager viewing this has clocked out for the day, approving/rejecting an Employee's
+  // swap request and editing the department's auto-approval settings both lock — same "done for
+  // the day" rule as My Tasks/My Requests (2026-08-03).
+  readOnly?: boolean
 }) {
   const isCompactReqLayout = useIsCompactViewport(1300)
   const [taskChangeRowRef, taskChangeRowCompact] = useIsCompactContainer<HTMLDivElement>(1100)
@@ -703,7 +707,7 @@ export default function SwapRequestsPanel({
   const [rejectSwapError, setRejectSwapError] = useState('')
 
   const decideRequest = async (id: string, decision: 'approved' | 'rejected', targetName?: string, reason?: string): Promise<boolean> => {
-    if (!internalUserId || !companyId) return false
+    if (readOnly || !internalUserId || !companyId) return false
     setReqActionLoading(true); setReqError('')
     try {
       const res = await fetch('/api/attendance', {
@@ -733,7 +737,7 @@ export default function SwapRequestsPanel({
   }
 
   const confirmRejectSwap = async () => {
-    if (!rejectSwapTarget) return
+    if (readOnly || !rejectSwapTarget) return
     const reason = rejectSwapReason.trim()
     if (!reason) { setRejectSwapError('A reason is required to reject this request.'); return }
     setRejectSwapError('')
@@ -869,7 +873,7 @@ export default function SwapRequestsPanel({
   }, [managerSwapSettingsOpen, managerSwapDeptId, loadManagerSwapSettings])
 
   const saveManagerSwapSettings = async () => {
-    if (!companyId || !internalUserId || !managerSwapDeptId) return
+    if (readOnly || !companyId || !internalUserId || !managerSwapDeptId) return
     setManagerSwapSettingsSaving(true)
     setManagerSwapSettingsError('')
     try {
@@ -988,7 +992,7 @@ export default function SwapRequestsPanel({
                   <ClipboardList size={15} style={{ color: '#F97316' }} />
                 </div>
                 <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2, flex: 1 }}>Review Request</span>
-                <button onClick={() => setManagerSwapSettingsOpen(true)} title="Settings" style={{ width: 36, height: 30, borderRadius: 10, border: '1.5px solid #E5E7EB', background: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}>
+                <button onClick={() => setManagerSwapSettingsOpen(true)} disabled={readOnly} title="Settings" style={{ width: 36, height: 30, borderRadius: 10, border: '1.5px solid #E5E7EB', background: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: readOnly ? 'default' : 'pointer', flexShrink: 0, opacity: readOnly ? 0.5 : 1 }}>
                   <Settings size={16} style={{ color: '#6B7280' }} />
                 </button>
               </div>
@@ -999,7 +1003,7 @@ export default function SwapRequestsPanel({
                     newlyProcessedId={newlyProcessedId}
                     actionNeeded={actionNeeded}
                     actionIndex={actionIndex}
-                    reqActionLoading={reqActionLoading}
+                    reqActionLoading={reqActionLoading || readOnly}
                     onSelectIndex={setActionIndex}
                     onApprove={r => void decideRequest(r.id, 'approved', r.requester_name)}
                     onReject={r => { setRejectSwapTarget({ id: r.id, requesterName: r.requester_name }); setRejectSwapReason(''); setRejectSwapError('') }}

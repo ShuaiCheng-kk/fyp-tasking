@@ -13,6 +13,7 @@ import { EmptyState } from '@/components/panel'
 import { setDeptColorOverrides } from '@/lib/deptColor'
 import { useIsCompactViewport } from '@/hooks/useIsCompactViewport'
 import { useResourceInvalidation } from '@/components/realtime/RealtimeNotificationsProvider'
+import { useEmployeeClockedOut } from '@/hooks/useEmployeeClockedOut'
 import {
   Plus, X, Trash2, Pencil, Megaphone,
   Send, Search, SquarePen, MessageSquare, Crown,
@@ -632,7 +633,7 @@ export default function CommunicationView({ renderSidebar, basePath }: {
   }
 
   async function handlePostAnnouncement() {
-    if (!internalUserId || !companyId) return
+    if (managerClockedOut || !internalUserId || !companyId) return
     setPosting(true)
     try {
       const res = await fetch('/api/inbox/announcements', {
@@ -670,7 +671,7 @@ export default function CommunicationView({ renderSidebar, basePath }: {
   }
 
   async function handleDeleteAnnouncement(announcementId: string) {
-    if (!internalUserId) return
+    if (managerClockedOut || !internalUserId) return
     setDeleting(true)
     try {
       setAnnouncements(prev => prev.filter(a => a.id !== announcementId))
@@ -737,6 +738,9 @@ export default function CommunicationView({ renderSidebar, basePath }: {
   const canPostCompanyWide = ['owner', 'partner'].includes(userRole?.toLowerCase())
   // Managers may only broadcast within their own department — never company-wide, never another department.
   const isManagerRole = userRole === 'Manager'
+  // Once a Manager has clocked out of every shift today, sending chat messages locks — same rule
+  // already applied to Employee's Communication page, Tasks page and My Requests (2026-08-03).
+  const managerClockedOut = useEmployeeClockedOut(isManagerRole && internalUserId ? internalUserId : '')
   // O/P never see Manager-posted announcements (ownerAnnouncementRepository's isOwnerOrPartner
   // branch already filters those out server-side) and don't post to each other in practice, so a
   // "From Others" filter never has anything meaningful to show them — only Manager's merged
@@ -887,7 +891,7 @@ export default function CommunicationView({ renderSidebar, basePath }: {
   async function handleSendMessage(partnerId: string) {
     const conv = conversations.find(c => c.partnerId === partnerId)
     const content = (panelInputs[partnerId] ?? '').trim()
-    if (!content || !conv || !internalUserId || !companyId) return
+    if (managerClockedOut || !content || !conv || !internalUserId || !companyId) return
     setPanelSending(prev => ({ ...prev, [partnerId]: true }))
     const optimistic: Message = {
       id: `tmp-${Date.now()}`, from_user_id: internalUserId, to_user_id: partnerId,
@@ -949,7 +953,7 @@ export default function CommunicationView({ renderSidebar, basePath }: {
   async function uploadAndSendPanelAttachment(partnerId: string) {
     const files = panelAttachFiles[partnerId] ?? []
     const conv = conversations.find(c => c.partnerId === partnerId)
-    if (files.length === 0 || !conv || !internalUserId || !companyId) return
+    if (managerClockedOut || files.length === 0 || !conv || !internalUserId || !companyId) return
     setPanelUploading(prev => ({ ...prev, [partnerId]: true }))
     try {
       for (const file of files) {
@@ -1177,7 +1181,7 @@ export default function CommunicationView({ renderSidebar, basePath }: {
           <div data-owner-header-badges style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
             {internalUserId && <OwnerUserBadge userId={internalUserId} companyId={companyId ?? ''} />}
             {/* Subscription plan is Owner/Partner-only — Manager (and every other role) can't switch it. */}
-            {companyId && (userRole === 'Owner' || userRole === 'Partner') && <OwnerPlanBadge plan={currentPlan} currentCompanyId={companyId} />}
+            {companyId && userRole === 'Owner' && <OwnerPlanBadge plan={currentPlan} currentCompanyId={companyId} />}
           </div>
         </div>
 
@@ -1574,7 +1578,7 @@ export default function CommunicationView({ renderSidebar, basePath }: {
                               ref={el => { panelFileRefs.current[partnerId] = el }}
                               onChange={e => { const files = Array.from(e.target.files ?? []); if (files.length) pickPanelAttachments(partnerId, files); e.target.value = '' }}
                             />
-                            {!conv.partnerDeleted && (
+                            {!conv.partnerDeleted && !managerClockedOut && (
                               <button onClick={() => panelPhotoRefs.current[partnerId]?.click()} title="Send photo"
                                 style={{ flexShrink: 0, width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#FFF7ED', border: '1.5px solid rgba(249,115,22,0.25)', borderRadius: 10, cursor: 'pointer', color: '#F97316', transition: 'all 0.15s' }}
                                 onMouseEnter={e => { e.currentTarget.style.background = '#FFEDD5'; e.currentTarget.style.borderColor = 'rgba(249,115,22,0.45)' }}
@@ -1582,7 +1586,7 @@ export default function CommunicationView({ renderSidebar, basePath }: {
                                 <ImagePlus size={18} strokeWidth={2} />
                               </button>
                             )}
-                            {!conv.partnerDeleted && (
+                            {!conv.partnerDeleted && !managerClockedOut && (
                               <button onClick={() => panelFileRefs.current[partnerId]?.click()} title="Send file"
                                 style={{ flexShrink: 0, width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#EFF6FF', border: '1.5px solid rgba(59,130,246,0.25)', borderRadius: 10, cursor: 'pointer', color: '#3B82F6', transition: 'all 0.15s' }}
                                 onMouseEnter={e => { e.currentTarget.style.background = '#DBEAFE'; e.currentTarget.style.borderColor = 'rgba(59,130,246,0.45)' }}
@@ -1594,13 +1598,13 @@ export default function CommunicationView({ renderSidebar, basePath }: {
                               value={input}
                               autoFocus={!conv.partnerDeleted}
                               onChange={e => setPanelInputs(p => ({ ...p, [partnerId]: e.target.value }))}
-                              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !conv.partnerDeleted) { e.preventDefault(); if (attachFiles.length > 0) uploadAndSendPanelAttachment(partnerId); else handleSendMessage(partnerId) } }}
-                              placeholder={conv.partnerDeleted ? "Account removed" : 'Type a message…'}
-                              disabled={conv.partnerDeleted}
+                              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !conv.partnerDeleted && !managerClockedOut) { e.preventDefault(); if (attachFiles.length > 0) uploadAndSendPanelAttachment(partnerId); else handleSendMessage(partnerId) } }}
+                              placeholder={conv.partnerDeleted ? "Account removed" : managerClockedOut ? "You've clocked out — messaging is locked" : 'Type a message…'}
+                              disabled={conv.partnerDeleted || managerClockedOut}
                               className="comm-input"
-                              style={{ flex: 1, height: 42, padding: '0 14px', border: '1.5px solid #E2E8F0', borderRadius: 10, fontSize: 14, fontWeight: 500, outline: 'none', background: conv.partnerDeleted ? '#F8FAFC' : '#FFFFFF', color: conv.partnerDeleted ? '#94A3B8' : '#0F172A', cursor: conv.partnerDeleted ? 'not-allowed' : undefined, transition: 'border-color 0.15s, box-shadow 0.15s' }}
+                              style={{ flex: 1, height: 42, padding: '0 14px', border: '1.5px solid #E2E8F0', borderRadius: 10, fontSize: 14, fontWeight: 500, outline: 'none', background: (conv.partnerDeleted || managerClockedOut) ? '#F8FAFC' : '#FFFFFF', color: (conv.partnerDeleted || managerClockedOut) ? '#94A3B8' : '#0F172A', cursor: conv.partnerDeleted ? 'not-allowed' : undefined, transition: 'border-color 0.15s, box-shadow 0.15s' }}
                             />
-                            {!conv.partnerDeleted && (
+                            {!conv.partnerDeleted && !managerClockedOut && (
                               <button
                                 onClick={() => { if (attachFiles.length > 0) uploadAndSendPanelAttachment(partnerId); else handleSendMessage(partnerId) }}
                                 disabled={sending || uploading || (!input.trim() && attachFiles.length === 0)}
@@ -1677,9 +1681,9 @@ export default function CommunicationView({ renderSidebar, basePath }: {
                         style={{ flex: 1, minWidth: 0, border: 'none', background: 'transparent', outline: 'none', fontSize: 13, color: '#0F172A', fontWeight: 500 }}
                       />
                     </div>
-                    <button onClick={() => { setAnnDeptId(userDeptId ?? ''); setShowNewAnnModal(true) }} title="Post announcement"
+                    <button onClick={() => { setAnnDeptId(userDeptId ?? ''); setShowNewAnnModal(true) }} disabled={managerClockedOut} title={managerClockedOut ? "You've clocked out — posting is locked" : 'Post announcement'}
                       className="comm-action-btn"
-                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 36, height: 36, background: '#F97316', border: 'none', borderRadius: 10, color: '#fff', cursor: 'pointer', flexShrink: 0 }}
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 36, height: 36, background: managerClockedOut ? '#E5E7EB' : '#F97316', border: 'none', borderRadius: 10, color: managerClockedOut ? '#9CA3AF' : '#fff', cursor: managerClockedOut ? 'default' : 'pointer', flexShrink: 0 }}
                     >
                       <Plus size={18} strokeWidth={2.5} />
                     </button>

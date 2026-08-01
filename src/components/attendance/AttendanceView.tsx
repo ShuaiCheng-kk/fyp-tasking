@@ -953,7 +953,7 @@ function fmtClockStamp(iso: string | null): string {
   return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Singapore' })
 }
 
-export default function AttendanceView({ sidebar, basePath, canModifyClockTimes = true, scopeToManagerDepartments = false, showPersonalClock = false, scopeToEmployeeSupervised = false }: {
+export default function AttendanceView({ sidebar, basePath, canModifyClockTimes = true, scopeToManagerDepartments = false, showPersonalClock = false, scopeToEmployeeSupervised = false, hidePlanBadge = false }: {
   sidebar: React.ReactNode
   basePath: string
   // UC56 (modify clock in/out times) is O/P-only.
@@ -967,6 +967,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
   // an approver for Shift Swap or Fixed Day Off), plus the Casual Worker clock-out release queue
   // for whoever they supervise today (confirmed 2026-07-26).
   scopeToEmployeeSupervised?: boolean
+  hidePlanBadge?: boolean
 }) {
   const router = useRouter()
   const [internalUserId, setInternalUserId] = useState('')
@@ -2383,7 +2384,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
           <div data-owner-header-badges style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
             {internalUserId && <OwnerUserBadge userId={internalUserId} companyId={companyId} />}
             {/* Subscription plan is Owner/Partner-only — Manager (and every other role) can't switch it. */}
-            {companyId && !scopeToManagerDepartments && !scopeToEmployeeSupervised && <OwnerPlanBadge plan={currentPlan} currentCompanyId={companyId} />}
+            {companyId && !scopeToManagerDepartments && !scopeToEmployeeSupervised && !hidePlanBadge && <OwnerPlanBadge plan={currentPlan} currentCompanyId={companyId} />}
           </div>
         </div>
 

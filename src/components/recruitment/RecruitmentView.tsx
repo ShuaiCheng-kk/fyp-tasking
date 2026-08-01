@@ -713,7 +713,7 @@ function RTimePicker({ value, onChange, min, max }: { value: string; onChange: (
   )
 }
 
-export default function RecruitmentView({ sidebar, canApprovePostings = true, canArchivePostings = true, scopeToManagerDepartments = false }: {
+export default function RecruitmentView({ sidebar, canApprovePostings = true, canArchivePostings = true, scopeToManagerDepartments = false, hidePlanBadge = false }: {
   sidebar: React.ReactNode
   // UC42 approve/reject a submitted posting is O/P-only; Managers still see their submissions' status.
   canApprovePostings?: boolean
@@ -721,6 +721,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
   canArchivePostings?: boolean
   // Manager role scope: postings limited to the viewer's own departments.
   scopeToManagerDepartments?: boolean
+  hidePlanBadge?: boolean
 }) {
   const router = useRouter()
   // The Applicants panel is one of three columns sharing a row (Detail | Applicants |
@@ -2183,7 +2184,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
           <div data-owner-header-badges style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
             {internalUserId && <OwnerUserBadge userId={internalUserId} companyId={companyId} />}
             {/* Subscription plan is Owner/Partner-only — Manager (and every other role) can't switch it. */}
-            {companyId && !scopeToManagerDepartments && <OwnerPlanBadge plan={currentPlan} currentCompanyId={companyId} />}
+            {companyId && !scopeToManagerDepartments && !hidePlanBadge && <OwnerPlanBadge plan={currentPlan} currentCompanyId={companyId} />}
           </div>
         </div>
 

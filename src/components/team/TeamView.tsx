@@ -1096,10 +1096,11 @@ export type TeamViewPermissions = {
   canInviteMembersCsv: boolean       // UC32
 }
 
-export default function TeamView({ sidebar, basePath, permissions }: {
+export default function TeamView({ sidebar, basePath, permissions, hidePlanBadge = false }: {
   sidebar: React.ReactNode
   basePath: string
   permissions: TeamViewPermissions
+  hidePlanBadge?: boolean
 }) {
   const router = useRouter()
   const [userId, setUserId] = useState('')
@@ -3007,7 +3008,7 @@ export default function TeamView({ sidebar, basePath, permissions }: {
           </div>
           <div data-owner-header-badges style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
             {internalUserId && <OwnerUserBadge userId={internalUserId} companyId={companyId} />}
-            {companyId && <OwnerPlanBadge plan={currentPlan} currentCompanyId={companyId} />}
+            {companyId && !hidePlanBadge && <OwnerPlanBadge plan={currentPlan} currentCompanyId={companyId} />}
           </div>
         </div>
 

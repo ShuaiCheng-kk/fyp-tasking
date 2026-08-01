@@ -982,11 +982,12 @@ const pageKeyframes = `
   .manager-dashboard-content-in { animation: managerDashboardContentIn 0.34s cubic-bezier(0.22,1,0.36,1) both; }
 `
 
-export default function DashboardView({ sidebar, basePath, viewerRole }: {
+export default function DashboardView({ sidebar, basePath, viewerRole, hidePlanBadge = false }: {
   sidebar: ReactNode
   basePath: string
   // 'Manager' scopes the summary to the viewer's departments and drops O/P-only cards.
   viewerRole?: 'Manager'
+  hidePlanBadge?: boolean
 }) {
   const router = useRouter()
   const isCompact = useIsCompactViewport(1200)
@@ -1362,8 +1363,8 @@ export default function DashboardView({ sidebar, basePath, viewerRole }: {
           </h1>
           <div data-owner-header-badges style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
             {internalUserId && <OwnerUserBadge userId={internalUserId} companyId={companyId} />}
-            {/* Subscription plan is Owner/Partner-only — Manager (and every other role) can't switch it. */}
-            {companyId && !viewerRole && <OwnerPlanBadge plan={currentPlan} currentCompanyId={companyId} />}
+            {/* Subscription plan is Owner-only — Partner/Manager (and every other role) don't see it. */}
+            {companyId && !viewerRole && !hidePlanBadge && <OwnerPlanBadge plan={currentPlan} currentCompanyId={companyId} />}
           </div>
         </div>
 

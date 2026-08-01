@@ -775,7 +775,7 @@ function DeptRateBarChart({
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-export default function ReportView({ sidebar }: { sidebar: React.ReactNode }) {
+export default function ReportView({ sidebar, hidePlanBadge = false }: { sidebar: React.ReactNode; hidePlanBadge?: boolean }) {
   const router = useRouter()
   const [companyId, setCompanyId] = useState('')
   const [ownerName, setOwnerName] = useState('')
@@ -1284,7 +1284,7 @@ export default function ReportView({ sidebar }: { sidebar: React.ReactNode }) {
           </div>
           <div data-owner-header-badges style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
             {internalUserId && <OwnerUserBadge userId={internalUserId} companyId={companyId} />}
-            {companyId && <OwnerPlanBadge plan={currentPlan} currentCompanyId={companyId} />}
+            {companyId && !hidePlanBadge && <OwnerPlanBadge plan={currentPlan} currentCompanyId={companyId} />}
           </div>
         </div>
 
