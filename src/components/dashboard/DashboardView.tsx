@@ -20,7 +20,7 @@ import {
 } from '@/types/OwnerDashboard'
 import RoleAvatar from '@/components/RoleAvatar'
 import { ModalOverlay, ModalBox, ModalHeader } from '@/components/modal'
-import { useResourceInvalidation } from '@/components/realtime/RealtimeNotificationsProvider'
+import { useResourceInvalidation, useRealtimeNotifications } from '@/components/realtime/RealtimeNotificationsProvider'
 import {
   CLOCK_IN_WINDOW_MINUTES_BEFORE, canClockIn, canClockOut,
   fmtShiftTime, fmtShiftTimeMinusMinutes, fmtClockStamp,
@@ -994,7 +994,9 @@ export default function DashboardView({ sidebar, basePath, viewerRole, hidePlanB
 
   const [companyId, setCompanyId] = useState('')
   const [internalUserId, setInternalUserId] = useState('')
-  const [currentPlan, setCurrentPlan] = useState('Free')
+  // Live Free/Paid plan (src/lib/paidFeatures.ts) — sourced from the realtime provider instead of
+  // a local fetch so an upgrade/downgrade reflects here the instant the DB changes, no refresh.
+  const currentPlan = useRealtimeNotifications().plan
 
   const [summary, setSummary] = useState<OwnerDashboardSummary | null>(null)
   const [loading, setLoading] = useState(false)
@@ -1137,9 +1139,6 @@ export default function DashboardView({ sidebar, basePath, viewerRole, hidePlanB
       const cid = localStorage.getItem(`tasking_company_id_${authId}`) || meData.user.company_id || ''
       if (!cid) return
       setCompanyId(cid)
-      const companyRes = await fetch(`/api/company/current?user_id=${authId}&company_id=${cid}`)
-      const companyData = await companyRes.json()
-      if (!cancelled && companyData.success) setCurrentPlan(companyData.company?.plan ?? 'Free')
     }
     void run()
     return () => { cancelled = true }

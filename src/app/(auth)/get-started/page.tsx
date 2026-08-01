@@ -2550,14 +2550,6 @@ export default function GetStartedPage() {
                     flexDirection: 'column',
                     position: 'relative',
                   }}>
-                    <span style={{
-                      position: 'absolute', top: '18px', right: '18px',
-                      background: '#F3F4F6', color: '#6B7280',
-                      fontFamily: fB, fontSize: '0.75rem', fontWeight: 700,
-                      padding: '3px 10px', borderRadius: '100px',
-                    }}>
-                      {ownerStep5.freePlan.badge}
-                    </span>
                     <p style={{ fontFamily: fH, fontWeight: 700, fontSize: '1.125rem', color: '#1C1917', marginBottom: '10px' }}>
                       Free
                     </p>
@@ -2569,10 +2561,13 @@ export default function GetStartedPage() {
                         {ownerStep5.freePlan.priceSub}
                       </span>
                     </div>
+                    <p style={{ fontFamily: fB, fontWeight: 600, fontSize: '0.8125rem', color: '#9CA3AF', marginBottom: '10px' }}>
+                      {ownerStep5.freePlan.featuresIntro}
+                    </p>
                     <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '10px', flex: 1, marginBottom: '28px' }}>
                       {ownerStep5.freePlan.features.map((f) => (
                         <li key={f} style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
-                          <Check size={16} color="#F97316" strokeWidth={2.5} style={{ flexShrink: 0, marginTop: '2px' }} />
+                          <Check size={16} color="#9CA3AF" strokeWidth={2.5} style={{ flexShrink: 0, marginTop: '2px' }} />
                           <span style={{ fontFamily: fB, fontSize: '0.9375rem', color: '#374151' }}>{f}</span>
                         </li>
                       ))}

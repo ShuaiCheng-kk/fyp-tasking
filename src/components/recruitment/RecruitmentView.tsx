@@ -23,12 +23,13 @@ import { CandidateRecommendation } from '@/types/AI'
 import { JobApplicant, JobPostingPendingApproval, JobPostingSummary, PoolInviteResult, PoolWorker } from '@/types/Recruitment'
 import { JobTemplate, JobTemplateUsageStats } from '@/types/JobTemplate'
 import { deptColor, setDeptColorOverrides } from '@/lib/deptColor'
+import { isFeatureEnabled } from '@/lib/paidFeatures'
 import { useIsCompactViewport } from '@/hooks/useIsCompactViewport'
 import { useIsCompactContainer } from '@/hooks/useIsCompactContainer'
 import DepartmentBadge from '@/components/DepartmentBadge'
 import RoleAvatar from '@/components/RoleAvatar'
 import DatePickerField from '@/components/DatePickerField'
-import { useResourceInvalidation } from '@/components/realtime/RealtimeNotificationsProvider'
+import { useResourceInvalidation, useRealtimeNotifications } from '@/components/realtime/RealtimeNotificationsProvider'
 
 type Tab = 'jobs' | 'closed' | 'post'
 type Department = { id: string; name: string }
@@ -740,7 +741,9 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
   const [companyIndustry, setCompanyIndustry] = useState('')
   const [companyDescription, setCompanyDescription] = useState('')
   const [ownerName, setOwnerName] = useState('')
-  const [currentPlan, setCurrentPlan] = useState('Free')
+  // Live Free/Paid plan (src/lib/paidFeatures.ts) — sourced from the realtime provider instead of
+  // a local fetch so an upgrade/downgrade reflects here the instant the DB changes, no refresh.
+  const currentPlan = useRealtimeNotifications().plan
 
   // data
   const [departments, setDepartments] = useState<Department[]>([])
@@ -1171,7 +1174,6 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
         setCompanySize(currentData.company?.size ?? '')
         setCompanyIndustry(currentData.company?.industry ?? '')
         setCompanyDescription(currentData.company?.description ?? '')
-        setCurrentPlan(currentData.company?.plan ?? 'Free')
       }
       if (!cancelled) await fetchAll(storedCid, uid)
     }
@@ -2691,6 +2693,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                         >
                           <UserCheck size={15} strokeWidth={2.5} /> {!isCompactApplicantActions && 'Invite from Pool'}
                         </button>
+                        {isFeatureEnabled(currentPlan, 'UC48') && (
                         <button
                           onClick={recommendCandidates}
                           disabled={aiLoading || applicants.length === 0}
@@ -2699,6 +2702,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                         >
                           {aiLoading ? <Spinner size={14} /> : <Sparkles size={15} strokeWidth={2.5} />} {!isCompactApplicantActions && 'AI Assessment'}
                         </button>
+                        )}
                       </div>
                     )}
                   </div>
@@ -2850,14 +2854,26 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                   <Plus size={15} style={{ color: '#F97316' }} />
                 </div>
                 <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>Job Postings</span>
-                {/* AI action — purple gradient button, same treatment as the other AI features */}
-                <button
-                  type="button"
-                  onClick={() => { resetForm(); setFormOpen(true) }}
-                  style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', color: '#FFFFFF', height: 36, padding: '0 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer', flexShrink: 0 }}
-                >
-                  <Sparkles size={15} strokeWidth={2.5} /> AI Job Builder
-                </button>
+                {/* AI action — purple gradient button, same treatment as the other AI features.
+                    Free plan doesn't get the AI Job Builder (UC47) — orange "Post Job" instead,
+                    which skips straight to the manual-fill form (see wizardStep 'type' handlers). */}
+                {isFeatureEnabled(currentPlan, 'UC47') ? (
+                  <button
+                    type="button"
+                    onClick={() => { resetForm(); setFormOpen(true) }}
+                    style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', color: '#FFFFFF', height: 36, padding: '0 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer', flexShrink: 0 }}
+                  >
+                    <Sparkles size={15} strokeWidth={2.5} /> AI Job Builder
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => { resetForm(); setFormOpen(true) }}
+                    style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: '#F97316', color: '#FFFFFF', height: 36, padding: '0 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer', flexShrink: 0 }}
+                  >
+                    <Plus size={15} strokeWidth={2.5} /> Post Job
+                  </button>
+                )}
               </div>
               <div style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0, overflowY: 'auto' }}>
                 {([
@@ -2868,7 +2884,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                   { key: 'drafts' as const,   icon: FileText, title: 'Drafts', onClick: () => { setOpenSource(o => o === 'drafts' ? 'none' : 'drafts'); setPostView('none') } },
                   { key: 'archived' as const, icon: Archive,  title: 'Archived', onClick: () => { setOpenSource(o => o === 'archived' ? 'none' : 'archived'); setPostView('none'); setSelectedArchivedId(''); setArchivedSelected(new Set()) } },
                   { key: 'templates' as const, icon: ClipboardList, title: 'Templates', onClick: () => { setPostView('none'); setOpenSource(o => o === 'templates' ? 'none' : 'templates') } },
-                ]).filter(card => canArchivePostings || card.key !== 'archived').map((card, idx) => {
+                ]).filter(card => (canArchivePostings || card.key !== 'archived') && (isFeatureEnabled(currentPlan, 'UC36') || card.key !== 'templates')).map((card, idx) => {
                   const Icon = card.icon
                   const isSelected = openSource === card.key
                   // Template block shrinks with the panel so its list scrolls internally and the New Template button stays pinned
@@ -2996,6 +3012,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                                   }
                                 </div>
                                 <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                                  {isFeatureEnabled(currentPlan, 'UC39') && (
                                   <button
                                     type="button"
                                     onClick={() => void runPostingAction('duplicate_posting', p.id)}
@@ -3005,6 +3022,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                                     onMouseEnter={e => { if (!actionLoading) e.currentTarget.style.background = '#DCFCE7' }}
                                     onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
                                   ><Copy size={14} /></button>
+                                  )}
                                   <button
                                     type="button"
                                     onClick={() => void deleteDraft(p.id, true)}
@@ -4375,16 +4393,18 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
           : 'Complete Job Description'
 
         // AI Post Job reuses this same wizard — give the create flow the same purple AI
-        // treatment as the Auto Shift Scheduling modal; editing an existing posting or
-        // applying a template keeps the plain orange look since neither is the AI action.
-        const accent = (editingId || isTemplateMode) ? '#F97316' : '#7C3AED'
-        const accentDark = (editingId || isTemplateMode) ? '#EA580C' : '#6D28D9'
+        // treatment as the Auto Shift Scheduling modal; editing an existing posting, applying a
+        // template, or being on the Free plan (no AI Job Builder, UC47) keeps the plain orange
+        // look since none of those are the AI action.
+        const isManualFlow = editingId || isTemplateMode || !isFeatureEnabled(currentPlan, 'UC47')
+        const accent = isManualFlow ? '#F97316' : '#7C3AED'
+        const accentDark = isManualFlow ? '#EA580C' : '#6D28D9'
         const accentGradient = `linear-gradient(135deg, ${accent}, ${accentDark})`
-        const accentTint = (editingId || isTemplateMode) ? '#FFF7ED' : '#F5F3FF'
-        const accentTintBorder = (editingId || isTemplateMode) ? '#FED7AA' : '#DDD6FE'
-        const accentTextDark = (editingId || isTemplateMode) ? '#C2410C' : '#6D28D9'
-        const accentDisabledBg = (editingId || isTemplateMode) ? '#FDA060' : '#EDE9FE'
-        const accentDisabledText = (editingId || isTemplateMode) ? '#FFFFFF' : '#A78BFA'
+        const accentTint = isManualFlow ? '#FFF7ED' : '#F5F3FF'
+        const accentTintBorder = isManualFlow ? '#FED7AA' : '#DDD6FE'
+        const accentTextDark = isManualFlow ? '#C2410C' : '#6D28D9'
+        const accentDisabledBg = isManualFlow ? '#FDA060' : '#EDE9FE'
+        const accentDisabledText = isManualFlow ? '#FFFFFF' : '#A78BFA'
 
         // The chosen supervisor's own shift on the selected date bounds the worker's times:
         // start no earlier, end no later. Feeds the time pickers' min/max so out-of-window
@@ -4468,6 +4488,8 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                     <div style={{ width: 32, height: 32, borderRadius: 9, background: accentGradient, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                       {isTemplateMode
                         ? <ClipboardList size={15} color="#FFFFFF" strokeWidth={2.5} />
+                        : !isFeatureEnabled(currentPlan, 'UC47')
+                        ? <Plus size={15} color="#FFFFFF" strokeWidth={2.5} />
                         : <Sparkles size={15} color="#FFFFFF" strokeWidth={2.5} />}
                     </div>
                   )}
@@ -4490,18 +4512,29 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
 
                 {/* Step progress — same pattern as the Auto Shift Scheduling modal: completed steps become clickable back-circles */}
                 {!editingId && !isTemplateMode && (() => {
-                  // 4-step create flow: Job Type → AI Content Generator → Requirements → Schedule & Payment
-                  const CREATE_STEPS = [
-                    { key: 'type', label: 'Job Type' },
-                    { key: 'ai', label: 'AI Content Generator' },
-                    { key: 'req', label: 'Requirements' },
-                    { key: 'post', label: 'Schedule & Payment' },
-                  ] as const
-                  const currentIdx = wizardStep === 'type' ? 0 : wizardStep === 'ai' ? 1 : createStep === 3 ? 2 : 3
+                  // 4-step create flow: Job Type → AI Content Generator → Requirements → Schedule & Payment.
+                  // Free plan (no AI Job Builder, UC47) skips the AI step entirely — 3-step flow instead.
+                  const freeFlow = !isFeatureEnabled(currentPlan, 'UC47')
+                  const CREATE_STEPS = freeFlow
+                    ? [
+                        { key: 'type', label: 'Job Type' },
+                        { key: 'req', label: 'Requirements' },
+                        { key: 'post', label: 'Schedule & Payment' },
+                      ]
+                    : [
+                        { key: 'type', label: 'Job Type' },
+                        { key: 'ai', label: 'AI Content Generator' },
+                        { key: 'req', label: 'Requirements' },
+                        { key: 'post', label: 'Schedule & Payment' },
+                      ]
+                  const currentIdx = wizardStep === 'type' ? 0
+                    : wizardStep === 'ai' ? 1
+                    : createStep === 3 ? (freeFlow ? 1 : 2)
+                    : (freeFlow ? 2 : 3)
                   const goTo = (i: number) => {
                     setFormError('')
                     if (i === 0) { setAiPreview(null); setAiPrompt(''); setWizardStep('type') }
-                    else if (i === 1) { setWizardStep('ai') }
+                    else if (!freeFlow && i === 1) { setWizardStep('ai') }
                     else { setCreateStep(3); setWizardStep('form') }
                   }
                   return (
@@ -4521,7 +4554,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                           {currentIdx === i && (
                             <span style={{ fontSize: '0.8125rem', fontWeight: 700, color: '#111827' }}>{s.label}</span>
                           )}
-                          {i < 3 && <div style={{ width: 16, height: 1.5, background: '#E5E7EB', margin: '0 1px' }} />}
+                          {i < CREATE_STEPS.length - 1 && <div style={{ width: 16, height: 1.5, background: '#E5E7EB', margin: '0 1px' }} />}
                         </div>
                       ))}
                     </div>
@@ -4531,7 +4564,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                 {/* ── Step 1: Job Type ── */}
                 {wizardStep === 'type' && (
                   <>
-                    <button onClick={() => { setFormJobType('shift'); setFormSalaryType('per hour'); setWizardStep('ai') }}
+                    <button onClick={() => { setFormJobType('shift'); setFormSalaryType('per hour'); if (isFeatureEnabled(currentPlan, 'UC47')) { setWizardStep('ai') } else { setCreateStep(3); setWizardStep('form') } }}
                       style={{ padding: '14px 16px', border: '1.5px solid #E5E7EB', borderRadius: 12, background: '#FFFFFF', cursor: 'pointer', textAlign: 'left' }}
                       onMouseEnter={e => { e.currentTarget.style.borderColor = accent }}
                       onMouseLeave={e => { e.currentTarget.style.borderColor = '#E5E7EB' }}>
@@ -4545,7 +4578,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                         </div>
                       </div>
                     </button>
-                    <button onClick={() => { setFormJobType('oneoff'); setFormSalaryType('flat rate'); setWizardStep('ai') }}
+                    <button onClick={() => { setFormJobType('oneoff'); setFormSalaryType('flat rate'); if (isFeatureEnabled(currentPlan, 'UC47')) { setWizardStep('ai') } else { setCreateStep(3); setWizardStep('form') } }}
                       style={{ padding: '14px 16px', border: '1.5px solid #E5E7EB', borderRadius: 12, background: '#FFFFFF', cursor: 'pointer', textAlign: 'left' }}
                       onMouseEnter={e => { e.currentTarget.style.borderColor = accent }}
                       onMouseLeave={e => { e.currentTarget.style.borderColor = '#E5E7EB' }}>
@@ -4593,6 +4626,8 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                         </div>
                       </>
                     ) : (
+                      // Free plan never reaches this step — the Job Type buttons skip straight to
+                      // the manual form (UC47 is Paid-only) — so this is always the Paid AI path.
                       <>
                         <div>
                           <label style={lStyle}>Describe Your Job</label>
@@ -4600,12 +4635,6 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                             rows={3} style={{ ...iStyle, resize: 'vertical', lineHeight: 1.55, verticalAlign: 'top' }} />
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-                          {/* Hidden for now: manual fill becomes the Free-tier path once plan gating lands; keep the logic wired */}
-                          {false && (
-                            <button onClick={() => { setAiPreview(null); setWizardStep('form') }} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: '1px solid #E5E7EB', borderRadius: 10, background: '#FFFFFF', color: '#111827', height: 36, padding: '0 12px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
-                              Fill Manually
-                            </button>
-                          )}
                           <button onClick={handleAIGenerate} disabled={!aiPrompt.trim() || aiLoading}
                             style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: !aiPrompt.trim() || aiLoading ? accentDisabledBg : accent, color: !aiPrompt.trim() || aiLoading ? accentDisabledText : '#FFFFFF', height: 36, padding: '0 12px', fontSize: 13, fontWeight: 700, cursor: !aiPrompt.trim() || aiLoading ? 'default' : 'pointer' }}>
                             {aiLoading ? <><Spinner size={13} /> Generating…</> : 'Generate'}
@@ -5145,7 +5174,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
               {/* Footer */}
               {wizardStep === 'form' && (
                 <div style={{ padding: '0 24px 20px', display: 'flex', justifyContent: 'flex-end', gap: 8, flexShrink: 0 }}>
-                  {!editingId && !formTemplateId && templateReady && (
+                  {!editingId && !formTemplateId && templateReady && isFeatureEnabled(currentPlan, 'UC36') && (
                     <button onClick={() => void saveAsTemplate()} disabled={templateActionLoading || templateAlreadySaved}
                       style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: templateAlreadySaved ? '1px solid #BBF7D0' : '1px solid #E5E7EB', borderRadius: 10, background: templateAlreadySaved ? '#F0FDF4' : '#FFFFFF', color: templateAlreadySaved ? '#059669' : '#6B7280', height: 36, padding: '0 12px', fontSize: 13, fontWeight: 700, cursor: templateActionLoading || templateAlreadySaved ? 'default' : 'pointer', whiteSpace: 'nowrap' }}>
                       {templateActionLoading ? <Spinner size={13} dark /> : templateAlreadySaved ? <Check size={13} /> : <ClipboardList size={13} />} {templateAlreadySaved ? 'Template Saved' : 'Save as Template'}

@@ -32,6 +32,10 @@ type RealtimeNotificationsContextValue = {
   ready: boolean
   user: RuntimeUser | null
   refresh: () => void
+  // The company's Free/Paid plan (see src/lib/paidFeatures.ts) — fetched once and then kept live
+  // via a realtime subscription on the companies row, so an upgrade/downgrade (Stripe webhook
+  // writing plan) reaches every open tab/component immediately, no page refresh needed.
+  plan: string
 }
 
 const EMPTY_COUNTS: NotificationCounts = {
@@ -50,6 +54,7 @@ const RealtimeNotificationsContext = createContext<RealtimeNotificationsContextV
   ready: false,
   user: null,
   refresh: () => {},
+  plan: 'Free',
 })
 
 const TABLE_RESOURCES: Record<string, NotificationResource[]> = {
@@ -101,6 +106,7 @@ export function RealtimeNotificationsProvider({ children }: { children: React.Re
   const [user, setUser] = useState<RuntimeUser | null>(null)
   const [counts, setCounts] = useState<NotificationCounts>(EMPTY_COUNTS)
   const [ready, setReady] = useState(false)
+  const [plan, setPlan] = useState('Free')
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const invalidationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pendingResourcesRef = useRef<Set<NotificationResource>>(new Set())
@@ -333,6 +339,16 @@ export function RealtimeNotificationsProvider({ children }: { children: React.Re
   }, [user, refreshCounts])
 
   useEffect(() => {
+    if (!user?.companyId) return
+    let cancelled = false
+    fetch(`/api/company/current?user_id=${encodeURIComponent(user.authId)}&company_id=${encodeURIComponent(user.companyId)}`)
+      .then(r => r.json())
+      .then(data => { if (!cancelled && data.success && data.company) setPlan(data.company.plan ?? 'Free') })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [user])
+
+  useEffect(() => {
     if (!user) return
     const supabase = createBrowserClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -388,6 +404,16 @@ export function RealtimeNotificationsProvider({ children }: { children: React.Re
         .on('postgres_changes', { event: '*', schema: 'public', table: 'casualworker_departments' },
           () => queueInvalidation(TABLE_RESOURCES.casualworker_departments, 'casualworker_departments'))
         .subscribe(),
+      // Free/Paid plan (src/lib/paidFeatures.ts) — pushed live the moment the Stripe webhook (or
+      // cancel/resume) writes companies.plan, so every open tab reflects an upgrade/downgrade
+      // without a page refresh. Reads straight off the payload, no refetch needed.
+      ...(user.companyId ? [
+        supabase
+          .channel(`global-company-plan-${user.companyId}`)
+          .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'companies', filter: `id=eq.${user.companyId}` },
+            (payload: { new?: { plan?: string } }) => { if (payload.new?.plan) setPlan(payload.new.plan) })
+          .subscribe(),
+      ] : []),
     ]
 
     const handleVisible = () => {
@@ -418,7 +444,8 @@ export function RealtimeNotificationsProvider({ children }: { children: React.Re
     ready,
     user,
     refresh: scheduleRefresh,
-  }), [counts, ready, scheduleRefresh, user])
+    plan,
+  }), [counts, ready, scheduleRefresh, user, plan])
 
   return (
     <RealtimeNotificationsContext.Provider value={value}>
