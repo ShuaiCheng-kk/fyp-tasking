@@ -10,6 +10,7 @@ vi.mock('@/repositories/casual/casualAttendanceRepository', () => ({
     getUserByAuthId: vi.fn(),
     getUpcomingAssignments: vi.fn(),
     getAssignmentById: vi.fn(),
+    isBannedByCompany: vi.fn(),
     getAttendanceRecordsByAssignmentIds: vi.fn(),
     getAttendanceRecordByAssignmentId: vi.fn(),
     createAttendanceRecord: vi.fn(),
@@ -26,11 +27,12 @@ import { casualAttendanceService } from './casualAttendanceService'
 import { casualAttendanceRepository } from '@/repositories/casual/casualAttendanceRepository'
 
 const user = { id: 'cw-1', full_name: 'Casual Worker One', role: 'Casual Worker' }
-const assignment = { id: 'assignment-1', user_id: 'cw-1', shifts: { id: 'shift-1', department_id: 'dept-1', shift_date: '2026-07-01', start_time: '08:00', end_time: '16:00' } } as any
+const assignment = { id: 'assignment-1', user_id: 'cw-1', shifts: { id: 'shift-1', company_id: 'company-1', department_id: 'dept-1', shift_date: '2026-07-01', start_time: '08:00', end_time: '16:00' } } as any
 
 describe('casualAttendanceService — Clock In / Clock Out (UC49)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.mocked(casualAttendanceRepository.isBannedByCompany).mockResolvedValue(false)
   })
 
   describe('getAttendance', () => {
@@ -84,6 +86,15 @@ describe('casualAttendanceService — Clock In / Clock Out (UC49)', () => {
       vi.mocked(casualAttendanceRepository.getAssignmentById).mockResolvedValue({ ...assignment, user_id: 'someone-else' } as any)
       await expect(casualAttendanceService.clockIn({ authId: 'auth-1', shift_assignment_id: 'assignment-1' }))
         .rejects.toThrow('Shift assignment not found for casual worker')
+    })
+
+    it('throws when the company that owns this shift has banned the worker (UC29)', async () => {
+      vi.mocked(casualAttendanceRepository.getUserByAuthId).mockResolvedValue(user)
+      vi.mocked(casualAttendanceRepository.getAssignmentById).mockResolvedValue(assignment)
+      vi.mocked(casualAttendanceRepository.isBannedByCompany).mockResolvedValue(true)
+      await expect(casualAttendanceService.clockIn({ authId: 'auth-1', shift_assignment_id: 'assignment-1' }))
+        .rejects.toThrow('You have been deactivated by this company')
+      expect(casualAttendanceRepository.isBannedByCompany).toHaveBeenCalledWith('cw-1', 'company-1')
     })
 
     it('throws when already clocked in for this shift', async () => {
@@ -396,13 +407,16 @@ describe('casualAttendanceService — Clock In / Clock Out (UC49)', () => {
       expect(result[0].pay).toBeNull()
     })
 
-    it('sources the title from the job posting and computes pay via hourly rate x hours', async () => {
+    it('sources the title from the job posting; a One-Off Job (is_open_ended) is paid the flat rate, not hourly_rate x hours (2026-08-01)', async () => {
       vi.mocked(casualAttendanceRepository.getUserByAuthId).mockResolvedValue(user)
       vi.mocked(casualAttendanceRepository.getHistoryAssignments).mockResolvedValue([
         { id: 'a-1', supervisor_employee_id: 'emp-1', shift: { id: 's-1', shift_date: '2026-07-01', start_time: '08:00', end_time: '10:00', is_open_ended: true, source_job_posting_id: 'job-1', hourly_rate: 15 } },
       ])
+      // Worked 1.5 hours (08:00–09:30), not the shift's nominal 2-hour window — hourly_rate x
+      // hours would give 22.5, but a One-Off Job's pay doesn't depend on how long the supervisor
+      // took to release Clock Out, so it must still land on the flat 15.
       vi.mocked(casualAttendanceRepository.getAttendanceRecordsByAssignmentIds).mockResolvedValue([
-        { id: 'r-1', shift_assignment_id: 'a-1', clock_in_time: '2026-07-01T08:00:00Z', clock_out_time: '2026-07-01T09:00:00Z' } as any,
+        { id: 'r-1', shift_assignment_id: 'a-1', clock_in_time: '2026-07-01T08:00:00Z', clock_out_time: '2026-07-01T09:30:00Z' } as any,
       ])
       vi.mocked(casualAttendanceRepository.getJobPostingsByIds).mockResolvedValue([{ id: 'job-1', title: 'Event Setup', company_name: 'Sunrise Hospitality', location: '12 Marina View', created_by: null }])
       vi.mocked(casualAttendanceRepository.getUsersByIds).mockResolvedValue([{ id: 'emp-1', full_name: 'John Tan', role: 'Employee', phone_number: null, email_address: null, profile_photo_url: null }])
@@ -414,9 +428,9 @@ describe('casualAttendanceService — Clock In / Clock Out (UC49)', () => {
         poster_name: null, poster_role: null, poster_phone: null, poster_email: null, poster_photo_url: null,
         is_open_ended: true, shift_date: '2026-07-01',
         start_time: '08:00', end_time: '10:00', status: 'completed',
-        clock_in_time: '2026-07-01T08:00:00Z', clock_out_time: '2026-07-01T09:00:00Z',
+        clock_in_time: '2026-07-01T08:00:00Z', clock_out_time: '2026-07-01T09:30:00Z',
         break_in_time: undefined, break_out_time: undefined,
-        hours: 1, hourly_rate: 15, pay: 15,
+        hours: 1.5, hourly_rate: 15, pay: 15,
         completed_tasks: [],
       }])
     })

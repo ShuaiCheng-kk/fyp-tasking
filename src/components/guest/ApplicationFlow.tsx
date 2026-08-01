@@ -54,6 +54,12 @@ export function getApplicationFlowState(app: FlowInput): FlowState {
   // On the happy path — map to one of the 3 steps.
   if (app.invitation_status === 'accepted') return { kind: 'stepper', step: 3 }
   if (app.invitation_status === 'sent') return { kind: 'stepper', step: 2 }
-  if (app.status === 'accepted') return { kind: 'stepper', step: 2 } // fallback: invitation not loaded yet
+  // Fallback: the employer accepted the applicant but no job_invitations row exists yet on this
+  // fetch — normally the two writes land together (recruitmentService.ts), so this is momentary.
+  // If the invitation row never actually shows up (a partial write, or a seed/data gap — see the
+  // guest1 casual1 "Pre-Shift Cafe Counter Cover" incident, 2026-07-31), the card still lands
+  // here with nothing to accept/decline; the Applications page's renderCardActions has an explicit
+  // "Offer being prepared" fallback for exactly that so it's not a silent dead end.
+  if (app.status === 'accepted') return { kind: 'stepper', step: 2 }
   return { kind: 'stepper', step: 1 }
 }

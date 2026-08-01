@@ -110,7 +110,7 @@ describe('shiftService — Shift (UC1, UC3-10)', () => {
         shift_id: 'shift-1',
         user_id: 'user-1',
         assigned_by: 'owner-1',
-        supervisor_employee_id: null,
+        supervisor_employee_id: null, user_name_snapshot: null,
         created_at: '2026-06-01T00:00:00.000Z',
       })
 
@@ -143,15 +143,33 @@ describe('shiftService — Shift (UC1, UC3-10)', () => {
       })).rejects.toThrow('Missing required shift fields')
     })
 
-    it('rejects when start_time is not before end_time', async () => {
-      await expect(shiftService.createShift({
+    // BUG-021: overnight shifts (end_time on the following day) are valid — only an exact
+    // start===end match is rejected.
+    it('accepts an overnight shift where end_time is numerically before start_time', async () => {
+      vi.mocked(shiftRepository.createShift).mockResolvedValue({ ...baseShift, start_time: '17:00', end_time: '09:00' })
+
+      const result = await shiftService.createShift({
         company_id: 'company-1',
         department_id: 'dept-1',
         shift_date: '2026-06-22',
         start_time: '17:00',
         end_time: '09:00',
         created_by: 'owner-1',
-      })).rejects.toThrow('start_time must be before end_time')
+      })
+
+      expect(result.shift.start_time).toBe('17:00')
+      expect(result.shift.end_time).toBe('09:00')
+    })
+
+    it('rejects when start_time equals end_time', async () => {
+      await expect(shiftService.createShift({
+        company_id: 'company-1',
+        department_id: 'dept-1',
+        shift_date: '2026-06-22',
+        start_time: '09:00',
+        end_time: '09:00',
+        created_by: 'owner-1',
+      })).rejects.toThrow('start_time and end_time cannot be the same')
     })
 
     it('creates the shift but returns a warning when rest hours are below the minimum (UC9)', async () => {
@@ -161,7 +179,7 @@ describe('shiftService — Shift (UC1, UC3-10)', () => {
           shift_id: 'shift-prev',
           user_id: 'user-1',
           assigned_by: 'owner-1',
-          supervisor_employee_id: null,
+          supervisor_employee_id: null, user_name_snapshot: null,
           created_at: '2026-06-01T00:00:00.000Z',
           shifts: { ...baseShift, id: 'shift-prev', shift_date: '2026-06-22', start_time: '00:00', end_time: '02:00' },
         },
@@ -280,7 +298,7 @@ describe('shiftService — Shift (UC1, UC3-10)', () => {
           shift_id: 'shift-prev',
           user_id: 'user-1',
           assigned_by: 'owner-1',
-          supervisor_employee_id: null,
+          supervisor_employee_id: null, user_name_snapshot: null,
           created_at: '2026-06-01T00:00:00.000Z',
           shifts: { ...baseShift, id: 'shift-prev', shift_date: '2026-06-22', start_time: '00:00', end_time: '02:00' },
         },
@@ -327,11 +345,23 @@ describe('shiftService — Shift (UC1, UC3-10)', () => {
       await expect(shiftService.editShift('missing', { start_time: '10:00' })).rejects.toThrow('Shift not found')
     })
 
-    it('rejects an edit that makes start_time after end_time', async () => {
+    // BUG-021: overnight shifts (end_time on the following day) are valid — only an exact
+    // start===end match is rejected.
+    it('accepts an edit that makes the shift overnight (end_time numerically before start_time)', async () => {
+      vi.mocked(shiftRepository.getShiftById).mockResolvedValue(baseShift)
+      vi.mocked(shiftRepository.getAssignmentsByShiftIds).mockResolvedValue([])
+      vi.mocked(shiftRepository.updateShift).mockResolvedValue({ ...baseShift, start_time: '18:00' })
+
+      const result = await shiftService.editShift('shift-1', { start_time: '18:00' })
+
+      expect(result.shift.start_time).toBe('18:00')
+    })
+
+    it('rejects an edit that makes start_time equal to end_time', async () => {
       vi.mocked(shiftRepository.getShiftById).mockResolvedValue(baseShift)
 
-      await expect(shiftService.editShift('shift-1', { start_time: '18:00' })).rejects.toThrow(
-        'start_time must be before end_time',
+      await expect(shiftService.editShift('shift-1', { start_time: baseShift.end_time })).rejects.toThrow(
+        'start_time and end_time cannot be the same',
       )
     })
 
@@ -358,7 +388,7 @@ describe('shiftService — Shift (UC1, UC3-10)', () => {
     it('clears an existing assignment without creating a new one when assigned_user_id is null', async () => {
       vi.mocked(shiftRepository.getShiftById).mockResolvedValue(baseShift)
       vi.mocked(shiftRepository.getAssignmentsByShiftIds).mockResolvedValue([
-        { id: 'a-1', shift_id: 'shift-1', user_id: 'user-1', assigned_by: 'owner-1', supervisor_employee_id: null, created_at: '' },
+        { id: 'a-1', shift_id: 'shift-1', user_id: 'user-1', assigned_by: 'owner-1', supervisor_employee_id: null, user_name_snapshot: null, created_at: '' },
       ])
       vi.mocked(shiftRepository.deleteAssignmentsByShiftId).mockResolvedValue(undefined)
 
@@ -375,7 +405,7 @@ describe('shiftService — Shift (UC1, UC3-10)', () => {
     it('does not touch shift_assignments when the assignment block matches the existing assignment (e.g. saving other fields unchanged)', async () => {
       vi.mocked(shiftRepository.getShiftById).mockResolvedValue(baseShift)
       vi.mocked(shiftRepository.getAssignmentsByShiftIds).mockResolvedValue([
-        { id: 'a-1', shift_id: 'shift-1', user_id: 'user-1', assigned_by: 'owner-1', supervisor_employee_id: null, created_at: '' },
+        { id: 'a-1', shift_id: 'shift-1', user_id: 'user-1', assigned_by: 'owner-1', supervisor_employee_id: null, user_name_snapshot: null, created_at: '' },
       ])
 
       await shiftService.editShift('shift-1', { start_time: '08:30' }, {
@@ -391,7 +421,7 @@ describe('shiftService — Shift (UC1, UC3-10)', () => {
     it('does not touch shift_assignments for a Casual Worker assignment (has a supervisor) when the caller omits supervisor_employee_id entirely, e.g. Bulk Edit', async () => {
       vi.mocked(shiftRepository.getShiftById).mockResolvedValue(baseShift)
       vi.mocked(shiftRepository.getAssignmentsByShiftIds).mockResolvedValue([
-        { id: 'a-1', shift_id: 'shift-1', user_id: 'casual-1', assigned_by: 'owner-1', supervisor_employee_id: 'employee-1', created_at: '' },
+        { id: 'a-1', shift_id: 'shift-1', user_id: 'casual-1', assigned_by: 'owner-1', supervisor_employee_id: 'employee-1', user_name_snapshot: null, created_at: '' },
       ])
 
       // No supervisor_employee_id key at all — Bulk Edit has no supervisor field in its UI.
@@ -409,7 +439,7 @@ describe('shiftService — Shift (UC1, UC3-10)', () => {
       vi.mocked(shiftRepository.deleteAssignmentsByShiftId).mockResolvedValue(undefined)
       vi.mocked(shiftRepository.createShiftAssignment).mockResolvedValue({} as never)
       vi.mocked(shiftRepository.getAssignmentsByShiftIds).mockResolvedValue([
-        { id: 'a-1', shift_id: 'shift-1', user_id: 'casual-1', assigned_by: 'owner-1', supervisor_employee_id: 'employee-1', created_at: '' },
+        { id: 'a-1', shift_id: 'shift-1', user_id: 'casual-1', assigned_by: 'owner-1', supervisor_employee_id: 'employee-1', user_name_snapshot: null, created_at: '' },
       ])
 
       await shiftService.editShift('shift-1', {}, {
@@ -432,10 +462,10 @@ describe('shiftService — Shift (UC1, UC3-10)', () => {
       vi.mocked(shiftRepository.deleteAssignmentsByShiftId).mockResolvedValue(undefined)
       vi.mocked(shiftRepository.createShiftAssignment).mockResolvedValue({} as never)
       vi.mocked(shiftRepository.getAssignmentsByShiftIds)
-        .mockResolvedValueOnce([{ id: 'a-1', shift_id: 'shift-1', user_id: 'irene', assigned_by: 'owner-1', supervisor_employee_id: null, created_at: '' }])
-        .mockResolvedValueOnce([{ id: 'a-2', shift_id: 'shift-2', user_id: 'marcus', assigned_by: 'owner-1', supervisor_employee_id: null, created_at: '' }])
+        .mockResolvedValueOnce([{ id: 'a-1', shift_id: 'shift-1', user_id: 'irene', assigned_by: 'owner-1', supervisor_employee_id: null, user_name_snapshot: null, created_at: '' }])
+        .mockResolvedValueOnce([{ id: 'a-2', shift_id: 'shift-2', user_id: 'marcus', assigned_by: 'owner-1', supervisor_employee_id: null, user_name_snapshot: null, created_at: '' }])
       vi.mocked(shiftRepository.getAssignmentsByUserAndDateRange).mockResolvedValue([
-        { id: 'a-2', shift_id: 'shift-2', user_id: 'marcus', assigned_by: 'owner-1', supervisor_employee_id: null, created_at: '', shifts: { ...baseShift, id: 'shift-2', start_time: '09:00', end_time: '17:00' } },
+        { id: 'a-2', shift_id: 'shift-2', user_id: 'marcus', assigned_by: 'owner-1', supervisor_employee_id: null, user_name_snapshot: null, created_at: '', shifts: { ...baseShift, id: 'shift-2', start_time: '09:00', end_time: '17:00' } },
       ])
 
       await shiftService.editShift('shift-1', {}, {
@@ -467,7 +497,7 @@ describe('shiftService — Shift (UC1, UC3-10)', () => {
       vi.mocked(shiftRepository.getShiftById).mockResolvedValue({ ...baseShift, start_time: '11:00', end_time: '17:00' })
       vi.mocked(shiftRepository.getAssignmentsByShiftIds).mockResolvedValueOnce([])
       vi.mocked(shiftRepository.getAssignmentsByUserAndDateRange).mockResolvedValue([
-        { id: 'a-2', shift_id: 'shift-2', user_id: 'marcus', assigned_by: 'owner-1', supervisor_employee_id: null, created_at: '', shifts: { ...baseShift, id: 'shift-2', start_time: '09:00', end_time: '17:00' } },
+        { id: 'a-2', shift_id: 'shift-2', user_id: 'marcus', assigned_by: 'owner-1', supervisor_employee_id: null, user_name_snapshot: null, created_at: '', shifts: { ...baseShift, id: 'shift-2', start_time: '09:00', end_time: '17:00' } },
       ])
 
       await expect(shiftService.editShift('shift-1', {}, {
@@ -546,7 +576,7 @@ describe('shiftService — Shift (UC1, UC3-10)', () => {
       vi.mocked(shiftRepository.createShiftAssignment).mockResolvedValue({} as never)
       vi.mocked(shiftRepository.getAssignmentsByUserAndDateRange).mockImplementation(async (_user, from) => {
         if (from === '2026-06-29') {
-          return [{ id: 'a-x', shift_id: 'shift-conflict', user_id: 'user-2', assigned_by: 'owner-1', supervisor_employee_id: null, created_at: '', shifts: { ...baseShift, id: 'shift-conflict' } }]
+          return [{ id: 'a-x', shift_id: 'shift-conflict', user_id: 'user-2', assigned_by: 'owner-1', supervisor_employee_id: null, user_name_snapshot: null, created_at: '', shifts: { ...baseShift, id: 'shift-conflict' } }]
         }
         return []
       })
@@ -643,7 +673,7 @@ describe('shiftService — Shift (UC1, UC3-10)', () => {
       vi.mocked(shiftRepository.getShiftById).mockResolvedValue({ ...baseShift, id: 'shift-1' })
       vi.mocked(shiftRepository.updateShift).mockResolvedValue({ ...baseShift, id: 'shift-1', start_time: '10:00' })
       vi.mocked(shiftRepository.getAssignmentsByShiftIds).mockResolvedValue([
-        { id: 'a-1', shift_id: 'shift-1', user_id: 'casual-1', assigned_by: 'owner-1', supervisor_employee_id: 'employee-1', created_at: '' },
+        { id: 'a-1', shift_id: 'shift-1', user_id: 'casual-1', assigned_by: 'owner-1', supervisor_employee_id: 'employee-1', user_name_snapshot: null, created_at: '' },
       ])
 
       const result = await shiftService.bulkEditShifts('company-1', [
@@ -742,7 +772,7 @@ describe('shiftService — Shift (UC1, UC3-10)', () => {
         shift_id: 'shift-1',
         user_id: 'user-1',
         assigned_by: 'owner-1',
-        supervisor_employee_id: null,
+        supervisor_employee_id: null, user_name_snapshot: null,
         created_at: '2026-06-01T00:00:00.000Z',
       }])
       const duplicated = { ...baseShift, id: 'shift-2', shift_date: '2026-06-23', publication_status: 'draft' as const }
@@ -959,7 +989,7 @@ describe('shiftService — Shift (UC1, UC3-10)', () => {
     it('throws without deleting anything when the shift itself already has attendance recorded', async () => {
       vi.mocked(shiftRepository.getShiftById).mockResolvedValue(baseShift)
       vi.mocked(shiftRepository.getAssignmentsByShiftIds).mockResolvedValue([
-        { id: 'assign-1', shift_id: 'shift-1', user_id: 'user-1', assigned_by: 'owner-1', supervisor_employee_id: null, created_at: '' },
+        { id: 'assign-1', shift_id: 'shift-1', user_id: 'user-1', assigned_by: 'owner-1', supervisor_employee_id: null, user_name_snapshot: null, created_at: '' },
       ])
       vi.mocked(attendanceRepository.getAttendanceRecordsByAssignmentIds).mockResolvedValue([
         { id: 'att-1', shift_assignment_id: 'assign-1' } as never,
@@ -979,9 +1009,9 @@ describe('shiftService — Shift (UC1, UC3-10)', () => {
       vi.mocked(shiftRepository.getShiftById).mockResolvedValue(original)
       vi.mocked(shiftRepository.getShiftsByRecurrenceGroupId).mockResolvedValue([original, sibling1, sibling2])
       vi.mocked(shiftRepository.getAssignmentsByShiftIds).mockResolvedValue([
-        { id: 'assign-1', shift_id: 'shift-1', user_id: 'user-1', assigned_by: 'owner-1', supervisor_employee_id: null, created_at: '' },
-        { id: 'assign-2', shift_id: 'shift-2', user_id: 'user-1', assigned_by: 'owner-1', supervisor_employee_id: null, created_at: '' },
-        { id: 'assign-3', shift_id: 'shift-3', user_id: 'user-1', assigned_by: 'owner-1', supervisor_employee_id: null, created_at: '' },
+        { id: 'assign-1', shift_id: 'shift-1', user_id: 'user-1', assigned_by: 'owner-1', supervisor_employee_id: null, user_name_snapshot: null, created_at: '' },
+        { id: 'assign-2', shift_id: 'shift-2', user_id: 'user-1', assigned_by: 'owner-1', supervisor_employee_id: null, user_name_snapshot: null, created_at: '' },
+        { id: 'assign-3', shift_id: 'shift-3', user_id: 'user-1', assigned_by: 'owner-1', supervisor_employee_id: null, user_name_snapshot: null, created_at: '' },
       ])
       // Only shift-1's assignment (today's already-occurred instance) has attendance recorded.
       vi.mocked(attendanceRepository.getAttendanceRecordsByAssignmentIds).mockResolvedValue([
@@ -1004,7 +1034,9 @@ describe('shiftService — Shift (UC1, UC3-10)', () => {
   })
 
   describe('assignShiftsInBulk (UC10)', () => {
-    it('creates shifts for valid assignments and collects failures for invalid ones', async () => {
+    // BUG-021: overnight shifts (end_time on the following day) are valid — only an exact
+    // start===end match fails, so the third assignment below now succeeds instead of failing.
+    it('creates shifts for valid assignments (including overnight ones) and collects failures for invalid ones', async () => {
       vi.mocked(shiftRepository.createShift).mockResolvedValue(baseShift)
       vi.mocked(shiftRepository.createShiftAssignment).mockResolvedValue({} as never)
 
@@ -1016,13 +1048,14 @@ describe('shiftService — Shift (UC1, UC3-10)', () => {
           { user_id: 'user-1', shift_date: '2026-06-22', start_time: '09:00', end_time: '17:00' },
           { user_id: '', shift_date: '2026-06-22', start_time: '09:00', end_time: '17:00' },
           { user_id: 'user-2', shift_date: '2026-06-22', start_time: '17:00', end_time: '09:00' },
+          { user_id: 'user-3', shift_date: '2026-06-22', start_time: '09:00', end_time: '09:00' },
         ],
       })
 
-      expect(result.created).toHaveLength(1)
+      expect(result.created).toHaveLength(2)
       expect(result.failed).toHaveLength(2)
       expect(result.failed[0].message).toBe('Missing required fields')
-      expect(result.failed[1].message).toBe('start_time must be before end_time')
+      expect(result.failed[1].message).toBe('start_time and end_time cannot be the same')
     })
   })
 
@@ -1051,6 +1084,8 @@ describe('shiftService — Shift (UC1, UC3-10)', () => {
       }))
     })
 
+    // BUG-021: overnight shifts (end_time on the following day) are valid — only an exact
+    // start===end match fails.
     it('collects per-row failures without aborting the batch', async () => {
       vi.mocked(shiftRepository.createShift).mockResolvedValue(baseShift)
       vi.mocked(shiftRepository.createShiftAssignment).mockResolvedValue({} as never)
@@ -1060,13 +1095,13 @@ describe('shiftService — Shift (UC1, UC3-10)', () => {
         created_by: 'owner-1',
         items: [
           { department_id: 'dept-1', shift_date: '2026-06-22', start_time: '09:00', end_time: '17:00' },
-          { department_id: 'dept-1', shift_date: '2026-06-22', start_time: '17:00', end_time: '09:00' },
+          { department_id: 'dept-1', shift_date: '2026-06-22', start_time: '09:00', end_time: '09:00' },
         ],
       })
 
       expect(result.created).toHaveLength(1)
       expect(result.failed).toHaveLength(1)
-      expect(result.failed[0].message).toBe('start_time must be before end_time')
+      expect(result.failed[0].message).toBe('start_time and end_time cannot be the same')
     })
   })
 
@@ -1085,7 +1120,7 @@ describe('shiftService — Shift (UC1, UC3-10)', () => {
           shift_id: 'shift-assigned',
           user_id: 'user-1',
           assigned_by: 'owner-1',
-          supervisor_employee_id: null,
+          supervisor_employee_id: null, user_name_snapshot: null,
           created_at: '2026-06-01T00:00:00.000Z',
         },
       ])
@@ -1185,7 +1220,7 @@ describe('shiftService — Shift (UC1, UC3-10)', () => {
         shift_id: 'shift-1',
         user_id: 'user-1',
         assigned_by: 'owner-1',
-        supervisor_employee_id: null,
+        supervisor_employee_id: null, user_name_snapshot: null,
         created_at: '2026-06-01T00:00:00.000Z',
       })
       vi.mocked(shiftRepository.deleteAssignmentById).mockResolvedValue(undefined)
@@ -1265,7 +1300,7 @@ describe('shiftService — Shift (UC1, UC3-10)', () => {
         shift_id: 'shift-1',
         user_id: 'user-1',
         assigned_by: 'owner-1',
-        supervisor_employee_id: null,
+        supervisor_employee_id: null, user_name_snapshot: null,
         created_at: '2026-06-01T00:00:00.000Z',
       }
       vi.mocked(shiftRepository.getLatestUndoableAction).mockResolvedValue({

@@ -41,13 +41,13 @@ function navItemsFor(role: SidebarRole) {
   if (role === 'manager') return items
     .filter(i => i.label !== 'Report' && i.label !== 'Company' && i.label !== 'Attendance')
     .map(i => i.label === 'Shifts' ? { ...i, dot: 'attendance' as DotKey } : i)
-  // Employee: no Company (O-only), no Recruitment (O/P/M-only), no Report (O/P-only), and no
-  // standalone Communication page — Employee can't post Announcements (O/P/M-only), so a full
-  // Communication page would only ever hold the Message tab; that lives as a panel on the
-  // Dashboard instead (confirmed 2026-07-25). Attendance is folded into the Shifts page too
-  // (same merge as Manager) — no standalone Attendance nav item, dot moves onto Shifts.
+  // Employee: no Company (O-only), no Recruitment (O/P/M-only), no Report (O/P-only). Attendance
+  // is folded into the Shifts page too (same merge as Manager) — no standalone Attendance nav
+  // item, dot moves onto Shifts. Communication moved off the Dashboard onto its own page
+  // (confirmed 2026-07-31) — Employee still can't post Announcements (O/P/M-only), that's gated
+  // inside EmployeeAnnouncementsPanel/the communication page itself, not the nav.
   if (role === 'employee') return items
-    .filter(i => ['Dashboard', 'Shifts', 'Tasks'].includes(i.label))
+    .filter(i => ['Dashboard', 'Shifts', 'Tasks', 'Communication'].includes(i.label))
     .map(i => i.label === 'Shifts' ? { ...i, dot: 'attendance' as DotKey } : i)
   return items
 }
@@ -349,90 +349,41 @@ export default function OwnerSidebar({
         fetchTaskAlertsRef.current = fetchTaskAlerts
         fetchTaskAlerts()
 
-        const readKey = `ann_read_ids_${cid}_${internalId}`
-        let readIds: Set<string> = new Set()
-        try {
-          const raw = localStorage.getItem(readKey)
-          if (raw) readIds = new Set(JSON.parse(raw))
-        } catch {}
-
-        fetch(`/api/inbox/announcements?company_id=${cid}&role=${role}`)
+        // BUG-053: `ann_read_ids_*` in localStorage was never written anywhere — CommunicationView
+        // tracks read state server-side via /api/inbox/announcements/read (plain announcement id),
+        // not localStorage — so this always came back empty and every announcement looked unread
+        // forever. Read the real, server-persisted set instead.
+        fetch(`/api/inbox/announcements/read?user_id=${internalId}&company_id=${cid}`)
           .then(r => r.json())
-          .then(data => {
-            if (data.success) {
-              // Own posts are never "unread" — matches CommunicationView's unreadAnnCount rule.
-              const unread = (data.announcements as { id: string; user_id: string; created_at: string; updated_at?: string | null }[])
-                .filter(a => a.user_id !== internalId && !readIds.has(`${a.id}:${a.updated_at ?? a.created_at}`)).length
-              setAnnCount(unread)
-            }
+          .then(readData => {
+            const readIds = new Set<string>(readData.success ? (readData.readIds ?? []) : [])
+            // Employee's announcement visibility is department-scoped server-side (see
+            // ownerAnnouncementRepository's isEmployee branch) — without audience_department_id
+            // it always returns zero rows, so this dot would silently stay 0 forever.
+            const deptParam = role === 'employee' && d.user.department_id ? `&audience_department_id=${d.user.department_id}` : ''
+            fetch(`/api/inbox/announcements?company_id=${cid}&role=${role}${deptParam}`)
+              .then(r => r.json())
+              .then(data => {
+                if (data.success) {
+                  // Own posts are never "unread" — matches CommunicationView's unreadAnnCount rule.
+                  const unread = (data.announcements as { id: string; user_id: string }[])
+                    .filter(a => a.user_id !== internalId && !readIds.has(a.id)).length
+                  setAnnCount(unread)
+                }
+              })
+              .catch(() => {})
           })
           .catch(() => {})
 
-        const supabase = createBrowserClient(
-          process.env.NEXT_PUBLIC_SUPABASE_URL!,
-          process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-        )
-
-        const msgChannel = supabase
-          .channel('owner-sidebar-messages')
-          .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `to_user_id=eq.${internalId}` },
-            () => { setMsgCount(c => c + 1) })
-          .subscribe()
-
-        const reviewChannel = supabase
-          .channel('owner-sidebar-review')
-          .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'job_postings', filter: `company_id=eq.${cid}` },
-            fetchReviewCount)
-          .subscribe()
-
-        const refreshAnnCount = () => {
-          const rkey = `ann_read_ids_${cid}_${internalId}`
-          let rids: Set<string> = new Set()
-          try { const raw2 = localStorage.getItem(rkey); if (raw2) rids = new Set(JSON.parse(raw2)) } catch {}
-          fetch(`/api/inbox/announcements?company_id=${cid}&role=${role}`)
-            .then(r => r.json())
-            .then(data => {
-              if (data.success) {
-                setAnnCount((data.announcements as { id: string; user_id: string; created_at: string; updated_at?: string | null }[])
-                  .filter(a => a.user_id !== internalId && !rids.has(`${a.id}:${a.updated_at ?? a.created_at}`)).length)
-              }
-            }).catch(() => {})
-        }
-
-        const annChannel = supabase
-          .channel('owner-sidebar-announcements')
-          .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'announcements', filter: `company_id=eq.${cid}` },
-            refreshAnnCount)
-          .subscribe()
-
-        const refreshAttendanceCount = fetchAttendanceBadgeCount
-
-        const swapChannel = supabase
-          .channel('owner-sidebar-swaps')
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'shift_swap_requests', filter: `company_id=eq.${cid}` },
-            refreshAttendanceCount)
-          .subscribe()
-
-        const offDayChannel = supabase
-          .channel('owner-sidebar-off-day')
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'off_day_requests', filter: `company_id=eq.${cid}` },
-            refreshAttendanceCount)
-          .subscribe()
-
-        const taskChannel = supabase
-          .channel('owner-sidebar-tasks')
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks', filter: `company_id=eq.${cid}` },
-            fetchTaskAlerts)
-          .subscribe()
-
-        return () => {
-          supabase.removeChannel(msgChannel)
-          supabase.removeChannel(annChannel)
-          supabase.removeChannel(reviewChannel)
-          supabase.removeChannel(swapChannel)
-          supabase.removeChannel(offDayChannel)
-          supabase.removeChannel(taskChannel)
-        }
+        // No realtime channel subscriptions here on purpose (2026-07-30, perf fix). This used to
+        // open 6 of its own Supabase channels (messages/review/announcements/swaps/off-day/tasks)
+        // that duplicated the ones RealtimeNotificationsProvider already keeps open at the app
+        // root — and since every dot below already prefers `realtimeNotifications.counts` the
+        // moment `ready` flips true, those channels + the fetches they re-triggered were pure
+        // dead weight kept alive by a sidebar that remounts fresh on every single page navigation
+        // (measured: this was a large share of Manager's slower tab-switch/page-nav times).
+        // The one-shot fetches above just seed msgCount/annCount/attendanceCount/taskAlertCount/
+        // reviewCount for the brief pre-`ready` window; nothing needs to keep them fresh after.
       })
       .catch(() => {})
   }, [])
@@ -469,7 +420,7 @@ export default function OwnerSidebar({
   const visibleLabels = userRole === 'Manager'
     ? navOrder.filter(l => l !== 'Report' && l !== 'Company')
     : userRole === 'Employee'
-      ? navOrder.filter(l => ['Dashboard', 'Shifts', 'Tasks'].includes(l))
+      ? navOrder.filter(l => ['Dashboard', 'Shifts', 'Tasks', 'Communication'].includes(l))
       : navOrder
 
   const orderedItems = visibleLabels
@@ -483,7 +434,10 @@ export default function OwnerSidebar({
     )
     await supabase.auth.signOut()
     localStorage.removeItem('tasking_user_id')
+    localStorage.removeItem('tasking_user_role')
     localStorage.removeItem('tasking_company_id')
+    localStorage.removeItem('tasking_active_session')
+    sessionStorage.removeItem('tasking_session_active')
     window.location.href = '/signout'
   }
 

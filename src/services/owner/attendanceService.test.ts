@@ -50,6 +50,7 @@ vi.mock('@/repositories/owner/attendanceRepository', () => ({
     getEmployeesByCompany: vi.fn(),
     getManagersByCompany: vi.fn(),
     countApprovedShiftSwapsForUser: vi.fn(),
+    getShiftDatesForUserWithinDates: vi.fn(),
   },
 }))
 
@@ -1467,6 +1468,7 @@ describe('attendanceService', () => {
       vi.mocked(attendanceRepository.getFixedOffDayRequestsByUserAndWeek).mockResolvedValue([])
       vi.mocked(attendanceRepository.deleteFixedOffDayRequestsByUserAndWeek).mockResolvedValue(undefined)
       vi.mocked(attendanceRepository.createFixedOffDayRequests).mockResolvedValue([] as any)
+      vi.mocked(attendanceRepository.getShiftDatesForUserWithinDates).mockResolvedValue([])
     })
 
     it('rejects a date that is not in the future', async () => {

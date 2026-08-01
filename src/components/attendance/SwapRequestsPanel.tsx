@@ -14,6 +14,7 @@ import { TimelineRow, TimelineShiftBlock } from '@/types/Timeline'
 import { useIsCompactViewport } from '@/hooks/useIsCompactViewport'
 import { useIsCompactContainer } from '@/hooks/useIsCompactContainer'
 import { useResourceInvalidation } from '@/components/realtime/RealtimeNotificationsProvider'
+import { EmptyState } from '@/components/panel'
 
 // Manager's Shift Swap approval queue — byte-for-byte the same UI as AttendanceView's
 // reqTab === 'swaps' (Requests queue / Review Request + Current Schedule + Task Changes /
@@ -174,10 +175,7 @@ function CurrentShiftsBlock({ show, deptName, rows, loading, panelBorder, highli
             <Spinner size={14} dark /> <span style={{ fontSize: 13, fontWeight: 600 }}>Loading…</span>
           </div>
         ) : !deptName ? (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 100, gap: 10, color: '#9CA3AF' }}>
-            <CalendarDays size={22} strokeWidth={1.5} />
-            <span style={{ fontSize: 13, fontWeight: 600 }}>Select a request to preview shifts</span>
-          </div>
+          <EmptyState variant="plain" icon={<CalendarDays size={22} strokeWidth={1.5} />} message="Select a request to preview shifts" />
         ) : sortedRows.length === 0 ? (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 100, gap: 10, color: '#9CA3AF' }}>
             <CalendarDays size={22} strokeWidth={1.5} />
@@ -392,14 +390,12 @@ function TaskChangeBlock({ title, show, request, panelBorder, useCounterpartTask
       </div>
       <div key={request?.id ?? 'none'} className="att-fade-in">
       {!request ? (
-        <div style={{ padding: '18px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 80, gap: 10, color: '#9CA3AF' }}>
-          <ClipboardList size={22} strokeWidth={1.5} />
-          <span style={{ fontSize: 13, fontWeight: 600 }}>Select a request to preview task changes</span>
+        <div style={{ padding: '18px' }}>
+          <EmptyState variant="plain" icon={<ClipboardList size={22} strokeWidth={1.5} />} message="Select a request to preview task changes" />
         </div>
       ) : !hasChanges ? (
-        <div style={{ padding: '18px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 80, gap: 10, color: '#9CA3AF' }}>
-          <ClipboardList size={22} strokeWidth={1.5} />
-          <span style={{ fontSize: 13, fontWeight: 600 }}>No tasks will move if this swap is approved</span>
+        <div style={{ padding: '18px' }}>
+          <EmptyState variant="plain" icon={<ClipboardList size={22} strokeWidth={1.5} />} message="No tasks will move if this swap is approved" />
         </div>
       ) : (
         <div style={{ padding: '18px', display: 'flex', alignItems: 'stretch', gap: 14 }}>
@@ -482,6 +478,11 @@ export default function SwapRequestsPanel({
       setNewlyProcessedId(id)
       setTimeout(() => setNewlyProcessedId(null), 800)
       setActionIndex(0)
+      // The Current Schedule preview below caches by department+date-range and would otherwise
+      // keep showing the pre-swap schedule after approving (BUG-038) — an approve/reject just
+      // changed the underlying shift_assignments, so that cache is now stale regardless of
+      // whether the next active request happens to share the same department+range.
+      csFetchedRangeRef.current = null
       await fetchSwapRequests(companyId)
       showSuccessToast(decision === 'approved' ? 'Shift swap approved.' : 'Shift swap rejected.')
       return true
@@ -889,10 +890,7 @@ export default function SwapRequestsPanel({
               {reqLoading && <Spinner size={13} dark />}
             </div>
             {actionNeeded.length === 0 ? (
-              <div style={{ flex: 1, padding: '26px 16px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, color: '#9CA3AF' }}>
-                <CheckCheck size={20} strokeWidth={1.5} />
-                <span style={{ fontSize: 12.5, fontWeight: 600 }}>No pending requests</span>
-              </div>
+              <EmptyState fill variant="plain" icon={<CheckCheck size={20} strokeWidth={1.5} />} message="No pending requests" />
             ) : (
               <div style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 10, flex: 1, minHeight: 0, overflowY: 'auto' }}>
                 {actionNeeded.map((req, idx) => {
@@ -959,10 +957,7 @@ export default function SwapRequestsPanel({
                   <SwapCard req={currentSwap} />
                 </div>
               ) : (
-                <div style={{ flex: 1, minHeight: 170, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, color: '#9CA3AF' }}>
-                  <CheckCheck size={22} strokeWidth={1.5} />
-                  <span style={{ fontSize: 13, fontWeight: 600 }}>All caught up — nothing needs action</span>
-                </div>
+                <EmptyState fill variant="plain" icon={<CheckCheck size={22} strokeWidth={1.5} />} message="All caught up — nothing needs action" />
               )}
             </section>
             <CurrentShiftsBlock
@@ -1010,7 +1005,7 @@ export default function SwapRequestsPanel({
             </div>
             <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 8, flex: 1, minHeight: 0, overflowY: 'auto' }}>
               {processed.length === 0
-                ? <div style={{ padding: '24px', textAlign: 'center', color: '#9CA3AF', fontSize: '0.875rem' }}>No processed requests.</div>
+                ? <EmptyState variant="plain" icon={<CheckCheck size={20} strokeWidth={1.5} />} message="No processed requests" />
                 : processed.map(req => (
                     <div key={req.id} className="att-list-in" style={{ animationDelay: '0ms', flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
                       <SwapCard req={req} compact />

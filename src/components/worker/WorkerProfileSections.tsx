@@ -2,15 +2,31 @@
 
 // Shared Worker Profile cards (Skills / Certificates / Resume) used by both the Guest User
 // profile page and the Casual Worker profile page — one set of components, two hosts, per the
-// shared-UI principle. Each card is self-contained (owns its own fetch/save) so pages are free to
-// lay them out independently (e.g. Casual's two-column grid). This is the long-lived profile
-// whose contents get snapshotted into each job application at apply time.
+// shared-UI principle. Each card receives its slice of the host page's single WorkerProfile fetch
+// as a prop (no fetch of its own) and only owns its own save logic, so pages are free to lay them
+// out independently (e.g. Casual's two-column grid). This is the long-lived profile whose
+// contents get snapshotted into each job application at apply time.
 
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { Award, Check, FileText, Paperclip, Pencil, Plus, RefreshCw, Trash2, Upload, Wrench } from 'lucide-react'
-import { PRESET_CERTIFICATES, WorkerCertificate } from '@/types/WorkerProfile'
+import { PRESET_CERTIFICATES, WorkerCertificate, WorkerProfile } from '@/types/WorkerProfile'
 import DropdownField from '@/components/DropdownField'
 import { TitledBlock } from '@/components/panel'
+import { DASHBOARD_SKELETON_KEYFRAMES, SkeletonLine } from '@/components/dashboard/ClockFlow'
+
+// Shared loading placeholder for a profile card — the host page (Guest/Casual Worker Profile)
+// fetches the whole WorkerProfile once and renders one of these per card slot until that single
+// fetch resolves, so all cards appear together instead of each card popping in on its own timing
+// as each previously ran an identical independent `/api/guest/profile` fetch (2026-07-31).
+export function ProfileCardSkeleton({ lines = 2 }: { lines?: number }) {
+  return (
+    <div style={{ ...cardStyle, display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <style>{DASHBOARD_SKELETON_KEYFRAMES}</style>
+      <SkeletonLine width="40%" height={14} />
+      {Array.from({ length: lines }).map((_, i) => <SkeletonLine key={i} height={36} radius={8} />)}
+    </div>
+  )
+}
 
 const DOCUMENT_ACCEPT = '.pdf,.doc,.docx'
 const CERTIFICATE_ACCEPT = '.pdf,.doc,.docx,.jpg,.jpeg,.png'
@@ -21,36 +37,16 @@ const CERT_ROW_HEIGHT = 48
 
 type Props = {
   authId: string
+  profile: WorkerProfile
   onToast?: (msg: string) => void
 }
 
-export function SkillsCard({ authId, onToast }: Props) {
-  const [loading, setLoading] = useState(true)
+export function SkillsCard({ authId, profile, onToast }: Props) {
   const [error, setError] = useState('')
-  const [skills, setSkills] = useState('')
-  const [savedSkills, setSavedSkills] = useState('')
+  const [skills, setSkills] = useState(profile.skills ?? '')
+  const [savedSkills, setSavedSkills] = useState(profile.skills ?? '')
   const [skillsSaving, setSkillsSaving] = useState(false)
   const [skillsEditing, setSkillsEditing] = useState(false)
-
-  useEffect(() => {
-    let cancelled = false
-    const load = async () => {
-      try {
-        const res = await fetch(`/api/guest/profile?user_id=${authId}`)
-        const data = await res.json()
-        if (cancelled) return
-        if (!data.success) throw new Error(data.message || 'Failed to load profile')
-        setSkills(data.profile.skills ?? '')
-        setSavedSkills(data.profile.skills ?? '')
-      } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load profile')
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    }
-    void load()
-    return () => { cancelled = true }
-  }, [authId])
 
   const saveSkills = async () => {
     setSkillsSaving(true)
@@ -71,10 +67,6 @@ export function SkillsCard({ authId, onToast }: Props) {
     } finally {
       setSkillsSaving(false)
     }
-  }
-
-  if (loading) {
-    return <div style={{ ...cardStyle, color: '#6B7280', fontSize: '0.9rem' }}>Loading skills…</div>
   }
 
   const skillsDirty = skills.trim() !== savedSkills.trim()
@@ -125,10 +117,8 @@ export function SkillsCard({ authId, onToast }: Props) {
   )
 }
 
-export function CertificatesCard({ authId, onToast }: Props) {
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-  const [certificates, setCertificates] = useState<WorkerCertificate[]>([])
+export function CertificatesCard({ authId, profile, onToast }: Props) {
+  const [certificates, setCertificates] = useState<WorkerCertificate[]>(profile.certificates ?? [])
   const [certChoice, setCertChoice] = useState('')
   const [certCustomName, setCertCustomName] = useState('')
   const [certFile, setCertFile] = useState<File | null>(null)
@@ -140,29 +130,16 @@ export function CertificatesCard({ authId, onToast }: Props) {
   const replaceTargetRef = useRef<string | null>(null)
   const [replacingCertId, setReplacingCertId] = useState<string | null>(null)
 
-  useEffect(() => {
-    let cancelled = false
-    const load = async () => {
-      try {
-        const res = await fetch(`/api/guest/profile?user_id=${authId}`)
-        const data = await res.json()
-        if (cancelled) return
-        if (!data.success) throw new Error(data.message || 'Failed to load profile')
-        setCertificates(data.profile.certificates ?? [])
-      } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load profile')
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    }
-    void load()
-    return () => { cancelled = true }
-  }, [authId])
-
   const addCertificate = async () => {
     const name = certChoice === CUSTOM_OPTION ? certCustomName.trim() : certChoice
     if (!name) { setCertError('Choose a certificate or enter a name.'); return }
     if (!certFile) { setCertError('Please upload a file to prove you hold this certificate.'); return }
+    // BUG-026 (same fix, this component was missed the first time — GuestOnboardingProfile.tsx
+    // got the duplicate-name check, this sibling worker-profile version didn't).
+    if (certificates.some(c => c.name.trim().toLowerCase() === name.toLowerCase())) {
+      setCertError('You already added this certificate.')
+      return
+    }
     setCertSaving(true); setCertError('')
     try {
       const form = new FormData()
@@ -218,17 +195,8 @@ export function CertificatesCard({ authId, onToast }: Props) {
     }
   }
 
-  if (loading) {
-    return <div style={{ ...cardStyle, color: '#6B7280', fontSize: '0.9rem' }}>Loading certificates…</div>
-  }
-
   return (
     <TitledBlock icon={<Award size={15} color="#F97316" />} title="Certificates">
-      {error && (
-        <div style={{ padding: '10px 14px', marginBottom: 14, background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 10, color: '#B91C1C', fontSize: '0.8125rem', fontWeight: 600 }}>
-          {error}
-        </div>
-      )}
       {/* Hidden picker for swapping the proof file on an already-added certificate. */}
       <input ref={replaceFileInputRef} type="file" accept={CERTIFICATE_ACCEPT} style={{ display: 'none' }}
         onChange={e => {
@@ -291,7 +259,13 @@ export function CertificatesCard({ authId, onToast }: Props) {
               placeholder="Select a certificate…"
               height={CERT_ROW_HEIGHT}
               options={[
-                ...PRESET_CERTIFICATES.map(name => ({ value: name, label: name })),
+                // Already-added certificates (case-insensitive) drop out of the picklist entirely —
+                // don't wait for the addCertificate() duplicate-name error to catch it after the
+                // fact, since the option sitting right there in the dropdown was the actual
+                // complaint (2026-07-30, BUG-026 second follow-up).
+                ...PRESET_CERTIFICATES
+                  .filter(name => !certificates.some(c => c.name.trim().toLowerCase() === name.toLowerCase()))
+                  .map(name => ({ value: name, label: name })),
                 { value: CUSTOM_OPTION, label: '+ Add custom certificate' },
               ]}
             />
@@ -334,32 +308,11 @@ export function CertificatesCard({ authId, onToast }: Props) {
   )
 }
 
-export function ResumeCard({ authId, onToast }: Props) {
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-  const [resumeUrl, setResumeUrl] = useState<string | null>(null)
+export function ResumeCard({ authId, profile, onToast }: Props) {
+  const [resumeUrl, setResumeUrl] = useState<string | null>(profile.resume_url ?? null)
   const [resumeBusy, setResumeBusy] = useState(false)
   const [resumeError, setResumeError] = useState('')
   const resumeInputRef = useRef<HTMLInputElement>(null)
-
-  useEffect(() => {
-    let cancelled = false
-    const load = async () => {
-      try {
-        const res = await fetch(`/api/guest/profile?user_id=${authId}`)
-        const data = await res.json()
-        if (cancelled) return
-        if (!data.success) throw new Error(data.message || 'Failed to load profile')
-        setResumeUrl(data.profile.resume_url ?? null)
-      } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load profile')
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    }
-    void load()
-    return () => { cancelled = true }
-  }, [authId])
 
   const uploadResume = async (file: File) => {
     setResumeBusy(true); setResumeError('')
@@ -395,17 +348,8 @@ export function ResumeCard({ authId, onToast }: Props) {
     }
   }
 
-  if (loading) {
-    return <div style={{ ...cardStyle, color: '#6B7280', fontSize: '0.9rem' }}>Loading resume…</div>
-  }
-
   return (
     <TitledBlock icon={<FileText size={15} color="#F97316" />} title="Resume">
-      {error && (
-        <div style={{ padding: '10px 14px', marginBottom: 14, background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 10, color: '#B91C1C', fontSize: '0.8125rem', fontWeight: 600 }}>
-          {error}
-        </div>
-      )}
       <input ref={resumeInputRef} type="file" accept={DOCUMENT_ACCEPT} style={{ display: 'none' }}
         onChange={e => { const f = e.target.files?.[0]; if (f) void uploadResume(f) }} />
 

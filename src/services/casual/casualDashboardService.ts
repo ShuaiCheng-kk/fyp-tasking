@@ -18,6 +18,8 @@ export interface CurrentJobView {
   is_open_ended: boolean
   company_name: string | null
   location: string | null
+  address: string | null
+  department_name: string | null
   // The posting this job was hired from — lets the worker re-open the full job detail (pay,
   // description, requirements) from the dashboard. Null for shifts not created from a posting.
   job_posting_id: string | null
@@ -45,6 +47,9 @@ export interface CurrentJobView {
   break_in_time: string | null
   break_out_time: string | null
   clock_out_released: boolean
+  // BUG-081 follow-up: this company has deactivated the worker (Team page "Inactive"). The worker
+  // can still work for other companies — this is per-company, not account-wide.
+  company_banned: boolean
 }
 
 type UpcomingAssignment = Awaited<ReturnType<typeof casualDashboardRepository.getUpcomingAssignments>>[number]
@@ -52,10 +57,14 @@ type UpcomingAssignment = Awaited<ReturnType<typeof casualDashboardRepository.ge
 // How many days ahead (inclusive of today) the dashboard's Upcoming Jobs timeline covers.
 const UPCOMING_WINDOW_DAYS = 7
 
-// A Casual Worker only ever works one job at a time — the earliest assignment from today onward
-// that hasn't been clocked out of yet IS the current job. Once they clock out, it drops out and
-// the next chronological assignment becomes current. Shared by the dashboard (job card) and by
-// work-action gates that must resolve the same current job (e.g. messaging the supervisor).
+// A Casual Worker only ever works one job at a time. The current job stays anchored to TODAY as
+// long as today has any assignment: the earliest one not yet clocked out of, or — once every job
+// scheduled for today is done — the most recently completed one, so the worker can still review
+// it (tasks, messages, clock times) for the rest of the day. It only jumps ahead to a future
+// day's job once today has nothing left at all, i.e. once the calendar day actually rolls over
+// (2026-07-31) — not the instant a same-day shift is clocked out. Shared by the dashboard (job
+// card) and by work-action gates that must resolve the same current job (e.g. messaging the
+// supervisor).
 // `all` is the full sorted upcoming list (with attendance records) — the dashboard builds its
 // 7-day timeline from it, so the current-job pick and the timeline can never disagree.
 //
@@ -81,16 +90,21 @@ export async function findCurrentAssignment(userId: string): Promise<{
   const records = await casualAttendanceRepository.getAttendanceRecordsByAssignmentIds(assignments.map(a => a.id))
   const recordsByAssignment = new Map(records.map(r => [r.shift_assignment_id, r]))
 
-  const active = assignments.find(a => {
-    const record = recordsByAssignment.get(a.id)
-    return !record?.clock_out_time
-  })
-
-  if (!active) return null
+  // "Current" stays anchored to TODAY as long as today has any assignment at all — the earliest
+  // one not yet clocked out of, or, once every one of today's is done, the most recently
+  // completed one (so the worker can still review it: tasks, messages, clock times) — rather than
+  // jumping straight to a future day's job the moment today's work finishes. Only when there is
+  // nothing scheduled for today at all does it fall through to the earliest not-yet-completed
+  // assignment on a later day (2026-07-31).
+  const todays = assignments.filter(a => a.shift.shift_date === todayKey)
+  const todaysActive = todays.find(a => !recordsByAssignment.get(a.id)?.clock_out_time)
+  const todaysFallback = todaysActive ?? [...todays].reverse()[0]
+  const chosen = todaysFallback ?? assignments.find(a => !recordsByAssignment.get(a.id)?.clock_out_time)
+  if (!chosen) return null
 
   return {
-    assignment: active,
-    record: recordsByAssignment.get(active.id) ?? null,
+    assignment: chosen,
+    record: recordsByAssignment.get(chosen.id) ?? null,
     all: assignments.map(a => ({ assignment: a, record: recordsByAssignment.get(a.id) ?? null })),
   }
 }
@@ -109,13 +123,17 @@ export const casualDashboardService = {
       return { user, current_job: null as CurrentJobView | null, upcoming_jobs: [] as CurrentJobView[] }
     }
 
-    // The timeline shows every NOT-YET-COMPLETED job in the next 7 days (today inclusive) — once
-    // a job is clocked out, it moves to Attendance History instead of lingering here greyed out.
-    // The current job is always included even when it starts beyond the window — otherwise a
-    // worker whose only job is next week would see an empty dashboard.
+    // The timeline shows every NOT-YET-COMPLETED job in the next 7 days (today inclusive), plus
+    // any job already clocked out TODAY — a shift stays visible for the rest of the calendar day
+    // it happened on (so the worker can still check their clocked times/tasks/messages after
+    // finishing) and only drops off once the day rolls over, at which point it moves to
+    // Attendance History instead (2026-07-31). The current job is always included even when it
+    // starts beyond the window — otherwise a worker whose only job is next week would see an
+    // empty dashboard.
+    const todayKey = sgtTodayKey()
     const windowEndKey = sgtDateKeyPlusDays(UPCOMING_WINDOW_DAYS - 1)
     const timeline = current.all.filter(entry =>
-      !entry.record?.clock_out_time &&
+      (!entry.record?.clock_out_time || entry.assignment.shift.shift_date === todayKey) &&
       (entry.assignment.shift.shift_date <= windowEndKey || entry.assignment.id === current.assignment.id)
     )
 
@@ -127,6 +145,20 @@ export const casualDashboardService = {
     const users = await casualDashboardRepository.getUsersByIds([...new Set([...supervisorIds, ...posterIds])])
     const postingById = new Map(postings.map(p => [p.id, p]))
     const userById = new Map(users.map(u => [u.id, u]))
+
+    // Department comes off the shift itself (not the posting) — a shift can exist without a
+    // source posting (e.g. a manually-created future shift), so this must resolve independently
+    // of whether `job` below is null.
+    const departmentIds = [...new Set(timeline.map(e => e.assignment.shift.department_id).filter((id): id is string => !!id))]
+    const departments = await casualDashboardRepository.getDepartmentsByIds(departmentIds)
+    const departmentById = new Map(departments.map(d => [d.id, d]))
+
+    const uniqueCompanyIds = [...new Set(timeline.map(e => e.assignment.shift.company_id))]
+    const bannedCompanyIds = new Set(
+      (await Promise.all(uniqueCompanyIds.map(async companyId => (
+        (await casualAttendanceRepository.isBannedByCompany(user.id, companyId)) ? companyId : null
+      )))).filter((id): id is string => !!id)
+    )
 
     const upcoming_jobs: CurrentJobView[] = timeline.map(({ assignment, record }) => {
       const job = assignment.shift.source_job_posting_id ? postingById.get(assignment.shift.source_job_posting_id) ?? null : null
@@ -144,6 +176,8 @@ export const casualDashboardService = {
         is_open_ended: assignment.shift.is_open_ended,
         company_name: job?.company_name ?? null,
         location: job?.location ?? null,
+        address: job?.address ?? null,
+        department_name: departmentById.get(assignment.shift.department_id)?.name ?? null,
         job_posting_id: assignment.shift.source_job_posting_id,
         supervisor: supervisor
           ? { id: supervisor.id, full_name: supervisor.full_name, phone_number: supervisor.phone_number, email_address: supervisor.email_address, profile_photo_url: supervisor.profile_photo_url }
@@ -156,6 +190,7 @@ export const casualDashboardService = {
         break_in_time: record?.break_in_time ?? null,
         break_out_time: record?.break_out_time ?? null,
         clock_out_released: record?.clock_out_released ?? false,
+        company_banned: bannedCompanyIds.has(assignment.shift.company_id),
       }
     })
 

@@ -2,7 +2,7 @@
 
 import { ReactNode } from 'react'
 import { ArrowRight } from 'lucide-react'
-import { sgtInstant } from '@/lib/singaporeTime'
+import { sgtInstant, sgtShiftEndInstant } from '@/lib/singaporeTime'
 
 // Shared personal clock in/out stepper — Manager's "My Shift Today" (DashboardView) and
 // Employee's Dashboard both render the exact same Clock In → Break In → Break Out → Clock Out
@@ -15,9 +15,11 @@ export function canClockIn(shift: { shift_date: string; start_time: string }): b
   return Date.now() >= shiftStart.getTime() - CLOCK_IN_WINDOW_MINUTES_BEFORE * 60000
 }
 
-export function canClockOut(shift: { shift_date: string; end_time: string; is_open_ended: boolean }): boolean {
+export function canClockOut(shift: { shift_date: string; start_time: string; end_time: string; is_open_ended: boolean }): boolean {
   if (shift.is_open_ended) return true
-  return Date.now() >= sgtInstant(shift.shift_date, shift.end_time).getTime()
+  // BUG-021: an overnight shift's end (end_time <= start_time) falls on the following Singapore
+  // calendar day.
+  return Date.now() >= sgtShiftEndInstant(shift.shift_date, shift.start_time, shift.end_time).getTime()
 }
 
 export function fmtShiftTime(hhmmss: string): string {
@@ -85,5 +87,24 @@ export function ClockFlowConnector() {
     <span style={{ width: 46, flex: '0 0 46px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#D1D5DB' }}>
       <ArrowRight size={16} />
     </span>
+  )
+}
+
+// Shared shimmer placeholder — Manager's Dashboard (DashboardView.tsx) already had its own
+// `.dashboard-skeleton`/`SkeletonLine`; lifted here (2026-07-30) so Employee's independently-
+// fetching dashboard widgets (My Tasks / Chatbox / Announcements) can show the same shimmer from
+// their very first render instead of a "Loading…" text line, so widgets stop popping in one at a
+// time as each one's own fetch happens to resolve.
+export const DASHBOARD_SKELETON_KEYFRAMES = `
+  @keyframes dashboardSkeletonPulse { 0%, 100% { opacity: .52 } 50% { opacity: 1 } }
+  .dashboard-skeleton { background: linear-gradient(90deg, #E2E8F0 0%, #F1F5F9 45%, #E2E8F0 100%); background-size: 220% 100%; animation: dashboardSkeletonPulse 1.05s ease-in-out infinite; }
+`
+
+export function SkeletonLine({ width = '100%', height = 14, radius = 999 }: { width?: number | string; height?: number; radius?: number }) {
+  return (
+    <span
+      className="dashboard-skeleton"
+      style={{ display: 'inline-block', width, height, borderRadius: radius, flexShrink: 0 }}
+    />
   )
 }

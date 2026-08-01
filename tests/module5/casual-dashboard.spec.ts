@@ -2,6 +2,24 @@ import { test, expect } from '@playwright/test'
 import { createClient } from '@supabase/supabase-js'
 import { seedTestOwnerAndCompany, cleanupTestOwnerAndCompany, TestOwner } from '../helpers/seed'
 
+// shifts.shift_date/start_time/end_time are Singapore-nominal wall-clock values (see
+// src/lib/singaporeTime.ts's sgtInstant) — a literal 'Z'-suffixed clock_time is parsed as true
+// UTC and drifts 8 hours from what the app considers "this shift's start/end", so every
+// clock_time sent to /api/casual/attendance must use +08:00 instead.
+function sgt(dateKey: string, time: string): string {
+  return `${dateKey}T${time}.000+08:00`
+}
+// Reads a real instant's Singapore wall-clock date/time — same technique as scripts/seed.js's
+// dateKeySGT/toHM — for the "shift that started just now" fixture below.
+function sgtDateKey(d: Date): string {
+  const sgt = new Date(d.getTime() + 8 * 60 * 60 * 1000)
+  return `${sgt.getUTCFullYear()}-${String(sgt.getUTCMonth() + 1).padStart(2, '0')}-${String(sgt.getUTCDate()).padStart(2, '0')}`
+}
+function sgtTime(d: Date): string {
+  const sgt = new Date(d.getTime() + 8 * 60 * 60 * 1000)
+  return `${String(sgt.getUTCHours()).padStart(2, '0')}:${String(sgt.getUTCMinutes()).padStart(2, '0')}:${String(sgt.getUTCSeconds()).padStart(2, '0')}`
+}
+
 const admin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!,
@@ -37,10 +55,13 @@ async function createUser(role: 'Employee' | 'Casual Worker', label: string): Pr
       supabase_auth_id: authData.user.id,
       full_name: `Module5 Dashboard ${label}`,
       email_address: email,
-      phone_number: null,
+      // phone_number/date_of_birth/profile_photo_url are NOT NULL + phone is unique — derive a
+      // distinct value per row (same pattern as tests/helpers/seed.ts).
+      phone_number: `T${Date.now()}${Math.floor(Math.random() * 1000)}`.slice(0, 20),
+      date_of_birth: '2000-01-01',
+      profile_photo_url: '',
       role,
       company_id: seeded.companyId,
-      worker_status: 'active',
     })
     .select()
     .single()
@@ -55,6 +76,7 @@ async function createShiftAssignment(input: {
   endTime: string
   isOpenEnded?: boolean
   supervisorEmployeeId?: string | null
+  hourlyRate?: number
 }) {
   const { data: shift, error: shiftError } = await admin
     .from('shifts')
@@ -64,10 +86,11 @@ async function createShiftAssignment(input: {
       shift_date: input.shiftDate,
       start_time: input.startTime,
       end_time: input.endTime,
-      title: 'Module 5 Dashboard Shift',
       created_by: seeded.ownerId,
       publication_status: 'published',
       is_open_ended: input.isOpenEnded ?? false,
+      // Pay is tied to the shift, not the worker (users.hourly_rate no longer exists).
+      hourly_rate: input.hourlyRate ?? 15,
     })
     .select('id')
     .single()
@@ -104,7 +127,6 @@ test.beforeAll(async () => {
   worker = await createUser('Casual Worker', 'worker')
 
   await admin.from('employee_departments').insert({ employee_id: supervisor.userId, department_id: departmentId })
-  await admin.from('users').update({ hourly_rate: 15 }).eq('id', worker.userId)
 
   // Two fixed shifts, earliest first — the dashboard's current-job resolution should surface the
   // earlier one until it's clocked out of, then fall through to the later one.
@@ -150,7 +172,7 @@ test('clocking out of the current job switches the dashboard to the next chronol
   const clockIn = await request.post('/api/casual/attendance', {
     data: {
       action: 'clock_in', user_id: worker.authUserId, shift_assignment_id: assignmentEarlyId,
-      clock_time: '2030-05-01T09:00:00.000Z',
+      clock_time: sgt('2030-05-01', '09:00:00'),
     },
   })
   expect(clockIn.status()).toBe(201)
@@ -158,7 +180,7 @@ test('clocking out of the current job switches the dashboard to the next chronol
   const clockOut = await request.post('/api/casual/attendance', {
     data: {
       action: 'clock_out', user_id: worker.authUserId, shift_assignment_id: assignmentEarlyId,
-      clock_time: '2030-05-01T17:00:00.000Z',
+      clock_time: sgt('2030-05-01', '17:00:00'),
     },
   })
   expect(clockOut.status()).toBe(200)
@@ -190,7 +212,7 @@ test('one-off job: clock-out is blocked until the supervising Employee releases 
   const clockIn = await request.post('/api/casual/attendance', {
     data: {
       action: 'clock_in', user_id: worker.authUserId, shift_assignment_id: oneOffAssignmentId,
-      clock_time: '2030-05-05T10:00:00.000Z',
+      clock_time: sgt('2030-05-05', '10:00:00'),
     },
   })
   expect(clockIn.status()).toBe(201)
@@ -199,7 +221,7 @@ test('one-off job: clock-out is blocked until the supervising Employee releases 
   const blockedClockOut = await request.post('/api/casual/attendance', {
     data: {
       action: 'clock_out', user_id: worker.authUserId, shift_assignment_id: oneOffAssignmentId,
-      clock_time: '2030-05-05T10:05:00.000Z',
+      clock_time: sgt('2030-05-05', '10:05:00'),
     },
   })
   expect(blockedClockOut.status()).toBe(400)
@@ -227,12 +249,12 @@ test('one-off job: clock-out is blocked until the supervising Employee releases 
     data: { action: 'release_clockout', user_id: supervisor.authUserId, attendance_record_id: oneOffRecordId },
   })
   expect(release.status()).toBe(200)
-  expect((await release.json()).record.clock_out_released_at).toBeTruthy()
+  expect((await release.json()).record.clock_out_released).toBe(true)
 
   const clockOut = await request.post('/api/casual/attendance', {
     data: {
       action: 'clock_out', user_id: worker.authUserId, shift_assignment_id: oneOffAssignmentId,
-      clock_time: '2030-05-05T10:10:00.000Z',
+      clock_time: sgt('2030-05-05', '10:10:00'),
     },
   })
   expect(clockOut.status()).toBe(200)
@@ -248,13 +270,14 @@ test('messaging is a work action: blocked before the Clock In window, wrong reci
   expect((await blockedEarly.json()).message).toContain('30 minutes before your job starts')
 
   // A shift that started 5 minutes ago becomes the current job (earlier than 2030-05-02) with an
-  // open window. Times are UTC-nominal like the app's own clock-in parsing; as with the other
-  // attendance specs this can misbehave when local-date and UTC-date disagree (00:00–08:00 SGT).
+  // open window. shift_date/start_time/end_time are Singapore-nominal wall-clock (see the `sgt`
+  // helper above) — read the SGT wall-clock date/time off the real instant, not raw UTC, or this
+  // drifts 8 hours around SGT midnight exactly like a literal-Z clock_time would.
   const startedJustNow = new Date(Date.now() - 5 * 60000)
   const windowAssignmentId = await createShiftAssignment({
-    shiftDate: startedJustNow.toISOString().slice(0, 10),
-    startTime: startedJustNow.toISOString().slice(11, 19),
-    endTime: new Date(startedJustNow.getTime() + 8 * 3600000).toISOString().slice(11, 19),
+    shiftDate: sgtDateKey(startedJustNow),
+    startTime: sgtTime(startedJustNow),
+    endTime: sgtTime(new Date(startedJustNow.getTime() + 8 * 3600000)),
     supervisorEmployeeId: supervisor.userId,
   })
   const dash = await request.get(`/api/casual/dashboard?user_id=${worker.authUserId}`)

@@ -134,6 +134,8 @@ export const workerApplicationRepository = {
         applied_at,
         decided_at,
         resume,
+        skills,
+        certificates,
         additional_note,
         job_postings (
           *,

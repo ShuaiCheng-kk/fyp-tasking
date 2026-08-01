@@ -560,10 +560,16 @@ function validateItems(input: {
   return { valid: errors.length === 0, errors, warnings }
 }
 
+// BUG-021: end_time at or before start_time means the shift crosses midnight and ends the
+// following day (see sgtShiftEndInstant) — add a day's worth of minutes before diffing, instead
+// of clamping to 0 as if it were an invalid same-day range.
 function shiftHours(item: ScheduleValidationItem): number {
   const [sh, sm] = item.start_time.split(':').map(Number)
   const [eh, em] = item.end_time.split(':').map(Number)
-  return Math.max(0, ((eh * 60 + (em || 0)) - (sh * 60 + (sm || 0))) / 60)
+  const startMinutes = sh * 60 + (sm || 0)
+  let endMinutes = eh * 60 + (em || 0)
+  if (endMinutes <= startMinutes) endMinutes += 24 * 60
+  return (endMinutes - startMinutes) / 60
 }
 
 function validateDepartmentMinimums(

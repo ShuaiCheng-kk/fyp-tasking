@@ -46,6 +46,7 @@ import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
 import DatePickerField from '@/components/DatePickerField'
 import MultiSelectDropdownField from '@/components/MultiSelectDropdownField'
 import { deptColor, setDeptColorOverrides } from '@/lib/deptColor'
+import { sgtHourMinuteOfInstant, sgtInstant, sgtShiftEndInstant } from '@/lib/singaporeTime'
 import { TimelineRow, TimelineShiftBlock } from '@/types/Timeline'
 import { ShiftTemplate } from '@/types/ShiftTemplate'
 import { AiShiftSlot, ShiftTypeInput } from '@/types/SchedulingRule'
@@ -56,6 +57,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useResourceInvalidation } from '@/components/realtime/RealtimeNotificationsProvider'
+import { useEmployeeClockedOut } from '@/hooks/useEmployeeClockedOut'
 import { AttendanceDashboardRecord, AttendanceRecord } from '@/types/Attendance'
 import { ModalOverlay, ModalBox, ModalHeader } from '@/components/modal'
 import { ARStatus, getARStatus, ARStatusIcon } from '@/components/attendance/ARStatus'
@@ -446,11 +448,13 @@ function findClopeningConflict(input: {
   end_time: string
   existingShifts: { shift_date: string; start_time: string; end_time: string }[]
 }): { rest_hours: number; direction: 'before' | 'after' } | null {
-  const newStart = new Date(`${input.shift_date}T${input.start_time}`).getTime()
-  const newEnd = new Date(`${input.shift_date}T${input.end_time}`).getTime()
+  // BUG-021: mirrors detectClopeningConflict's server-side day-crossing convention — an overnight
+  // shift's end falls on the following Singapore calendar day.
+  const newStart = sgtInstant(input.shift_date, input.start_time).getTime()
+  const newEnd = sgtShiftEndInstant(input.shift_date, input.start_time, input.end_time).getTime()
   for (const shift of input.existingShifts) {
-    const existingStart = new Date(`${shift.shift_date}T${shift.start_time}`).getTime()
-    const existingEnd = new Date(`${shift.shift_date}T${shift.end_time}`).getTime()
+    const existingStart = sgtInstant(shift.shift_date, shift.start_time).getTime()
+    const existingEnd = sgtShiftEndInstant(shift.shift_date, shift.start_time, shift.end_time).getTime()
     let restMs: number | null = null
     let direction: 'before' | 'after' | null = null
     if (existingEnd <= newStart) { restMs = newStart - existingEnd; direction = 'before' }
@@ -484,20 +488,21 @@ function formatShiftHour(time: string): string {
   return m === 0 ? `${h12}${ampm}` : `${h12}:${String(m).padStart(2, '0')}${ampm}`
 }
 
-// Shift times are UTC-nominal (stored/compared as literal wall-clock) — read clock_in/out
-// timestamps with the UTC getters so a Manager-recorded clock time formats consistently with the
-// shift's own start_time/end_time instead of drifting through the browser's timezone.
+// clock_in/out timestamps are real UTC instants (unlike the shift's own start_time/end_time,
+// which are Singapore-nominal literal strings) — convert via sgtHourMinuteOfInstant before
+// display, or the bar shows a time 8 hours off from the real Singapore clock-in/out time.
 function formatClockHour(iso: string): string {
-  const d = new Date(iso)
-  const h = d.getUTCHours()
-  const m = d.getUTCMinutes()
+  const { h, m } = sgtHourMinuteOfInstant(iso)
   const ampm = h < 12 ? 'am' : 'pm'
   const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h
   return m === 0 ? `${h12}${ampm}` : `${h12}:${String(m).padStart(2, '0')}${ampm}`
 }
 
+// BUG-021: end_time <= start_time is now a valid overnight shift (e.g. 22:00-06:00), not an error
+// to silently correct — only nudge the end time forward when it exactly equals the new start
+// time (the one truly ambiguous/zero-length case), otherwise leave whatever the user already has.
 function bumpEndTime(startTime: string, currentEndTime: string): string {
-  if (currentEndTime > startTime) return currentEndTime
+  if (currentEndTime !== startTime) return currentEndTime
   const [h, m] = startTime.split(':').map(Number)
   const total = Math.min(h * 60 + m + 30, 23 * 60 + 30)
   return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`
@@ -846,6 +851,9 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
   const [initialReady, setInitialReady] = useState(false)
   const [authUserId, setAuthUserId] = useState('')
   const [internalUserId, setInternalUserId] = useState('')
+  // Employee-only (2026-08-02): once clocked out of every shift today, My Requests locks to
+  // read-only — same rule as the Tasks page and Dashboard's My Tasks board.
+  const employeeClockedOut = useEmployeeClockedOut(scopeToEmployeeSelf ? internalUserId : '')
   const viewerParams = scopeToManagerDepartments && internalUserId
     ? `&viewer_role=Manager&viewer_user_id=${internalUserId}`
     : scopeToEmployeeSelf && internalUserId
@@ -1042,7 +1050,10 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
     if (!cid) return
     setArRecordsLoading(true)
     try {
-      const res = await fetch(`/api/attendance?company_id=${cid}&resource=range&from_date=${from}&to_date=${to}`)
+      // BUG-023 — pass the viewer's role so the service can filter out Draft (unpublished) shifts
+      // for Manager/Employee, matching the Timeline path's filterShiftsForViewer behavior.
+      const viewerRole = scopeToManagerDepartments ? 'Manager' : scopeToEmployeeSelf ? 'Employee' : 'Owner'
+      const res = await fetch(`/api/attendance?company_id=${cid}&resource=range&from_date=${from}&to_date=${to}&viewer_role=${viewerRole}`)
       const data = await res.json()
       if (data.success) setArRecords(data.records ?? [])
     } catch { /* leave stale data */ }
@@ -2012,8 +2023,10 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
       }))
       .filter(shift => shift.start_time && shift.end_time)
     if (validShiftTypes.length === 0) { setAiShiftError('Add at least one shift type'); return false }
-    if (validShiftTypes.some(shift => shift.start_time >= shift.end_time)) {
-      setAiShiftError('Each shift type start time must be before end time')
+    // Overnight shift types (e.g. 22:00-06:00) are valid — end_time is only rejected when it
+    // exactly equals start_time (zero-length, ambiguous).
+    if (validShiftTypes.some(shift => shift.start_time === shift.end_time)) {
+      setAiShiftError('Each shift type must have a start time different from its end time')
       return false
     }
 
@@ -2287,9 +2300,11 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
       setBulkError('Select at least one enabled shift cell.')
       return
     }
-    const invalid = enabledBatchCells.find(cell => cell.start_time >= cell.end_time)
+    // Overnight shifts (e.g. 22:00-06:00, ending the following day) are valid — only reject an
+    // exact start===end match (zero-length, ambiguous).
+    const invalid = enabledBatchCells.find(cell => cell.start_time === cell.end_time)
     if (invalid) {
-      setBulkError(`Invalid time on ${prettyDate(invalid.shift_date)}. Start time must be before end time.`)
+      setBulkError(`Invalid time on ${prettyDate(invalid.shift_date)}. Start time and end time cannot be the same.`)
       return
     }
     if (batchRepeatEnabled && isSingleCellRepeatEligible) {
@@ -2499,8 +2514,10 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
       setShiftActionError('Shift date must be within the next 30 days.')
       return
     }
-    if (shiftEditForm.start_time >= shiftEditForm.end_time) {
-      setShiftActionError('Start time must be before end time.')
+    // Overnight shifts (end_time on the following day) are valid — only reject an exact
+    // start===end match (zero-length, ambiguous).
+    if (shiftEditForm.start_time === shiftEditForm.end_time) {
+      setShiftActionError('Start time and end time cannot be the same.')
       return
     }
     if (editSplitEnabled) {
@@ -2689,8 +2706,10 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
       setDuplicateShiftError('Shift date must be within the next 30 days.')
       return
     }
-    if (duplicateShiftForm.start_time >= duplicateShiftForm.end_time) {
-      setDuplicateShiftError('Start time must be before end time.')
+    // Overnight shifts (end_time on the following day) are valid — only reject an exact
+    // start===end match (zero-length, ambiguous).
+    if (duplicateShiftForm.start_time === duplicateShiftForm.end_time) {
+      setDuplicateShiftError('Start time and end time cannot be the same.')
       return
     }
     setDuplicateShiftLoading(true)
@@ -3005,7 +3024,9 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
   const handleSaveShiftTemplateEntry = async () => {
     if (!shiftTemplateFormName.trim()) { setShiftTemplateFormError('Name is required'); return }
     if (!shiftTemplateFormStartTime || !shiftTemplateFormEndTime) { setShiftTemplateFormError('Start and end time are required'); return }
-    if (shiftTemplateFormStartTime >= shiftTemplateFormEndTime) { setShiftTemplateFormError('Start time must be before end time'); return }
+    // Overnight templates (e.g. a Night Shift ending the following day) are valid — only reject
+    // an exact start===end match (zero-length, ambiguous).
+    if (shiftTemplateFormStartTime === shiftTemplateFormEndTime) { setShiftTemplateFormError('Start time and end time cannot be the same'); return }
     setShiftTemplateFormLoading(true)
     setShiftTemplateFormError('')
     try {
@@ -3328,12 +3349,14 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
     // Build per-user rows, filtered to selected dept if any, excluding open shifts.
     // Manager merges Casual Workers into the same calendar as internal staff (matching the old
     // Attendance Records block's "Internal Members" + "Casual Workers" sections) — Owner/Partner
-    // keep the existing internal-staff-only Weekly Shift view.
+    // keep the existing internal-staff-only Weekly Shift view. Employee never gets a Casual
+    // Workers section at all here (confirmed 2026-07-31) — Employee's Shift Calendar is about
+    // their own schedule, not supervising Casual Workers' attendance (that's the Dashboard's job).
     const deptFilter = selectedDepartment?.id
     const filteredRows = calWeekRows.filter(r =>
       r.user_id !== null &&
       r.department_id &&
-      (r.role === 'Manager' || r.role === 'Employee' || ((scopeToManagerDepartments || scopeToEmployeeSelf) && r.role === 'Casual Worker')) &&
+      (r.role === 'Manager' || r.role === 'Employee' || (scopeToManagerDepartments && r.role === 'Casual Worker')) &&
       (!deptFilter || r.department_id === deptFilter)
     )
     // Sort: Manager → Employee → Casual Worker, then alpha
@@ -3371,7 +3394,10 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
           {/* Header row */}
           <div style={{ display: 'grid', gridTemplateColumns: `${NAME_COL}px repeat(7, 1fr)`, background: 'linear-gradient(135deg, #0F172A 0%, #1E293B 100%)', height: 54, position: 'sticky', top: 0, zIndex: 5 }}>
             <div style={{ padding: '10px 14px 10px 20px', borderRight: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center' }}>
-              {(scopeToManagerDepartments || scopeToEmployeeSelf) && (
+              {/* "Internal Members" only makes sense as a label distinguishing it from the Casual
+                  Workers section below it — Manager still has both, but Employee's calendar has no
+                  Casual Workers section anymore (confirmed 2026-07-31), so the label is dropped. */}
+              {scopeToManagerDepartments && (
                 <span style={{ fontSize: 14, fontWeight: 700, color: 'rgba(255,255,255,0.85)', letterSpacing: '0.01em' }}>Internal Members</span>
               )}
             </div>
@@ -3406,9 +3432,10 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                   const borderTop = isDeptBoundary ? EDGE : `1px solid ${BORDER}`
                   const maxShiftsInRow = Math.max(1, ...weekDates.map(date => row.shifts.filter((s: TimelineShiftBlock) => s.shift_date === date).length))
                   const rowHeight = Math.min(104, Math.max(58, maxShiftsInRow * 28 + (maxShiftsInRow - 1) * 4 + 24))
-                  // Manager/Employee merge internal staff and Casual Workers into one table — a
-                  // labelled section break marks where internal staff ends and CW rows begin.
-                  const showCwSectionHeader = (scopeToManagerDepartments || scopeToEmployeeSelf) && row.role === 'Casual Worker'
+                  // Manager merges internal staff and Casual Workers into one table — a labelled
+                  // section break marks where internal staff ends and CW rows begin. Employee
+                  // never has CW rows at all (filtered out above), so this never fires for them.
+                  const showCwSectionHeader = scopeToManagerDepartments && row.role === 'Casual Worker'
                     && (rowIdx === 0 || deptRowsCal[deptId][rowIdx - 1].role !== 'Casual Worker')
                   return (
                     <div key={row.user_id ?? `r-${deptIdx}-${rowIdx}`}>
@@ -3465,7 +3492,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                             <div key={date} style={{ padding: sortedAr.length > 2 ? '8px 6px' : '0 6px', borderRight: `1px solid ${BORDER}`, height: rowHeight, overflowY: sortedAr.length > 2 ? 'auto' : 'hidden', display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'stretch', justifyContent: sortedAr.length > 2 ? 'flex-start' : 'center', boxSizing: 'border-box', scrollbarGutter: sortedAr.length > 2 ? 'stable' : undefined }}>
                               {sortedAr.map((rec, ri) => {
                                 const st = getARStatus(rec)
-                                const pillBorder = st === 'absent' ? '1.5px solid #EF4444' : st === 'late' ? '1.5px solid #F59E0B' : '1.5px solid #10B981'
+                                const pillBorder = st === 'absent' ? '1.5px solid #EF4444' : st === 'late' ? '1.5px solid #F59E0B' : st === 'no-shift' ? '1.5px solid #CBD5E1' : '1.5px solid #10B981'
                                 const wasModified = wasAttendanceRecordModified(rec.record)
                                 const inTime = rec.record?.modified_clock_in_time ?? rec.record?.clock_in_time
                                 const outTime = rec.record?.modified_clock_out_time ?? rec.record?.clock_out_time
@@ -3476,7 +3503,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                                     style={{
                                       display: 'grid', gridTemplateColumns: '20px 1fr 20px', alignItems: 'center',
                                       padding: '0 4px', height: 28, flexShrink: 0,
-                                      background: st === 'absent' ? '#FEF2F2' : st === 'late' ? '#FFFBEB' : '#ECFDF5',
+                                      background: st === 'absent' ? '#FEF2F2' : st === 'late' ? '#FFFBEB' : st === 'no-shift' ? '#F8FAFC' : '#ECFDF5',
                                       border: pillBorder, borderRadius: 999, cursor: 'pointer', width: '100%',
                                     }}
                                     onMouseEnter={e => { e.currentTarget.style.filter = 'brightness(0.96)' }}
@@ -3845,14 +3872,21 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                   </div>
               </div>
 
-              <div style={{ display: managerShiftTab === 'swaps' ? 'block' : 'none', flex: '1 1 0', minHeight: 0 }}>
-                  <SwapRequestsPanel
-                    companyId={companyId}
-                    internalUserId={internalUserId}
-                    showSuccessToast={showSuccessToast}
-                    showErrorToast={showErrorToast}
-                    onAttentionCount={setSwapAlertCount}
-                  />
+              <div style={{ display: managerShiftTab === 'swaps' ? 'flex' : 'none', gap: 16, flex: '1 1 0', minHeight: 0 }}>
+                  {/* Manager's own submitted requests live only on the Schedule tab's MyRequestsPanel
+                      (above) — not duplicated here. getMyRequests() is keyed on user_id alone with no
+                      role/counterpart filter, so that panel already surfaces a Manager's own
+                      Manager<->Manager swap; the Swaps tab stays a pure review queue for other people's
+                      requests (2026-07-30, reverting the BUG-039 duplication fix per product decision). */}
+                  <div style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
+                    <SwapRequestsPanel
+                      companyId={companyId}
+                      internalUserId={internalUserId}
+                      showSuccessToast={showSuccessToast}
+                      showErrorToast={showErrorToast}
+                      onAttentionCount={setSwapAlertCount}
+                    />
+                  </div>
               </div>
             </div>
           )}
@@ -3863,7 +3897,13 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
               No Schedule/Swap Requests tab bar since there's only ever one section to show. ── */}
           {companyId && scopeToEmployeeSelf && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16, flex: 1, minHeight: 0 }}>
-              <section className="shift-calendar-panel" style={{ background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, display: 'flex', flexDirection: 'column', flex: '1 1 0', minHeight: 0 }}>
+              {/* Sized to its actual content (Internal Members only, now that Casual Workers is
+                  gone — confirmed 2026-07-31), capped at half the available height — beyond that
+                  cap the table scrolls internally (renderCalendarView's own overflow:auto) instead
+                  of the panel growing further. Below the cap it never blindly reserves half the
+                  page like the old flex:'1 1 0' did, which left a large blank area under a short
+                  table. */}
+              <section className="shift-calendar-panel" style={{ background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, display: 'flex', flexDirection: 'column', flex: '0 1 auto', maxHeight: '50%', minHeight: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '14px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, flexWrap: 'wrap', flexShrink: 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -3916,6 +3956,9 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                   showSuccessToast={showSuccessToast}
                   showErrorToast={showErrorToast}
                   onAttentionCount={setMyReqAlertCount}
+                  autoSelectFirst={false}
+                  wideEmployeeLayout
+                  readOnly={employeeClockedOut}
                 />
               </div>
             </div>
@@ -4001,9 +4044,11 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
               <div style={{ display: 'grid', gap: 10, marginBottom: 12 }}>
                 {orderedDepartments.map((department, deptIdx) => {
                   const deptMembers = membersByDepartment.get(department.id) ?? []
-                  const employeeCount = deptMembers.filter(member => member.role === 'Employee' && userIdsWithShiftToday.has(member.id)).length
+                  // Total department headcount (BUG-019, confirmed 2026-07-29) — not "scheduled
+                  // today", to match Team page's Departments card metric.
+                  const employeeCount = deptMembers.filter(member => member.role === 'Employee').length
                   const deptManagerList = departmentManagers.filter(item => item.department_id === department.id)
-                  const managerCountToday = deptManagerList.filter(item => userIdsWithShiftToday.has(item.manager_id)).length
+                  const managerCountToday = deptManagerList.length
                   const isDragging = draggingDepartmentId === department.id
                   const isDragOver = dragOverDepartmentId === department.id
                   return (
@@ -5372,12 +5417,22 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                               const cell = batchCells[key] ?? { user_id: member.id, shift_date: date, start_time: defaultStartTime, end_time: defaultEndTime, enabled: true }
                               if (cell.enabled === false) return null
                               const existing = futureShiftMap.get(key) ?? []
-                              const prevDayKey = `${member.id}_${formatDateKey(addDays(new Date(`${date}T00:00:00`), -1))}`
-                              const nextDayKey = `${member.id}_${formatDateKey(addDays(new Date(`${date}T00:00:00`), 1))}`
+                              const prevDate = formatDateKey(addDays(new Date(`${date}T00:00:00`), -1))
+                              const nextDate = formatDateKey(addDays(new Date(`${date}T00:00:00`), 1))
+                              const prevDayKey = `${member.id}_${prevDate}`
+                              const nextDayKey = `${member.id}_${nextDate}`
+                              // BUG-022 — nearbyShifts used to only look at already-persisted shifts
+                              // (futureShiftMap), so two brand-new draft cells in this same batch
+                              // that clopening-conflict with EACH OTHER (neither exists in the DB
+                              // yet) went undetected. Pull in the sibling draft cells too.
+                              const draftPrev = batchCells[prevDayKey]
+                              const draftNext = batchCells[nextDayKey]
                               const nearbyShifts = [
                                 ...existing,
                                 ...(futureShiftMap.get(prevDayKey) ?? []),
                                 ...(futureShiftMap.get(nextDayKey) ?? []),
+                                ...(draftPrev && draftPrev.enabled !== false ? [{ shift_date: prevDate, start_time: draftPrev.start_time, end_time: draftPrev.end_time }] : []),
+                                ...(draftNext && draftNext.enabled !== false ? [{ shift_date: nextDate, start_time: draftNext.start_time, end_time: draftNext.end_time }] : []),
                               ]
                               const clopeningConflict = findClopeningConflict({
                                 shift_date: date,
@@ -6407,6 +6462,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
           basePath={basePath}
           canModifyClockTimes={scopeToManagerDepartments}
           scopeToManagerDepartments={scopeToManagerDepartments}
+          scopeToEmployeeSelf={scopeToEmployeeSelf}
           showSuccessToast={showSuccessToast}
           showErrorToast={showErrorToast}
         />

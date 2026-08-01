@@ -243,6 +243,7 @@ export function JobDetailPanel({
   canApply = false,
   actionSlot,
   variant = 'panel',
+  afterCompanyProfile,
 }: {
   job: JobView
   onClose?: () => void
@@ -254,6 +255,11 @@ export function JobDetailPanel({
   // 'panel' = sticky sidebar (Job Board); 'modal' = static full-width block inside a modal overlay;
   // 'inline' = embedded inside a host block that already shows title/company — no chrome, no close.
   variant?: 'panel' | 'modal' | 'inline'
+  // Extra section rendered after Company Profile, inside this same scrollable shell — e.g. the
+  // Applications page's "Submitted With This Application" snapshot. Kept as a slot rather than a
+  // JobView field because it's specific to "an applicant viewing their own application", which
+  // this shared job-board/application panel has no other concept of.
+  afterCompanyProfile?: React.ReactNode
 }) {
   const isShiftJob = resolveJobType(job) === 'shift'
   const cd = deadlineCountdown(job.expires_at)
@@ -430,6 +436,8 @@ export function JobDetailPanel({
           </div>
         </div>
       </div>
+
+      {afterCompanyProfile}
     </div>
   )
 }

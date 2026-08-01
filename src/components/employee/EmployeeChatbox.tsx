@@ -16,9 +16,9 @@ import {
 } from 'lucide-react'
 import RoleAvatar from '@/components/RoleAvatar'
 import Spinner from '@/components/Spinner'
-import { ShowcaseCard } from '@/components/panel'
-import { ModalOverlay, ModalBox, ModalHeader, modalLabelStyle } from '@/components/modal'
+import { ModalOverlay, ModalBox, ModalHeader, modalLabelStyle, modalDestructiveButtonStyle } from '@/components/modal'
 import { useResourceInvalidation } from '@/components/realtime/RealtimeNotificationsProvider'
+import { DASHBOARD_SKELETON_KEYFRAMES, SkeletonLine } from '@/components/dashboard/ClockFlow'
 
 type Contact = { id: string; full_name: string; role: string; email_address: string; profile_photo_url: string | null }
 
@@ -26,6 +26,7 @@ type Conversation = {
   partnerId: string
   partnerName: string
   partnerRole: string
+  partnerPhotoUrl?: string | null
   lastMessage: string
   lastTime: string
   unreadCount: number
@@ -52,15 +53,26 @@ function formatTime(iso: string) {
 type Props = {
   companyId: string
   internalUserId: string
+  // Reports the total unread-message count live, straight off the same `conversations` state
+  // this component already keeps in sync (fetched on mount, refetched on realtime 'communication'
+  // invalidation, and refetched right after opening a panel marks it read) — driving the
+  // Communication page's Chat tab dot off a second independent fetch would lag one tick behind
+  // whatever the user just did inside this component (open a panel, receive a message).
+  onUnreadCount?: (count: number) => void
+  // Once clocked out of every shift today, sending messages locks too — same rule as the Tasks
+  // page and Shifts page's My Requests once clocked out (2026-08-02). Reading existing
+  // conversations still works; only composing is blocked.
+  readOnly?: boolean
 }
 
-export default function EmployeeChatbox({ companyId, internalUserId }: Props) {
+export default function EmployeeChatbox({ companyId, internalUserId, onUnreadCount, readOnly = false }: Props) {
   const [contacts, setContacts] = useState<Contact[]>([])
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [filteredConversations, setFilteredConversations] = useState<Conversation[]>([])
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set())
   const [search, setSearch] = useState('')
   const [deletingConvId, setDeletingConvId] = useState<string | null>(null)
+  const [deleteConvConfirmId, setDeleteConvConfirmId] = useState<string | null>(null)
 
   // Multi-panel chat state (up to 4 panels), mirrors CommunicationView's Chatbox exactly.
   const [openPanelIds, setOpenPanelIds] = useState<string[]>([])
@@ -81,7 +93,7 @@ export default function EmployeeChatbox({ companyId, internalUserId }: Props) {
   const [composeOpen, setComposeOpen] = useState(false)
   const [composeSearch, setComposeSearch] = useState('')
 
-  useEffect(() => {
+  const fetchContacts = useCallback(() => {
     if (!internalUserId) return
     fetch(`/api/employee/contacts?user_id=${internalUserId}`)
       .then(r => r.json())
@@ -89,8 +101,16 @@ export default function EmployeeChatbox({ companyId, internalUserId }: Props) {
       .catch(() => {})
   }, [internalUserId])
 
+  useEffect(() => { fetchContacts() }, [fetchContacts])
+  // Re-fetch when a department reassignment (UC31) changes who this Employee can message —
+  // without this the contact list stayed stale until a manual page refresh (BUG-046).
+  useResourceInvalidation(['team'], fetchContacts)
+
+  const [conversationsLoading, setConversationsLoading] = useState(true)
+  const lastConvLoadedAtRef = useRef(0)
   const fetchConversations = useCallback((keepPlaceholderId?: string) => {
     if (!internalUserId) return
+    lastConvLoadedAtRef.current = Date.now()
     fetch(`/api/inbox/messages?user_id=${internalUserId}`)
       .then(r => r.json())
       .then(d => {
@@ -104,6 +124,7 @@ export default function EmployeeChatbox({ companyId, internalUserId }: Props) {
           return placeholder ? [placeholder, ...fetched] : fetched
         })
       })
+      .finally(() => setConversationsLoading(false))
   }, [internalUserId])
 
   useEffect(() => {
@@ -115,7 +136,15 @@ export default function EmployeeChatbox({ companyId, internalUserId }: Props) {
     } catch {}
   }, [internalUserId, fetchConversations])
 
-  useResourceInvalidation(['communication'], () => fetchConversations())
+  useResourceInvalidation(['communication'], () => {
+    // Skip the realtime echo of a message this same tab just sent (same fix as BUG-060).
+    if (Date.now() - lastConvLoadedAtRef.current < 1500) return
+    fetchConversations()
+  })
+
+  useEffect(() => {
+    onUnreadCount?.(conversations.reduce((sum, c) => sum + c.unreadCount, 0))
+  }, [conversations, onUnreadCount])
 
   useEffect(() => {
     const q = search.toLowerCase()
@@ -256,6 +285,7 @@ export default function EmployeeChatbox({ companyId, internalUserId }: Props) {
     } catch {
     } finally {
       setDeletingConvId(null)
+      setDeleteConvConfirmId(null)
     }
   }
 
@@ -275,6 +305,7 @@ export default function EmployeeChatbox({ companyId, internalUserId }: Props) {
   }
 
   async function handleSendMessage(partnerId: string) {
+    if (readOnly) return
     const conv = conversations.find(c => c.partnerId === partnerId)
     const content = (panelInputs[partnerId] ?? '').trim()
     if (!content || !conv || !internalUserId || !companyId) return
@@ -339,6 +370,7 @@ export default function EmployeeChatbox({ companyId, internalUserId }: Props) {
   }
 
   async function uploadAndSendPanelAttachment(partnerId: string) {
+    if (readOnly) return
     const files = panelAttachFiles[partnerId] ?? []
     const conv = conversations.find(c => c.partnerId === partnerId)
     if (files.length === 0 || !conv || !internalUserId || !companyId) return
@@ -388,6 +420,7 @@ export default function EmployeeChatbox({ companyId, internalUserId }: Props) {
       if (prev.some(c => c.partnerId === member.id)) return prev
       const placeholder: Conversation = {
         partnerId: member.id, partnerName: member.full_name, partnerRole: member.role,
+        partnerPhotoUrl: member.profile_photo_url,
         lastMessage: '', lastTime: new Date().toISOString(), unreadCount: 0,
       }
       return [placeholder, ...prev]
@@ -401,31 +434,54 @@ export default function EmployeeChatbox({ companyId, internalUserId }: Props) {
   const communicationReady = Boolean(internalUserId && companyId)
 
   return (
-    <div style={{ height: '100%', minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-    <ShowcaseCard icon={<MessageSquare size={15} color="#F97316" />} title="Chatbox" fillHeight>
-    <div style={{ height: '100%', minHeight: 0, display: 'grid', gridTemplateColumns: '300px minmax(0, 1fr)', gap: 16 }}>
-      {/* Left: conversations. */}
-      <div style={{ minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-        <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
-          <div style={{ flex: 1, minWidth: 0, height: 32, display: 'flex', alignItems: 'center', gap: 6, background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 9, padding: '0 10px' }}>
-            <Search size={13} color="#94A3B8" />
+    <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: '400px minmax(0, 1fr)', gap: 12, overflow: 'hidden' }}>
+      {/* Left: conversations — own card, same structure/spacing as Manager's CommunicationView
+          Chat tab (src/components/communication/CommunicationView.tsx) so the two only differ in
+          which actions are available, never in layout/sizing (confirmed 2026-07-31: this used to
+          be nested one level deeper inside a single outer "Chatbox" card with its own
+          padding+overflowY:auto wrapper, which both narrowed the list column to 300px vs Manager's
+          400px and broke the height chain down to the message panel, cutting off content that
+          Manager's page showed in full for the exact same conversation). */}
+      <div style={{ maxHeight: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', background: '#FFFFFF', borderRadius: 14, border: '1px solid #E5E7EB', boxShadow: '0 1px 4px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '16px 18px', borderBottom: '1px solid #E2E8F0', flexShrink: 0 }}>
+          <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            <MessageSquare size={15} style={{ color: '#F97316' }} />
+          </div>
+          <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>Chatbox</span>
+        </div>
+        <div style={{ padding: '10px 12px 0', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ flex: 1, minWidth: 0, height: 36, display: 'flex', alignItems: 'center', gap: 8, background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 10, padding: '0 13px' }}>
+            <Search size={15} color="#94A3B8" style={{ flexShrink: 0 }} />
             <input
               value={search} onChange={e => setSearch(e.target.value)}
-              placeholder="Search…"
-              style={{ flex: 1, minWidth: 0, border: 'none', background: 'transparent', outline: 'none', fontSize: 12, color: '#0F172A', fontWeight: 500 }}
+              placeholder="Search conversations…"
+              style={{ flex: 1, minWidth: 0, border: 'none', background: 'transparent', outline: 'none', fontSize: 13, color: '#0F172A', fontWeight: 500 }}
             />
           </div>
           <button onClick={() => { setComposeOpen(true); setComposeSearch('') }} disabled={!communicationReady} title="New message"
-            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, background: communicationReady ? '#F97316' : '#E5E7EB', border: 'none', borderRadius: 9, color: communicationReady ? '#fff' : '#9CA3AF', cursor: communicationReady ? 'pointer' : 'not-allowed', flexShrink: 0 }}
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 36, height: 36, background: communicationReady ? '#F97316' : '#E5E7EB', border: 'none', borderRadius: 10, color: communicationReady ? '#fff' : '#9CA3AF', cursor: communicationReady ? 'pointer' : 'not-allowed', flexShrink: 0 }}
           >
-            <SquarePen size={15} strokeWidth={2.5} />
+            <SquarePen size={18} strokeWidth={2.5} />
           </button>
         </div>
 
-        <div style={{ overflowY: 'auto', flex: 1, minHeight: 0, padding: '18px 0 8px' }}>
-          {filteredConversations.length === 0 ? (
-            <div style={{ height: 140, borderRadius: 12, background: '#F8FAFC', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94A3B8', gap: 6, fontWeight: 600, fontSize: 12 }}>
-              <MessageSquare size={22} strokeWidth={1.5} />
+        <div style={{ overflowY: 'auto', flex: 1, minHeight: 0, padding: '14px 10px 10px' }}>
+          {conversationsLoading ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <style>{DASHBOARD_SKELETON_KEYFRAMES}</style>
+              {[0, 1, 2].map(i => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 4px' }}>
+                  <SkeletonLine width={34} height={34} radius={999} />
+                  <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <SkeletonLine width="55%" height={12} />
+                    <SkeletonLine width="80%" height={10} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : filteredConversations.length === 0 ? (
+            <div style={{ height: 180, borderRadius: 12, background: '#F8FAFC', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94A3B8', gap: 8, fontWeight: 600, fontSize: 13 }}>
+              <MessageSquare size={26} strokeWidth={1.5} />
               {search ? 'No results' : 'No conversations yet'}
             </div>
           ) : filteredConversations.map(conv => {
@@ -442,7 +498,7 @@ export default function EmployeeChatbox({ companyId, internalUserId }: Props) {
                 title="Drag onto an open conversation to view side by side"
                 style={{
                   position: 'relative',
-                  display: 'flex', alignItems: 'center', gap: 12, padding: '13px 54px 13px 14px',
+                  display: 'flex', alignItems: 'center', gap: 12, padding: '18px 54px 18px 14px',
                   background: active ? '#FFF7ED' : '#FFFFFF',
                   border: active ? '1.5px solid rgba(249,115,22,0.35)' : '1.5px solid #EDF2F7',
                   borderRadius: 12, cursor: 'grab', textAlign: 'left', width: '100%', marginBottom: 14, boxSizing: 'border-box',
@@ -450,7 +506,7 @@ export default function EmployeeChatbox({ companyId, internalUserId }: Props) {
                 }}
               >
                 <button onClick={() => openPanelSolo(conv.partnerId)} style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0, background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', padding: 0 }}>
-                  <RoleAvatar role={conv.partnerRole} size={44} photoUrl={contacts.find(m => m.id === conv.partnerId)?.profile_photo_url ?? null} />
+                  <RoleAvatar role={conv.partnerRole} size={44} photoUrl={conv.partnerPhotoUrl ?? null} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 4 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
@@ -474,12 +530,12 @@ export default function EmployeeChatbox({ companyId, internalUserId }: Props) {
                     </div>
                   </div>
                 </button>
-                <span style={{ position: 'absolute', top: 13, right: 12, fontSize: 11.5, color: '#9CA3AF', fontWeight: 500 }}>{formatTime(conv.lastTime)}</span>
+                <span style={{ position: 'absolute', top: 16, right: 12, fontSize: 11.5, color: '#9CA3AF', fontWeight: 500 }}>{formatTime(conv.lastTime)}</span>
                 <button
-                  onClick={() => deleteConversation(conv.partnerId)}
+                  onClick={() => setDeleteConvConfirmId(conv.partnerId)}
                   title="Delete conversation"
                   disabled={deletingConvId === conv.partnerId}
-                  style={{ position: 'absolute', bottom: 13, right: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', width: 24, height: 24, background: 'none', border: 'none', borderRadius: 7, cursor: 'pointer', color: '#DC2626', transition: 'color 0.15s' }}
+                  style={{ position: 'absolute', bottom: 16, right: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', width: 24, height: 24, background: 'none', border: 'none', borderRadius: 7, cursor: 'pointer', color: '#DC2626', transition: 'color 0.15s' }}
                   onMouseEnter={e => { e.currentTarget.style.color = '#B91C1C' }}
                   onMouseLeave={e => { e.currentTarget.style.color = '#DC2626' }}
                 >
@@ -504,7 +560,7 @@ export default function EmployeeChatbox({ companyId, internalUserId }: Props) {
               const draggedListId = e.dataTransfer.getData('listPartnerId')
               if (draggedListId) openPanel(draggedListId)
             }}
-            style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#FFFFFF', borderRadius: 14, border: '1px solid #E5E7EB', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
             <div style={{ textAlign: 'center', color: '#94A3B8' }}>
               <div style={{ width: 48, height: 48, borderRadius: 16, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px', color: '#F97316' }}>
                 <MessageSquare size={20} strokeWidth={1.5} />
@@ -572,7 +628,7 @@ export default function EmployeeChatbox({ companyId, internalUserId }: Props) {
                     style={{ width: solo ? '100%' : '92%', margin: solo ? 0 : '10px auto 0', padding: '9px 10px', background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 11, display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, cursor: openPanelIds.length > 1 ? 'grab' : 'default', userSelect: 'none' }}
                     title={openPanelIds.length > 1 ? 'Drag to swap panels' : undefined}
                   >
-                    <RoleAvatar role={conv.partnerRole} size={34} photoUrl={contacts.find(m => m.id === partnerId)?.profile_photo_url ?? null} />
+                    <RoleAvatar role={conv.partnerRole} size={34} photoUrl={conv.partnerPhotoUrl ?? null} />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
                         <span style={{ fontWeight: 800, fontSize: 14, color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{conv.partnerName}</span>
@@ -588,7 +644,7 @@ export default function EmployeeChatbox({ companyId, internalUserId }: Props) {
                       {isPinned ? <PinOff size={14} strokeWidth={2.5} /> : <Pin size={14} strokeWidth={2.5} />}
                     </button>
                     <button
-                      onClick={() => deleteConversation(partnerId)}
+                      onClick={() => setDeleteConvConfirmId(partnerId)}
                       title="Delete conversation"
                       disabled={deletingConvId === partnerId}
                       style={{ flexShrink: 0, width: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#FEF2F2', border: '1.5px solid rgba(220,38,38,0.3)', borderRadius: 8, cursor: 'pointer', color: '#DC2626' }}
@@ -609,7 +665,7 @@ export default function EmployeeChatbox({ companyId, internalUserId }: Props) {
                     <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 7 }}>
                       {msgs.length === 0 && (
                         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
-                          <RoleAvatar role={conv.partnerRole} size={56} photoUrl={contacts.find(m => m.id === partnerId)?.profile_photo_url ?? null} />
+                          <RoleAvatar role={conv.partnerRole} size={56} photoUrl={conv.partnerPhotoUrl ?? null} />
                           <p style={{ margin: '14px 0 0', fontWeight: 700, fontSize: 15, color: '#374151' }}>No messages yet</p>
                           <p style={{ margin: '5px 0 0', fontSize: 12.5, color: '#9CA3AF', fontWeight: 500 }}>Send a message to start chatting with {conv.partnerName}</p>
                         </div>
@@ -640,7 +696,7 @@ export default function EmployeeChatbox({ companyId, internalUserId }: Props) {
                                 <div style={{ fontSize: 11, marginTop: 8, color: '#94A3B8', fontWeight: 500, textAlign: isMine ? 'right' : 'left' }}>{formatTime(msg.created_at)}</div>
                               </a>
                             ) : (
-                              <div style={{ maxWidth: '70%', padding: '8px 11px', borderRadius: isMine ? '13px 13px 3px 13px' : '13px 13px 13px 3px', background: isMine ? '#FFEDD5' : '#FFFFFF', border: isMine ? '1px solid #FED7AA' : '1px solid #EDF2F7', color: '#0F172A', fontSize: 15, fontWeight: 500, lineHeight: 1.5, boxShadow: '0 1px 4px rgba(15,23,42,0.04)' }}>
+                              <div style={{ maxWidth: '70%', padding: '8px 11px', borderRadius: isMine ? '13px 13px 3px 13px' : '13px 13px 13px 3px', background: isMine ? '#FFEDD5' : '#FFFFFF', border: isMine ? '1px solid #FED7AA' : '1px solid #EDF2F7', color: '#0F172A', fontSize: 15, fontWeight: 500, lineHeight: 1.5, boxShadow: '0 1px 4px rgba(15,23,42,0.04)', wordBreak: 'break-word', overflowWrap: 'break-word' }}>
                                 {msg.content}
                                 <div style={{ fontSize: 11, marginTop: 8, color: '#94A3B8', fontWeight: 500, textAlign: isMine ? 'right' : 'left' }}>{formatTime(msg.created_at)}</div>
                               </div>
@@ -681,13 +737,13 @@ export default function EmployeeChatbox({ companyId, internalUserId }: Props) {
                         ref={el => { panelFileRefs.current[partnerId] = el }}
                         onChange={e => { const files = Array.from(e.target.files ?? []); if (files.length) pickPanelAttachments(partnerId, files); e.target.value = '' }}
                       />
-                      {!conv.partnerDeleted && (
+                      {!conv.partnerDeleted && !readOnly && (
                         <button onClick={() => panelPhotoRefs.current[partnerId]?.click()} title="Send photo"
                           style={{ flexShrink: 0, width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#FFF7ED', border: '1.5px solid rgba(249,115,22,0.25)', borderRadius: 9, cursor: 'pointer', color: '#F97316' }}>
                           <ImagePlus size={16} strokeWidth={2} />
                         </button>
                       )}
-                      {!conv.partnerDeleted && (
+                      {!conv.partnerDeleted && !readOnly && (
                         <button onClick={() => panelFileRefs.current[partnerId]?.click()} title="Send file"
                           style={{ flexShrink: 0, width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#EFF6FF', border: '1.5px solid rgba(59,130,246,0.25)', borderRadius: 9, cursor: 'pointer', color: '#3B82F6' }}>
                           <Paperclip size={15} strokeWidth={2} />
@@ -696,12 +752,12 @@ export default function EmployeeChatbox({ companyId, internalUserId }: Props) {
                       <input
                         value={input}
                         onChange={e => setPanelInputs(p => ({ ...p, [partnerId]: e.target.value }))}
-                        onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !conv.partnerDeleted) { e.preventDefault(); if (attachFiles.length > 0) void uploadAndSendPanelAttachment(partnerId); else void handleSendMessage(partnerId) } }}
-                        placeholder={conv.partnerDeleted ? 'Account removed' : 'Type a message…'}
-                        disabled={conv.partnerDeleted}
-                        style={{ flex: 1, minWidth: 0, height: 38, padding: '0 12px', border: '1.5px solid #E2E8F0', borderRadius: 9, fontSize: 13.5, fontWeight: 500, outline: 'none', background: conv.partnerDeleted ? '#F8FAFC' : '#FFFFFF', color: conv.partnerDeleted ? '#94A3B8' : '#0F172A' }}
+                        onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !conv.partnerDeleted && !readOnly) { e.preventDefault(); if (attachFiles.length > 0) void uploadAndSendPanelAttachment(partnerId); else void handleSendMessage(partnerId) } }}
+                        placeholder={conv.partnerDeleted ? 'Account removed' : readOnly ? "You've clocked out — messaging is locked" : 'Type a message…'}
+                        disabled={conv.partnerDeleted || readOnly}
+                        style={{ flex: 1, minWidth: 0, height: 38, padding: '0 12px', border: '1.5px solid #E2E8F0', borderRadius: 9, fontSize: 13.5, fontWeight: 500, outline: 'none', background: (conv.partnerDeleted || readOnly) ? '#F8FAFC' : '#FFFFFF', color: (conv.partnerDeleted || readOnly) ? '#94A3B8' : '#0F172A' }}
                       />
-                      {!conv.partnerDeleted && (
+                      {!conv.partnerDeleted && !readOnly && (
                         <button
                           onClick={() => { if (attachFiles.length > 0) void uploadAndSendPanelAttachment(partnerId); else void handleSendMessage(partnerId) }}
                           disabled={sending || uploading || (!input.trim() && attachFiles.length === 0)}
@@ -718,7 +774,6 @@ export default function EmployeeChatbox({ companyId, internalUserId }: Props) {
           </div>
         )}
       </div>
-    </div>
 
       {composeOpen && (
         <ModalOverlay onClose={() => setComposeOpen(false)} maxWidth="420px">
@@ -748,7 +803,28 @@ export default function EmployeeChatbox({ companyId, internalUserId }: Props) {
           </ModalBox>
         </ModalOverlay>
       )}
-    </ShowcaseCard>
+
+      {deleteConvConfirmId && (
+        <ModalOverlay onClose={() => setDeleteConvConfirmId(null)} maxWidth="400px">
+          <ModalBox>
+            <ModalHeader title="Delete Conversation" icon={<Trash2 size={15} color="#fff" strokeWidth={2.5} />} iconBg="linear-gradient(135deg, #EF4444, #DC2626)" onClose={() => setDeleteConvConfirmId(null)} />
+            <div style={{ padding: '20px 24px 0' }}>
+              <p style={{ fontSize: '0.9375rem', color: '#374151', margin: 0, lineHeight: 1.6 }}>
+                This permanently deletes every message in this conversation for both you and the other person — not just from your own view. This cannot be undone.
+              </p>
+            </div>
+            <div style={{ padding: '20px 24px 20px', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button onClick={() => setDeleteConvConfirmId(null)} disabled={deletingConvId === deleteConvConfirmId}
+                style={{ padding: '7px 16px', background: 'none', border: '1.5px solid #E5E7EB', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#6B7280', cursor: 'pointer' }}>
+                Cancel
+              </button>
+              <button onClick={() => deleteConversation(deleteConvConfirmId)} disabled={deletingConvId === deleteConvConfirmId} style={modalDestructiveButtonStyle(deletingConvId === deleteConvConfirmId)}>
+                {deletingConvId === deleteConvConfirmId ? <Spinner size={13} /> : <Trash2 size={13} />} Delete
+              </button>
+            </div>
+          </ModalBox>
+        </ModalOverlay>
+      )}
     </div>
   )
 }

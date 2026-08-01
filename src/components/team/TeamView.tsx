@@ -2139,6 +2139,7 @@ export default function TeamView({ sidebar, basePath, permissions }: {
     // have no way to actually save (create/update/delete-department are Owner-only server-side).
     if (!permissions.canManageDepartments) return
     setDepartmentModal('edit')
+    setDepartmentModalTab('manual')
     setActiveDepartment(department)
     setDepartmentNameInput(department.name)
     setDepartmentColorInput(department.color ?? deptColor(department.id))
@@ -2159,7 +2160,7 @@ export default function TeamView({ sidebar, basePath, permissions }: {
     setDepartmentActionLoading(true)
     setDepartmentActionError('')
     try {
-      if (departmentModalTab === 'import') {
+      if (departmentModal === 'add' && departmentModalTab === 'import') {
         const res = await fetch('/api/import/departments', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -2548,10 +2549,10 @@ export default function TeamView({ sidebar, basePath, permissions }: {
                       className="dept-card-item"
                       style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', padding: '14px 16px', background: highlightDeptId === dept.id ? '#FFF7ED' : '#F9FAFB', border: `1px solid ${highlightDeptId === dept.id ? '#F97316' : '#E5E7EB'}`, borderRadius: 10, cursor: 'pointer', transition: 'border-color 0.15s, background 0.15s', animationDelay: `${0.28 + companyDepartments.indexOf(dept) * 0.07}s` }}
                     >
-                      <div>
-                        <span style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 10 }}>
+                      <div style={{ minWidth: 0 }}>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 10, minWidth: 0 }}>
                           <span style={{ width: 8, height: 8, borderRadius: 999, background: deptColor(dept.id), flexShrink: 0 }} />
-                          <span style={{ fontSize: '0.9375rem', fontWeight: 600, color: '#374151' }}>{dept.name}</span>
+                          <span title={dept.name} style={{ fontSize: '0.9375rem', fontWeight: 600, color: '#374151', minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{dept.name}</span>
                         </span>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -3542,7 +3543,7 @@ export default function TeamView({ sidebar, basePath, permissions }: {
                 <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
                   <div>
                     <label style={modalLabelStyle}>Department name</label>
-                    <input value={departmentNameInput} onChange={e => setDepartmentNameInput(e.target.value)} style={modalInputStyle} placeholder="Operations" />
+                    <input value={departmentNameInput} onChange={e => setDepartmentNameInput(e.target.value)} maxLength={100} style={modalInputStyle} placeholder="Operations" />
                   </div>
 
                   <DepartmentColorPicker value={departmentColorInput} onChange={setDepartmentColorInput} usedColors={companyDepartments.filter(d => d.id !== activeDepartment.id).map(d => d.color ?? deptColor(d.id))} />
@@ -3584,7 +3585,7 @@ export default function TeamView({ sidebar, basePath, permissions }: {
                     <>
                       <div>
                         <label style={modalLabelStyle}>Department name</label>
-                        <input value={departmentNameInput} onChange={e => setDepartmentNameInput(e.target.value)} style={modalInputStyle} placeholder="Operations" />
+                        <input value={departmentNameInput} onChange={e => setDepartmentNameInput(e.target.value)} maxLength={100} style={modalInputStyle} placeholder="Operations" />
                       </div>
                       <DepartmentColorPicker value={departmentColorInput} onChange={setDepartmentColorInput} usedColors={companyDepartments.map(d => d.color ?? deptColor(d.id))} />
                     </>
@@ -4412,6 +4413,11 @@ export default function TeamView({ sidebar, basePath, permissions }: {
                         placeholder="Select a department"
                         options={departments.map(d => ({ value: d.id, label: d.name }))}
                       />
+                      {/* BUG-008 — Send Invite silently disabled with no department picked, same
+                          blind-button pattern as registration's Create Account. */}
+                      {!inviteDeptId && (
+                        <span style={{ fontSize: '0.75rem', color: '#DC2626', marginTop: 4, display: 'block' }}>Select a department to continue</span>
+                      )}
                     </div>
                   )}
 

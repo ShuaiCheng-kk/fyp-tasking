@@ -14,13 +14,6 @@ vi.mock('@/repositories/auth/authRepository', () => ({
   },
 }))
 
-vi.mock('@/repositories/company/companyRepository', () => ({
-  companyRepository: {
-    nullifyUserCompanyId: vi.fn(),
-    expireInvitationCodesForUser: vi.fn(),
-  },
-}))
-
 import { userService } from './userService'
 import { authRepository } from '@/repositories/auth/authRepository'
 

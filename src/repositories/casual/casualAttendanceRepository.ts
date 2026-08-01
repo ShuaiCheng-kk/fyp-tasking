@@ -47,12 +47,14 @@ export const casualAttendanceRepository = {
 
   async getJobPostingsByIds(ids: string[]): Promise<{ id: string; title: string; company_name: string | null; location: string | null; created_by: string | null }[]> {
     if (ids.length === 0) return []
-    const { data, error } = await supabase.from('job_postings').select('id, title, location, created_by, companies(name)').in('id', ids)
+    // job_postings has no location column of its own — pull it from the companies join instead
+    // (same fix as casualDashboardRepository.getJobPostingsByIds — see that file for the schema-drift note).
+    const { data, error } = await supabase.from('job_postings').select('id, title, created_by, companies(name, location)').in('id', ids)
     if (error) throw new Error(error.message)
     return (data ?? []).map((row: any) => {
       const { companies, ...rest } = row
       const co = Array.isArray(companies) ? companies[0] : companies
-      return { ...rest, company_name: co?.name ?? null }
+      return { ...rest, company_name: co?.name ?? null, location: co?.location ?? null }
     })
   },
 
@@ -114,6 +116,21 @@ export const casualAttendanceRepository = {
       .maybeSingle()
     if (error) throw new Error(error.message)
     return (data as AssignmentWithShift | null) ?? null
+  },
+
+  // A company can ban a Casual Worker per-company (casualWorkerStatusService, Team page) — the same
+  // worker can be banned by one company and stay active for another. Used to stop them clocking into
+  // a shift for a company that's since banned them, without touching their access to other companies.
+  async isBannedByCompany(casual_worker_id: string, company_id: string): Promise<boolean> {
+    const { data, error } = await supabase
+      .from('casualworker_departments')
+      .select('inactive_at')
+      .eq('casual_worker_id', casual_worker_id)
+      .eq('company_id', company_id)
+      .not('inactive_at', 'is', null)
+      .maybeSingle()
+    if (error) throw new Error(error.message)
+    return !!data
   },
 
   async getAttendanceRecordsByAssignmentIds(assignmentIds: string[]): Promise<AttendanceRecord[]> {

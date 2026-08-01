@@ -8,15 +8,30 @@
 // affordances this dashboard surface doesn't need) — click opens a read-only detail popup;
 // full editing stays on the dedicated Tasks page.
 
-import { Fragment, useEffect, useState } from 'react'
-import { AlertTriangle, ArrowRight, CheckCircle, Clock, Eye, GitBranch, GripVertical, Layers } from 'lucide-react'
+import { Fragment, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { AlertCircle, AlertTriangle, ArrowRight, Check, CheckCircle, ChevronDown, Clock, Eye, GitBranch, GripVertical, Layers } from 'lucide-react'
 import { Task } from '@/types/Task'
 import { ShowcaseCard } from '@/components/panel'
 import { ModalHeader, modalLabelStyle, modalInputStyle } from '@/components/modal'
 import { modalKeyframes } from '@/components/theme/tokens'
 import { useResourceInvalidation } from '@/components/realtime/RealtimeNotificationsProvider'
+import { DASHBOARD_SKELETON_KEYFRAMES, SkeletonLine } from '@/components/dashboard/ClockFlow'
 
 const COLUMNS: Task['status'][] = ['Assigned', 'In Progress', 'Review', 'Complete']
+
+// Same deadline-warning rule as Owner/Manager's own Tasks page (TasksView.tsx) — red only once
+// overdue or within 2 hours of due, not unconditionally. An Employee is internal staff (in again
+// tomorrow), unlike a Casual Worker's board (CasualTaskBoard.tsx), which is scoped to a single
+// day's gig and deliberately keeps every deadline red regardless of how far off it is (2026-08-02
+// — this widget previously copied that CW rule by mistake).
+function isDueOverdue(due: string): boolean {
+  return new Date(due) < new Date()
+}
+function isDueWithinHours(due: string, hours: number): boolean {
+  const msRemaining = new Date(due).getTime() - Date.now()
+  return msRemaining > 0 && msRemaining <= hours * 60 * 60 * 1000
+}
 
 const PRIORITY_COLORS: Record<string, { bg: string; text: string }> = {
   Low: { bg: '#F1F5F9', text: '#475569' },
@@ -35,17 +50,24 @@ const STATUS_CONFIG: Record<Task['status'], { label: string; color: string; bg: 
 type Props = {
   companyId: string
   internalUserId: string
+  // Once every one of today's shifts is clocked out, the Employee has left for the day — same
+  // "read-only once clocked out" rule as the Casual Worker's own board (CasualTaskBoard.tsx's
+  // readOnly), applied here to Assigned/In Progress drag-to-move and sub-task ticking (2026-08-02).
+  clockedOut?: boolean
 }
 
-export default function EmployeeMyTasksBoard({ companyId, internalUserId }: Props) {
+export default function EmployeeMyTasksBoard({ companyId, internalUserId, clockedOut = false }: Props) {
   const [tasks, setTasks] = useState<Task[]>([])
   const [loading, setLoading] = useState(true)
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null)
   const [dragOverCol, setDragOverCol] = useState<Task['status'] | null>(null)
   const [detailTask, setDetailTask] = useState<Task | null>(null)
+  const [expandedTaskIds, setExpandedTaskIds] = useState<Set<string>>(new Set())
 
+  const lastLoadedAtRef = useRef(0)
   const load = async () => {
     if (!companyId || !internalUserId) return
+    lastLoadedAtRef.current = Date.now()
     const res = await fetch(`/api/task?company_id=${companyId}&kanban=true&assigned_user_id=${encodeURIComponent(internalUserId)}&viewer_id=${encodeURIComponent(internalUserId)}`)
     const data = await res.json()
     if (data.success) {
@@ -61,17 +83,30 @@ export default function EmployeeMyTasksBoard({ companyId, internalUserId }: Prop
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyId, internalUserId])
 
-  useResourceInvalidation(['tasks'], () => { void load() })
+  // Skip the realtime echo of our own just-completed write (same fix as BUG-060/CasualTaskBoard).
+  useResourceInvalidation(['tasks'], () => {
+    if (Date.now() - lastLoadedAtRef.current < 1500) return
+    void load()
+  })
 
-  const canDragTask = (task: Task): boolean => task.status !== 'Review' && task.status !== 'Complete'
+  const canDragTask = (task: Task): boolean =>
+    !clockedOut && task.status !== 'Review' && task.status !== 'Complete'
+
+  // A card can only ever move exactly one column forward — never backward, never skip a column.
+  // Shared by the actual drop handler below and by the column highlight on drag-over, so a column
+  // that would reject the drop never lights up as if it were a valid target in the first place
+  // (same fix as Casual Worker's board, 2026-08-01 — this widget never had it).
+  const isValidDropTarget = (task: Task, targetStatus: Task['status']): boolean => {
+    if (!canDragTask(task)) return false
+    const currentIdx = COLUMNS.indexOf(task.status)
+    const targetIdx = COLUMNS.indexOf(targetStatus)
+    return targetIdx === currentIdx + 1
+  }
 
   const handleDrop = async (task: Task, targetStatus: Task['status']) => {
     setDragOverCol(null)
     setDraggingTaskId(null)
-    if (!canDragTask(task)) return
-    const currentIdx = COLUMNS.indexOf(task.status)
-    const targetIdx = COLUMNS.indexOf(targetStatus)
-    if (targetIdx !== currentIdx + 1) return
+    if (!isValidDropTarget(task, targetStatus)) return
 
     const subTasks = tasks.filter(t => t.parent_task_id === task.id)
     const affectedIds = new Set([task.id, ...subTasks.map(t => t.id)])
@@ -92,14 +127,77 @@ export default function EmployeeMyTasksBoard({ companyId, internalUserId }: Prop
     }
   }
 
-  const viewFieldValue: React.CSSProperties = { ...modalInputStyle, display: 'flex', alignItems: 'center' }
+  // Sub-tasks are a one-way checklist (matches taskService.completeSubTask): tick in sequence
+  // order while the parent is In Progress; there is no un-ticking. Ticking every sub-task does
+  // NOT move the parent — the assignee still drags the card to Review themselves, same as a task
+  // with no sub-tasks (2026-08-02, reversing 2026-07-31's auto-promote-on-last-tick — the system
+  // shouldn't decide the work is review-ready just because a checklist is done). No separate
+  // "Start Task"/"Submit for Review" button (previously added for BUG-025) — dragging the card is
+  // the only way a task advances.
+  const canToggleSubTask = (sub: Task): boolean => {
+    if (clockedOut) return false
+    if (sub.is_completed) return false
+    const parent = tasks.find(t => t.id === sub.parent_task_id)
+    if (!parent || parent.status !== 'In Progress') return false
+    const siblings = tasks.filter(t => t.parent_task_id === sub.parent_task_id)
+    return !siblings.some(s => (s.sequence_order ?? 0) < (sub.sequence_order ?? 0) && !s.is_completed)
+  }
+
+  const toggleSubTask = async (sub: Task) => {
+    if (!canToggleSubTask(sub)) return
+    // Once every sub-task is ticked there's nothing left to check off — collapse the checklist so
+    // it doesn't sit expanded showing an all-done, purely static list. This does NOT move the
+    // parent card: ticking sub-tasks is a checklist, not a decision that the work is ready for
+    // review — only the assignee dragging the card to Review does that (2026-08-02, reversing
+    // 2026-08-01's auto-promote-on-last-tick).
+    const siblings = tasks.filter(t => t.parent_task_id === sub.parent_task_id)
+    const isLastSubTask = !siblings.some(s => s.id !== sub.id && !s.is_completed)
+    if (isLastSubTask && sub.parent_task_id) {
+      const parentId = sub.parent_task_id
+      setExpandedTaskIds(prev => {
+        const next = new Set(prev)
+        next.delete(parentId)
+        return next
+      })
+    }
+    setTasks(prev => prev.map(t => t.id === sub.id ? { ...t, is_completed: true } : t))
+    try {
+      const res = await fetch('/api/task', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: sub.id, action: 'complete_subtask', assigned_by: internalUserId }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error()
+      void load()
+    } catch {
+      void load()
+    }
+  }
+
+  // Same field style as Casual Worker's read-only detail popup — the shared modal.ts
+  // modalInputStyle (0.9375rem) runs visibly bigger than TasksView.tsx's own local override,
+  // which both boards now match pixel-for-pixel (2026-07-31).
+  const viewFieldValue: React.CSSProperties = { ...modalInputStyle, fontSize: '0.8125rem', padding: '9px 12px', fontFamily: 'inherit', display: 'flex', alignItems: 'center' }
   const viewEmpty: React.CSSProperties = { ...viewFieldValue, color: '#9CA3AF', fontStyle: 'italic' }
 
-  const subTaskCountByParent = new Map<string, number>()
+  const toggleExpanded = (taskId: string) => {
+    setExpandedTaskIds(prev => {
+      const next = new Set(prev)
+      if (next.has(taskId)) next.delete(taskId)
+      else next.add(taskId)
+      return next
+    })
+  }
+
+  const subTasksByParent = new Map<string, Task[]>()
   for (const t of tasks) {
     if (!t.parent_task_id) continue
-    subTaskCountByParent.set(t.parent_task_id, (subTaskCountByParent.get(t.parent_task_id) ?? 0) + 1)
+    const arr = subTasksByParent.get(t.parent_task_id) ?? []
+    arr.push(t)
+    subTasksByParent.set(t.parent_task_id, arr)
   }
+  for (const arr of subTasksByParent.values()) arr.sort((a, b) => (a.sequence_order ?? 0) - (b.sequence_order ?? 0))
 
   return (
     <div style={{ height: '100%', minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', position: 'relative' }}>
@@ -107,16 +205,45 @@ export default function EmployeeMyTasksBoard({ companyId, internalUserId }: Prop
       icon={<Layers size={15} color="#F97316" />}
       title="My Tasks"
       rightContent={
-        <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.7rem', fontWeight: 600, color: '#9CA3AF', background: '#F3F4F6', padding: '3px 8px', borderRadius: 999, whiteSpace: 'nowrap', flexShrink: 0 }}>
-          <GripVertical size={11} /> Drag to move
-        </span>
+        // No hint once clocked out — cards read as done (not draggable, no hover motion), same
+        // as the Casual Worker's own board once its readOnly kicks in (2026-08-02).
+        !clockedOut && (
+          <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.7rem', fontWeight: 600, color: '#9CA3AF', background: '#F3F4F6', padding: '3px 8px', borderRadius: 999, whiteSpace: 'nowrap', flexShrink: 0 }}>
+            <GripVertical size={11} /> Drag to move
+          </span>
+        )
       }
       fillHeight
     >
       {loading ? (
-        <p style={{ margin: 0, color: '#6B7280', fontSize: '0.875rem' }}>Loading tasks…</p>
+        <div style={{ display: 'flex', flexDirection: 'row', gap: 10, height: '100%', boxSizing: 'border-box', minWidth: 640 }}>
+          <style>{DASHBOARD_SKELETON_KEYFRAMES}</style>
+          {COLUMNS.map(col => (
+            <div key={col} style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 10, background: '#F7F8FA', borderRadius: 12, border: '1px solid #F0F1F3', padding: '10px 10px 12px' }}>
+              <SkeletonLine width="60%" height={13} />
+              <SkeletonLine height={64} radius={10} />
+              <SkeletonLine height={64} radius={10} />
+            </div>
+          ))}
+        </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'stretch', gap: 0, height: '100%', boxSizing: 'border-box', minWidth: 640, overflowX: 'auto' }}>
+          {/* Same hover lift + shadow and sub-task expand transition as Casual Worker's board
+              (src/components/casual/CasualTaskBoard.tsx) — this widget never had it (2026-07-31). */}
+          <style>{`
+            .task-card {
+              transition: box-shadow 0.16s ease, transform 0.16s ease, border-color 0.16s ease;
+            }
+            .task-card:hover {
+              box-shadow: 0 6px 22px rgba(0,0,0,0.10), 0 0 0 1.5px rgba(249,115,22,0.15);
+              transform: translateY(-2px);
+            }
+            @keyframes empSubtasksIn {
+              from { opacity: 0; transform: translateY(-6px); }
+              to   { opacity: 1; transform: translateY(0); }
+            }
+            .emp-subtasks-in { animation: empSubtasksIn 0.2s ease both; }
+          `}</style>
           {COLUMNS.map((col, colIdx) => {
             const cfg = STATUS_CONFIG[col]
             const items = tasks.filter(t => t.status === col && !t.parent_task_id)
@@ -131,7 +258,12 @@ export default function EmployeeMyTasksBoard({ companyId, internalUserId }: Prop
                   </div>
                 )}
                 <div
-                  onDragOver={e => { e.preventDefault(); setDragOverCol(col) }}
+                  onDragOver={e => {
+                    const task = tasks.find(t => t.id === draggingTaskId)
+                    if (!task || !isValidDropTarget(task, col)) return
+                    e.preventDefault()
+                    setDragOverCol(col)
+                  }}
                   onDragLeave={() => setDragOverCol(prev => (prev === col ? null : prev))}
                   onDrop={e => {
                     e.preventDefault()
@@ -150,65 +282,148 @@ export default function EmployeeMyTasksBoard({ companyId, internalUserId }: Prop
                     transition: 'background 0.12s, border-color 0.12s',
                   }}
                 >
-                  <div style={{ padding: '10px 12px 9px', display: 'flex', alignItems: 'center', gap: 7, flexShrink: 0, borderBottom: '1px solid #ECEEF1' }}>
+                  <div style={{ padding: '11px 14px 10px', display: 'flex', alignItems: 'center', gap: 7, flexShrink: 0, borderBottom: '1px solid #ECEEF1' }}>
                     <div style={{ color: cfg.color, display: 'flex', alignItems: 'center' }}>{cfg.icon}</div>
                     <span style={{ fontWeight: 700, fontSize: '0.8125rem', color: cfg.color, flex: 1 }}>{cfg.label}</span>
                     <span style={{ fontSize: '0.72rem', fontWeight: 700, background: cfg.bg, color: cfg.color, padding: '2px 8px', borderRadius: 999 }}>{items.length}</span>
                   </div>
 
-                  <div style={{ flex: 1, minHeight: 96, overflowY: 'auto', padding: '10px 10px 12px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  <div style={{ flex: 1, minHeight: 96, overflowY: 'auto', padding: '10px 18px 12px', display: 'flex', flexDirection: 'column' }}>
                     {items.map(task => {
                       const draggable = canDragTask(task)
                       const priority = task.priority ? PRIORITY_COLORS[task.priority] : null
                       const needsRework = !!task.rejection_reason && task.status === 'In Progress'
-                      const subTaskCount = subTaskCountByParent.get(task.id) ?? 0
+                      const subTasks = subTasksByParent.get(task.id) ?? []
+                      const expanded = expandedTaskIds.has(task.id)
+                      // Playing-card-stack effect behind the card when it has sub-tasks and isn't
+                      // expanded yet — matches Casual Worker's board exactly (2026-07-31).
+                      const showStack = subTasks.length > 0 && !expanded
+                      // Card height/font/spacing now matches Manager's My Tasks tab TaskCard exactly
+                      // (showAssignee=false path in TasksView.tsx) instead of this widget's own
+                      // one-off smaller sizing (2026-08-02).
                       return (
+                        <div key={task.id} style={{ position: 'relative', marginBottom: showStack ? 22 : 14 }}>
+                        {showStack && (
+                          <>
+                            <div style={{ position: 'absolute', left: 12, right: 12, bottom: -8, height: 14, background: '#EEF1F5', border: '1px solid #E2E8F0', borderRadius: 10, zIndex: 0 }} />
+                            <div style={{ position: 'absolute', left: 6, right: 6, bottom: -4, height: 14, background: '#F7F9FB', border: '1px solid #E5E7EB', borderRadius: 10, zIndex: 1 }} />
+                          </>
+                        )}
                         <div
-                          key={task.id}
                           draggable={draggable}
                           onDragStart={() => draggable && setDraggingTaskId(task.id)}
                           onDragEnd={() => { setDraggingTaskId(null); setDragOverCol(null) }}
                           onClick={() => setDetailTask(task)}
+                          className="task-card"
                           style={{
                             position: 'relative',
+                            zIndex: 2,
                             background: '#FFFFFF',
                             border: '1px solid #E5E7EB',
                             borderRadius: 10,
-                            padding: '16px',
+                            padding: '16px 16px',
                             cursor: draggable ? 'grab' : 'pointer',
                             opacity: draggingTaskId === task.id ? 0.5 : 1,
                             boxSizing: 'border-box',
                           }}
                         >
-                          {(priority || needsRework || subTaskCount > 0) && (
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
+                          {(priority || needsRework || subTasks.length > 0 || task.assigned_by_name) && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
                               {priority && task.priority && (
-                                <span style={{ fontSize: '0.66rem', fontWeight: 800, padding: '3px 9px', borderRadius: 999, background: priority.bg, color: priority.text, letterSpacing: '0.01em' }}>
+                                <span style={{ fontSize: '0.72rem', fontWeight: 800, padding: '4px 10px', borderRadius: 999, background: priority.bg, color: priority.text, letterSpacing: '0.01em' }}>
                                   {task.priority}
                                 </span>
                               )}
+                              {task.assigned_by_name && (
+                                <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 999, fontSize: '0.72rem', fontWeight: 600, background: '#F1F5F9', color: '#475569', border: '1px solid #E2E8F0', whiteSpace: 'nowrap' }}>
+                                  Assigned by {task.assigned_by_name}
+                                </span>
+                              )}
                               {needsRework && (
-                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.66rem', fontWeight: 800, padding: '3px 9px', borderRadius: 999, background: '#FEF2F2', color: '#DC2626', letterSpacing: '0.01em' }}>
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', fontWeight: 800, padding: '4px 10px', borderRadius: 999, background: '#FEF2F2', color: '#DC2626', letterSpacing: '0.01em' }}>
                                   <AlertTriangle size={10} /> Rework
                                 </span>
                               )}
-                              {subTaskCount > 0 && (
-                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.65rem', fontWeight: 700, padding: '2px 8px', borderRadius: 999, background: '#F1F5F9', color: '#475569' }}>
+                              {subTasks.length > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={e => { e.stopPropagation(); toggleExpanded(task.id) }}
+                                  style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.65rem', fontWeight: 700, padding: '2px 7px', borderRadius: 999, background: '#F1F5F9', color: '#475569', border: 'none', cursor: 'pointer' }}
+                                >
                                   <GitBranch size={10} />
-                                  {subTaskCount}
-                                </span>
+                                  {subTasks.length}
+                                  <ChevronDown size={10} style={{ transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+                                </button>
                               )}
                             </div>
                           )}
 
-                          <p style={{ margin: 0, fontSize: '0.8125rem', fontWeight: 700, color: '#111827', lineHeight: 1.4 }}>{task.title}</p>
+                          <p style={{ margin: '0 0 12px', fontSize: '0.875rem', fontWeight: 600, color: '#111827', lineHeight: 1.4 }}>{task.title}</p>
 
-                          {task.due_at && (
-                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginTop: 10, fontSize: '0.7rem', fontWeight: 600, color: '#9CA3AF' }}>
-                              <Clock size={11} />
-                              {new Date(task.due_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                            </span>
-                          )}
+                          {task.due_at && (() => {
+                            const deadlineWarning = task.status !== 'Complete' && (isDueOverdue(task.due_at) || isDueWithinHours(task.due_at, 2))
+                            return (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 5, margin: '0 0 8px' }}>
+                                {deadlineWarning ? <AlertCircle size={13} color="#EF4444" /> : <Clock size={13} color="#9CA3AF" />}
+                                <span style={{ fontSize: '0.8125rem', fontWeight: 700, color: deadlineWarning ? '#EF4444' : '#6B7280', whiteSpace: 'nowrap' }}>
+                                  {new Date(task.due_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                </span>
+                              </div>
+                            )
+                          })()}
+                        </div>
+
+                        {expanded && subTasks.length > 0 && (
+                          <div className="emp-subtasks-in" style={{ marginTop: 8, paddingLeft: 14 }}>
+                            {subTasks.map((sub, idx) => {
+                              const done = sub.is_completed
+                              const canToggle = canToggleSubTask(sub)
+                              const toggleTitle = done
+                                ? 'Completed'
+                                : task.status !== 'In Progress'
+                                ? 'Start the task before checking off sub-tasks'
+                                : canToggle
+                                ? 'Mark as done'
+                                : 'Complete the previous sub-task first'
+                              return (
+                              <div key={sub.id} style={{ display: 'flex', alignItems: 'stretch', gap: 8 }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
+                                  <span style={{ width: 20, height: 20, marginTop: 10, borderRadius: '50%', background: done ? '#DCFCE7' : '#FFF3E8', color: done ? '#15803D' : '#EA580C', fontSize: 11, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                    {idx + 1}
+                                  </span>
+                                  {idx < subTasks.length - 1 && <div style={{ width: 1, flex: 1, background: '#E2E8F0' }} />}
+                                </div>
+                                <div
+                                  onClick={() => setDetailTask(sub)}
+                                  style={{ flex: 1, minWidth: 0, marginBottom: 8, padding: '9px 12px', borderRadius: 8, background: '#FFFFFF', border: '1px solid #EEF0F2', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}
+                                >
+                                  <p style={{ margin: 0, flex: 1, minWidth: 0, fontSize: '0.75rem', fontWeight: 600, color: done ? '#9CA3AF' : '#111827' }}>
+                                    {sub.title}
+                                  </p>
+                                  <button
+                                    type="button"
+                                    disabled={!canToggle}
+                                    onClick={e => { e.stopPropagation(); void toggleSubTask(sub) }}
+                                    title={toggleTitle}
+                                    style={{
+                                      width: 22, height: 22, borderRadius: '50%', flexShrink: 0,
+                                      border: done ? 'none' : '1.5px solid #D1D5DB',
+                                      background: done ? '#16A34A' : '#FFFFFF',
+                                      color: '#FFFFFF',
+                                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                      cursor: canToggle ? 'pointer' : 'not-allowed',
+                                      opacity: !done && !canToggle ? 0.5 : 1,
+                                      padding: 0,
+                                    }}
+                                  >
+                                    {done && <Check size={13} strokeWidth={3} />}
+                                  </button>
+                                </div>
+                              </div>
+                              )
+                            })}
+                          </div>
+                        )}
                         </div>
                       )
                     })}
@@ -220,17 +435,21 @@ export default function EmployeeMyTasksBoard({ companyId, internalUserId }: Prop
         </div>
       )}
 
-      {/* Read-only task detail — full editing stays on the dedicated Tasks page. Scoped to this
-          block only (absolute, not fixed) so opening it never dims the rest of the Dashboard. */}
-      {detailTask && (
+      {/* Read-only task detail — full editing stays on the dedicated Tasks page. Portaled to
+          document.body (same fix as Casual Worker's board, 2026-08-01) — an ancestor between here
+          and the page root has a completed `animation: ... both` fill-mode that leaves a non-none
+          `transform` behind, which per the CSS spec becomes the containing block for
+          `position:fixed` descendants; without the portal the overlay only ever covered this
+          block, not the whole page. */}
+      {detailTask && createPortal(
         <div
           onClick={() => setDetailTask(null)}
-          style={{ position: 'absolute', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', borderRadius: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 5, padding: 20, animation: 'overlayFadeIn 0.18s ease-out' }}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: 20, animation: 'overlayFadeIn 0.18s ease-out' }}
         >
           <style>{modalKeyframes}</style>
           <div
             onClick={e => e.stopPropagation()}
-            style={{ width: 'min(400px, 100%)', maxHeight: '100%', overflowY: 'auto', background: '#FFFFFF', borderRadius: 16, boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}
+            style={{ width: 'min(440px, 100%)', maxHeight: '100%', overflowY: 'auto', background: '#FFFFFF', borderRadius: 16, boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}
           >
             <ModalHeader
               title={detailTask.title}
@@ -243,20 +462,6 @@ export default function EmployeeMyTasksBoard({ companyId, internalUserId }: Prop
                 {detailTask.description
                   ? <div style={{ ...viewFieldValue, alignItems: 'flex-start', whiteSpace: 'pre-wrap', lineHeight: 1.55 }}>{detailTask.description}</div>
                   : <div style={viewEmpty}>No description</div>}
-              </div>
-
-              <div>
-                <label style={modalLabelStyle}>Deadline</label>
-                {detailTask.due_at
-                  ? <div style={viewFieldValue}>{new Date(detailTask.due_at).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
-                  : <div style={viewEmpty}>No deadline</div>}
-              </div>
-
-              <div>
-                <label style={modalLabelStyle}>Assigned By</label>
-                <div style={viewFieldValue}>
-                  {detailTask.assigned_by_name ?? 'Unknown'}
-                </div>
               </div>
 
               <div>
@@ -286,7 +491,8 @@ export default function EmployeeMyTasksBoard({ companyId, internalUserId }: Prop
               )}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </ShowcaseCard>
     </div>

@@ -1,6 +1,6 @@
 import { casualAttendanceRepository } from '@/repositories/casual/casualAttendanceRepository'
 import { applyClockInGracePeriod } from '@/services/shared/attendanceGrace'
-import { sgtInstant, sgtTodayKey } from '@/lib/singaporeTime'
+import { sgtInstant, sgtShiftEndInstant, sgtTodayKey } from '@/lib/singaporeTime'
 import { AttendanceRecord, CasualAttendanceOverview } from '@/types/Attendance'
 
 // UC49: the Clock In button only appears starting 30 minutes before the shift's scheduled
@@ -88,7 +88,17 @@ export const casualAttendanceService = {
 
     return clockedIn
       .map(a => {
-        const record = recordsByAssignment.get(a.id)!
+        const raw = recordsByAssignment.get(a.id)!
+        // An Owner/Manager correction (UC56) supersedes the worker's own recorded times — the
+        // worker's own history/pay must reflect the corrected time, or a fixed clock error never
+        // actually reaches the person it was fixed for (their view, and their pay, would keep
+        // computing off the original wrong time forever).
+        const record = {
+          clock_in_time: raw.modified_clock_in_time ?? raw.clock_in_time,
+          clock_out_time: raw.modified_clock_out_time ?? raw.clock_out_time,
+          break_in_time: raw.modified_break_in_time ?? raw.break_in_time,
+          break_out_time: raw.modified_break_out_time ?? raw.break_out_time,
+        }
         const job = a.shift.source_job_posting_id ? jobMap.get(a.shift.source_job_posting_id) : undefined
         const supervisor = a.supervisor_employee_id ? userMap.get(a.supervisor_employee_id) : undefined
         const poster = job?.created_by ? userMap.get(job.created_by) : undefined
@@ -96,13 +106,18 @@ export const casualAttendanceService = {
           ? hoursBetween({ clock_in_time: record.clock_in_time, clock_out_time: record.clock_out_time, break_in_time: record.break_in_time, break_out_time: record.break_out_time })
           : null
 
-        // Pay is only earned once the shift is completed (clocked out) — hourly_rate x actual
-        // hours worked. Mirrors the exact formula reportService uses for labor costing. Rate
-        // comes from the shift itself (set from job_postings.salary_amount at shift-creation
-        // time) — pay is decided by the job, not a fixed rate on the worker.
+        // Pay is only earned once the shift is completed (clocked out). Rate comes from the shift
+        // itself (set from job_postings.salary_amount at shift-creation time) — pay is decided by
+        // the job, not a fixed rate on the worker. A One-Off Job (is_open_ended) is paid the flat
+        // rate regardless of duration — hourly_rate × hours would inflate/deflate it based on how
+        // long the supervisor took to release Clock Out, which isn't the worker's pay to begin
+        // with (2026-08-01). A Shift Job is hourly_rate × actual hours worked, mirroring the same
+        // formula reportService uses for labor costing.
         let pay: number | null = null
-        if (record.clock_out_time && a.shift.hourly_rate !== null && a.shift.hourly_rate !== undefined && hours !== null) {
-          pay = Math.round(a.shift.hourly_rate * hours * 100) / 100
+        if (record.clock_out_time && a.shift.hourly_rate !== null && a.shift.hourly_rate !== undefined) {
+          pay = a.shift.is_open_ended
+            ? a.shift.hourly_rate
+            : hours !== null ? Math.round(a.shift.hourly_rate * hours * 100) / 100 : null
         }
 
         return {
@@ -179,12 +194,21 @@ export const casualAttendanceService = {
     }
     if (!assignment.shifts) throw new Error('Shift not found for this assignment')
 
+    // Per-company ban (casualWorkerStatusService, Team page "Inactive") — the worker may still be
+    // active for other companies, so this only blocks clock-in for shifts belonging to the company
+    // that banned them, not their account as a whole.
+    if (await casualAttendanceRepository.isBannedByCompany(user.id, assignment.shifts.company_id)) {
+      throw new Error('You have been deactivated by this company and can no longer clock in for their shifts.')
+    }
+
     const existing = await casualAttendanceRepository.getAttendanceRecordByAssignmentId(input.shift_assignment_id)
     if (existing?.clock_in_time) throw new Error('Already clocked in for this shift')
 
     const rawNow = input.clock_time ?? new Date().toISOString()
     const shiftStart = sgtInstant(assignment.shifts.shift_date, assignment.shifts.start_time)
-    const shiftEnd = sgtInstant(assignment.shifts.shift_date, assignment.shifts.end_time)
+    // BUG-021: an overnight shift's end (end_time <= start_time) falls on the following Singapore
+    // calendar day.
+    const shiftEnd = sgtShiftEndInstant(assignment.shifts.shift_date, assignment.shifts.start_time, assignment.shifts.end_time)
     const earliestClockIn = new Date(shiftStart.getTime() - CLOCK_IN_WINDOW_MINUTES_BEFORE * 60000)
     if (new Date(rawNow).getTime() < earliestClockIn.getTime()) {
       throw new Error('Too early to clock in for this shift')
@@ -267,7 +291,9 @@ export const casualAttendanceService = {
     // worker first — otherwise a worker could clock in and immediately clock out unchecked.
     if (!assignment.shifts.is_open_ended) {
       const rawNow = input.clock_time ?? new Date().toISOString()
-      const shiftEnd = sgtInstant(assignment.shifts.shift_date, assignment.shifts.end_time)
+      // BUG-021: an overnight shift's end (end_time <= start_time) falls on the following
+      // Singapore calendar day.
+      const shiftEnd = sgtShiftEndInstant(assignment.shifts.shift_date, assignment.shifts.start_time, assignment.shifts.end_time)
       if (new Date(rawNow).getTime() < shiftEnd.getTime()) {
         throw new Error('Too early to clock out — wait until the shift ends')
       }

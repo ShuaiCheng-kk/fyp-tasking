@@ -5,6 +5,7 @@ import { recruitmentRepository } from '@/repositories/owner/recruitmentRepositor
 import { workerApplicationRepository } from '@/repositories/guest/workerApplicationRepository'
 import { emailService } from '@/services/email/emailService'
 import { assertWorkerEligibleForJob } from '@/services/shared/workerEligibility'
+import { sgtInstant } from '@/lib/singaporeTime'
 import { JobApplicant, JobPosting, JobPostingInput, JobPostingPendingApproval, JobPostingSummary, PoolInviteResult, PoolWorker } from '@/types/Recruitment'
 
 // A "confirmed" hire needs both sides: the Owner accepted the application AND the worker
@@ -373,6 +374,7 @@ export const recruitmentService = {
       department_id: original.department_id,
       created_by,
       title: `${original.title} (copy)`,
+      job_type: original.job_type,
       responsibilities: original.responsibilities,
       skills: original.skills,
       salary_amount: original.salary_amount,
@@ -590,6 +592,14 @@ function validateJobPostingInput(input: JobPostingInput): void {
   if (!isDraft && input.job_type === 'oneoff' && !input.job_start_time) {
     throw new Error('job_start_time is required to publish a one-off job')
   }
+  // BUG-030: the date picker already refuses a past date, but the paired time field had no
+  // matching check — picking today's date with an earlier-than-now start time (Shift Job or
+  // One-off) published a job that was already expired the moment it went live.
+  if (!isDraft && input.job_date && input.job_start_time) {
+    if (sgtInstant(input.job_date, input.job_start_time).getTime() < Date.now()) {
+      throw new Error('The job\'s start time cannot be in the past')
+    }
+  }
   // Every published casual-worker posting must name a responsible employee: the on-site contact
   // the worker reports to, and the supervising Employee the attendance approval chain starts at.
   if (!isDraft && !input.assigned_employee_id) {
@@ -624,6 +634,9 @@ async function assertPublishable(id: string): Promise<JobPosting> {
   if (!posting.assigned_employee_id) throw new Error('A responsible employee is required to publish a job')
   if (posting.job_type === 'oneoff' && !posting.job_start_time) {
     throw new Error('job_start_time is required to publish a one-off job')
+  }
+  if (posting.job_date && posting.job_start_time && sgtInstant(posting.job_date, posting.job_start_time).getTime() < Date.now()) {
+    throw new Error('The job\'s start time cannot be in the past')
   }
   await assertWithinSupervisorShift(posting)
   return posting

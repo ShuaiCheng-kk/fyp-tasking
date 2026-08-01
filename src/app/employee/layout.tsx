@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
+import { useReloadOnBfcacheRestore } from '@/hooks/useReloadOnBfcacheRestore'
 
 const ROLE_DASHBOARD: Record<string, string> = {
   Owner: '/owner/dashboard',
@@ -14,6 +15,7 @@ export default function EmployeeLayout({ children }: { children: React.ReactNode
   const router = useRouter()
   const [checking, setChecking] = useState(true)
   const authUserIdRef = useRef<string | null>(null)
+  useReloadOnBfcacheRestore()
 
   useEffect(() => {
     if (window.location.pathname === '/employee/removed') {
@@ -27,14 +29,20 @@ export default function EmployeeLayout({ children }: { children: React.ReactNode
     )
 
     supabase.auth.getSession().then(async ({ data: { session }, error }) => {
+      // BUG-077: no session at all (logged out, never logged in, or the refresh token was revoked
+      // — e.g. by BUG-071's password-reset session revocation) is NOT the same thing as "removed
+      // from the company". /employee/removed says "your account has been removed", which is false
+      // and misleading here — send these cases to /signin instead, matching what owner/partner's
+      // layout already does correctly (see their `!userId` branch). Only an actual session that
+      // resolves to a missing/mismatched user record below is a real removal.
       if (error?.message?.toLowerCase().includes('refresh token')) {
         await supabase.auth.signOut()
         localStorage.clear()
-        router.replace('/employee/removed')
+        router.replace('/signin')
         return
       }
       if (!session) {
-        router.replace('/employee/removed')
+        router.replace('/signin')
         return
       }
 

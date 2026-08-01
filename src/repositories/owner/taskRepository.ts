@@ -6,6 +6,7 @@ import { Task, TaskInput, TaskStats, TaskStatItem, DepartmentTaskStats } from '@
 import { TaskAssignment } from '@/types/TaskAssignment'
 import { User } from '@/types/auth.types'
 import { Shift } from '@/types/Shift'
+import { sgtTodayKey } from '@/lib/singaporeTime'
 
 export const taskRepository = {
 
@@ -74,7 +75,7 @@ export const taskRepository = {
   async getTasksByCompany(company_id: string, assigned_by?: string | string[], department_ids?: string[], assigned_user_id?: string): Promise<Task[]> {
     let query = supabase
       .from('tasks')
-      .select('id, shift_id, company_id, department_id, parent_task_id, sequence_order, title, description, assigned_user_id, assigned_by, status, priority, due_at, task_date, recurrence_group_id, source_task_id, is_archived, rejection_reason, rejected_at, completed_at, reviewed_by, created_at, updated_at, shifts(shift_date)')
+      .select('id, shift_id, company_id, department_id, parent_task_id, sequence_order, title, description, assigned_user_id, assigned_by, status, priority, due_at, task_date, recurrence_group_id, source_task_id, is_archived, is_completed, rejection_reason, rejected_at, completed_at, reviewed_by, created_at, updated_at, shifts(shift_date)')
       .eq('company_id', company_id)
       .eq('is_archived', false)
     if (Array.isArray(assigned_by)) {
@@ -330,7 +331,11 @@ export const taskRepository = {
   // day arrives (confirmed 2026-07-25) — matches the real-world "they're on the floor today, so I
   // can hand them work today" relationship, not a standing roster.
   async getSupervisedCasualWorkerIds(employee_id: string, company_id: string, department_id: string): Promise<string[]> {
-    const today = new Date().toISOString().slice(0, 10)
+    // Shift dates are Singapore-nominal (see src/lib/singaporeTime) — raw UTC "today" drifts up to
+    // 8 hours off the real Singapore calendar day, which made this reject a perfectly valid
+    // reassignment to a Casual Worker the Employee genuinely supervises today whenever the two
+    // dates disagreed (2026-08-01). Matches employeeDashboardRepository.getSupervisedWorkersToday.
+    const today = sgtTodayKey()
     const { data, error } = await supabase
       .from('shift_assignments')
       .select('user_id, shifts!inner(company_id, department_id, shift_date)')

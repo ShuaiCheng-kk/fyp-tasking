@@ -1,6 +1,6 @@
 ﻿'use client';
 
-import { Suspense, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Eye, EyeOff } from 'lucide-react';
@@ -70,6 +70,36 @@ function SignInContent() {
   const [isLoading, setIsLoading] = useState(false);
   const [showError, setShowError] = useState(false);
   const [errorMessage, setErrorMessage] = useState('Invalid email or password');
+  // true = "don't know yet, show nothing" — only ever set false inside the effect below, once we
+  // know for sure there's no active session to redirect away from (same pattern as Navbar.tsx's
+  // authLoading). Without this, an already-logged-in visitor briefly saw the sign-in form (and the
+  // navbar still showed Dashboard/Logout) instead of bouncing straight to their own dashboard.
+  const [checkingSession, setCheckingSession] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    const redirectIfSignedIn = async () => {
+      const supabase = createBrowserClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+      );
+      const { data: { session } } = await supabase.auth.getSession();
+      if (cancelled || !session?.user) { if (!cancelled) setCheckingSession(false); return; }
+      try {
+        const res = await fetch('/api/user/me?user_id=' + session.user.id);
+        const data = await res.json();
+        const role: string = data.success ? (data.user?.role ?? '') : '';
+        if (role) {
+          const route = role === 'Owner' ? getOwnerLandingHref() : role === 'Partner' ? getOwnerLandingHref('partner') : (ROLE_ROUTES[role] || '/owner/dashboard');
+          window.location.href = route;
+          return;
+        }
+      } catch { /* fall through to showing the sign-in form */ }
+      if (!cancelled) setCheckingSession(false);
+    };
+    void redirectIfSignedIn();
+    return () => { cancelled = true; };
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -164,6 +194,8 @@ function SignInContent() {
     boxSizing: 'border-box',
     transition: 'border-color 0.15s',
   };
+
+  if (checkingSession) return <div style={{ flex: 1, background: '#FFFBF5' }} />;
 
   return (
     <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#FFFBF5', padding: '40px 24px' }}>

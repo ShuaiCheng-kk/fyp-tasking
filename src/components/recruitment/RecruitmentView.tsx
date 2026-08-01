@@ -386,7 +386,7 @@ function localDateKey(d: Date): string {
 function formatCompactAt(iso: string): string {
   const d = new Date(iso)
   const day = String(d.getDate()).padStart(2, '0')
-  const month = d.toLocaleDateString([], { month: 'short' })
+  const month = d.toLocaleDateString('en-AU', { month: 'short' })
   const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }).replace(/\s/g, '')
   return `${day} ${month}, ${time}`
 }
@@ -1047,7 +1047,13 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
 
   const fetchAll = useCallback(async (cid: string, uid: string) => {
     if (!cid || !uid) return
-    setLoading(true)
+    // BUG-028: only show the full-list "Loading..." placeholder on the true first load. Once data
+    // has been fetched once, background refetches — e.g. the useResourceInvalidation(['recruitment'])
+    // callback firing because AI Assessment just wrote job_applicants.ai_computed_at (a cache
+    // write, not a real posting change) — must update the list silently, or the whole Active Jobs
+    // card list blanks out to a spinner and pops back with unchanged data every time, which is the
+    // visible "flicker" this was chasing.
+    if (!hasFetchedLivePostingsRef.current) setLoading(true)
     setError('')
     try {
       const [liveRes, pendingRes, draftsRes, deptRes, templatesRes] = await Promise.all([
@@ -2126,7 +2132,10 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
   const jobsPostings    = useMemo(() => activeTab === 'closed' ? closedPostings : openPostings, [activeTab, openPostings, closedPostings])
   const archivedPostings = useMemo(() => livePostings.filter(p => p.status === 'archived'), [livePostings])
 
-  const jobsDepts = useMemo(() => ['all', ...Array.from(new Set(jobsPostings.map(p => p.department_name).filter(Boolean)))] as string[], [jobsPostings])
+  // BUG-015 — used to derive filter options from existing job postings, so with 0 postings the
+  // dropdown only ever had "All Departments" even though real departments existed. Sourced from
+  // the company's actual department list instead, matching CommunicationView's equivalent filter.
+  const jobsDepts = useMemo(() => ['all', ...departments.map(d => d.name)], [departments])
   const filteredJobsPostings = useMemo(() => jobsDeptFilter === 'all' ? jobsPostings : jobsPostings.filter(p => p.department_name === jobsDeptFilter), [jobsPostings, jobsDeptFilter])
   // Single source of truth for the card's red dot AND its sort position — same two signals as
   // each other (new applicants this viewer can act on, or their own submission just approved and

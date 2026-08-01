@@ -14,6 +14,7 @@ vi.mock('@/repositories/department/departmentRepository', () => ({
     deleteById: vi.fn(),
     countMembers: vi.fn(),
     findByCompanyId: vi.fn(),
+    findById: vi.fn(),
   },
 }))
 
@@ -29,6 +30,7 @@ describe('companyService — Manage Departments (UC24-26)', () => {
     it('passes the department payload straight through to the repository', async () => {
       const created = { id: 'dept-1', name: 'Operations', company_id: 'company-1', color: null, created_at: '2026-01-01' }
       vi.mocked(departmentRepository.createDepartment).mockResolvedValue(created)
+      vi.mocked(departmentRepository.findByCompanyId).mockResolvedValue([])
 
       const result = await companyService.createDepartment({ name: 'Operations', company_id: 'company-1' })
 
@@ -40,6 +42,8 @@ describe('companyService — Manage Departments (UC24-26)', () => {
   describe('updateDepartment', () => {
     it('renames a department by delegating to the repository', async () => {
       vi.mocked(departmentRepository.updateById).mockResolvedValue(undefined)
+      vi.mocked(departmentRepository.findById).mockResolvedValue({ id: 'dept-1', name: 'Old Name', company_id: 'company-1', color: null })
+      vi.mocked(departmentRepository.findByCompanyId).mockResolvedValue([])
 
       await companyService.updateDepartment('dept-1', 'Logistics', '#F97316')
 

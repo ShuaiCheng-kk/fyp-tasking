@@ -1,9 +1,11 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { createContext, useContext, useEffect, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import CasualSidebar from '@/components/CasualSidebar'
 import GuestSidebar from '@/components/GuestSidebar'
+import { useReloadOnBfcacheRestore } from '@/hooks/useReloadOnBfcacheRestore'
+import type { WorkerProfile } from '@/types/WorkerProfile'
 
 type WorkerRole = 'Guest User' | 'Casual Worker'
 
@@ -12,6 +14,16 @@ const guestAllowedRoutes = [
   '/guest/profile',
 ]
 
+// The layout already fetches the full WorkerProfile below for its own role-guard check — expose
+// it to pages under this layout instead of each page (Applications, Profile) running the exact
+// same `/api/guest/profile` fetch again right after the layout's own "Loading…" gate clears
+// (2026-07-31). Null means "not available from the layout" (first render, or the layout's fetch
+// hit its error fallback) — a consumer should fall back to fetching for itself in that case.
+const WorkerProfileContext = createContext<WorkerProfile | null>(null)
+export function useLayoutWorkerProfile() {
+  return useContext(WorkerProfileContext)
+}
+
 export default function WorkerLayout({
   children,
 }: {
@@ -19,8 +31,10 @@ export default function WorkerLayout({
 }) {
   const router = useRouter()
   const pathname = usePathname()
+  useReloadOnBfcacheRestore()
 
   const [role, setRole] = useState<WorkerRole | null>(null)
+  const [profile, setProfile] = useState<WorkerProfile | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -47,6 +61,7 @@ export default function WorkerLayout({
 
         const data = await res.json()
         if (!data.success) throw new Error(data.message || 'Failed to load profile')
+        setProfile(data.profile)
 
         // The role for THIS session is the one signin/page.tsx stamped into localStorage at
         // login, not whatever the DB says right now — accepting a job offer promotes the
@@ -99,7 +114,7 @@ export default function WorkerLayout({
         <GuestSidebar />
 
         <main style={{ marginLeft: 64, height: '100vh', minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-          {children}
+          <WorkerProfileContext.Provider value={profile}>{children}</WorkerProfileContext.Provider>
         </main>
       </div>
     )
@@ -110,7 +125,7 @@ export default function WorkerLayout({
       <CasualSidebar />
 
       <main style={{ marginLeft: 64, height: '100vh', minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-        {children}
+        <WorkerProfileContext.Provider value={profile}>{children}</WorkerProfileContext.Provider>
       </main>
     </div>
   )

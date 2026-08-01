@@ -10,8 +10,13 @@ export interface AttendanceRecord {
   id: string
   shift_assignment_id: string
   // Whoever clocked in for this record — Employee, Manager, or Casual Worker (all three
-  // self-clock the same way). Not Casual-Worker-exclusive despite the name.
-  user_id: string
+  // self-clock the same way). Not Casual-Worker-exclusive despite the name. Null once that
+  // user has been removed from the company — the record itself is kept for payroll/history,
+  // see user_name_snapshot below.
+  user_id: string | null
+  // Full name of the clocking-in user, captured at removal time so the record stays readable
+  // once user_id goes null. Null while the user is still an active member.
+  user_name_snapshot: string | null
   clock_in_time: string | null
   clock_out_time: string | null
   break_in_time: string | null

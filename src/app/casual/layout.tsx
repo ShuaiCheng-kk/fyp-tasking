@@ -14,6 +14,7 @@ import { LogOut } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 import CasualSidebar from '@/components/CasualSidebar'
 import { useIsCompactViewport } from '@/hooks/useIsCompactViewport'
+import { useReloadOnBfcacheRestore } from '@/hooks/useReloadOnBfcacheRestore'
 
 const PHONE_BREAKPOINT = 640
 
@@ -23,6 +24,7 @@ export default function CasualLayout({ children }: { children: React.ReactNode }
   const [paymentMissing, setPaymentMissing] = useState(false)
   const [checked, setChecked] = useState(false)
   const isPhone = useIsCompactViewport(PHONE_BREAKPOINT)
+  useReloadOnBfcacheRestore()
 
   const handleLogout = async () => {
     const supabase = createBrowserClient(

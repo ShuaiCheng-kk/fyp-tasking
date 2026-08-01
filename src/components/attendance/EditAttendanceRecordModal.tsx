@@ -7,6 +7,7 @@ import Spinner from '@/components/Spinner'
 import { ModalOverlay, ModalBox, ModalHeader, modalErrorBoxStyle, modalPrimaryButtonStyle, modalLabelStyle } from '@/components/modal'
 import { AttendanceDashboardRecord, AttendanceModifiedTimeField, AttendanceRecord } from '@/types/Attendance'
 import { getARStatus } from '@/components/attendance/ARStatus'
+import { sgtInstant, sgtHourMinuteOfInstant } from '@/lib/singaporeTime'
 
 // UC56 — click-to-edit-clock-time modal for a single attendance record. Shared by AttendanceView's
 // Attendance Records block (Owner/Partner/Employee) and ShiftsView's Manager-only merged Shift
@@ -61,12 +62,13 @@ const selectStyle: React.CSSProperties = {
 
 function isoToAmPm(iso: string | null | undefined): string {
   if (!iso) return ''
-  // Times are stored as UTC. Round to nearest 5-min slot so the value matches a dropdown option.
-  const d = new Date(iso)
-  const utcH = d.getUTCHours()
-  const utcM = Math.round(d.getUTCMinutes() / 5) * 5
-  const h = utcH + (utcM >= 60 ? 1 : 0)
-  const m = utcM >= 60 ? 0 : utcM
+  // clock_in/out timestamps are real UTC instants — convert to the Singapore wall-clock reading
+  // before rounding to the nearest 5-min dropdown slot, or the picker shows a time 8 hours off
+  // from what was actually recorded (and re-saving it would silently corrupt the stored time).
+  const { h: sgtH, m: sgtM } = sgtHourMinuteOfInstant(iso)
+  const roundedM = Math.round(sgtM / 5) * 5
+  const h = sgtH + (roundedM >= 60 ? 1 : 0)
+  const m = roundedM >= 60 ? 0 : roundedM
   const ampm = h < 12 ? 'AM' : 'PM'
   const h12raw = h % 24
   const h12 = h12raw % 12 === 0 ? 12 : h12raw % 12
@@ -114,7 +116,7 @@ function getStoredModifiedFields(record: AttendanceRecord | null | undefined): A
 }
 
 export default function EditAttendanceRecordModal({
-  record, onClose, onSaved, companyId, internalUserId, basePath, canModifyClockTimes, scopeToManagerDepartments, showSuccessToast, showErrorToast,
+  record, onClose, onSaved, companyId, internalUserId, basePath, canModifyClockTimes, scopeToManagerDepartments, showSuccessToast, showErrorToast, scopeToEmployeeSelf = false,
 }: {
   record: AttendanceDashboardRecord | null
   onClose: () => void
@@ -126,6 +128,15 @@ export default function EditAttendanceRecordModal({
   scopeToManagerDepartments: boolean
   showSuccessToast: (message: string) => void
   showErrorToast: (message: string) => void
+  // Employee-only (confirmed 2026-07-31): Employee can view a Casual Worker's attendance record
+  // but must never be able to deactivate them (that's Owner/Partner/Manager-only team management,
+  // not an attendance action) — hides the Inactive/Active button. The header badge next to the
+  // name also swaps from the generic role pill to the Job Type (Shift Job / One-off Job) for this
+  // viewer, since "Casual Worker" is already implied by only ever seeing their own supervised
+  // workers here — and the separate "Job Type" detail row below is dropped to match (redundant
+  // once it's in the badge). Owner/Partner/Manager are unaffected — same badge/fields/button as
+  // before.
+  scopeToEmployeeSelf?: boolean
 }) {
   const router = useRouter()
   const [reviewClockIn, setReviewClockIn] = useState('')
@@ -184,7 +195,10 @@ export default function EditAttendanceRecordModal({
     if (!record?.record || !internalUserId || !companyId) return
     setReviewError('')
     const shiftDate = record.shift.shift_date
-    const toISO = (ampm: string) => ampm ? new Date(`${shiftDate}T${amPmToHHMM(ampm)}:00Z`).toISOString() : null
+    // The dropdown value is a Singapore wall-clock time the reviewer picked — combine it via
+    // sgtInstant (+08:00), never a literal 'Z', or the saved clock time lands 8 hours off from
+    // what was actually chosen.
+    const toISO = (ampm: string) => ampm ? sgtInstant(shiftDate, amPmToHHMM(ampm)).toISOString() : null
     const clockInIso = toISO(reviewClockIn)
     const clockOutIso = toISO(reviewClockOut)
     const breakInIso = toISO(reviewBreakIn)
@@ -249,7 +263,7 @@ export default function EditAttendanceRecordModal({
     || reviewBreakIn !== reviewInitialTimes.breakIn
     || reviewBreakOut !== reviewInitialTimes.breakOut
   const shiftDateForCompare = record.shift.shift_date
-  const toISOForCompare = (ampm: string): string | null => ampm ? new Date(`${shiftDateForCompare}T${amPmToHHMM(ampm)}:00Z`).toISOString() : null
+  const toISOForCompare = (ampm: string): string | null => ampm ? sgtInstant(shiftDateForCompare, amPmToHHMM(ampm)).toISOString() : null
   const truncateToMinute = (iso: string | null) => iso?.slice(0, 16) ?? null
   // The true original for every field is always its own raw column — clock_in_time/
   // clock_out_time/break_in_time/break_out_time are never overwritten; only the modified_*
@@ -282,6 +296,12 @@ export default function EditAttendanceRecordModal({
   }
   const showReadOnlyReason = showModifiedInfo && !hasTimeChanges
   const showEditableReason = hasTimeChanges && willBeModified
+  // Employee viewing their own record (the only non-Casual-Worker record they can ever open —
+  // never a Manager's or another Employee's) — the role badge, status badge, and Department field
+  // all just restate things already obvious from it being their own record, so all three are
+  // dropped for this specific case (confirmed 2026-07-31). Unaffected: Employee viewing a
+  // supervised Casual Worker's record, and every field for Owner/Partner/Manager.
+  const isEmployeeOwnRecord = scopeToEmployeeSelf && record.assignee_role === 'Employee'
 
   return (
     <ModalOverlay onClose={onClose} maxWidth="420px">
@@ -295,10 +315,13 @@ export default function EditAttendanceRecordModal({
               : <UserRound size={20} color={record.assignee_role === 'Manager' ? '#EA580C' : '#4B5563'} />}
           </div>
           <div>
-            <p style={{ fontWeight: 700, fontSize: '1rem', color: '#0F172A', margin: '0 0 5px' }}>{record.assignee_name}</p>
+            <p style={{ fontWeight: 700, fontSize: '1rem', color: '#0F172A', margin: isEmployeeOwnRecord ? 0 : '0 0 5px' }}>{record.assignee_name}</p>
+            {!isEmployeeOwnRecord && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <span style={{ display: 'inline-block', padding: '3px 10px', borderRadius: 999, fontSize: '0.8125rem', fontWeight: 700, background: record.assignee_role === 'Manager' ? '#FFF7ED' : '#F3F4F6', color: record.assignee_role === 'Manager' ? '#EA580C' : '#4B5563' }}>
-                {record.assignee_role}
+                {scopeToEmployeeSelf && record.assignee_role === 'Casual Worker'
+                  ? (record.shift.is_open_ended ? 'One-off Job' : 'Shift Job')
+                  : record.assignee_role}
               </span>
               {(() => {
                 const status = getARStatus(record)
@@ -308,6 +331,7 @@ export default function EditAttendanceRecordModal({
                 return null
               })()}
             </div>
+            )}
           </div>
         </div>
 
@@ -315,7 +339,9 @@ export default function EditAttendanceRecordModal({
           {([
             ...(record.assignee_role === 'Casual Worker'
               ? [
-                  { label: 'Job Type', value: record.shift.is_open_ended ? 'One-off Job' : 'Shift Job' },
+                  // Job Type is dropped here for Employee — already shown as the header badge
+                  // above (see scopeToEmployeeSelf), so repeating it as its own row would be redundant.
+                  ...(scopeToEmployeeSelf ? [] : [{ label: 'Job Type', value: record.shift.is_open_ended ? 'One-off Job' : 'Shift Job' }]),
                   {
                     label: 'Job Title',
                     value: record.job_title ?? '—',
@@ -324,9 +350,9 @@ export default function EditAttendanceRecordModal({
                       : undefined,
                   },
                 ]
-              : [
-                  { label: 'Department', value: record.department_name ?? '—' },
-                ]
+              // Department is dropped for Employee viewing their own record — same "already
+              // obvious, don't restate it" reasoning as the header badges above.
+              : (isEmployeeOwnRecord ? [] : [{ label: 'Department', value: record.department_name ?? '—' }])
             ),
             { label: 'Date', value: formatDateDisplay(record.shift.shift_date) },
             ...(record.shift.is_open_ended
@@ -465,7 +491,7 @@ export default function EditAttendanceRecordModal({
         {reviewError && <div style={modalErrorBoxStyle}>{reviewError}</div>}
 
         <div style={{ padding: '16px 24px 20px', display: 'flex', gap: 8, justifyContent: 'space-between', alignItems: 'center' }}>
-          {record.assignee_role === 'Casual Worker' && (
+          {record.assignee_role === 'Casual Worker' && !scopeToEmployeeSelf && (
             <button
               onClick={toggleCwStatus}
               disabled={cwStatusLoading}

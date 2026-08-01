@@ -20,6 +20,9 @@ import { Task, TaskInput, KanbanGroup, TaskWorkloadSuggestion, TaskDelayAlert } 
 import { TaskTemplate } from '@/types/TaskTemplate'
 import { TimelineRow, TimelineShiftBlock } from '@/types/Timeline'
 import { useResourceInvalidation } from '@/components/realtime/RealtimeNotificationsProvider'
+import { useEmployeeClockedOut } from '@/hooks/useEmployeeClockedOut'
+import { useSupervisedCasualWorkers, SupervisedWorker } from '@/components/employee/useSupervisedCasualWorkers'
+import SupervisedWorkerDetailModal from '@/components/employee/SupervisedWorkerDetailModal'
 
 // ─── Date picker constants ────────────────────────────────────────────────────
 
@@ -322,6 +325,11 @@ type Member = {
   skills?: string[] | string | null
   worker_status?: string | null
   profile_photo_url?: string | null
+  // Employee-scoped supervised Casual Workers only (see the supervised_workers fetch below) —
+  // true once today's shift is clocked out, so they can be excluded from anywhere a task gets
+  // newly assigned (the Member panel, New/Edit Task assignee pickers, AI Assign) while still
+  // resolving fine wherever an EXISTING assignment just looks their name/avatar up by id.
+  clockedOut?: boolean
 }
 type ShiftOption = TimelineShiftBlock & {
   assignee_name: string
@@ -993,7 +1001,7 @@ function SubTaskOrderList({ items, onReorder, onRemove, onRename, disabled, acce
 // ─── Task Card ────────────────────────────────────────────────────────────────
 
 function TaskCard({
-  task, members, shiftOptions, departments, showDept, onClick, onEdit, subTaskCount, expanded, onToggleExpand, clickable = true, isOwner = true, highlighted = false, noOuterMargin = false, fillHeight = false, isSubTask = false, compact = false, stacked, viewerId, showAssignee = true,
+  task, members, shiftOptions, departments, showDept, onClick, onEdit, subTaskCount, expanded, onToggleExpand, clickable = true, isOwner = true, highlighted = false, noOuterMargin = false, fillHeight = false, isSubTask = false, compact = false, stacked, viewerId, showAssignee = true, showSubTaskStatus = false, alwaysRedDeadline = false, readOnly = false,
 }: {
   task: Task
   members: Member[]
@@ -1027,10 +1035,29 @@ function TaskCard({
   // whose assigner isn't the viewer shows "Posted by X" to make that visible. Left undefined for
   // Owner/Partner — postedByName then never renders, same as if this prop didn't exist.
   viewerId?: string
+  // Employee-only (confirmed 2026-07-31): a read-only version of the same completion checkbox the
+  // Casual Worker ticks on their own board (CasualTaskBoard.tsx) — sits on a sub-task card's
+  // footer so the assigning Employee can see, live, which sub-tasks a Casual Worker has already
+  // checked off without opening the task's detail modal. Left false for Owner/Partner/Manager, so
+  // their sub-task cards render exactly as before.
+  showSubTaskStatus?: boolean
+  // Employee-only (2026-08-01): every Casual Worker this board assigns tasks to is only ever
+  // rostered for a single shift/day, so unlike Owner/Manager's week-out deadlines, every deadline
+  // here is effectively "today" — always shown in red, not just once it's overdue or within 2h.
+  // Matches CasualTaskBoard.tsx's own always-red deadline for the same reason.
+  alwaysRedDeadline?: boolean
+  // Employee-only (2026-08-02): once clocked out of every shift today, the edit pencil disappears
+  // too — matches the function-level guard on handleSaveTask/handleDeleteTask, just making the
+  // lock visible instead of a silent no-op if clicked.
+  readOnly?: boolean
 }) {
   const postedByName = !isSubTask && viewerId && task.assigned_by && task.assigned_by !== viewerId ? task.assigned_by_name : null
   const assigneeIds = task.assigned_user_ids ?? (task.assigned_user_id ? [task.assigned_user_id] : [])
   const assignees = assigneeIds.map(id => members.find(m => m.id === id)).filter((m): m is Member => !!m)
+  // A Casual Worker who clocked out with this task still not Reviewed/Complete can't act on it
+  // anymore — flag it in red where the assignee normally shows instead of silently leaving their
+  // name/avatar in place, so the supervising Employee knows to manually reassign it (2026-08-01).
+  const unfinishedByClockedOutWorker = task.status !== 'Review' && task.status !== 'Complete' && assignees.some(a => a.clockedOut)
   const shift = task.shift_id ? shiftOptions.find(s => s.id === task.shift_id) : null
   const priority = !isSubTask && task.priority ? PRIORITY_COLORS[task.priority] : null
   const deadlineWarning = task.due_at && task.status !== 'Complete' && (isDueOverdue(task.due_at) || isDueWithinHours(task.due_at, 2))
@@ -1076,7 +1103,7 @@ function TaskCard({
       >
       {/* Edit pencil: absolutely positioned so it never reserves flow height when there are no badges.
           Hidden once the task reaches Review/Complete — submitted/approved work is no longer editable. */}
-      {clickable && isOwner && task.status !== 'Review' && task.status !== 'Complete' && (
+      {clickable && isOwner && !readOnly && task.status !== 'Review' && task.status !== 'Complete' && (
         <button
           onClick={e => { e.stopPropagation(); onEdit() }}
           style={{ position: 'absolute', top: 12, right: 12, background: 'none', border: 'none', cursor: 'pointer', padding: 4, display: 'flex', alignItems: 'center', color: '#9CA3AF', borderRadius: 6, flexShrink: 0, zIndex: 1 }}
@@ -1154,6 +1181,14 @@ function TaskCard({
       {showAssignee && ((!compact) || (!isSubTask && task.due_at)) && (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: compact ? 'flex-end' : 'space-between', gap: 8, minHeight: compact ? undefined : 26 }}>
         {!compact && (assignees.length > 0 ? (
+          unfinishedByClockedOutWorker ? (
+            <span style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, fontSize: '0.7rem', fontWeight: 700, color: '#DC2626' }}>
+              <AlertTriangle size={12} style={{ flexShrink: 0 }} />
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {`${assignees.map(a => a.full_name).join(', ')} didn't finish`}
+              </span>
+            </span>
+          ) : (
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
             <div style={{ display: 'flex', flexShrink: 0 }}>
               {assignees.slice(0, 3).map((assignee, i) => (
@@ -1173,15 +1208,32 @@ function TaskCard({
               {assignees.map(a => a.full_name).join(', ')}
             </span>
           </div>
+          )
         ) : (
           <span style={{ fontSize: '0.75rem', color: '#CBD5E1', fontStyle: 'italic' }}>No assignee</span>
         ))}
         {!isSubTask && task.due_at && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
-            {deadlineWarning ? <AlertCircle size={11} color="#EF4444" /> : <Clock size={11} color="#9CA3AF" />}
-            <span style={{ fontSize: '0.7rem', fontWeight: 600, color: deadlineWarning ? '#EF4444' : '#9CA3AF', whiteSpace: 'nowrap' }}>
+            {(deadlineWarning || alwaysRedDeadline) ? <AlertCircle size={11} color="#EF4444" /> : <Clock size={11} color="#9CA3AF" />}
+            <span style={{ fontSize: '0.7rem', fontWeight: 600, color: (deadlineWarning || alwaysRedDeadline) ? '#EF4444' : '#9CA3AF', whiteSpace: 'nowrap' }}>
               {compact ? formatDeadlineTime(task.due_at) : formatDeadlineDisplay(task.due_at)}
             </span>
+          </div>
+        )}
+        {/* Read-only completion checklist — same visual as the Casual Worker's own toggle button
+            (CasualTaskBoard.tsx), just not clickable here. */}
+        {isSubTask && showSubTaskStatus && (
+          <div
+            title={task.is_completed ? 'Completed' : 'Not completed yet'}
+            style={{
+              width: 22, height: 22, borderRadius: '50%', flexShrink: 0,
+              border: task.is_completed ? 'none' : '1.5px solid #D1D5DB',
+              background: task.is_completed ? '#16A34A' : '#FFFFFF',
+              color: '#FFFFFF',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+          >
+            {task.is_completed && <Check size={13} strokeWidth={3} />}
           </div>
         )}
       </div>
@@ -1221,9 +1273,21 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
   const [currentPlan,    setCurrentPlan]    = useState('Free')
   const [initialReady,   setInitialReady]   = useState(false)
 
+  // Employee-only (2026-08-02): once clocked out of every shift today, this whole page locks to
+  // read-only — no creating/editing/reassigning/approving/rejecting/deleting a task. Matches the
+  // same rule already applied to the Dashboard's My Tasks board and the Casual Worker's own board.
+  const employeeClockedOut = useEmployeeClockedOut(scopeToEmployeeSupervised ? internalUserId : '')
+
   const [departments, setDepartments] = useState<Department[]>([])
   const [members,     setMembers]     = useState<Member[]>([])
   const [shiftOptions, setShiftOptions] = useState<ShiftOption[]>([])
+
+  // Employee's Member panel merges in today's supervised Casual Workers directly (2026-08-02),
+  // replacing the old standalone "Casual Workers Today" block that used to live on the Dashboard.
+  const { supervisedWorkers, releaseQueue, releaseBusyId, releaseError, releaseClockOut } = useSupervisedCasualWorkers(scopeToEmployeeSupervised)
+  const [supervisedDetailId, setSupervisedDetailId] = useState('')
+  const supervisedDetailWorker = supervisedWorkers.find(w => w.shift_assignment_id === supervisedDetailId) ?? null
+  const supervisedDetailRelease = supervisedDetailWorker ? releaseQueue.find(r => r.user_id === supervisedDetailWorker.id) : undefined
 
   // Department selector
   const [selectedDeptId,  setSelectedDeptIdRaw]  = useState('') // '' = All
@@ -1567,6 +1631,18 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
   const [aiSubTaskDrafts,  setAiSubTaskDrafts]  = useState<{ id: string; title: string }[]>([])
   const [aiSubTaskCollapsed, setAiSubTaskCollapsed] = useState(true)
   const [aiSubTaskDraft, setAiSubTaskDraft] = useState('')
+
+  // Employee-only (2026-08-01): tasks whose Casual Worker clocked out with the task still not
+  // Reviewed/Complete get pulled off the board entirely (see filteredTasks) and surfaced here
+  // instead, so the Assigned/In Progress columns only ever show work someone can actually still
+  // be doing right now.
+  const [uncompletedModalOpen, setUncompletedModalOpen] = useState(false)
+  const [uncompletedReassignError, setUncompletedReassignError] = useState('')
+  // Which row's "Reassign to" pick is currently being applied.
+  const [uncompletedReassigningId, setUncompletedReassigningId] = useState<string | null>(null)
+  // Picking a name from a row's dropdown only stages it — a separate Confirm button per row
+  // commits it (2026-08-02: reverted the earlier "pick = commit" design, too easy to fat-finger).
+  const [uncompletedPendingAssignee, setUncompletedPendingAssignee] = useState<Record<string, string>>({})
   const [aiCreateLoading,  setAiCreateLoading]  = useState(false)
   const aiReviewDescriptionRef = useRef<HTMLTextAreaElement>(null)
 
@@ -1626,6 +1702,10 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
     setTaskToast(message)
     taskToastTimerRef.current = setTimeout(() => setTaskToast(''), 3000)
   }, [])
+
+  useEffect(() => {
+    if (releaseError) showTaskToast(releaseError)
+  }, [releaseError, showTaskToast])
 
   const panelRef = useRef<HTMLDivElement>(null)
   const hasAutoSelectedTaskDateRef = useRef(false)
@@ -1761,14 +1841,28 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
         const dept: Department = { id: data.department_id, name: data.department_name }
         setDepartments([dept])
         setDeptColorOverrides([dept])
-        const cwMembers: Member[] = (data.supervised_workers ?? []).map((w: { id: string; full_name: string; email_address: string; phone_number: string; profile_photo_url: string | null }) => ({
-          id: w.id,
-          full_name: w.full_name,
+        // supervised_workers is one row PER shift_assignment, not per person — a Casual Worker
+        // with two shifts today (e.g. Marcus Lee's One-off + Shift job demo rows) comes back
+        // twice with the same id, which both duplicated them in the Member panel/pickers and
+        // threw a React duplicate-key warning off `.map(renderMember)`'s `member.id` key
+        // (2026-08-01). Dedupe by id; only counts as clocked out once EVERY one of today's shifts
+        // has a clock_out_time — still on one of them means they can still take on a task.
+        const workerRows = (data.supervised_workers ?? []) as Array<{ id: string; full_name: string; email_address: string; phone_number: string; profile_photo_url: string | null; clock_out_time: string | null }>
+        const workersById = new Map<string, typeof workerRows>()
+        for (const w of workerRows) {
+          const rows = workersById.get(w.id) ?? []
+          rows.push(w)
+          workersById.set(w.id, rows)
+        }
+        const cwMembers: Member[] = [...workersById.values()].map(rows => ({
+          id: rows[0].id,
+          full_name: rows[0].full_name,
           role: 'Casual Worker',
           department_id: data.department_id,
-          email_address: w.email_address,
-          phone_number: w.phone_number,
-          profile_photo_url: w.profile_photo_url,
+          email_address: rows[0].email_address,
+          phone_number: rows[0].phone_number,
+          profile_photo_url: rows[0].profile_photo_url,
+          clockedOut: rows.every(r => !!r.clock_out_time),
         }))
         setMembers(cwMembers)
       }).catch(() => {})
@@ -2036,6 +2130,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
   // ── Save task ─────────────────────────────────────────────────────────────
 
   const handleSaveTask = async () => {
+    if (scopeToEmployeeSupervised && employeeClockedOut) return
     if (!selectedTask || !editTitle.trim() || !editDeptId || !editStartDate || !editPriority || !editDueAt || !editDeadlineTime) {
       setPanelError('Title, department, start date, priority, and deadline are required')
       return
@@ -2076,12 +2171,16 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
       })
       const added = editSubTasks.filter(s => !original.some(t => t.id === s.id))
 
-      for (const id of removedIds) {
+      // BUG-043: these three categories used to run as sequential for-await loops — one HTTP
+      // round trip at a time. With several sub-task edits at once that added up to a very visible
+      // multi-second delay on Save Changes; each category's operations are independent of each
+      // other within the category, so they run in parallel now.
+      await Promise.all(removedIds.map(async id => {
         const delRes = await fetch(`/api/task?id=${id}&assigned_by=${encodeURIComponent(internalUserId)}`, { method: 'DELETE' })
         const delData = await delRes.json()
         if (!delData.success) throw new Error(delData.message)
-      }
-      for (const s of renamed) {
+      }))
+      await Promise.all(renamed.map(async s => {
         const original_ = original.find(t => t.id === s.id)!
         const renameRes = await fetch('/api/task', {
           method: 'PATCH',
@@ -2106,9 +2205,9 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
         })
         const renameData = await renameRes.json()
         if (!renameData.success) throw new Error(renameData.message)
-      }
+      }))
       const createdIdByDraftId = new Map<string, string>()
-      for (const s of added) {
+      await Promise.all(added.map(async s => {
         const createRes = await fetch('/api/task', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -2129,7 +2228,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
         const createData = await createRes.json()
         if (!createData.success) throw new Error(createData.message)
         createdIdByDraftId.set(s.id, createData.task.id)
-      }
+      }))
       if (editSubTasks.length > 0) {
         const finalOrderIds = editSubTasks.map(s => createdIdByDraftId.get(s.id) ?? s.id)
         const reorderRes = await fetch('/api/task', {
@@ -2180,6 +2279,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
   // ── Delete task ────────────────────────────────────────────────────────────
 
   const handleDeleteTask = async () => {
+    if (scopeToEmployeeSupervised && employeeClockedOut) return
     if (!selectedTask) return
     setDeleteLoading(true)
     const taskId = selectedTask.id
@@ -2200,6 +2300,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
   }
 
   const handleDeleteTaskDirect = async () => {
+    if (scopeToEmployeeSupervised && employeeClockedOut) return
     if (!deleteTaskModal) return
     setDeleteTaskLoading(true); setDeleteTaskError('')
     const taskId = deleteTaskModal.id
@@ -2288,6 +2389,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
   // ── Review sign-off: Approve → Complete, Reject (with reason) → back to In Progress ──
 
   const handleApproveTask = async () => {
+    if (scopeToEmployeeSupervised && employeeClockedOut) return
     if (!selectedTask) return
     setTaskActionLoading('approve'); setPanelError('')
     try {
@@ -2307,6 +2409,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
   }
 
   const handleRejectTask = async () => {
+    if (scopeToEmployeeSupervised && employeeClockedOut) return
     if (!selectedTask || !rejectReason.trim()) return
     setTaskActionLoading('reject'); setPanelError('')
     try {
@@ -2768,7 +2871,9 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
     setAiTitle('')
     setAiDescription('')
     setAiPriority('')
-    setAiDueDate('')
+    // Same "defaults to today" reasoning as openNewTaskFor above — Employee's Casual Worker tasks
+    // are day-scoped, so pre-filling the date skips straight to the time step (2026-08-01).
+    setAiDueDate(scopeToEmployeeSupervised ? todayTaskDate : '')
     setAiDueTime('')
     setAiSubTaskEnabled(false)
     setAiSuggestion(null)
@@ -2781,14 +2886,57 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
   }
 
   const openAiAssign = () => {
+    if (scopeToEmployeeSupervised && employeeClockedOut) return
     setAiModal(true)
     resetAiAssignInput()
+  }
+
+  // Uncompleted Tasks modal, Employee only — picking a name from a row's "Reassign to" dropdown
+  // only stages the choice; this fires when the row's Confirm button is clicked (2026-08-02).
+  const handleReassignOneTask = async (task: Task, newAssigneeId: string) => {
+    if (employeeClockedOut || !newAssigneeId) return
+    setUncompletedReassigningId(task.id)
+    setUncompletedReassignError('')
+    try {
+      // Two separate PATCH calls on purpose: the route's quick-status-update shortcut only fires
+      // when `status` is the sole field besides id, so a combined {assigned_user_id, status} body
+      // would silently skip the reassignment and just flip status. Status is very likely already
+      // 'Assigned' by now (the normalize effect above), but this task could still be mid-flight
+      // through that PATCH — force it here too so a fast pick can never leave it on 'In Progress'
+      // for the new assignee.
+      const statusRes = await fetch('/api/task', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: task.id, status: 'Assigned' }),
+      })
+      const statusData = await statusRes.json()
+      if (!statusData.success) throw new Error(statusData.message)
+      const patchRes = await fetch('/api/task', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: task.id, assigned_user_id: newAssigneeId, assigned_by: internalUserId }),
+      })
+      const patchData = await patchRes.json()
+      if (!patchData.success) throw new Error(patchData.message)
+      setUncompletedPendingAssignee(prev => {
+        const next = { ...prev }
+        delete next[task.id]
+        return next
+      })
+      showTaskToast('Task reassigned.')
+      await fetchKanban(companyId, true)
+    } catch (err) {
+      setUncompletedReassignError(err instanceof Error ? err.message : 'Failed to reassign task')
+    } finally {
+      setUncompletedReassigningId(null)
+    }
   }
 
   // Open new task modal pre-filled with dept + assignee.
   // Kanban tab: pre-fill with the selected day, clamped to today (a task can't start in the past).
   // Calendar tab shows a whole week, not one day, so the user must pick the start date themselves — leave it blank.
   const openNewTaskFor = (memberId: string, deptId: string) => {
+    if (scopeToEmployeeSupervised && employeeClockedOut) return
     // Manager only ever has one department — force it regardless of the caller's deptId (e.g. a
     // company-wide template passes '', which would otherwise leave the form's only-ever-valid
     // department unset with no picker to fix it, since the field is hidden for Manager below).
@@ -2796,7 +2944,12 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
     setNewAssigneeIds(memberId ? [memberId] : [])
     setNewShiftId('')
     setNewStartDate(boardViewMode === 'kanban' && taskDate > todayTaskDate ? taskDate : todayTaskDate)
-    setNewTitle(''); setNewDescription(''); setNewPriority(''); setNewDeadlineDate(''); setNewDeadlineTime(''); setNewError(''); setNewTemplateId('')
+    // A Casual Worker is only ever rostered for one shift/day, so an Employee's task deadline is
+    // almost always "today" — pre-filling the date means opening the picker jumps straight to
+    // picking the time (DeadlinePicker's handleOpen already skips to the time step once dateValue
+    // is set), saving a step. Owner/Partner/Manager deadlines aren't day-scoped the same way, so
+    // this stays blank for them (2026-08-01).
+    setNewTitle(''); setNewDescription(''); setNewPriority(''); setNewDeadlineDate(scopeToEmployeeSupervised ? todayTaskDate : ''); setNewDeadlineTime(''); setNewError(''); setNewTemplateId('')
     setNewSubTaskEnabled(false); setNewSubTasks([]); setNewSubTaskDraft(''); setNewSubTaskCollapsed(false)
     setNewRecurringEnabled(false); setNewRecurringCollapsed(false); setNewRecurrenceRule(''); setNewRecurrenceEndDate(''); setNewCustomIntervalDays(14); setNewCustomIntervalTouched(false)
     setNewDeadlineRuleType(''); setNewDeadlineRuleTime(''); setNewDeadlineRuleWeekday(null); setNewDeadlineRuleOffsetAmount(1); setNewDeadlineRuleOffsetUnit('days')
@@ -3043,10 +3196,22 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
     }
   }
 
+  // Employee-only: a task whose Casual Worker has clocked out today, still sitting in
+  // Assigned/In Progress, can't be worked on by that person anymore — pulled off the board
+  // entirely (see filteredTasks below) into the "Uncompleted Tasks" bucket instead of just
+  // getting the red "didn't finish" treatment inline (2026-08-01).
+  const isClockedOutUnfinished = (task: Task): boolean => {
+    if (!scopeToEmployeeSupervised || task.parent_task_id) return false
+    if (task.status !== 'Assigned' && task.status !== 'In Progress') return false
+    const assigneeIds = task.assigned_user_ids ?? (task.assigned_user_id ? [task.assigned_user_id] : [])
+    return assigneeIds.some(id => members.find(m => m.id === id)?.clockedOut)
+  }
+
   const filteredTasks = (col: Task['status']): Task[] => {
     if (!kanban) return []
     const search = kanbanSearch.trim().toLowerCase()
     return (kanban[col] ?? [])
+      .filter(t => !!t.parent_task_id || !isClockedOutUnfinished(t))
       .filter(t => !selectedDeptId || t.department_id === selectedDeptId)
       .filter(t => !selectedMemberId || (t.assigned_user_ids ?? (t.assigned_user_id ? [t.assigned_user_id] : [])).includes(selectedMemberId))
       // Priority filter and search only gate top-level cards — sub-tasks render nested under
@@ -3063,6 +3228,35 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
         kanbanSortComparator(a, b) ||
         (PRIORITY_ORDER[a.priority ?? ''] ?? 4) - (PRIORITY_ORDER[b.priority ?? ''] ?? 4))
   }
+
+  const uncompletedByClockedOutTasks = useMemo(() => {
+    if (!scopeToEmployeeSupervised || !kanban) return []
+    return (['Assigned', 'In Progress'] as const).flatMap(col => (kanban[col] ?? []).filter(isClockedOutUnfinished))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kanban, members, scopeToEmployeeSupervised])
+
+  // Once the last task is reassigned there's nothing left to show — close the modal instead of
+  // leaving an empty shell open (2026-08-02).
+  useEffect(() => {
+    if (uncompletedModalOpen && uncompletedByClockedOutTasks.length === 0) setUncompletedModalOpen(false)
+  }, [uncompletedModalOpen, uncompletedByClockedOutTasks.length])
+
+  // Reassigning starts the new Casual Worker fresh, so any in-flight progress under the old
+  // (now clocked-out) one is normalized back to Assigned the moment it's detected — not left as
+  // "In Progress" for someone who was never told to start it (2026-08-01).
+  const normalizedClockedOutIdsRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    if (!scopeToEmployeeSupervised) return
+    const toNormalize = uncompletedByClockedOutTasks.filter(t => t.status === 'In Progress' && !normalizedClockedOutIdsRef.current.has(t.id))
+    if (toNormalize.length === 0) return
+    toNormalize.forEach(t => normalizedClockedOutIdsRef.current.add(t.id))
+    Promise.all(toNormalize.map(t => fetch('/api/task', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: t.id, status: 'Assigned' }),
+    }))).then(() => fetchKanban(companyId, true)).catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uncompletedByClockedOutTasks, scopeToEmployeeSupervised])
 
   const allVisibleTasks = useMemo(() => {
     if (!kanban) return []
@@ -3398,6 +3592,8 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                         topLevelTasks.map(task => {
                           const draggable = canDragMyTask(task)
                           const isNew = isUnseenMyTaskAlert(task, col)
+                          const subTasks = subTasksByParent.get(task.id) ?? []
+                          const isExpanded = expandedTaskIds.has(task.id)
                           return (
                             <div
                               key={task.id}
@@ -3420,11 +3616,50 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                                 showDept={false}
                                 onClick={() => { markMyTaskSeen(task); openTask(task, true) }}
                                 onEdit={() => {}}
-                                subTaskCount={(subTasksByParent.get(task.id) ?? []).length}
+                                subTaskCount={subTasks.length}
+                                expanded={isExpanded}
+                                onToggleExpand={() => toggleTaskExpanded(task.id)}
                                 isOwner={false}
                                 viewerId={internalUserId}
                                 showAssignee={false}
                               />
+                              {/* BUG-024 — this sub-task list was never rendered at all in My Tasks
+                                  (assignee view), only in Team Tasks (assigner view); same markup. */}
+                              {isExpanded && subTasks.length > 0 && (
+                                <div style={{ marginTop: -6, marginBottom: 14, paddingLeft: 6, paddingRight: 20 }}>
+                                  {subTasks.map((sub, idx) => (
+                                    <div key={sub.id} style={{ display: 'flex', alignItems: 'stretch', gap: 8 }}>
+                                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
+                                        <span style={{ width: 26, height: 26, marginTop: 14, borderRadius: '50%', background: '#FFF3E8', color: '#EA580C', fontSize: 13, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                          {idx + 1}
+                                        </span>
+                                        {idx < subTasks.length - 1 && (
+                                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 1 }}>
+                                            <div style={{ width: 1, flex: 1, background: '#E2E8F0' }} />
+                                            <ChevronDown size={12} color="#CBD5E1" style={{ marginTop: -2, flexShrink: 0 }} />
+                                          </div>
+                                        )}
+                                      </div>
+                                      <div style={{ flex: 1, minWidth: 0 }}>
+                                        <TaskCard
+                                          task={sub}
+                                          members={members}
+                                          shiftOptions={shiftOptions}
+                                          departments={departments}
+                                          showDept={false}
+                                          onClick={() => {}}
+                                          onEdit={() => openTask(sub, false)}
+                                          clickable={false}
+                                          isSubTask
+                                          isOwner={false}
+                                          viewerId={internalUserId}
+                                          showAssignee={false}
+                                        />
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                           )
                         })
@@ -3440,7 +3675,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
     )
   }
 
-  const assignableMembers = members.filter(m => m.role === assigneeRole)
+  const assignableMembers = members.filter(m => m.role === assigneeRole && !m.clockedOut)
   const deptDropdownOptions = departments.map(d => ({ value: d.id, label: d.name }))
   const newAssigneeMembers = newAssigneeIds.map(id => members.find(m => m.id === id)).filter((m): m is Member => !!m)
   const newAssigneeDeptMembers = assignableMembers.filter(m => !newDeptId || m.department_id === newDeptId)
@@ -4240,7 +4475,11 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                 {scopeToManagerDepartments && deadlineSummarySection}
 
               <section className="task-dept-panel" style={{ width: '100%', background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, overflow: 'visible' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '16px 18px', borderBottom: '1px solid #F3F4F6' }}>
+                {/* Explicit height (not just padding) so this header's divider always lines up
+                    with the Board panel's header divider next to it, regardless of which one's
+                    own content (icon-only here vs. a 40px search input there) is naturally taller
+                    (confirmed 2026-07-31). */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, height: 68, padding: '0 18px', boxSizing: 'border-box', borderBottom: '1px solid #F3F4F6' }}>
                   {(scopeToManagerDepartments || scopeToEmployeeSupervised) ? (
                     // Manager/Employee only ever have their own single department in scope — no
                     // back button (nothing to go back to) and no department color dot (no other
@@ -4250,15 +4489,19 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                         <Users size={15} style={{ color: '#F97316' }} />
                       </div>
                       <span style={{ fontWeight: 700, fontSize: '1rem', color: '#0F172A' }}>Member</span>
-                      {/* AI Task Assignment Suggestion (UC20) — Employee gets it too, scoped to
-                          the Casual Workers they supervise (see openAiAssign/handleGenerate below). */}
-                      <button
-                        type="button"
-                        onClick={openAiAssign}
-                        style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, border: 0, borderRadius: 8, background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', color: '#FFFFFF', height: 30, padding: '0 12px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', flexShrink: 0 }}
-                      >
-                        <Sparkles size={13} strokeWidth={2.5} /> AI Assign
-                      </button>
+                      {/* AI Task Assignment Suggestion (UC20) — Manager keeps it inline in the
+                          header. Employee's moved to the bottom of the panel, below the member
+                          list, to match Owner's AI Assign placement/size (confirmed 2026-07-31) —
+                          see the bottom button after sortedDeptMembers below. */}
+                      {scopeToManagerDepartments && (
+                        <button
+                          type="button"
+                          onClick={openAiAssign}
+                          style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, border: 0, borderRadius: 8, background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', color: '#FFFFFF', height: 30, padding: '0 12px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', flexShrink: 0 }}
+                        >
+                          <Sparkles size={13} strokeWidth={2.5} /> AI Assign
+                        </button>
+                      )}
                     </>
                   ) : selectedDept ? (
                     <>
@@ -4413,7 +4656,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                     }
 
                     // ── Department selected: manager list (everyone in the department) ──
-                    const deptMembers = members.filter(m => m.department_id === dept.id && m.role === assigneeRole)
+                    const deptMembers = members.filter(m => m.department_id === dept.id && m.role === assigneeRole && !m.clockedOut)
                     // Live workload per person: tasks still in Assigned / In Progress / Review.
                     // Scoped to the department only (not selectedMemberId) — these badges must keep
                     // showing every member's real count even while one member's tasks are isolated
@@ -4484,22 +4727,118 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                       )
                     }
 
-                    if (sortedDeptMembers.length === 0) {
+                    // Employee's Member panel shows every Casual Worker supervised TODAY (merged
+                    // in from the old standalone "Casual Workers Today" Dashboard block,
+                    // 2026-08-02) — sourced from useSupervisedCasualWorkers, not deptMembers,
+                    // since that list intentionally excludes anyone already clocked out and this
+                    // one must not (a clocked-out worker still needs their card, just without the
+                    // Assign button — see renderSupervisedWorker below).
+                    // Three groups, in this order (2026-08-02): not clocked out with nothing
+                    // assigned yet (the ones who most need a task), not clocked out with tasks
+                    // already assigned, then clocked out (nothing left to assign for today).
+                    // Ascending task count breaks ties within a group, same as before.
+                    const supervisedGroupRank = (w: SupervisedWorker) => {
+                      if (w.clock_out_time) return 2
+                      return (dateTaskCountByUser[w.id] ?? 0) === 0 ? 0 : 1
+                    }
+                    const sortedSupervisedWorkers = [...supervisedWorkers].sort((a, b) => {
+                      const rankDiff = supervisedGroupRank(a) - supervisedGroupRank(b)
+                      if (rankDiff !== 0) return rankDiff
+                      const countA = dateTaskCountByUser[a.id] ?? 0
+                      const countB = dateTaskCountByUser[b.id] ?? 0
+                      return countA - countB
+                    })
+
+                    const renderSupervisedWorker = (w: SupervisedWorker) => {
+                      const count = dateTaskCountByUser[w.id] ?? 0
+                      const wc = workloadColor(count)
+                      const isClockedOut = !!w.clock_out_time
                       return (
-                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, padding: '28px 12px', textAlign: 'center' }}>
-                          <span style={{ width: 40, height: 40, borderRadius: 999, background: '#F3F4F6', color: '#9CA3AF', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
-                            <Users size={19} />
-                          </span>
-                          <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: '#6B7280' }}>
-                            {scopeToEmployeeSupervised ? 'No Casual Workers under you today' : `No ${assigneeRole}s in this department yet`}
-                          </p>
+                        <div
+                          key={w.shift_assignment_id}
+                          className="member-card"
+                          style={{ display: 'flex', alignItems: 'center', gap: 10, border: '1px solid #F1F5F9', borderRadius: 12, padding: '12px 14px', background: '#FFFFFF', justifyContent: 'space-between' }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
+                            <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 38, height: 38, borderRadius: 999, background: w.profile_photo_url ? 'transparent' : '#F3F4F6', color: '#4B5563', flexShrink: 0, overflow: 'hidden' }}>
+                              {w.profile_photo_url
+                                ? <img src={w.profile_photo_url} alt={w.full_name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                : <UserRound size={18} />}
+                            </span>
+                            <div style={{ minWidth: 0, flex: 1 }}>
+                              <p style={{ margin: 0, color: '#0F172A', fontSize: '0.875rem', fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{w.full_name}</p>
+                              {count > 0 && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 3 }}>
+                                  <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 7px', borderRadius: 99, background: wc.bg, color: wc.text }}>
+                                    {count} Task{count !== 1 ? 's' : ''}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                            <button
+                              onClick={() => setSupervisedDetailId(w.shift_assignment_id)}
+                              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 30, height: 30, background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 8, color: '#475569', cursor: 'pointer' }}
+                              title="View"
+                            >
+                              <Eye size={15} />
+                            </button>
+                            {/* Once clocked out there's nothing left to assign them for today — View
+                                takes the Assign button's place instead of leaving it disabled next
+                                to an empty slot (2026-08-02). Same when the Employee themselves has
+                                clocked out — the whole page is read-only then, not just this row
+                                (2026-08-02, second rule). */}
+                            {!isClockedOut && !employeeClockedOut && (
+                              <button
+                                onClick={() => openNewTaskFor(w.id, dept.id)}
+                                className="assign-task-btn"
+                                style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 30, height: 30, background: '#FFF7ED', border: '1px solid #FDBA74', borderRadius: 8, color: '#EA580C', cursor: 'pointer' }}
+                                title="Assign Task"
+                              >
+                                <Plus size={15} strokeWidth={2.5} />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    }
+
+                    // Employee's AI Assign (UC20) sits at the bottom of the Member panel, same
+                    // placement/size as Owner's department-grid AI Assign button (confirmed
+                    // 2026-07-31) — Manager keeps its own inline header button instead (unchanged).
+                    const employeeAiAssignButton = scopeToEmployeeSupervised && !employeeClockedOut && (
+                      <div style={{ display: 'flex', justifyContent: 'center' }}>
+                        <button
+                          type="button"
+                          onClick={openAiAssign}
+                          style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', color: '#FFFFFF', height: 36, padding: '0 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+                        >
+                          <Sparkles size={15} strokeWidth={2.5} /> AI Assign
+                        </button>
+                      </div>
+                    )
+
+                    if (scopeToEmployeeSupervised ? sortedSupervisedWorkers.length === 0 : sortedDeptMembers.length === 0) {
+                      return (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, padding: '28px 12px', textAlign: 'center' }}>
+                            <span style={{ width: 40, height: 40, borderRadius: 999, background: '#F3F4F6', color: '#9CA3AF', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                              <Users size={19} />
+                            </span>
+                            <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: '#6B7280' }}>
+                              {scopeToEmployeeSupervised ? 'No Casual Workers under you today' : `No ${assigneeRole}s in this department yet`}
+                            </p>
+                          </div>
+                          {employeeAiAssignButton}
                         </div>
                       )
                     }
 
                     return (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                        {sortedDeptMembers.map(renderMember)}
+                        {scopeToEmployeeSupervised ? sortedSupervisedWorkers.map(renderSupervisedWorker) : sortedDeptMembers.map(renderMember)}
+                        {employeeAiAssignButton}
                       </div>
                     )
                   })()}
@@ -4513,7 +4852,12 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
 
               {/* ── BOARD PANEL ────────────────────────────────────────────── */}
               <section className="task-board-panel" style={{ flex: 1, minWidth: 0, minHeight: 0, alignSelf: 'stretch', display: 'flex', flexDirection: 'column', background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, overflow: 'hidden' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '14px 18px', borderBottom: '1px solid #F3F4F6', flexWrap: 'wrap', flexShrink: 0 }}>
+                {/* height: 68 matches the Member/Departments panel's header exactly, so the two
+                    dividers line up regardless of which panel's own content is naturally taller
+                    (confirmed 2026-07-31). flexWrap can still wrap this row's own content onto a
+                    second line on a narrow viewport — that's unrelated to this fixed height, which
+                    only sets the *minimum* row height via boxSizing, not a hard cap. */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, minHeight: 68, padding: '14px 18px', boxSizing: 'border-box', borderBottom: '1px solid #F3F4F6', flexWrap: 'wrap', flexShrink: 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                     <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                       {boardViewMode === 'calendar'
@@ -4604,6 +4948,15 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                             ]}
                           />
                         </div>
+                        {scopeToEmployeeSupervised && uncompletedByClockedOutTasks.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => { setUncompletedReassignError(''); setUncompletedModalOpen(true) }}
+                            style={{ height: 38, padding: '0 14px', border: '1px solid #FECACA', borderRadius: 8, background: '#FEF2F2', color: '#DC2626', fontSize: 13, fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 7 }}
+                          >
+                            <AlertTriangle size={14} /> Uncompleted Tasks
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
@@ -4723,6 +5076,8 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                                       // Owner/Partner don't get this — not asked for, and their
                                       // board already only shows tasks either of them assigned.
                                       viewerId={(scopeToManagerDepartments || scopeToEmployeeSupervised) ? internalUserId : undefined}
+                                      alwaysRedDeadline={scopeToEmployeeSupervised}
+                                      readOnly={scopeToEmployeeSupervised && employeeClockedOut}
                                     />
                                     {isExpanded && subTasks.length > 0 && (
                                       <div style={{ marginTop: -6, marginBottom: 14, paddingLeft: 6, paddingRight: 20 }}>
@@ -4750,6 +5105,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                                                 onEdit={() => openTask(sub, false)}
                                                 clickable={false}
                                                 isSubTask
+                                                showSubTaskStatus={scopeToEmployeeSupervised}
                                               />
                                             </div>
                                           </div>
@@ -4821,11 +5177,43 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                   }
                 </div>
 
+                {/* Sub-tasks — BUG-024 (point 5): this view-only detail modal never rendered the
+                    sub-task checklist at all, for any role. Sourced from whichever board's kanban
+                    data is currently loaded (My Tasks vs Team Tasks each fetch their own). Skipped
+                    for Employee (confirmed 2026-07-31): the sub-task checklist already lives on
+                    the card itself (the gray sub-task-count badge expands it in place, each
+                    sub-task card showing a live completion checkbox — see showSubTaskStatus on
+                    TaskCard), so repeating it in this modal would be redundant. */}
+                {!scopeToEmployeeSupervised && (() => {
+                  const source = boardViewMode === 'mytasks' ? myTasksKanban : kanban
+                  const allLoadedTasks: Task[] = source ? [...source.Assigned, ...source['In Progress'], ...source.Review, ...source.Complete] : []
+                  const modalSubTasks = allLoadedTasks.filter(t => t.parent_task_id === selectedTask.id)
+                  if (modalSubTasks.length === 0) return null
+                  return (
+                    <div>
+                      <label style={modalLabelStyle}>Sub-tasks</label>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        {modalSubTasks.map(sub => (
+                        <div key={sub.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 8, background: '#F9FAFB', border: '1px solid #F3F4F6' }}>
+                          {sub.status === 'Complete'
+                            ? <CheckCircle size={15} color="#059669" style={{ flexShrink: 0 }} />
+                            : <div style={{ width: 15, height: 15, borderRadius: '50%', border: '1.5px solid #D1D5DB', flexShrink: 0 }} />}
+                          <span style={{ flex: 1, minWidth: 0, fontSize: 13, color: sub.status === 'Complete' ? '#9CA3AF' : '#374151', textDecoration: sub.status === 'Complete' ? 'line-through' : 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sub.title}</span>
+                        </div>
+                        ))}
+                      </div>
+                    </div>
+                  )
+                })()}
+
                 {/* Assigned By — skipped for a Manager viewing a task assigned to them (My Tasks,
                     or a peer Manager's shared-department task): the card that opened this panel
                     already carries a "Posted by" badge for the same info (see postedByName on
-                    TaskCard), so repeating it here would be redundant. */}
-                {!(scopeToManagerDepartments && !isOwner) && (
+                    TaskCard), so repeating it here would be redundant. Also skipped entirely for
+                    Employee: this page only ever shows tasks the Employee themself assigned to
+                    their supervised Casual Workers, so "Assigned By" is always just themselves —
+                    confirmed 2026-07-31. */}
+                {!(scopeToManagerDepartments && !isOwner) && !scopeToEmployeeSupervised && (
                 <div>
                   <label style={modalLabelStyle}>Assigned By</label>
                   <div style={viewFieldValue}>
@@ -4925,7 +5313,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                   Manager or a fellow Manager) — assertCanActOnTaskAsPeer would reject the request
                   server-side anyway, but the button must not even be offered: reviewing your own
                   submitted work is exactly what the Review checkpoint exists to prevent. */}
-              {selectedTask.status === 'Review' && boardViewMode !== 'mytasks' && (
+              {selectedTask.status === 'Review' && boardViewMode !== 'mytasks' && !(scopeToEmployeeSupervised && employeeClockedOut) && (
                 <div style={{ padding: '0 20px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {rejectReasonOpen ? (
                     <>
@@ -4962,7 +5350,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
               {/* Footer — only the user who assigned this task may operate on it. Hidden entirely
                   once the task reached Review/Complete: submitted/approved work only offers the
                   Approve/Reject sign-off above, no Duplicate/Archive/Delete. */}
-              {isOwner && selectedTask.status !== 'Review' && selectedTask.status !== 'Complete' && (
+              {isOwner && selectedTask.status !== 'Review' && selectedTask.status !== 'Complete' && !(scopeToEmployeeSupervised && employeeClockedOut) && (
                 <div style={{ padding: '0 20px 18px', display: 'grid', gridTemplateColumns: scopeToEmployeeSupervised ? '1fr' : 'repeat(3, 1fr)', gap: 8 }}>
                   {/* Duplicate (UC16) / Archive (UC18) are O/P/M-only — Employee only gets Delete (UC15). */}
                   {!scopeToEmployeeSupervised && (
@@ -6630,7 +7018,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
         // Eligibility is based on the task's own deadline date, not whatever date happens to be
         // selected on the board — those can differ once the user picks a Deadline in this modal.
         const aiAssignDate = boardViewMode === 'kanban' && taskDate > todayTaskDate ? taskDate : todayTaskDate
-        const aiDeptManagers = members.filter(m => m.role === assigneeRole && m.department_id === aiDeptId)
+        const aiDeptManagers = members.filter(m => m.role === assigneeRole && m.department_id === aiDeptId && !m.clockedOut)
         const aiManagerDropdownOptions = aiDeptManagers.map(m => ({ value: m.id, label: m.full_name }))
 
         const handleGenerate = async () => {
@@ -6977,6 +7365,106 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
           </div>
         )
       })()}
+
+      {/* ═══════════════ UNCOMPLETED TASKS MODAL (Employee only) ═══════════════ */}
+      {uncompletedModalOpen && (
+        <div
+          onClick={() => setUncompletedModalOpen(false)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: 20, animation: 'overlayFadeIn 0.18s ease-out' }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="uncompleted-tasks-title"
+            onClick={e => e.stopPropagation()}
+            style={{ width: 'min(520px, 100%)', maxHeight: '85vh', overflowY: 'auto', background: '#FFFFFF', borderRadius: 16, boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}
+          >
+            <div style={{ padding: '18px 20px 16px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 32, height: 32, borderRadius: 9, background: 'linear-gradient(135deg, #EF4444, #DC2626)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <AlertTriangle size={15} color="#fff" strokeWidth={2.5} />
+                </div>
+                <h2 id="uncompleted-tasks-title" style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
+                  Uncompleted Tasks
+                </h2>
+              </div>
+              <button
+                onClick={() => setUncompletedModalOpen(false)}
+                style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8 }}
+                onMouseEnter={e => { e.currentTarget.style.background = '#F3F4F6' }}
+                onMouseLeave={e => { e.currentTarget.style.background = '#F9FAFB' }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div style={{ padding: '16px 20px 0' }}>
+              <p style={{ margin: 0, fontSize: 13, color: '#6B7280', lineHeight: 1.5 }}>
+                Their assignee has clocked out. Reassign to someone still on shift.
+              </p>
+            </div>
+            {uncompletedReassignError && (
+              <div style={{ margin: '12px 20px 0', padding: '8px 10px', borderRadius: 8, background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', fontSize: 12.5 }}>{uncompletedReassignError}</div>
+            )}
+            <div style={{ padding: '14px 20px 20px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {uncompletedByClockedOutTasks.map(task => {
+                const assigneeIds = task.assigned_user_ids ?? (task.assigned_user_id ? [task.assigned_user_id] : [])
+                const assignee = members.find(m => assigneeIds.includes(m.id))
+                const priority = task.priority ? PRIORITY_COLORS[task.priority] : null
+                const reassigning = uncompletedReassigningId === task.id
+                const pending = uncompletedPendingAssignee[task.id] ?? ''
+                return (
+                  <div key={task.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                    <div style={{ flex: 1, minWidth: 0, background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 10, padding: '10px 12px' }}>
+                      {priority && task.priority && (
+                        <span style={{ display: 'inline-block', fontSize: '0.66rem', fontWeight: 800, padding: '3px 9px', borderRadius: 999, background: priority.bg, color: priority.text, marginBottom: 6 }}>
+                          {task.priority}
+                        </span>
+                      )}
+                      <p style={{ margin: 0, fontSize: '0.8125rem', fontWeight: 700, color: '#111827', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{task.title}</p>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 6, fontSize: '0.7rem', fontWeight: 700, color: '#DC2626' }}>
+                        <AlertTriangle size={11} style={{ flexShrink: 0 }} />
+                        {`${assignee?.full_name ?? 'Unknown'} didn't finish`}
+                      </span>
+                    </div>
+                    <div style={{ width: 150, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <DropdownField
+                        value={pending}
+                        options={assignableMembers.map(m => ({ value: m.id, label: m.full_name }))}
+                        onChange={v => setUncompletedPendingAssignee(prev => ({ ...prev, [task.id]: v }))}
+                        placeholder={reassigning ? 'Reassigning…' : employeeClockedOut ? 'Locked' : assignableMembers.length === 0 ? 'No one free' : 'Reassign to'}
+                        disabled={reassigning || employeeClockedOut || assignableMembers.length === 0}
+                      />
+                      {pending && (
+                        <button
+                          onClick={() => handleReassignOneTask(task, pending)}
+                          disabled={reassigning}
+                          style={{
+                            height: 30, borderRadius: 8, border: 'none', fontSize: 12, fontWeight: 700,
+                            background: reassigning ? '#FCA5A5' : '#DC2626', color: '#fff',
+                            cursor: reassigning ? 'default' : 'pointer',
+                          }}
+                        >
+                          {reassigning ? 'Confirming…' : 'Confirm'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {supervisedDetailWorker && (
+        <SupervisedWorkerDetailModal
+          worker={supervisedDetailWorker}
+          release={supervisedDetailRelease}
+          releaseBusyId={releaseBusyId}
+          onRelease={releaseClockOut}
+          onClose={() => setSupervisedDetailId('')}
+        />
+      )}
 
       <Toast message={taskToast} />
     </div>

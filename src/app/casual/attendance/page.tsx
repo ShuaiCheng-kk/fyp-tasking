@@ -12,6 +12,7 @@ import { JobDetailPanel, JobView } from '@/components/jobs/JobPresentation'
 import RoleAvatar from '@/components/RoleAvatar'
 import { useIsCompactViewport } from '@/hooks/useIsCompactViewport'
 import { useResourceInvalidation } from '@/components/realtime/RealtimeNotificationsProvider'
+import { DASHBOARD_SKELETON_KEYFRAMES, SkeletonLine } from '@/components/dashboard/ClockFlow'
 
 type HistoryEntry = {
   id: string
@@ -339,8 +340,21 @@ export default function CasualAttendancePage() {
       </div>
 
       {loading ? (
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <Spinner size={26} />
+        <div style={isPhone
+          ? { display: 'flex', flexDirection: 'column', gap: 12 }
+          : { flex: 1, minHeight: 0, display: 'flex', gap: 16 }}
+        >
+          <style>{DASHBOARD_SKELETON_KEYFRAMES}</style>
+          <div style={isPhone
+            ? { width: '100%', display: 'flex', flexDirection: 'column', gap: 12 }
+            : { width: 390, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 12 }}
+          >
+            <SkeletonLine height={64} radius={14} />
+            <SkeletonLine height={80} radius={14} />
+            <SkeletonLine height={80} radius={14} />
+            <SkeletonLine height={80} radius={14} />
+          </div>
+          {!isPhone && <div style={{ flex: 1, minWidth: 0 }}><SkeletonLine height={200} radius={14} /></div>}
         </div>
       ) : history.length === 0 ? (
         <p style={{ margin: 0, color: '#6B7280', fontSize: '0.95rem' }}>No attendance records yet.</p>
@@ -506,9 +520,15 @@ function RecordDetail({ entry, isCompact, detailJob }: {
   isCompact: boolean
   detailJob: JobView | null
 }) {
-  const rateLabel = entry.hourly_rate !== null ? `$${entry.hourly_rate.toFixed(2)} / hour` : '–'
-  const breakLabel = entry.break_in_time
-    ? `${formatClockTime(entry.break_in_time)} – ${formatClockTime(entry.break_out_time)}`
+  const rateLabel = entry.hourly_rate !== null ? `$${entry.hourly_rate.toFixed(2)}` : '–'
+  // Duration, not a time range — same 5-minute-rounded punch times roundedHoursWorked below
+  // subtracts, so this reconciles with the hours actually deducted from pay.
+  const breakLabel = entry.break_in_time && entry.break_out_time
+    ? (() => {
+        const ms = roundToFiveMinutes(entry.break_out_time).getTime() - roundToFiveMinutes(entry.break_in_time).getTime()
+        const breakHours = ms > 0 ? ms / 3600000 : 0
+        return `${Math.floor(breakHours)}h ${Math.round((breakHours - Math.floor(breakHours)) * 60)}m`
+      })()
     : '—'
   // Derived from the same 5-minute-rounded punch times shown above (Clock In/Out, Break Start/
   // End) rather than the raw backend `hours` figure — otherwise the duration shown here wouldn't
@@ -601,7 +621,9 @@ function RecordDetail({ entry, isCompact, detailJob }: {
               <div style={{ borderTop: '1px solid #F3F4F6', marginTop: 14 }}>
                 <DetailRow icon={<CalendarDays size={15} color="#F97316" />} label="Job Type" value={entry.is_open_ended ? 'One-off Job' : 'Shift Job'} />
                 <DetailRow icon={<DollarSign size={15} color="#F97316" />} label="Rate" value={rateLabel} />
-                <DetailRow icon={<Coffee size={15} color="#F97316" />} label="Break Time" value={breakLabel} />
+                {!entry.is_open_ended && (
+                  <DetailRow icon={<Coffee size={15} color="#F97316" />} label="Break Time" value={breakLabel} />
+                )}
                 <DetailRow icon={<UserRound size={15} color="#F97316" />} label="Supervisor" value={entry.supervisor_name ?? '—'} last />
               </div>
             )}
@@ -638,8 +660,12 @@ function RecordDetail({ entry, isCompact, detailJob }: {
             <div style={{ position: 'relative', paddingLeft: 18 }}>
               <div style={{ position: 'absolute', left: 3, top: 18, bottom: 18, width: 2, background: '#E5E7EB', borderRadius: 1 }} />
               <TimelineRow icon={<Clock size={16} color="#16A34A" />} iconBg="#DCFCE7" label="Clock In" time={formatClockTime(entry.clock_in_time)} delay={0} />
-              <TimelineRow icon={<Coffee size={16} color="#EA580C" />} iconBg="#FFEDD5" label="Break Start" time={formatClockTime(entry.break_in_time)} delay={0.05} />
-              <TimelineRow icon={<Coffee size={16} color="#2563EB" />} iconBg="#DBEAFE" label="Break End" time={formatClockTime(entry.break_out_time)} delay={0.1} />
+              {!entry.is_open_ended && (
+                <>
+                  <TimelineRow icon={<Coffee size={16} color="#EA580C" />} iconBg="#FFEDD5" label="Break Start" time={formatClockTime(entry.break_in_time)} delay={0.05} />
+                  <TimelineRow icon={<Coffee size={16} color="#2563EB" />} iconBg="#DBEAFE" label="Break End" time={formatClockTime(entry.break_out_time)} delay={0.1} />
+                </>
+              )}
               <TimelineRow icon={<Clock size={16} color="#DC2626" />} iconBg="#FEE2E2" label="Clock Out" time={formatClockTime(entry.clock_out_time)} delay={0.15} last />
             </div>
           </TitledBlock>
@@ -649,9 +675,16 @@ function RecordDetail({ entry, isCompact, detailJob }: {
           <TitledBlock icon={<Wallet size={15} color="#F97316" />} title="Payment Summary" containerStyle={{ flexShrink: 0, animation: 'attendanceFadeSlideUp 0.35s ease both', animationDelay: '0.18s' }}>
             <div style={{ position: 'relative', paddingLeft: 18 }}>
               <div style={{ position: 'absolute', left: 3, top: 18, bottom: 18, width: 2, background: '#E5E7EB', borderRadius: 1 }} />
-              <TimelineRow icon={<DollarSign size={16} color="#EA580C" />} iconBg="#FFEDD5" label="Hourly Rate" time={rateLabel} delay={0} />
+              {!entry.is_open_ended && (
+                <TimelineRow icon={<DollarSign size={16} color="#EA580C" />} iconBg="#FFEDD5" label="Hourly Rate" time={rateLabel} delay={0} />
+              )}
+              {/* Hours Worked stays for a One-Off Job too — same clock-in-to-clock-out formula,
+                  the worker just doesn't get an Hourly Rate/Break Time row since pay isn't
+                  computed from it (2026-08-01). */}
               <TimelineRow icon={<Clock size={16} color="#2563EB" />} iconBg="#DBEAFE" label="Hours Worked" time={hoursWorkedLabel} delay={0.05} />
-              <TimelineRow icon={<Coffee size={16} color="#EA580C" />} iconBg="#FFEDD5" label="Break Time" time={breakLabel} delay={0.1} />
+              {!entry.is_open_ended && (
+                <TimelineRow icon={<Coffee size={16} color="#EA580C" />} iconBg="#FFEDD5" label="Break Time" time={breakLabel} delay={0.1} />
+              )}
               <TimelineRow icon={<Wallet size={16} color="#16A34A" />} iconBg="#DCFCE7" label="Total Earnings" time={entry.pay !== null ? `$${entry.pay.toFixed(2)}` : '–'} delay={0.15} last />
             </div>
           </TitledBlock>

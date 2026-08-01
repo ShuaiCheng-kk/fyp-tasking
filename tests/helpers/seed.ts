@@ -37,7 +37,11 @@ export async function seedTestOwnerAndCompany(label: string): Promise<TestOwner>
       supabase_auth_id: authData.user.id,
       full_name: `Test Owner ${label}`,
       email_address: email,
-      phone_number: null,
+      // phone_number is unique+NOT NULL — derive a distinct value per row (see the
+      // 20260728330000 migration's own backfill for the same pattern).
+      phone_number: `T${Date.now()}${Math.floor(Math.random() * 1000)}`.slice(0, 20),
+      date_of_birth: '2000-01-01',
+      profile_photo_url: '',
       role: 'Owner',
     })
     .select()

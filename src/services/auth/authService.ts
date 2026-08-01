@@ -63,9 +63,29 @@ export const authService = {
     if (error) throw new Error(error.message)
   },
 
-  async resetPassword(password: string): Promise<void> {
-    const { error } = await supabase.auth.updateUser({ password })
-    if (error) throw new Error(error.message)
+  // BUG-071: this used to call the client-side `supabase.auth.updateUser({password})` against the
+  // recovery-link session — that only rotates the token for the tab that clicked the link. A
+  // device that was already signed in before the reset stayed signed in indefinitely. Going
+  // through the admin API instead invalidates every refresh token this user already holds.
+  async resetPassword(auth_user_id: string, password: string): Promise<void> {
+    // M8-CHAIN-01: reset accepted the same password the account already had, which defeats the
+    // point of a reset (nothing actually changes, and it silently no-ops BUG-071's session
+    // revocation from the user's point of view since nothing looks different). Can't compare
+    // plaintext directly — verify by attempting to sign in with the "new" password against the
+    // account's CURRENT credentials; if that succeeds, it's the same password.
+    const admin = getAdminClient()
+    const { data: userData, error: userErr } = await admin.auth.admin.getUserById(auth_user_id)
+    if (userErr || !userData.user?.email) throw new Error('User not found')
+
+    const verifyClient = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      { auth: { persistSession: false, autoRefreshToken: false } }
+    )
+    const { data: signInData } = await verifyClient.auth.signInWithPassword({ email: userData.user.email, password })
+    if (signInData.user) throw new Error('New password must be different from your current password')
+
+    await authRepository.updateAuthPassword(auth_user_id, password)
   },
 
   async changePassword(email: string, currentPassword: string, newPassword: string): Promise<void> {
@@ -216,6 +236,9 @@ export const authService = {
 
     if (user.company_id) return { company_id: user.company_id }
 
+    const nameClash = await companyRepository.findByName(data.company_name)
+    if (nameClash) throw new Error(`A company named "${data.company_name.trim()}" already exists`)
+
     const company = await companyRepository.createCompany({
       name: data.company_name,
       description: data.company_description || null,
@@ -230,14 +253,24 @@ export const authService = {
 
     await authRepository.updateCompanyId(user.id, company.id)
 
-    for (const [index, deptName] of data.departments.entries()) {
-      if (deptName && deptName.trim()) {
-        await departmentRepository.createDepartment({
-          name: deptName.trim(),
-          company_id: company.id,
-          color: DEPT_COLORS[index % DEPT_COLORS.length],
-        })
-      }
+    // BUG-010: two Step-4 department fields could both be "Operations" with no warning, producing
+    // two indistinguishable departments in every later dropdown — dedupe case-insensitively within
+    // this batch (mirrors importService's CSV-import dedup, the one path that already got this
+    // right) instead of creating every entry verbatim.
+    const seenDeptNames = new Set<string>()
+    let deptColorIndex = 0
+    for (const deptName of data.departments) {
+      const normalized = deptName?.trim().replace(/\s+/g, ' ').slice(0, 100)
+      if (!normalized) continue
+      const key = normalized.toLowerCase()
+      if (seenDeptNames.has(key)) continue
+      seenDeptNames.add(key)
+      await departmentRepository.createDepartment({
+        name: normalized,
+        company_id: company.id,
+        color: DEPT_COLORS[deptColorIndex % DEPT_COLORS.length],
+      })
+      deptColorIndex++
     }
 
     return { company_id: company.id }

@@ -17,7 +17,10 @@ vi.mock('@/repositories/owner/ownerTeamRepository', () => ({
     findCompanyById: vi.fn(),
     findMembersByCompanyId: vi.fn(),
     findManagersByCompany: vi.fn(),
+    findPartnersByCompany: vi.fn(),
     findManagersByDepartment: vi.fn(),
+    findEmployeeDepartments: vi.fn(),
+    findEmployeesByDepartment: vi.fn(),
     findUserById: vi.fn(),
     findUserByAuthIdOrInternalId: vi.fn(),
     deleteUserById: vi.fn(),
@@ -25,8 +28,6 @@ vi.mock('@/repositories/owner/ownerTeamRepository', () => ({
     deleteManagerDepartmentsByUserId: vi.fn(),
     deleteEmployeeDepartmentsByUserId: vi.fn(),
     cleanupUserOperationalReferences: vi.fn(),
-    countSupervisedActivePostings: vi.fn(),
-    countSupervisedUpcomingShifts: vi.fn(),
     findManagerDepartments: vi.fn(),
     findDepartmentManagers: vi.fn(),
     assignManagerDepartment: vi.fn(),
@@ -38,11 +39,18 @@ vi.mock('@/repositories/owner/ownerTeamRepository', () => ({
   },
 }))
 
+const sendRemovedFromCompanyEmailMock = vi.fn().mockResolvedValue(undefined)
+vi.mock('@/services/email/emailService', () => ({
+  emailService: {
+    sendRemovedFromCompanyEmail: sendRemovedFromCompanyEmailMock,
+  },
+}))
+
 import { ownerTeamService } from './ownerTeamService'
 import { ownerTeamRepository } from '@/repositories/owner/ownerTeamRepository'
 import { User } from '@/types/auth.types'
 
-const company = { id: 'company-1', owner_id: 'owner-1' }
+const company = { id: 'company-1', owner_id: 'owner-1', name: 'Test Company' }
 
 const makeUser = (overrides: Partial<User> = {}): User => ({
   id: 'user-1',
@@ -61,9 +69,12 @@ const makeUser = (overrides: Partial<User> = {}): User => ({
 describe('ownerTeamService', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    // Employees with no live supervised jobs/shifts pass the removal guard by default.
-    vi.mocked(ownerTeamRepository.countSupervisedActivePostings).mockResolvedValue(0)
-    vi.mocked(ownerTeamRepository.countSupervisedUpcomingShifts).mockResolvedValue(0)
+    sendRemovedFromCompanyEmailMock.mockResolvedValue(undefined)
+    // Default: no department membership at all, so removeMember's role-specific reassignment
+    // branches no-op (empty for-loop) rather than throwing on an unmocked undefined array — tests
+    // that care about the department-replacement logic override these explicitly.
+    vi.mocked(ownerTeamRepository.findEmployeeDepartments).mockResolvedValue([])
+    vi.mocked(ownerTeamRepository.findManagerDepartments).mockResolvedValue([])
   })
 
   describe('getTeamByCompany (UC28)', () => {
@@ -164,21 +175,93 @@ describe('ownerTeamService', () => {
       expect(ownerTeamRepository.deleteUserById).not.toHaveBeenCalled()
     })
 
-    it('blocks removing an Employee who supervises live recruitment jobs or upcoming casual shifts', async () => {
+    it('blocks removing an Employee who is the only Employee in their department (BUG-084)', async () => {
       vi.mocked(ownerTeamRepository.findCompanyById).mockResolvedValue(company)
       vi.mocked(ownerTeamRepository.findUserByAuthIdOrInternalId).mockResolvedValue(requester)
       vi.mocked(ownerTeamRepository.findUserById).mockResolvedValue(target)
-      vi.mocked(ownerTeamRepository.countSupervisedActivePostings).mockResolvedValue(1)
+      vi.mocked(ownerTeamRepository.findEmployeeDepartments).mockResolvedValue([
+        { department_id: 'dept-ops', department_name: 'Operations' },
+      ])
+      vi.mocked(ownerTeamRepository.findEmployeesByDepartment).mockResolvedValue([{ id: 'user-2', full_name: 'Test User' }])
 
       await expect(ownerTeamService.removeMember('company-1', 'user-2', 'owner-1'))
-        .rejects.toThrow('Assign another supervisor')
+        .rejects.toThrow('Test User is the only Employee in the Operations department')
       expect(ownerTeamRepository.deleteUserById).not.toHaveBeenCalled()
+    })
 
-      // Also blocked when the postings are done but hired shifts are still upcoming.
-      vi.mocked(ownerTeamRepository.countSupervisedActivePostings).mockResolvedValue(0)
-      vi.mocked(ownerTeamRepository.countSupervisedUpcomingShifts).mockResolvedValue(2)
-      await expect(ownerTeamService.removeMember('company-1', 'user-2', 'owner-1'))
-        .rejects.toThrow('Assign another supervisor')
+    it('reassigns a removed Employee\'s tasks/supervision to another Employee in the same department (BUG-084)', async () => {
+      vi.mocked(ownerTeamRepository.findCompanyById).mockResolvedValue(company)
+      vi.mocked(ownerTeamRepository.findUserByAuthIdOrInternalId).mockResolvedValue(requester)
+      vi.mocked(ownerTeamRepository.findUserById).mockResolvedValue(target)
+      vi.mocked(ownerTeamRepository.findEmployeeDepartments).mockResolvedValue([
+        { department_id: 'dept-ops', department_name: 'Operations' },
+      ])
+      vi.mocked(ownerTeamRepository.findEmployeesByDepartment).mockResolvedValue([
+        { id: 'user-2', full_name: 'Test User' },
+        { id: 'emp-9', full_name: 'Backup Employee' },
+      ])
+      deleteUserMock.mockResolvedValue({ error: null })
+
+      await ownerTeamService.removeMember('company-1', 'user-2', 'owner-1')
+
+      expect(ownerTeamRepository.cleanupUserOperationalReferences).toHaveBeenCalledWith('user-2', 'emp-9', target.full_name, 'emp-9')
+    })
+
+    it('reassigns a removed Partner to another Partner if one exists (BUG-084)', async () => {
+      const partnerTarget = makeUser({ id: 'partner-2', role: 'Partner', full_name: 'Second Partner', supabase_auth_id: 'auth-p2' })
+      vi.mocked(ownerTeamRepository.findCompanyById).mockResolvedValue(company)
+      vi.mocked(ownerTeamRepository.findUserByAuthIdOrInternalId).mockResolvedValue(requester)
+      vi.mocked(ownerTeamRepository.findUserById).mockResolvedValue(partnerTarget)
+      vi.mocked(ownerTeamRepository.findPartnersByCompany).mockResolvedValue([
+        { id: 'partner-2', full_name: 'Second Partner' },
+        { id: 'partner-3', full_name: 'Third Partner' },
+      ])
+      deleteUserMock.mockResolvedValue({ error: null })
+
+      await ownerTeamService.removeMember('company-1', 'partner-2', 'owner-1')
+
+      expect(ownerTeamRepository.cleanupUserOperationalReferences).toHaveBeenCalledWith('partner-2', 'partner-3', 'Second Partner', 'partner-3')
+    })
+
+    it('reassigns a removed Partner to the Owner when no other Partner exists, and never blocks (BUG-084)', async () => {
+      const partnerTarget = makeUser({ id: 'partner-2', role: 'Partner', full_name: 'Only Partner', supabase_auth_id: 'auth-p2' })
+      vi.mocked(ownerTeamRepository.findCompanyById).mockResolvedValue(company)
+      vi.mocked(ownerTeamRepository.findUserByAuthIdOrInternalId).mockResolvedValue(requester)
+      vi.mocked(ownerTeamRepository.findUserById).mockResolvedValue(partnerTarget)
+      vi.mocked(ownerTeamRepository.findPartnersByCompany).mockResolvedValue([{ id: 'partner-2', full_name: 'Only Partner' }])
+      deleteUserMock.mockResolvedValue({ error: null })
+
+      const result = await ownerTeamService.removeMember('company-1', 'partner-2', 'owner-1')
+
+      expect(ownerTeamRepository.cleanupUserOperationalReferences).toHaveBeenCalledWith('partner-2', 'owner-1', 'Only Partner', 'owner-1')
+      expect(result).toEqual({ success: true, accountDeleted: true })
+    })
+
+    it('emails the removed member to notify them they can no longer sign in (UC30)', async () => {
+      vi.mocked(ownerTeamRepository.findCompanyById).mockResolvedValue(company)
+      vi.mocked(ownerTeamRepository.findUserByAuthIdOrInternalId).mockResolvedValue(requester)
+      vi.mocked(ownerTeamRepository.findUserById).mockResolvedValue(target)
+      deleteUserMock.mockResolvedValue({ error: null })
+
+      await ownerTeamService.removeMember('company-1', 'user-2', 'owner-1')
+
+      expect(sendRemovedFromCompanyEmailMock).toHaveBeenCalledWith({
+        to: target.email_address,
+        fullName: target.full_name,
+        companyName: company.name,
+      })
+    })
+
+    it('still reports success even when the notification email fails to send (best-effort)', async () => {
+      vi.mocked(ownerTeamRepository.findCompanyById).mockResolvedValue(company)
+      vi.mocked(ownerTeamRepository.findUserByAuthIdOrInternalId).mockResolvedValue(requester)
+      vi.mocked(ownerTeamRepository.findUserById).mockResolvedValue(target)
+      deleteUserMock.mockResolvedValue({ error: null })
+      sendRemovedFromCompanyEmailMock.mockRejectedValue(new Error('Resend is down'))
+
+      const result = await ownerTeamService.removeMember('company-1', 'user-2', 'owner-1')
+
+      expect(result).toEqual({ success: true, accountDeleted: true })
     })
 
     it('removes a member: cleans up references, deletes the row, and deletes the auth user', async () => {
@@ -190,12 +273,46 @@ describe('ownerTeamService', () => {
       const result = await ownerTeamService.removeMember('company-1', 'user-2', 'owner-1')
 
       expect(ownerTeamRepository.deleteMessagesByUserId).toHaveBeenCalledWith('user-2')
-      expect(ownerTeamRepository.cleanupUserOperationalReferences).toHaveBeenCalledWith('user-2', 'owner-1')
+      expect(ownerTeamRepository.cleanupUserOperationalReferences).toHaveBeenCalledWith('user-2', 'owner-1', target.full_name, null)
       expect(ownerTeamRepository.deleteManagerDepartmentsByUserId).toHaveBeenCalledWith('user-2')
       expect(ownerTeamRepository.deleteEmployeeDepartmentsByUserId).toHaveBeenCalledWith('user-2')
       expect(ownerTeamRepository.deleteUserById).toHaveBeenCalledWith('user-2')
       expect(deleteUserMock).toHaveBeenCalledWith('auth-2')
       expect(result).toEqual({ success: true, accountDeleted: true })
+    })
+
+    it('blocks removing a Manager who is the only Manager in their department (BUG-084)', async () => {
+      const managerTarget = makeUser({ id: 'mgr-1', role: 'Manager', full_name: 'David Lim' })
+      vi.mocked(ownerTeamRepository.findCompanyById).mockResolvedValue(company)
+      vi.mocked(ownerTeamRepository.findUserByAuthIdOrInternalId).mockResolvedValue(requester)
+      vi.mocked(ownerTeamRepository.findUserById).mockResolvedValue(managerTarget)
+      vi.mocked(ownerTeamRepository.findManagerDepartments).mockResolvedValue([
+        { department_id: 'dept-ops', department_name: 'Operations' },
+      ])
+      vi.mocked(ownerTeamRepository.findManagersByDepartment).mockResolvedValue([{ id: 'mgr-1', full_name: 'David Lim' }])
+
+      await expect(ownerTeamService.removeMember('company-1', 'mgr-1', 'owner-1'))
+        .rejects.toThrow('David Lim is the only Manager in the Operations department')
+      expect(ownerTeamRepository.deleteUserById).not.toHaveBeenCalled()
+    })
+
+    it('reassigns a removed Manager\'s tasks/recruitment to another Manager in the same department, not the requesting Owner (BUG-084)', async () => {
+      const managerTarget = makeUser({ id: 'mgr-1', role: 'Manager', full_name: 'David Lim', supabase_auth_id: 'auth-mgr-1' })
+      vi.mocked(ownerTeamRepository.findCompanyById).mockResolvedValue(company)
+      vi.mocked(ownerTeamRepository.findUserByAuthIdOrInternalId).mockResolvedValue(requester)
+      vi.mocked(ownerTeamRepository.findUserById).mockResolvedValue(managerTarget)
+      vi.mocked(ownerTeamRepository.findManagerDepartments).mockResolvedValue([
+        { department_id: 'dept-ops', department_name: 'Operations' },
+      ])
+      vi.mocked(ownerTeamRepository.findManagersByDepartment).mockResolvedValue([
+        { id: 'mgr-1', full_name: 'David Lim' },
+        { id: 'mgr-5', full_name: 'Wendy Ho' },
+      ])
+      deleteUserMock.mockResolvedValue({ error: null })
+
+      await ownerTeamService.removeMember('company-1', 'mgr-1', 'owner-1')
+
+      expect(ownerTeamRepository.cleanupUserOperationalReferences).toHaveBeenCalledWith('mgr-1', 'mgr-5', 'David Lim', 'mgr-5')
     })
 
     it('throws when deleting the auth user fails', async () => {

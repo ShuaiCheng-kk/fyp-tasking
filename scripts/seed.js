@@ -269,6 +269,7 @@ const legacyTestEmailsToDelete = [
   'casual4@test.com',
   'casual5@test.com',
   'casual6@test.com',
+  'casual7@test.com',
   'partner2@test.com',
   ...Array.from({ length: 10 }, (_, i) => `cw${i + 1}@test.com`),
   ...Array.from({ length: 10 }, (_, i) => `guest${i + 1}@test.com`),
@@ -961,12 +962,32 @@ async function main() {
     publication_status: 'published',
   })
   const dashboardAttendanceAssignments = []
-  for (const email of ['manager5@test.com', 'employee1@test.com', 'employee5@test.com']) {
+  // employee1 (Ben Seah) intentionally left off this shared 09:00-17:00 shift — he gets his own
+  // "now"-relative one below instead, so his own Dashboard's Clock In/Break In/Break Out/Clock Out
+  // row is genuinely clickable the moment the seed finishes, not a fixed business-hours window
+  // that may already be over (or not started) whenever this actually runs.
+  for (const email of ['manager5@test.com', 'employee5@test.com']) {
     const assignment = await assignShift(dashboardAttendanceShift?.id, userIdMap[email].internalId, ownerUser.id)
     if (assignment) dashboardAttendanceAssignments.push({ email, assignment })
   }
   await clockRecord(dashboardAttendanceAssignments.find(a => a.email === 'manager5@test.com')?.assignment, manager5UserId, { dateStr: todayKey, breakStart: '12:15', breakEnd: '12:45' })
-  await clockRecord(dashboardAttendanceAssignments.find(a => a.email === 'employee1@test.com')?.assignment, employee1UserId, { dateStr: todayKey, lateMinutes: 20, breakStart: '12:30', breakEnd: '13:00' })
+
+  // employee1's own "click through it yourself" shift (UC49, same idea as Marcus Lee's Step 18
+  // CW demo) — starts 45 minutes ago, runs 2 hours from now, no attendance_records row at all, so
+  // Clock In is live right away and Break In/Break Out/Clock Out stay open for the user to click
+  // through at their own pace, ending with Clock Out themselves (2026-08-01).
+  const employee1ShiftStart = new Date(Date.now() - 45 * 60000)
+  const employee1ShiftEnd = new Date(Date.now() + 2 * 60 * 60000)
+  const employee1ShiftDate = dateKeySGT(employee1ShiftStart)
+  const employee1LiveShift = await createShift({
+    company_id: company.id, department_id: opsDept.id, shift_date: employee1ShiftDate,
+    start_time: toHM(employee1ShiftStart), end_time: toHM(employee1ShiftEnd), is_open_ended: false,
+    created_by: ownerUser.id, publication_status: 'published',
+  })
+  if (employee1LiveShift) {
+    await assignShift(employee1LiveShift.id, employee1UserId, ownerUser.id)
+    console.log(`  ✓ Ben Seah（employee1）今天 ${toHM(employee1ShiftStart)}–${toHM(employee1ShiftEnd)} UTC 排班，未打卡 —— 登录 employee1@test.com 立刻可以自己点完 Clock In → Break In → Break Out → Clock Out 整套流程`)
+  }
 
   const ownerDashboardAttendanceDefs = [
     {
@@ -981,11 +1002,13 @@ async function main() {
     {
       department: depts[2],
       title: 'Engineering Release Support',
-      emails: ['manager3@test.com', 'manager7@test.com', 'employee3@test.com', 'employee7@test.com'],
+      // employee3 (Daniel Tay) is deliberately NOT scheduled today — he has an approved Fixed Day
+      // Off for today (see the off_day_requests seeding below), so giving him a shift + clock-in
+      // record on the same date would contradict that and confuse the Off Day pill test.
+      emails: ['manager3@test.com', 'manager7@test.com', 'employee7@test.com'],
       clocked: [
         { email: 'manager3@test.com', userId: manager3UserId, options: { dateStr: todayKey } },
         { email: 'manager7@test.com', userId: manager7UserId, options: { dateStr: todayKey, lateMinutes: 15 } },
-        { email: 'employee3@test.com', userId: employee3UserId, options: { dateStr: todayKey, breakStart: '12:45', breakEnd: '13:15' } },
       ],
     },
     {
@@ -2014,6 +2037,30 @@ async function main() {
   await assignShift(cwFutShift2?.id, userIdMap['casual1@test.com'].internalId, ownerUser.id, userIdMap['employee1@test.com'].internalId)
   console.log('  ✓ Marcus Lee 另外 2 条未来班次（Upcoming Jobs 列表用）')
 
+  // Marcus Lee 再多 3 条未来班次，铺满 Upcoming Jobs（2026-07-31：单独 2 条太单薄，Casual
+  // Dashboard 看起来像个几乎没排班的账号）——凑成一个排班很满的活跃 Casual Worker。
+  // casualDashboardService.UPCOMING_WINDOW_DAYS = 7（今天含在内，窗口到 TODAY+6）——超出这个
+  // 窗口的班次不会出现在 Dashboard 的 Upcoming Jobs 里，所以这几条必须落在 +1..+6 天内，且避开
+  // 已有的 +2 / +5，让一周内每天最多一条，看起来是排得满满的一周而不是同一天撞两条。
+  const cwMoreFutureDefs = [
+    { days: 1, start: '10:00', end: '14:00' },
+    { days: 3, start: '17:00', end: '21:00' },
+    { days: 6, start: '09:00', end: '13:00' },
+  ]
+  for (const def of cwMoreFutureDefs) {
+    const shift = await createShift({
+      company_id: company.id,
+      department_id: depts[0].id,
+      shift_date: dateKey(addDays(TODAY, def.days)),
+      start_time: def.start,
+      end_time: def.end,
+      created_by: ownerUser.id,
+      publication_status: 'published',
+    })
+    await assignShift(shift?.id, userIdMap['casual1@test.com'].internalId, ownerUser.id, userIdMap['employee1@test.com'].internalId)
+  }
+  console.log('  ✓ Marcus Lee 再 3 条未来班次（共 5 条未来班次，Upcoming Jobs 列表铺满）')
+
   // ── Step 13: 创建 Attendance Records（Present / Late / Absent 状态混合，UC50/51/56）──
   console.log('\nStep 13: 创建 Attendance Records...')
   // 3-10 天前：全员 Present——单纯给 Report 页默认的近 7 天窗口和各种历史统计铺数据，不需要
@@ -2400,12 +2447,19 @@ async function main() {
   })
 
   // ── Step 18: 给 Marcus Lee 建一个"现在就能打卡"的开放 Casual Worker 工作（UC49）──
-  // 时间从真实当下往前推 10 分钟起、往后 4 小时止，跑完 seed 立刻登录 casual1@test.com
-  // 就能在 Dashboard 上看到 Clock In 按钮可点；不是 open-ended，达到 end_time 后 Clock Out
-  // 不需要主管先 Release。shift_date 用 UTC 日历日，跟打卡窗口判定用的时区口径保持一致。
+  // 时间从真实当下往前推 45 分钟起、往后推 20 分钟止，跑完 seed 立刻登录 casual1@test.com 就能
+  // Clock In。job_type: 'oneoff' —— 真实 app 里 workerApplicationService 对 oneoff 职位建 shift
+  // 时永远是 is_open_ended: true（2026-08-01 修正：这里曾经手动传 is_open_ended: false，跟
+  // job_type 对不上，导致 Dashboard 显示 Break In/Break Out 且能自己 Clock Out，跟 Attendance
+  // 页显示的"$16 flat rate / Est. 4 hours"这些 one-off 特征矛盾——用户实测时发现）。改成
+  // is_open_ended: true 后：没有 Break In/Break Out（casual/dashboard/page.tsx 已按
+  // is_open_ended 隐藏这两个按钮），Clock Out 需要主管（Ben Seah / employee1@test.com）在自己
+  // 的 Dashboard 上 Approve Clock Out 放行（employeeAttendanceService.getClockOutReleaseQueue 是
+  // 实时查询，Marcus Clock In 后会自动出现在该队列，不需要额外种数据）。shift_date 用 UTC 日历
+  // 日，跟打卡窗口判定用的时区口径保持一致。
   console.log('\nStep 18: 创建 Casual Worker 当前可打卡的工作...')
-  const cwOpenStart = new Date(Date.now() - 10 * 60000)
-  const cwOpenEnd = new Date(Date.now() + 4 * 60 * 60000)
+  const cwOpenStart = new Date(Date.now() - 45 * 60000)
+  const cwOpenEnd = new Date(Date.now() + 20 * 60000)
   // UTC calendar date — matches both the Clock In gate (casualAttendanceService.clockIn) and the
   // Casual Dashboard's "which jobs show up" query (casualDashboardService.findCurrentAssignment,
   // fixed to use the same UTC day instead of local — see that file for why the two need to agree).
@@ -2444,13 +2498,18 @@ async function main() {
 
     const cwOpenShift = await createShift({
       company_id: company.id, department_id: depts[0].id, shift_date: cwOpenShiftDate,
-      start_time: toHM(cwOpenStart), end_time: toHM(cwOpenEnd), is_open_ended: false,
+      start_time: toHM(cwOpenStart), end_time: toHM(cwOpenEnd), is_open_ended: true,
       created_by: ownerUser.id, publication_status: 'published',
       source_job_posting_id: cwOpenJob.id,
+      // Mirrors workerApplicationService.confirmApplication's shift-creation mapping
+      // (hourly_rate: job.salary_amount) — without it Attendance's Total Earnings has no rate to
+      // compute a flat payout from and shows "–" (2026-08-01, caught while verifying the
+      // is_open_ended fix above).
+      hourly_rate: 16,
     })
     if (cwOpenShift) {
       await assignShift(cwOpenShift.id, userIdMap['casual1@test.com'].internalId, ownerUser.id, userIdMap['employee1@test.com'].internalId)
-      console.log(`  ✓ Marcus Lee 的开放班次：${cwOpenJob.title}（今天 ${toHM(cwOpenStart)}–${toHM(cwOpenEnd)} UTC，登录 casual1@test.com 立刻可 Clock In，主管 Ben Seah）`)
+      console.log(`  ✓ Marcus Lee 的开放班次（One-off）：${cwOpenJob.title}（今天 ${toHM(cwOpenStart)}–${toHM(cwOpenEnd)} UTC，登录 casual1@test.com 立刻可 Clock In；无 Break In/Out；Clock Out 需 Ben Seah（employee1@test.com）在其 Dashboard Approve Clock Out 放行）`)
 
       // Ben Seah（主管，employee1）给 Marcus 分派的 Task——挂在这个当前班次的 shift_id 上，
       // CasualTaskBoard 是按 shift_id 过滤 + 前端再按 assigned_user_id 过滤当前用户的任务，
@@ -2481,6 +2540,110 @@ async function main() {
       })
       console.log('  ✓ Ben Seah 给 Marcus Lee 分派的 4 条 Task（挂在当前班次 shift_id 上，Kanban 三列 + 1 条历史）')
     }
+  }
+
+  // ── Step 18c: 给 Marcus Lee 再建一个"现在就能打卡"的 Shift Job（对照 Step 18 的 One-off，
+  // 验证 Break In/Break Out + 按时薪算钱这条路径没被 Step 18/is_open_ended 的改动带偏）──
+  // 完整字段（含 job_end_time、hourly_rate），不是"缺斤少两"的 job：有 Break In/Out，Clock Out
+  // 不需要主管放行，到点自己解锁。時間同 Step 18 的套路：往前 45 分钟起、往后 20 分钟止。
+  console.log('\nStep 18c: 创建 Casual Worker 当前可打卡的 Shift Job（对照 One-off）...')
+  const cwShiftStart = new Date(Date.now() - 45 * 60000)
+  const cwShiftEnd = new Date(Date.now() + 20 * 60000)
+  const cwShiftDate = dateKeySGT(cwShiftStart)
+
+  const { data: cwShiftJob, error: cwShiftJobErr } = await supabase.from('job_postings').insert({
+    company_id: company.id, department_id: depts[0].id, created_by: ownerUser.id,
+    title: 'Same-Day Retail Floor Cover', responsibilities: 'Cover the retail floor for a same-day gap in the roster.',
+    skills: 'Available immediately, comfortable with customer-facing retail work.',
+    status: 'closed', archived_at: new Date().toISOString(), job_type: 'shift', urgency: 'urgent',
+    job_date: cwShiftDate, job_start_time: toHM(cwShiftStart), job_end_time: toHM(cwShiftEnd),
+    openings: 1, experience_required: 'Not Required', minimum_age: 16,
+    salary_amount: 18, expires_at: dateKey(addDays(TODAY, 3)),
+  }).select().single()
+  if (cwShiftJobErr) {
+    console.warn(`  ⚠ 创建 job_posting 失败 (Same-Day Retail Floor Cover): ${cwShiftJobErr.message}`)
+  } else {
+    const { data: cwShiftApp, error: cwShiftAppErr } = await supabase.from('job_applicants').insert({
+      job_id: cwShiftJob.id, user_id: userIdMap['casual1@test.com'].internalId,
+      resume: 'https://example.com/demo-resumes/marcus-lee-resume.pdf', status: 'accepted',
+      additional_note: "Happy to cover the floor today.",
+    }).select().single()
+    if (cwShiftAppErr) {
+      console.warn(`  ⚠ 创建 job_applicant 失败 (Marcus Lee): ${cwShiftAppErr.message}`)
+    } else {
+      const { error: cwShiftInviteErr } = await supabase.from('job_invitations').insert({
+        job_id: cwShiftJob.id, applicant_id: cwShiftApp.id, sent_by: ownerUser.id, status: 'accepted',
+      })
+      if (cwShiftInviteErr) console.warn(`  ⚠ 创建 job_invitation 失败: ${cwShiftInviteErr.message}`)
+    }
+
+    const cwShiftShift = await createShift({
+      company_id: company.id, department_id: depts[0].id, shift_date: cwShiftDate,
+      start_time: toHM(cwShiftStart), end_time: toHM(cwShiftEnd), is_open_ended: false,
+      created_by: ownerUser.id, publication_status: 'published',
+      source_job_posting_id: cwShiftJob.id,
+      hourly_rate: 18,
+    })
+    if (cwShiftShift) {
+      await assignShift(cwShiftShift.id, userIdMap['casual1@test.com'].internalId, ownerUser.id, userIdMap['employee1@test.com'].internalId)
+      console.log(`  ✓ Marcus Lee 的开放班次（Shift）：${cwShiftJob.title}（今天 ${toHM(cwShiftStart)}–${toHM(cwShiftEnd)} UTC，登录 casual1@test.com 立刻可 Clock In → Break In → Break Out → Clock Out 一路点完，不需要主管放行）`)
+    }
+  }
+
+  // ── Step 18d: 给 Marcus Lee（casual1）补 Applications 页两张卡——之前他所有 job_applicant
+  // 都是 status:'accepted' + invitation:'accepted'（Confirmed），从来没有 invitation:'sent'
+  // （Accept/Reject Offer）或 status:'rejected'（History）的卡，导致 Applications 小红点
+  // （sidebar + Ongoing/History 胶囊）永远不会亮，CW 侧完全没法测（2026-08-01，对照 guest1
+  // 已经天然齐全的四态数据）。跟真实 shift 无关，纯粹是 job_applicants/job_invitations 记录。
+  console.log('\nStep 18d: 给 Marcus Lee 补 Accept/Reject Offer + History 两张 Applications 卡...')
+  const { data: cwOfferJob, error: cwOfferJobErr } = await supabase.from('job_postings').insert({
+    company_id: company.id, department_id: depts[0].id, created_by: ownerUser.id,
+    title: 'Weekend Warehouse Restock — Extra Hands', responsibilities: 'Extra crew to restock the warehouse floor ahead of the weekend rush.',
+    skills: 'Comfortable with physical, repetitive work.',
+    status: 'closed', job_type: 'oneoff', urgency: 'normal',
+    job_date: dateKey(addDays(TODAY, 7)), job_start_time: '10:00:00', estimated_hours: '5',
+    openings: 2, experience_required: 'Not Required', minimum_age: 16,
+    salary_amount: 70, expires_at: dateKey(addDays(TODAY, 7)),
+  }).select().single()
+  if (cwOfferJobErr) {
+    console.warn(`  ⚠ 创建 job_posting 失败 (Weekend Warehouse Restock — Extra Hands): ${cwOfferJobErr.message}`)
+  } else {
+    const { data: cwOfferApp, error: cwOfferAppErr } = await supabase.from('job_applicants').insert({
+      job_id: cwOfferJob.id, user_id: userIdMap['casual1@test.com'].internalId,
+      resume: 'https://example.com/demo-resumes/marcus-lee-resume.pdf', status: 'accepted',
+      additional_note: "I've done warehouse restocking before, happy to help this weekend.",
+    }).select().single()
+    if (cwOfferAppErr) {
+      console.warn(`  ⚠ 创建 job_applicant 失败 (Marcus Lee offer): ${cwOfferAppErr.message}`)
+    } else {
+      const { error: cwOfferInviteErr } = await supabase.from('job_invitations').insert({
+        job_id: cwOfferJob.id, applicant_id: cwOfferApp.id, sent_by: ownerUser.id, status: 'sent',
+      })
+      if (cwOfferInviteErr) console.warn(`  ⚠ 创建 job_invitation 失败: ${cwOfferInviteErr.message}`)
+      else console.log('  ✓ Accept/Reject Offer 卡：Weekend Warehouse Restock — Extra Hands')
+    }
+  }
+
+  const { data: cwRejectJob, error: cwRejectJobErr } = await supabase.from('job_postings').insert({
+    company_id: company.id, department_id: depts[0].id, created_by: ownerUser.id,
+    title: 'Overnight Stocktake Crew', responsibilities: 'Overnight team counting and organizing warehouse inventory.',
+    skills: 'Comfortable with repetitive counting tasks, basic spreadsheet use a plus.',
+    status: 'open', job_type: 'shift', urgency: 'normal',
+    job_date: dateKey(addDays(TODAY, 9)), job_start_time: '22:00:00', job_end_time: '06:00:00',
+    openings: 2, experience_required: '6+ Months', minimum_age: 18,
+    salary_amount: 15, expires_at: dateKey(addDays(TODAY, 19)),
+  }).select().single()
+  if (cwRejectJobErr) {
+    console.warn(`  ⚠ 创建 job_posting 失败 (Overnight Stocktake Crew): ${cwRejectJobErr.message}`)
+  } else {
+    const { error: cwRejectAppErr } = await supabase.from('job_applicants').insert({
+      job_id: cwRejectJob.id, user_id: userIdMap['casual1@test.com'].internalId,
+      resume: 'https://example.com/demo-resumes/marcus-lee-resume.pdf', status: 'rejected',
+      additional_note: "I'm available overnight and comfortable with stocktake work.",
+      decided_at: new Date().toISOString(),
+    })
+    if (cwRejectAppErr) console.warn(`  ⚠ 创建 job_applicant 失败 (Marcus Lee reject): ${cwRejectAppErr.message}`)
+    else console.log('  ✓ History 卡：Overnight Stocktake Crew（Not Selected）')
   }
 
   // ── Step 18b: Employee Dashboard 演示数据——Ben Seah（employee1）今天同时督导两种类型的
@@ -2626,6 +2789,81 @@ async function main() {
           if (casual6ClockErr) console.warn(`  ⚠ 创建 casual6 attendance_record 失败: ${casual6ClockErr.message}`)
           console.log(`  ✓ Marcus Tan（casual6，One-off job）今天 ${toHM(casual6JobStart)} UTC 起已打卡、尚未 Clock Out，等 Ben Seah 在 Dashboard 点 Approve Clock Out 才能放行`)
         }
+      }
+    }
+  }
+
+  // ── Step 18e: Employee Tasks 页「Uncompleted Tasks」演示数据——一个 Ben Seah 督导、今天
+  // 已经 Clock Out 的 Casual Worker，手上还留着 Assigned/In Progress 各一条任务没做完。跑完
+  // seed 直接登录 employee1@test.com 打开 Tasks 页，就能看到 Board 里 Assigned/In Progress 两列
+  // 不显示这两条卡（被过滤掉），"All Tasks" 筛选框右边出现红色 Uncompleted Tasks 按钮，点开能看到
+  // 这两条任务 + AI Reassign 按钮（这个部门当时还有 Hafiz Rahman / Marcus Tan 在班，可以reassign）。
+  // 不复用 casual1/5/6——他们分别演示"现在能打卡""已打卡未放行"，跟这里"已经打完卡走人"是三种
+  // 不同状态，混在一个人身上会互相干扰。
+  console.log('\nStep 18e: Employee Tasks 页 Uncompleted Tasks 演示数据（Casual Worker 已下班但任务未完成）...')
+  const { data: casual7Auth, error: casual7AuthErr } = await supabase.auth.admin.createUser({
+    email: 'casual7@test.com', password: PASSWORD, email_confirm: true,
+  })
+  if (casual7AuthErr || !casual7Auth.user) {
+    console.warn(`  ⚠ Failed to create casual7@test.com auth: ${casual7AuthErr?.message}`)
+  } else {
+    const { data: casual7User, error: casual7UserErr } = await supabase
+      .from('users')
+      .insert({
+        supabase_auth_id: casual7Auth.user.id,
+        full_name: 'Nadia Osman',
+        email_address: 'casual7@test.com',
+        phone_number: '+65 8300 3007',
+        date_of_birth: '2000-06-21',
+        profile_photo_url: DEMO_PHOTO_URL,
+        role: 'Casual Worker',
+        company_id: company.id,
+      })
+      .select()
+      .single()
+    if (casual7UserErr) {
+      console.warn(`  ⚠ Failed to create casual7@test.com user: ${casual7UserErr.message}`)
+    } else {
+      userIdMap['casual7@test.com'] = { authId: casual7Auth.user.id, internalId: casual7User.id }
+      const { error: casual7DeptErr } = await supabase.from('casualworker_departments').upsert({
+        casual_worker_id: casual7User.id, department_id: depts[0].id, company_id: company.id,
+        verified_at: new Date().toISOString(),
+      }, { onConflict: 'casual_worker_id,department_id' })
+      if (casual7DeptErr) console.warn(`  ⚠ Failed to verify casual7@test.com in Operations: ${casual7DeptErr.message}`)
+
+      // A short shift earlier today that's already over — clocked in AND out, both "now"-relative
+      // so this reads as "already finished and left" no matter when the seed actually runs.
+      const casual7ShiftStart = new Date(Date.now() - 4 * 60 * 60 * 1000)
+      const casual7ShiftEnd = new Date(Date.now() - 60 * 60 * 1000)
+      const casual7ShiftDate = dateKeySGT(casual7ShiftStart)
+      const casual7Shift = await createShift({
+        company_id: company.id, department_id: depts[0].id, shift_date: casual7ShiftDate,
+        start_time: toHM(casual7ShiftStart), end_time: toHM(casual7ShiftEnd), is_open_ended: false,
+        created_by: ownerUser.id, publication_status: 'published',
+      })
+      const casual7Assignment = casual7Shift && await assignShift(casual7Shift.id, casual7User.id, ownerUser.id, userIdMap['employee1@test.com'].internalId)
+      if (casual7Assignment) {
+        const { error: casual7ClockErr } = await supabase.from('attendance_records').insert({
+          shift_assignment_id: casual7Assignment.id,
+          user_id: casual7User.id,
+          clock_in_time: casual7ShiftStart.toISOString(),
+          clock_out_time: casual7ShiftEnd.toISOString(),
+        })
+        if (casual7ClockErr) console.warn(`  ⚠ 创建 casual7 attendance_record 失败: ${casual7ClockErr.message}`)
+
+        await createTask({
+          company_id: company.id, department_id: depts[0].id, shift_id: casual7Shift.id,
+          title: 'Reconcile petty cash drawer', description: 'Count petty cash against the log and flag any discrepancy.',
+          assigned_user_id: casual7User.id, assigned_by: userIdMap['employee1@test.com'].internalId,
+          status: 'Assigned', due_at: dueAtOn(TODAY), priority: 'Medium',
+        })
+        await createTask({
+          company_id: company.id, department_id: depts[0].id, shift_id: casual7Shift.id,
+          title: 'Label backroom overflow boxes', description: 'Sort and label the overflow boxes in the backroom for next restock.',
+          assigned_user_id: casual7User.id, assigned_by: userIdMap['employee1@test.com'].internalId,
+          status: 'In Progress', due_at: dueAtOn(TODAY), priority: 'High',
+        })
+        console.log(`  ✓ Nadia Osman（casual7）今天 ${toHM(casual7ShiftStart)}–${toHM(casual7ShiftEnd)} UTC 已打卡+已 Clock Out；留 2 条任务（Assigned/In Progress）没做完，Ben Seah 的 Tasks 页会出现 Uncompleted Tasks 按钮`)
       }
     }
   }
@@ -2884,6 +3122,37 @@ async function main() {
   }
   console.log('  ✓ 3 条 Announcement（company-wide ×2 + Operations 部门 ×1）+ 4 条 Message（含未读，Owner/Partner 收件箱都有）')
 
+  // Marcus Lee (casual1) ↔ Ben Seah (his supervisor, employee1) / Sarah Mitchell (owner, backup
+  // contact) — Casual Dashboard's Message panel had zero seeded rows before this (2026-07-31),
+  // so a fresh login showed both contact tabs completely empty until the worker typed something
+  // themselves. A real back-and-forth here, mixed read/unread on both threads.
+  const casualMessageDefs = [
+    { from_user_id: employee1UserId, from_name: 'Ben Seah', to_email: 'casual1@test.com',
+      content: 'Hey Marcus, thanks for covering the counter today on such short notice!', is_read: true },
+    { from_user_id: userIdMap['casual1@test.com'].internalId, from_name: 'Marcus Lee', to_email: 'employee1@test.com',
+      content: "No problem — I'll get the float counted and the till set up before we open.", is_read: true },
+    { from_user_id: employee1UserId, from_name: 'Ben Seah', to_email: 'casual1@test.com',
+      content: "Great. I've also put a couple of restocking tasks on your board, should be quick.", is_read: false },
+    { from_user_id: userIdMap['casual1@test.com'].internalId, from_name: 'Marcus Lee', to_email: 'employee1@test.com',
+      content: "Got it, I'll knock those out once the morning rush settles down.", is_read: true },
+    { from_user_id: ownerUser.id, from_name: 'Sarah Mitchell', to_email: 'casual1@test.com',
+      content: 'Welcome back Marcus — appreciate you picking up shifts on short notice again this month!', is_read: false },
+    { from_user_id: userIdMap['casual1@test.com'].internalId, from_name: 'Marcus Lee', to_email: 'owner@test.com',
+      content: 'Thank you! Always happy to help out when I can.', is_read: true },
+  ]
+  for (const def of casualMessageDefs) {
+    const { error } = await supabase.from('messages').insert({
+      from_user_id: def.from_user_id,
+      to_user_id: userIdMap[def.to_email].internalId,
+      company_id: company.id,
+      content: def.content,
+      is_read: def.is_read,
+      sender_name: def.from_name,
+    })
+    if (error) console.warn(`  ⚠ 创建 casual message 失败: ${error.message}`)
+  }
+  console.log('  ✓ Marcus Lee ↔ Ben Seah / Sarah Mitchell 的 Message 对话（Casual Dashboard Message 面板用，含未读）')
+
   console.log('\n═══════════════════════════════════════════')
   console.log('  完成！账号结构（密码全部 111111）：')
   console.log('  Owner:    owner@test.com')
@@ -2917,7 +3186,7 @@ async function main() {
   console.log('    Off Day 待审批：Ben Seah + Grace Lim 撞同一天（Operations 2 人）—— AI Process 应判 Ben 为 safe、Grace 为 flagged 并给出替代日建议')
   console.log('                   Aaron Wong（Manager 自己的申请；Engineering 现有 manager3+manager7 两个 Manager，AI Process 应判 safe）')
   console.log('                   Elaine Chua（当天已有排班冲突，仅供手动测试，AI Process 不检查排班）')
-  console.log('  Casual Worker Clock In：casual1@test.com 登录后 Dashboard 有 Same-Day Café Cover Shift 可直接 Clock In（UC49）')
+  console.log('  Casual Worker Clock In：casual1@test.com 登录后 Dashboard 有 Same-Day Café Cover Shift（One-off，无 Break）可直接 Clock In（UC49），Clock Out 需 employee1@test.com 在其 Dashboard Approve 放行')
   console.log('  Templates：Job Template ×2（Standard Event Crew / Weekend Warehouse Shift）+ Shift Template ×2')
   console.log('  Archived Job Posting：Holiday Season Support — Customer Support')
   console.log('  Task 已种 12 条：Owner→Manager ×4、Partner→Manager ×2、Manager→Employee ×4（含 2 条子任务）')

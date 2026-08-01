@@ -7,7 +7,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { Check } from 'lucide-react'
 import GuestPersonalInfoCard from '@/components/guest/GuestPersonalInfoCard'
-import { SkillsCard, CertificatesCard, ResumeCard } from '@/components/worker/WorkerProfileSections'
+import { SkillsCard, CertificatesCard, ResumeCard, ProfileCardSkeleton } from '@/components/worker/WorkerProfileSections'
+import { useLayoutWorkerProfile } from '@/app/guest/layout'
+import type { WorkerProfile } from '@/types/WorkerProfile'
 
 const pageKeyframes = `
   @keyframes blockSlideUp { from { opacity: 0; transform: translateY(20px) } to { opacity: 1; transform: translateY(0) } }
@@ -15,8 +17,14 @@ const pageKeyframes = `
 `
 
 export default function GuestWorkerProfilePage() {
-  const [authId, setAuthId] = useState('')
-  const [internalUserId, setInternalUserId] = useState('')
+  // guest/layout.tsx already fetched the full WorkerProfile for its own role-guard check before
+  // this page ever mounts — reuse that instead of the page redoing the exact same
+  // `/api/guest/profile` round trip a second time (2026-07-31). The 4 cards below each used to
+  // ALSO run their own identical fetch on top of that, popping in independently whenever their
+  // own request happened to resolve; loading it once and handing every card its slice as a prop
+  // makes them render together, same as the Owner pages' single-`loading`-gate skeleton pattern.
+  const layoutProfile = useLayoutWorkerProfile()
+  const [profile, setProfile] = useState<WorkerProfile | null>(layoutProfile)
   const [toast, setToast] = useState('')
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -27,21 +35,21 @@ export default function GuestWorkerProfilePage() {
   }
 
   useEffect(() => {
+    if (layoutProfile) { setProfile(layoutProfile); return }
+    // Fallback for the rare case the layout's own fetch hit its error path (transient failure) —
+    // fetch directly instead of leaving the page stuck on skeletons forever.
     const load = async () => {
       const storedAuthId = localStorage.getItem('tasking_user_id')
       if (!storedAuthId) {
         window.location.href = '/signin'
         return
       }
-      setAuthId(storedAuthId)
-
-      // Internal user id (not the auth uid) — the header badge's profile update matches on users.id
       const res = await fetch(`/api/guest/profile?user_id=${storedAuthId}`)
       const data = await res.json()
-      if (data.success) setInternalUserId(data.profile.id)
+      if (data.success) setProfile(data.profile)
     }
     void load()
-  }, [])
+  }, [layoutProfile])
 
   return (
     <>
@@ -56,16 +64,34 @@ export default function GuestWorkerProfilePage() {
         </div>
 
         {/* The profile grid is the page's scroll block — the header above stays fixed and this
-            section scrolls internally once the cards outgrow the viewport. */}
-        <section style={{ maxWidth: 1080, margin: '0 auto', width: '100%', flex: '1 1 auto', minHeight: 0, overflowY: 'auto', display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 16, alignItems: 'start', animation: 'blockSlideUp 0.38s ease both 0.06s' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            {internalUserId && <GuestPersonalInfoCard userId={internalUserId} onToast={showToast} />}
-            {authId && <SkillsCard authId={authId} onToast={showToast} />}
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            {authId && <CertificatesCard authId={authId} onToast={showToast} />}
-            {authId && <ResumeCard authId={authId} onToast={showToast} />}
-          </div>
+            section scrolls internally once the cards outgrow the viewport. Keyed on whether the
+            single fetch above has landed, so the real cards mount fresh (and replay the entrance
+            animation) right when they're ready instead of an already-settled shell sitting there
+            from first paint. */}
+        <section key={profile ? 'ready' : 'loading'} style={{ maxWidth: 1080, margin: '0 auto', width: '100%', flex: '1 1 auto', minHeight: 0, overflowY: 'auto', display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 16, alignItems: 'start', animation: 'blockSlideUp 0.38s ease both' }}>
+          {profile ? (
+            <>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <GuestPersonalInfoCard initialProfile={profile} onToast={showToast} />
+                <SkillsCard authId={profile.supabase_auth_id} profile={profile} onToast={showToast} />
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <CertificatesCard authId={profile.supabase_auth_id} profile={profile} onToast={showToast} />
+                <ResumeCard authId={profile.supabase_auth_id} profile={profile} onToast={showToast} />
+              </div>
+            </>
+          ) : (
+            <>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <ProfileCardSkeleton lines={4} />
+                <ProfileCardSkeleton lines={1} />
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <ProfileCardSkeleton lines={2} />
+                <ProfileCardSkeleton lines={1} />
+              </div>
+            </>
+          )}
         </section>
       </main>
 

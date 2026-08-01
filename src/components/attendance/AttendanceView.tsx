@@ -37,7 +37,7 @@ import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { TimelineRow, TimelineShiftBlock } from '@/types/Timeline'
 import { useResourceInvalidation } from '@/components/realtime/RealtimeNotificationsProvider'
-import { sgtInstant, sgtTodayKey } from '@/lib/singaporeTime'
+import { sgtInstant, sgtTodayKey, sgtHourMinuteOfInstant, sgtShiftEndInstant } from '@/lib/singaporeTime'
 
 const PANEL_BORDER = '#E2E8F0'
 const TEXT_DARK = '#0F172A'
@@ -283,16 +283,22 @@ function computeWeekStartKey(dateKey: string): string {
 // todayKey, same Monday-offset math, same local-time deadline moment) — the week currently open
 // for submission shifts forward each time a window's own deadline passes, so the header always
 // names whichever week a fresh submission would actually land in, not a stale/already-closed one.
-function resolveActiveSubmissionWeekStart(deadlineWeekday: number, deadlineTime: string): string {
+// deadline === null means the company hasn't configured one yet, which the server treats as "no
+// gating" and returns next week immediately — this must short-circuit the same way, or a fresh
+// company (no deadline row) computes an extra week ahead of what the server actually accepts.
+function resolveActiveSubmissionWeekStart(deadline: { weekday: number; time: string } | null): string {
   const todayKey = new Date().toISOString().slice(0, 10)
-  let candidateWeekStart = computeWeekStartKey(todayKey)
+  const candidateWeekStart = computeWeekStartKey(todayKey)
+  const targetWeek = toISODate(addDays(new Date(`${candidateWeekStart}T00:00:00`), 7))
+  if (!deadline) return targetWeek
+  let candidate = candidateWeekStart
   for (;;) {
-    const targetWeek = toISODate(addDays(new Date(`${candidateWeekStart}T00:00:00`), 7))
-    const offsetFromMonday = (deadlineWeekday + 6) % 7
-    const deadlineDate = toISODate(addDays(new Date(`${candidateWeekStart}T00:00:00`), offsetFromMonday))
-    const deadlineMoment = new Date(`${deadlineDate}T${deadlineTime}:00`)
-    if (Date.now() <= deadlineMoment.getTime()) return targetWeek
-    candidateWeekStart = targetWeek
+    const target = toISODate(addDays(new Date(`${candidate}T00:00:00`), 7))
+    const offsetFromMonday = (deadline.weekday + 6) % 7
+    const deadlineDate = toISODate(addDays(new Date(`${candidate}T00:00:00`), offsetFromMonday))
+    const deadlineMoment = new Date(`${deadlineDate}T${deadline.time}:00`)
+    if (Date.now() <= deadlineMoment.getTime()) return target
+    candidate = target
   }
 }
 
@@ -331,21 +337,19 @@ function formatRoundedShiftHour(time: string): string {
   return m === 0 ? `${h12}${ampm}` : `${h12}:${String(m).padStart(2, '0')}${ampm}`
 }
 
-// Shift times are UTC-nominal (stored/compared as literal wall-clock, never converted) — read
-// clock_in/out timestamps with the UTC getters so an owner-modified time formats consistently
-// with the shift's own start_time/end_time instead of drifting through the browser's timezone.
+// clock_in/out timestamps are real UTC instants (unlike the shift's own start_time/end_time,
+// which are Singapore-nominal literal strings) — convert via sgtHourMinuteOfInstant before
+// display, or the bar shows a time 8 hours off from the real Singapore clock-in/out time.
 function formatClockHour(iso: string): string {
-  const d = new Date(iso)
-  const h = d.getUTCHours()
-  const m = d.getUTCMinutes()
+  const { h, m } = sgtHourMinuteOfInstant(iso)
   const ampm = h < 12 ? 'am' : 'pm'
   const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h
   return m === 0 ? `${h12}${ampm}` : `${h12}:${String(m).padStart(2, '0')}${ampm}`
 }
 
 function formatRoundedClockHour(iso: string): string {
-  const d = new Date(iso)
-  const { h, m } = normalizeToFiveMinuteTime(d.getUTCHours(), d.getUTCMinutes())
+  const raw = sgtHourMinuteOfInstant(iso)
+  const { h, m } = normalizeToFiveMinuteTime(raw.h, raw.m)
   const ampm = h < 12 ? 'am' : 'pm'
   const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h
   return m === 0 ? `${h12}${ampm}` : `${h12}:${String(m).padStart(2, '0')}${ampm}`
@@ -933,7 +937,9 @@ function canClockIn(shift: MyShift['shift']): boolean {
 
 function canClockOut(shift: MyShift['shift']): boolean {
   if (shift.is_open_ended) return true
-  return Date.now() >= sgtInstant(shift.shift_date, shift.end_time).getTime()
+  // BUG-021: an overnight shift's end (end_time <= start_time) falls on the following Singapore
+  // calendar day.
+  return Date.now() >= sgtShiftEndInstant(shift.shift_date, shift.start_time, shift.end_time).getTime()
 }
 
 function fmtShiftTime(hhmmss: string): string {
@@ -1042,6 +1048,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
   const [overrideSearchPanelOpen, setOverrideSearchPanelOpen] = useState(false)
   const [deadlineWeekday, setDeadlineWeekday] = useState(2)
   const [deadlineTime, setDeadlineTime] = useState('17:00')
+  const [deadlineConfigured, setDeadlineConfigured] = useState(false)
 
   // ── Shift Swap Settings block state ──────────────────────────────────────
   // Owner/Partner-only, company-wide — governs Manager<->Manager swaps only.
@@ -1264,7 +1271,10 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
     const to = toISODate(addDays(today, offset))
     const from = toISODate(addDays(today, offset - 6))
     try {
-      const res = await fetch(`/api/attendance?company_id=${cid}&resource=range&from_date=${from}&to_date=${to}`)
+      // BUG-023 — pass the viewer's role so the service filters out Draft (unpublished) shifts
+      // for Manager/Employee, matching the Timeline path's filterShiftsForViewer behavior.
+      const viewerRole = scopeToManagerDepartments ? 'Manager' : scopeToEmployeeSupervised ? 'Employee' : 'Owner'
+      const res = await fetch(`/api/attendance?company_id=${cid}&resource=range&from_date=${from}&to_date=${to}&viewer_role=${viewerRole}`)
       const data = await res.json()
       if (data.success) setWeekRecords(scopeToSelf(scopeByDept(data.records ?? [])))
     } catch { /* leave stale data */ }
@@ -1459,8 +1469,8 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
   // has been Approved or Modified, so this stays on the oldest week that still has something to
   // decide, and only falls back to the next open-for-submission week once the queue is empty.
   const displayWeekStart = useMemo(
-    () => currentFixedOffItem?.requested_week ?? resolveActiveSubmissionWeekStart(deadlineWeekday, deadlineTime),
-    [currentFixedOffItem, deadlineWeekday, deadlineTime],
+    () => currentFixedOffItem?.requested_week ?? resolveActiveSubmissionWeekStart(deadlineConfigured ? { weekday: deadlineWeekday, time: deadlineTime } : null),
+    [currentFixedOffItem, deadlineConfigured, deadlineWeekday, deadlineTime],
   )
 
   // ── Off Day Settings (quota + deadline) ─────────────────────────────────────
@@ -1501,6 +1511,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
       settings.filter(s => s.user_id !== null).forEach(s => { overrides[s.user_id as string] = s.max_days_per_week })
       setIndividualQuotaOverrides(overrides)
 
+      setDeadlineConfigured(!!deadlineData.deadline)
       setDeadlineWeekday(deadlineData.deadline?.deadline_weekday ?? 2)
       setDeadlineTime(deadlineData.deadline?.deadline_time ?? '17:00')
     } catch (err) {
@@ -1963,7 +1974,14 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
     }>()
 
     weekRecords.forEach(row => {
-      const userId = row.assignment.user_id
+      // Removed members have no user_id anymore. BUG-085: keying the fallback by the assignment's
+      // own id meant a removed member with MORE THAN ONE historical shift split into one row PER
+      // SHIFT instead of one row for the person — the whole point of the name snapshot (BUG-050)
+      // was to keep their history readable as a single person, not fragment it. Key by the name
+      // snapshot instead: still keeps two different removed people from colliding into one row
+      // (unless they happen to share the exact same name, an accepted edge case), but correctly
+      // merges every shift belonging to the SAME removed person under one row.
+      const userId = row.assignment.user_id ?? `removed:${row.assignment.user_name_snapshot ?? row.assignment.id}`
       if (!map.has(userId)) {
         map.set(userId, { name: row.assignee_name, role: row.assignee_role, deptId: '', deptName: row.department_name ?? '', profilePhotoUrl: row.assignee_profile_photo_url ?? null, byDate: new Map() })
       }
@@ -2813,9 +2831,10 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                                       {sorted.length > 0 ? sorted.map((rec, ri) => {
                                         const st = getARStatus(rec)
                                         const pillBorder =
-                                          st === 'absent' ? '1.5px solid #EF4444' :
-                                          st === 'late'   ? '1.5px solid #F59E0B' :
-                                                            '1.5px solid #10B981'
+                                          st === 'absent'   ? '1.5px solid #EF4444' :
+                                          st === 'late'     ? '1.5px solid #F59E0B' :
+                                          st === 'no-shift' ? '1.5px solid #CBD5E1' :
+                                                              '1.5px solid #10B981'
                                         // This record's clock/break time was corrected via the 'modified' decision —
                                         // by a Manager, the Owner, or the Partner (any of the three). Shown on every
                                         // role's Records table, Manager included — a Manager needs to see when
@@ -2832,7 +2851,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                                               alignItems: 'center',
                                               padding: '0 4px',
                                               height: 32, flexShrink: 0,
-                                              background: st === 'absent' ? '#FEF2F2' : st === 'late' ? '#FFFBEB' : '#ECFDF5',
+                                              background: st === 'absent' ? '#FEF2F2' : st === 'late' ? '#FFFBEB' : st === 'no-shift' ? '#F8FAFC' : '#ECFDF5',
                                               border: pillBorder,
                                               borderRadius: 999, cursor: 'pointer', width: '100%',
                                             }}

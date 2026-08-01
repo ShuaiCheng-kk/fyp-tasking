@@ -48,28 +48,66 @@ export const ownerTeamService = {
       throw new Error('Insufficient permissions to remove a member')
     }
 
-    // An Employee who is the responsible supervisor on live recruitment jobs or upcoming casual
-    // shifts cannot simply vanish — the workers hired through them would lose their on-site
-    // contact and the attendance chain its first approver. The supervisor must be reassigned
-    // before removal.
+    // BUG-084: everything this person created/was assigned/supervised used to get reassigned to
+    // whichever Owner clicked Remove — but the Owner doesn't run that day-to-day, so this reassigns
+    // to a real peer instead (keeps a genuinely accountable owner, and the audit trail stays
+    // meaningful: "who's actually handling this now"). The replacement differs by role:
+    //   - Partner: another Partner if one exists, otherwise Owner (Owner always exists, so removing
+    //     a Partner is NEVER blocked — there's always a valid fallback).
+    //   - Manager: another Manager in the SAME department. Blocked if that department would be left
+    //     with zero Managers — the Owner must assign a replacement first.
+    //   - Employee: another Employee in the SAME department (this REPLACES the previous hard block
+    //     on "supervises live recruitment jobs or upcoming casual shifts" — instead of refusing to
+    //     remove them until someone manually reassigns those things first, removal now reassigns
+    //     automatically as long as a same-department replacement exists; blocked only if none does).
+    let reassignTo = requester.id
+    let reassignAssigneeTo: string | null = null
+
+    if (target.role === 'Partner') {
+      const otherPartners = (await ownerTeamRepository.findPartnersByCompany(company_id)).filter(p => p.id !== user_id_to_remove)
+      const replacement = otherPartners[0]?.id ?? company.owner_id
+      reassignTo = replacement
+      reassignAssigneeTo = replacement
+    }
+
+    if (target.role === 'Manager') {
+      const myDepartments = await ownerTeamRepository.findManagerDepartments(user_id_to_remove, company_id)
+      for (const dept of myDepartments) {
+        const deptManagers = await ownerTeamRepository.findManagersByDepartment(company_id, dept.department_id)
+        const others = deptManagers.filter(m => m.id !== user_id_to_remove)
+        if (others.length === 0) {
+          throw new Error(
+            `${target.full_name} is the only Manager in the ${dept.department_name} department. Assign another Manager to this department before removing them.`
+          )
+        }
+        if (dept.department_id === myDepartments[0].department_id) {
+          reassignTo = others[0].id
+          reassignAssigneeTo = others[0].id
+        }
+      }
+    }
+
     if (target.role === 'Employee') {
-      const today = new Date()
-      const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
-      const [activePostings, upcomingShifts] = await Promise.all([
-        ownerTeamRepository.countSupervisedActivePostings(user_id_to_remove),
-        ownerTeamRepository.countSupervisedUpcomingShifts(user_id_to_remove, todayKey),
-      ])
-      if (activePostings > 0 || upcomingShifts > 0) {
-        throw new Error(
-          'This employee is the responsible supervisor for active recruitment jobs or upcoming casual shifts. Assign another supervisor to those first, then remove them.'
-        )
+      const myDepartments = await ownerTeamRepository.findEmployeeDepartments(user_id_to_remove, company_id)
+      for (const dept of myDepartments) {
+        const deptEmployees = await ownerTeamRepository.findEmployeesByDepartment(company_id, dept.department_id)
+        const others = deptEmployees.filter(e => e.id !== user_id_to_remove)
+        if (others.length === 0) {
+          throw new Error(
+            `${target.full_name} is the only Employee in the ${dept.department_name} department. Assign another Employee to this department before removing them.`
+          )
+        }
+        if (dept.department_id === myDepartments[0].department_id) {
+          reassignTo = others[0].id
+          reassignAssigneeTo = others[0].id
+        }
       }
     }
 
     const supabaseAuthId = target.supabase_auth_id
 
     await ownerTeamRepository.deleteMessagesByUserId(user_id_to_remove)
-    await ownerTeamRepository.cleanupUserOperationalReferences(user_id_to_remove, requester.id)
+    await ownerTeamRepository.cleanupUserOperationalReferences(user_id_to_remove, reassignTo, target.full_name, reassignAssigneeTo)
     await ownerTeamRepository.deleteManagerDepartmentsByUserId(user_id_to_remove)
     await ownerTeamRepository.deleteEmployeeDepartmentsByUserId(user_id_to_remove)
     await ownerTeamRepository.deleteUserById(user_id_to_remove)
@@ -78,6 +116,18 @@ export const ownerTeamService = {
       const { error } = await getSupabaseAdmin().auth.admin.deleteUser(supabaseAuthId)
       if (error) throw new Error(`Failed to delete auth user: ${error.message}`)
     }
+
+    // UC30: notify the removed member by email — their account is already gone by this point, so
+    // this is the only way they find out they're locked out. Best-effort: the removal itself has
+    // already fully succeeded, so a flaky email provider must never surface as a failed removal.
+    try {
+      const { emailService } = await import('@/services/email/emailService')
+      await emailService.sendRemovedFromCompanyEmail({
+        to: target.email_address,
+        fullName: target.full_name,
+        companyName: company.name,
+      })
+    } catch { /* best-effort notification only */ }
 
     return { success: true, accountDeleted: true }
   },

@@ -8,14 +8,16 @@
 // Visual language mirrors the Owner Task board's Kanban (column header pill + arrow connectors +
 // card layout) so the same board reads consistently across roles.
 
-import { Fragment, useEffect, useState } from 'react'
-import { AlertTriangle, ArrowRight, Check, CheckCircle, ChevronDown, Clock, ClipboardList, Eye, GitBranch, GripVertical, Layers, RefreshCw } from 'lucide-react'
+import { Fragment, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { AlertCircle, AlertTriangle, ArrowRight, Check, CheckCircle, ChevronDown, Clock, ClipboardList, Eye, GitBranch, GripVertical, Layers } from 'lucide-react'
 import { Task } from '@/types/Task'
 import { TitledBlock } from '@/components/panel'
 import { ModalHeader, modalLabelStyle, modalInputStyle } from '@/components/modal'
 import { modalKeyframes } from '@/components/theme/tokens'
 import { useIsCompactContainer } from '@/hooks/useIsCompactContainer'
 import { useResourceInvalidation } from '@/components/realtime/RealtimeNotificationsProvider'
+import { DASHBOARD_SKELETON_KEYFRAMES, SkeletonLine } from '@/components/dashboard/ClockFlow'
 
 const COLUMNS: Task['status'][] = ['Assigned', 'In Progress', 'Review', 'Complete']
 
@@ -37,9 +39,12 @@ type Props = {
   companyId: string
   shiftId: string
   userId: string
+  // Once the worker has clocked out of this job there's nothing left to action — the board still
+  // shows what was done, but dragging a card is no longer a real move (2026-08-01).
+  readOnly?: boolean
 }
 
-export default function CasualTaskBoard({ companyId, shiftId, userId }: Props) {
+export default function CasualTaskBoard({ companyId, shiftId, userId, readOnly = false }: Props) {
   const [tasks, setTasks] = useState<Task[]>([])
   const [loading, setLoading] = useState(true)
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null)
@@ -52,7 +57,9 @@ export default function CasualTaskBoard({ companyId, shiftId, userId }: Props) {
   const [detailTask, setDetailTask] = useState<Task | null>(null)
   const [expandedTaskIds, setExpandedTaskIds] = useState<Set<string>>(new Set())
 
+  const lastLoadedAtRef = useRef(0)
   const load = async () => {
+    lastLoadedAtRef.current = Date.now()
     const res = await fetch(`/api/task?company_id=${companyId}&shift_id=${shiftId}`)
     const data = await res.json()
     if (data.success) {
@@ -71,19 +78,33 @@ export default function CasualTaskBoard({ companyId, shiftId, userId }: Props) {
   }, [companyId, shiftId, userId])
 
   // Live-updates the board when the assigning Employee rejects/approves a task or edits its
-  // sub-tasks, so a rework notice appears without the Casual Worker refreshing the page.
-  useResourceInvalidation(['tasks'], () => { void load() })
+  // sub-tasks, so a rework notice appears without the Casual Worker refreshing the page. Skipped
+  // when a load just ran (own write's realtime echo, same fix as BUG-060) so a subtask-complete
+  // doesn't fetch the same fresh data twice in a row.
+  useResourceInvalidation(['tasks'], () => {
+    if (Date.now() - lastLoadedAtRef.current < 1500) return
+    void load()
+  })
 
   const canDragTask = (task: Task): boolean =>
-    task.status !== 'Review' && task.status !== 'Complete'
+    !readOnly && task.status !== 'Review' && task.status !== 'Complete'
+
+  // A card can only ever move exactly one column forward — never backward, never skip a column.
+  // Shared by the actual drop handler below and by the column highlight on drag-over, so a column
+  // that would reject the drop never lights up as if it were a valid target in the first place
+  // (2026-07-31 — dragging "In Progress" back onto "Assigned" used to highlight Assigned even
+  // though dropping there was always a no-op).
+  const isValidDropTarget = (task: Task, targetStatus: Task['status']): boolean => {
+    if (!canDragTask(task)) return false
+    const currentIdx = COLUMNS.indexOf(task.status)
+    const targetIdx = COLUMNS.indexOf(targetStatus)
+    return targetIdx === currentIdx + 1
+  }
 
   const handleDrop = async (task: Task, targetStatus: Task['status']) => {
     setDragOverCol(null)
     setDraggingTaskId(null)
-    if (!canDragTask(task)) return
-    const currentIdx = COLUMNS.indexOf(task.status)
-    const targetIdx = COLUMNS.indexOf(targetStatus)
-    if (targetIdx !== currentIdx + 1) return
+    if (!isValidDropTarget(task, targetStatus)) return
 
     const subTasks = tasks.filter(t => t.parent_task_id === task.id)
     const affectedIds = new Set([task.id, ...subTasks.map(t => t.id)])
@@ -105,9 +126,10 @@ export default function CasualTaskBoard({ companyId, shiftId, userId }: Props) {
   }
 
   // Sub-tasks are a one-way checklist (matches taskService.completeSubTask): tick in sequence
-  // order while the parent is In Progress; there is no un-ticking. Ticking the last one promotes
-  // the parent (and its siblings) to Review, so a full reload after success keeps everything —
-  // parent status, sibling percentages — in sync rather than hand-patching local state.
+  // order while the parent is In Progress; there is no un-ticking. Ticking every sub-task does
+  // NOT move the parent — the worker still drags the card to Review themselves (2026-08-02). A
+  // full reload after success still keeps sibling percentages/state in sync rather than
+  // hand-patching local state.
   const canToggleSubTask = (sub: Task): boolean => {
     if (sub.is_completed) return false
     const parent = tasks.find(t => t.id === sub.parent_task_id)
@@ -118,6 +140,21 @@ export default function CasualTaskBoard({ companyId, shiftId, userId }: Props) {
 
   const toggleSubTask = async (sub: Task) => {
     if (!canToggleSubTask(sub)) return
+    // Once every sub-task is ticked there's nothing left to check off — collapse the checklist so
+    // it doesn't sit expanded showing an all-done, purely static list. This does NOT move the
+    // parent card: ticking sub-tasks is a checklist, not a decision that the work is ready for
+    // review — only the worker dragging the card to Review does that (2026-08-02, reversing
+    // 2026-08-01's auto-promote-on-last-tick).
+    const siblings = tasks.filter(t => t.parent_task_id === sub.parent_task_id)
+    const isLastSubTask = !siblings.some(s => s.id !== sub.id && !s.is_completed)
+    if (isLastSubTask && sub.parent_task_id) {
+      const parentId = sub.parent_task_id
+      setExpandedTaskIds(prev => {
+        const next = new Set(prev)
+        next.delete(parentId)
+        return next
+      })
+    }
     setTasks(prev => prev.map(t => t.id === sub.id ? { ...t, is_completed: true } : t))
     try {
       const res = await fetch('/api/task', {
@@ -133,7 +170,13 @@ export default function CasualTaskBoard({ companyId, shiftId, userId }: Props) {
     }
   }
 
-  const viewFieldValue: React.CSSProperties = { ...modalInputStyle, display: 'flex', alignItems: 'center' }
+  // The shared `@/components/modal` modalInputStyle (0.9375rem, forced Inter) isn't what
+  // Employee's reference "…'s Details" panel actually uses — TasksView.tsx defines its own LOCAL,
+  // same-named modalInputStyle (0.8125rem, no forced font-family) that shadows the shared one for
+  // that file only. Same text at the shared size ran noticeably bigger here and wrapped to a 2nd
+  // line where Employee's fit on one (2026-07-31) — overridden here to match TasksView's actual
+  // rendered values pixel-for-pixel instead of the shared import's.
+  const viewFieldValue: React.CSSProperties = { ...modalInputStyle, fontSize: '0.8125rem', padding: '9px 12px', fontFamily: 'inherit', display: 'flex', alignItems: 'center' }
   const viewEmpty: React.CSSProperties = { ...viewFieldValue, color: '#9CA3AF', fontStyle: 'italic' }
 
   // Sub-tasks nest under their parent card wherever the parent renders — regardless of the
@@ -165,23 +208,53 @@ export default function CasualTaskBoard({ companyId, shiftId, userId }: Props) {
       icon={<ClipboardList size={15} color="#F97316" />}
       title="Tasks"
       titleHint={
-        <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.7rem', fontWeight: 600, color: '#9CA3AF', background: '#F3F4F6', padding: '3px 8px', borderRadius: 999, whiteSpace: 'nowrap', flexShrink: 0 }}>
-          <GripVertical size={11} />{!isNarrow && ' Drag to move'}
-        </span>
+        // TitledBlock's own header row only gaps title/titleHint by 8px (see that component's "do
+        // not redesign here" note — global for every TitledBlock, so not touched here) — Employee's
+        // matching "Drag to move" pill instead sits inside ShowcaseCard, whose header uses gap:18,
+        // reading noticeably more breathing room. Matched locally with a left margin here so this
+        // one instance reads the same without changing TitledBlock for every other caller (2026-07-31).
+        // No hint at all once readOnly — the cards themselves (not draggable, no hover motion)
+        // already read as done; the badge was redundant (2026-08-01).
+        !readOnly && (
+          <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.7rem', fontWeight: 600, color: '#9CA3AF', background: '#F3F4F6', padding: '3px 8px', borderRadius: 999, whiteSpace: 'nowrap', flexShrink: 0, marginLeft: 10 }}>
+            <GripVertical size={11} />{!isNarrow && ' Drag to move'}
+          </span>
+        )
       }
       containerStyle={{ height: '100%', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', position: 'relative' }}
       bodyStyle={{ flex: 1, minHeight: 0, overflow: 'auto' }}
-      headerRight={
-        <button type="button" onClick={() => { setLoading(true); void load() }} title="Refresh"
-          style={{ width: 28, height: 28, border: 'none', background: 'transparent', color: '#9CA3AF', cursor: 'pointer', borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <RefreshCw size={14} />
-        </button>
-      }
     >
       {loading ? (
-        <p style={{ margin: 0, color: '#6B7280', fontSize: '0.875rem' }}>Loading tasks…</p>
+        <div style={{ display: 'flex', flexDirection: 'row', gap: 10, height: '100%', boxSizing: 'border-box', minWidth: 640 }}>
+          <style>{DASHBOARD_SKELETON_KEYFRAMES}</style>
+          {COLUMNS.map(col => (
+            <div key={col} style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 10, background: '#F7F8FA', borderRadius: 12, border: '1px solid #F0F1F3', padding: '10px 10px 12px' }}>
+              <SkeletonLine width="60%" height={13} />
+              <SkeletonLine height={64} radius={10} />
+              <SkeletonLine height={64} radius={10} />
+            </div>
+          ))}
+        </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'stretch', gap: 0, height: '100%', boxSizing: 'border-box', minWidth: 640 }}>
+          {/* Same hover lift + shadow as the shared Owner/Manager/Employee Kanban card
+              (src/components/tasks/TasksView.tsx's .task-card rule) — this board never had it
+              (2026-07-31). Sub-task checklist also gets an entrance transition instead of just
+              snapping into view when expanded. */}
+          <style>{`
+            .task-card {
+              transition: box-shadow 0.16s ease, transform 0.16s ease, border-color 0.16s ease;
+            }
+            .task-card:hover {
+              box-shadow: 0 6px 22px rgba(0,0,0,0.10), 0 0 0 1.5px rgba(249,115,22,0.15);
+              transform: translateY(-2px);
+            }
+            @keyframes cwSubtasksIn {
+              from { opacity: 0; transform: translateY(-6px); }
+              to   { opacity: 1; transform: translateY(0); }
+            }
+            .cw-subtasks-in { animation: cwSubtasksIn 0.2s ease both; }
+          `}</style>
           {COLUMNS.map((col, colIdx) => {
             const cfg = STATUS_CONFIG[col]
             const items = tasks.filter(t => t.status === col && !t.parent_task_id)
@@ -196,7 +269,12 @@ export default function CasualTaskBoard({ companyId, shiftId, userId }: Props) {
                   </div>
                 )}
                 <div
-                  onDragOver={e => { e.preventDefault(); setDragOverCol(col) }}
+                  onDragOver={e => {
+                    const draggingTask = tasks.find(t => t.id === draggingTaskId)
+                    if (!draggingTask || !isValidDropTarget(draggingTask, col)) return
+                    e.preventDefault()
+                    setDragOverCol(col)
+                  }}
                   onDragLeave={() => setDragOverCol(prev => (prev === col ? null : prev))}
                   onDrop={e => {
                     e.preventDefault()
@@ -228,15 +306,29 @@ export default function CasualTaskBoard({ companyId, shiftId, userId }: Props) {
                       const needsRework = !!task.rejection_reason && task.status === 'In Progress'
                       const subTasks = subTasksByParent.get(task.id) ?? []
                       const expanded = expandedTaskIds.has(task.id)
+                      // Playing-card-stack effect behind the card when it has sub-tasks and isn't
+                      // expanded yet — same visual recipe as the Owner/Manager/Employee shared
+                      // TaskCard (src/components/tasks/TasksView.tsx), which this board never had
+                      // (2026-07-31). Hidden once expanded since the sub-task checklist is then
+                      // visibly listed below, so there's nothing left to imply is "behind" it.
+                      const showStack = subTasks.length > 0 && !expanded
                       return (
-                        <div key={task.id}>
+                        <div key={task.id} style={{ position: 'relative', marginBottom: showStack ? 12 : 0 }}>
+                        {showStack && (
+                          <>
+                            <div style={{ position: 'absolute', left: 12, right: 12, bottom: -8, height: 14, background: '#EEF1F5', border: '1px solid #E2E8F0', borderRadius: 10, zIndex: 0 }} />
+                            <div style={{ position: 'absolute', left: 6, right: 6, bottom: -4, height: 14, background: '#F7F9FB', border: '1px solid #E5E7EB', borderRadius: 10, zIndex: 1 }} />
+                          </>
+                        )}
                         <div
                           draggable={draggable}
                           onDragStart={() => draggable && setDraggingTaskId(task.id)}
                           onDragEnd={() => { setDraggingTaskId(null); setDragOverCol(null) }}
                           onClick={() => setDetailTask(task)}
+                          className="task-card"
                           style={{
                             position: 'relative',
+                            zIndex: 2,
                             background: '#FFFFFF',
                             border: '1px solid #E5E7EB',
                             borderRadius: 10,
@@ -274,16 +366,21 @@ export default function CasualTaskBoard({ companyId, shiftId, userId }: Props) {
 
                           <p style={{ margin: 0, fontSize: '0.8125rem', fontWeight: 700, color: '#111827', lineHeight: 1.4 }}>{task.title}</p>
 
+                          {/* Always red/AlertCircle here, unlike the shared TaskCard's "only red
+                              if overdue or due within 2 hours" rule (2026-07-31) — a Casual
+                              Worker's whole assignment is one shift, so every deadline on this
+                              board is effectively "today," never a week-out Owner→Manager-style
+                              deadline that only needs urgency styling once it's actually close. */}
                           {task.due_at && (
-                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginTop: 10, fontSize: '0.7rem', fontWeight: 600, color: '#9CA3AF' }}>
-                              <Clock size={11} />
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginTop: 10, fontSize: '0.7rem', fontWeight: 600, color: '#EF4444' }}>
+                              <AlertCircle size={11} />
                               {new Date(task.due_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                             </span>
                           )}
                         </div>
 
                         {expanded && subTasks.length > 0 && (
-                          <div style={{ marginTop: 8, paddingLeft: 14 }}>
+                          <div className="cw-subtasks-in" style={{ marginTop: 8, paddingLeft: 14 }}>
                             {subTasks.map((sub, idx) => {
                               const done = sub.is_completed
                               const canToggle = canToggleSubTask(sub)
@@ -304,7 +401,7 @@ export default function CasualTaskBoard({ companyId, shiftId, userId }: Props) {
                                 </div>
                                 <div
                                   onClick={() => setDetailTask(sub)}
-                                  style={{ flex: 1, minWidth: 0, marginBottom: 8, padding: '9px 12px', borderRadius: 8, background: '#FAFAFA', border: '1px solid #EEF0F2', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}
+                                  style={{ flex: 1, minWidth: 0, marginBottom: 8, padding: '9px 12px', borderRadius: 8, background: '#FFFFFF', border: '1px solid #EEF0F2', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}
                                 >
                                   <p style={{ margin: 0, flex: 1, minWidth: 0, fontSize: '0.75rem', fontWeight: 600, color: done ? '#9CA3AF' : '#111827', textDecoration: done ? 'line-through' : 'none' }}>
                                     {sub.title}
@@ -345,17 +442,29 @@ export default function CasualTaskBoard({ companyId, shiftId, userId }: Props) {
       )}
 
       {/* Read-only task detail — Casual Worker is never the assigner, so no edit affordances here.
-          Scoped to this block only (absolute, not fixed) so opening it never dims the rest of the
-          Dashboard's blocks — just the Tasks card it belongs to. */}
-      {detailTask && (
+          Portaled to document.body (like TasksView.tsx's own popovers/modal do) instead of
+          rendering in place: this card sits inside the Dashboard's Row 2, whose wrapper animates
+          in with `animation: blockSlideUp ... both` — the `both` fill-mode holds that animation's
+          final `transform: translateY(0)` on the element forever (computes to a real, non-'none'
+          matrix, not literally "no transform"), which per spec makes THAT div the containing block
+          for any `position: fixed` descendant. So this modal's fixed overlay was only ever
+          resolving "fixed" relative to that div's box, not the real viewport — the sidebar and
+          page header sat outside it and never dimmed (2026-07-31). Portaling out to <body> escapes
+          that ancestry entirely, which position:fixed alone could not fix from the inside no matter
+          the z-index. */}
+      {detailTask && typeof document !== 'undefined' && createPortal(
         <div
           onClick={() => setDetailTask(null)}
-          style={{ position: 'absolute', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', borderRadius: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 5, padding: 20, animation: 'overlayFadeIn 0.18s ease-out' }}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: 20, animation: 'overlayFadeIn 0.18s ease-out' }}
         >
           <style>{modalKeyframes}</style>
           <div
             onClick={e => e.stopPropagation()}
-            style={{ width: 'min(400px, 100%)', maxHeight: '100%', overflowY: 'auto', background: '#FFFFFF', borderRadius: 16, boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}
+            // 440, matching the width of the shared Owner/Manager/Employee TaskCard's own read-only
+            // "…'s Details" panel (src/components/tasks/TasksView.tsx) — was 400px, narrow enough
+            // that the exact same Description text wrapped to a 2nd line here but not there
+            // (2026-07-31). min(…, 100%) keeps the same narrow-viewport safety net.
+            style={{ width: 'min(440px, 100%)', maxHeight: '100%', overflowY: 'auto', background: '#FFFFFF', borderRadius: 16, boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}
           >
             <ModalHeader
               title={detailTask.title}
@@ -368,20 +477,6 @@ export default function CasualTaskBoard({ companyId, shiftId, userId }: Props) {
                 {detailTask.description
                   ? <div style={{ ...viewFieldValue, alignItems: 'flex-start', whiteSpace: 'pre-wrap', lineHeight: 1.55 }}>{detailTask.description}</div>
                   : <div style={viewEmpty}>No description</div>}
-              </div>
-
-              <div>
-                <label style={modalLabelStyle}>Deadline</label>
-                {detailTask.due_at
-                  ? <div style={viewFieldValue}>{new Date(detailTask.due_at).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
-                  : <div style={viewEmpty}>No deadline</div>}
-              </div>
-
-              <div>
-                <label style={modalLabelStyle}>Assigned By</label>
-                <div style={viewFieldValue}>
-                  {detailTask.assigned_by_name ?? 'Unknown'}
-                </div>
               </div>
 
               <div>
@@ -411,7 +506,8 @@ export default function CasualTaskBoard({ companyId, shiftId, userId }: Props) {
               )}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </TitledBlock>
     </div>

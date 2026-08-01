@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase';
 import { createBrowserClient } from '@supabase/ssr';
+import { isValidImageFile } from '@/lib/imageValidation';
 import { Building2, UserPlus, Eye, EyeOff, ChevronLeft, ChevronDown, Check, X } from 'lucide-react';
 import {
   step1,
@@ -588,10 +589,10 @@ function TermsCheckbox({ checked, onChange }: { checked: boolean; onChange: (v: 
 
 // ─── Step heading ─────────────────────────────────────────────────────────────
 
-function StepHeading({ headline, subheadline, onBack }: { headline: string; subheadline: string; onBack?: () => void }) {
+function StepHeading({ headline, subheadline, onBack, onStartOver }: { headline: string; subheadline: string; onBack?: () => void; onStartOver?: () => void }) {
   return (
     <div style={{ marginBottom: '40px' }}>
-      {/* Top row: back button left, title centred */}
+      {/* Top row: back button left, title centred, start-over X right */}
       <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '36px', marginBottom: subheadline ? '8px' : '0' }}>
         {onBack && (
           <button
@@ -611,6 +612,24 @@ function StepHeading({ headline, subheadline, onBack }: { headline: string; subh
         <h1 style={{ fontFamily: fH, fontWeight: 700, fontSize: '1.875rem', color: '#1C1917', margin: 0 }}>
           {headline}
         </h1>
+        {onStartOver && (
+          <button
+            onClick={onStartOver}
+            aria-label="Start over"
+            title="Start over"
+            style={{
+              position: 'absolute', right: 0,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              width: '28px', height: '28px',
+              background: 'none', border: 'none', borderRadius: '8px', cursor: 'pointer',
+              color: '#A8A29E',
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = '#F5F5F4'; e.currentTarget.style.color = '#78716C'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'none'; e.currentTarget.style.color = '#A8A29E'; }}
+          >
+            <X size={18} />
+          </button>
+        )}
       </div>
       {subheadline && (
         <p style={{ fontFamily: fB, fontSize: '1rem', color: '#78716C', lineHeight: 1.65, textAlign: 'center', margin: 0 }}>
@@ -1097,6 +1116,10 @@ function AccountFields({ form, setForm, phoneError, clearPhoneError, profilePhot
     e.target.value = '';
     if (!file) return;
     setPhotoUploadError('');
+    if (!(await isValidImageFile(file))) {
+      setPhotoUploadError('That file is not a valid image. Please choose a photo.');
+      return;
+    }
     setLocalPreview(URL.createObjectURL(file));
     setPhotoUploading(true);
     try {
@@ -1149,7 +1172,7 @@ function AccountFields({ form, setForm, phoneError, clearPhoneError, profilePhot
           )}
         </button>
         <span style={{ fontFamily: fB, fontSize: '0.8125rem', color: '#9CA3AF' }}>
-          {photoUploading ? 'Uploading…' : displayPhotoUrl ? 'Click to change photo' : 'Upload Profile Photo'}
+          {photoUploading ? 'Uploading…' : displayPhotoUrl ? 'Click to change photo' : 'Upload Profile Photo (required)'}
         </span>
         {photoUploadError && (
           <span style={{ fontFamily: fB, fontSize: '0.8125rem', color: '#DC2626' }}>{photoUploadError}</span>
@@ -1164,7 +1187,12 @@ function AccountFields({ form, setForm, phoneError, clearPhoneError, profilePhot
           value={form.fullName}
           onChange={(e) => {
             const raw = e.target.value;
-            if (/[^a-zA-Z\s']/.test(raw)) return;
+            // BUG-009 — was Latin-letters-only (a-zA-Z), blocking Chinese/Malay/Tamil names and
+            // even hyphenated English ones (Mary-Jane, Al-Amin) despite Singapore's multiracial
+            // user base. \p{L} matches any Unicode letter; still no digits/symbols beyond hyphen
+            // and apostrophe. (XSS is a service/output-encoding concern, not this filter's job —
+            // see BUG-009 in BUGLOG for why blocking <script> here isn't real protection.)
+            if (/[^\p{L}\s'-]/u.test(raw)) return;
             if (/^ /.test(raw) || /  /.test(raw)) return;
             setForm({ ...form, fullName: raw });
           }}
@@ -1188,6 +1216,11 @@ function AccountFields({ form, setForm, phoneError, clearPhoneError, profilePhot
       <div className="gs-field">
         <label style={labelStyle}>Password</label>
         <PasswordInput value={form.password} onChange={(v) => { if (/\s/.test(v)) return; setForm({ ...form, password: v }); }} placeholder="Create a password" />
+        {/* BUG-008 — Create Account silently disabled on 7 conditions with zero indication which
+            one was unmet; password length was one of the easiest to hit blind. */}
+        {form.password.length > 0 && form.password.length < 6 && (
+          <span style={{ fontFamily: fB, fontSize: '0.8125rem', color: '#DC2626', marginTop: 4, display: 'block' }}>At least 6 characters</span>
+        )}
       </div>
       <div className="gs-field">
         <label style={labelStyle}>Confirm Password</label>
@@ -1413,6 +1446,8 @@ export default function GetStartedPage() {
   const [confirmationEmail, setConfirmationEmail] = useState<string | null>(null);
   const [verifiedFromUrl, setVerifiedFromUrl] = useState(false);
   const [linkErrorFromUrl, setLinkErrorFromUrl] = useState(false);
+  const [showStartOverConfirm, setShowStartOverConfirm] = useState(false);
+  const [startingOver, setStartingOver] = useState(false);
   const [planLoading, setPlanLoading] = useState<'free' | 'pro' | null>(null);
   const [showProMsg, setShowProMsg] = useState(false);
   const [showFreeMsg, setShowFreeMsg] = useState(false);
@@ -1545,6 +1580,58 @@ export default function GetStartedPage() {
       setLinkErrorFromUrl(true);
       setPath('owner');
       setStep(2);
+      return;
+    }
+
+    // BUG-011 — a plain F5 mid-wizard (no recognized query param at all) used to bounce all the
+    // way back to the very first "how would you like to get started" screen, even though every
+    // step already writes its own snapshot to sessionStorage. Restore from whatever's there
+    // instead of pretending nothing happened — deduce the furthest completed step from which
+    // snapshot keys exist (departments -> step 4 done -> resume at 5; company_name -> step 3 done
+    // -> resume at 4; owner_user_id/email alone -> resume at 2, same as the explicit
+    // verified=true branch above).
+    if (storedOwnerEmail) {
+      setPath('owner');
+      // BUG-073: the fallback below can resume at step 2 (Verify Email), but that step's render
+      // guard is `step === 2 && confirmationEmail` — without this, confirmationEmail stays null
+      // (only the explicit verified=true/invalid_link branches above ever set it) and the whole
+      // step renders nothing, leaving a blank page that a refresh can't fix since it hits the same
+      // branch every time.
+      setConfirmationEmail(storedOwnerEmail);
+      setOwnerAccount({
+        fullName: sessionStorage.getItem('owner_full_name') || '',
+        email: storedOwnerEmail,
+        password: sessionStorage.getItem('owner_password') || '',
+        confirmPassword: sessionStorage.getItem('owner_password') || '',
+        phone: sessionStorage.getItem('owner_phone') || '',
+        dateOfBirth: sessionStorage.getItem('owner_date_of_birth') || '',
+      });
+      const storedPhotoUrl = sessionStorage.getItem('owner_photo_url');
+      if (storedPhotoUrl) setProfilePhotoUrl(storedPhotoUrl);
+      const storedDepartments = sessionStorage.getItem('departments');
+      const storedCompanyName = sessionStorage.getItem('company_name');
+      if (storedDepartments) {
+        setCompanyName(storedCompanyName || '');
+        setCompanyDesc(sessionStorage.getItem('company_description') || '');
+        setCompanyLocation(sessionStorage.getItem('company_location') || '');
+        setCompanyAddress(sessionStorage.getItem('company_address') || '');
+        setCompanyPostal(sessionStorage.getItem('company_postal') || '');
+        setCompanyIndustry(sessionStorage.getItem('company_industry') || '');
+        setCompanySize(sessionStorage.getItem('company_size') || '');
+        try { setDepartments(JSON.parse(storedDepartments)); } catch {}
+        setStep(5);
+      } else if (storedCompanyName) {
+        setCompanyName(storedCompanyName);
+        setCompanyDesc(sessionStorage.getItem('company_description') || '');
+        setCompanyLocation(sessionStorage.getItem('company_location') || '');
+        setCompanyAddress(sessionStorage.getItem('company_address') || '');
+        setCompanyPostal(sessionStorage.getItem('company_postal') || '');
+        setCompanyIndustry(sessionStorage.getItem('company_industry') || '');
+        setCompanySize(sessionStorage.getItem('company_size') || '');
+        setStep(4);
+      } else {
+        setStep(2);
+      }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1612,6 +1699,39 @@ export default function GetStartedPage() {
     setError('');
     if (step === 1) { setPath(null); setStep(0); setTermsAccepted(false); }
     else setStep((s) => s - 1);
+  };
+
+  // Discard an in-progress registration entirely and return to step 0. Before this there was no
+  // way to abandon a stuck/unwanted registration — sessionStorage/localStorage keep every step's
+  // snapshot forever (that's what BUG-011/BUG-073's resume logic relies on), so a plain refresh or
+  // navigating away and back always restored exactly where you left off, with no way out. Only
+  // wired up on steps where no real `users` row/session exists yet (see call sites below) — once
+  // registration has actually completed, this isn't offered.
+  const handleStartOver = async () => {
+    setStartingOver(true);
+    // Only ever clean up by `confirmationEmail` — it's only set once a signUp/admin.createUser call
+    // has actually succeeded for THIS registration attempt (see handleGuestRegister/registerOwner).
+    // Never fall back to a raw form field (ownerAccount.email / guestAccount.email): those are
+    // whatever the user has typed and not yet submitted, which could be someone else's real,
+    // already-registered email (e.g. a seed account) — deleteOrphanedAuthUser matches by email
+    // with no other check, so calling it on an unsubmitted field could delete a real account.
+    if (confirmationEmail) {
+      try {
+        await fetch('/api/auth/cancel-registration', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: confirmationEmail }),
+        });
+      } catch { /* best-effort — clearing local state matters more than server cleanup succeeding */ }
+    }
+    [
+      'owner_user_id', 'owner_full_name', 'owner_email', 'owner_password', 'owner_phone', 'owner_date_of_birth',
+      'owner_company_id', 'owner_photo_url', 'company_name', 'company_description', 'company_location',
+      'company_address', 'company_postal', 'company_industry', 'company_size', 'departments', 'invite_code',
+    ].forEach((k) => sessionStorage.removeItem(k));
+    ['guest_email', 'guest_user_id', 'guest_password', 'guest_full_name', 'guest_phone', 'guest_dob', 'guest_photo', 'apply_job_id']
+      .forEach((k) => localStorage.removeItem(k));
+    window.location.href = '/get-started';
   };
 
   // ── Departments ───────────────────────────────────────────────────────────
@@ -1819,7 +1939,7 @@ export default function GetStartedPage() {
     });
   };
 
-  const handleInvitedRegister = () => {
+  const handleInvitedRegister = async () => {
     setError('');
     setInvitedPhoneError('');
     if (!invitedAccount.fullName.trim()) { setError('Please enter your full name.'); return; }
@@ -1840,7 +1960,22 @@ export default function GetStartedPage() {
     }
     if (!invitedAccount.dateOfBirth) { setError('Date of birth is required.'); return; }
     if (!profilePhotoUrl) { setError('Please upload a profile photo.'); return; }
-    goNext();
+
+    // BUG-017 — email/phone dedup used to only be checked in Step 2 (Join Now), well after the
+    // worker had moved past the fields that actually conflict. Reuses the same check endpoints
+    // the Owner registration path already calls at this same point.
+    setIsLoading(true);
+    try {
+      const [emailRes, phoneRes] = await Promise.all([
+        fetch('/api/auth/check-email', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: invitedAccount.email.trim() }) }).then(r => r.json()).catch(() => ({ exists: false })),
+        fetch('/api/auth/check-phone', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: invitedAccount.phone }) }).then(r => r.json()).catch(() => ({ exists: false })),
+      ]);
+      if (emailRes.exists) { setError('An account with this email already exists. Please sign in instead.'); return; }
+      if (phoneRes.exists) { setInvitedPhoneError('This phone number is already registered.'); return; }
+      goNext();
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleGuestRegister = async () => {
@@ -2049,7 +2184,7 @@ export default function GetStartedPage() {
             <StepHeading headline="Check your email" subheadline="" onBack={() => {
               setStep(1);
               setConfirmationEmail(null);
-            }} />
+            }} onStartOver={() => setShowStartOverConfirm(true)} />
             <ProgressBar current={2} steps={['Account', 'Verify', 'Company', 'Departments', 'Plan']} />
             <VerifyEmailStep
               email={confirmationEmail}
@@ -2126,7 +2261,7 @@ export default function GetStartedPage() {
         {/* Step 1A — Create account */}
         {path === 'owner' && step === 1 && (
           <Card>
-            <StepHeading headline={ownerStep2.headline} subheadline={ownerStep2.subheadline} onBack={goBack} />
+            <StepHeading headline={ownerStep2.headline} subheadline={ownerStep2.subheadline} onBack={goBack} onStartOver={() => setShowStartOverConfirm(true)} />
             <ProgressBar current={1} steps={['Account', 'Verify', 'Company', 'Departments', 'Plan']} />
             <AccountFields form={ownerAccount} setForm={setOwnerAccount} phoneError={ownerPhoneError} clearPhoneError={() => setOwnerPhoneError('')} profilePhotoUrl={profilePhotoUrl} onProfilePhotoChange={handleProfilePhotoChange} />
             <div style={{ marginTop: '28px' }}>
@@ -2156,7 +2291,7 @@ export default function GetStartedPage() {
         {/* Step 3A — Company profile */}
         {path === 'owner' && step === 3 && (
           <Card>
-            <StepHeading headline={ownerStep3.headline} subheadline={ownerStep3.subheadline} onBack={() => setStep(2)} />
+            <StepHeading headline={ownerStep3.headline} subheadline={ownerStep3.subheadline} onBack={() => setStep(2)} onStartOver={() => setShowStartOverConfirm(true)} />
             <ProgressBar current={3} steps={['Account', 'Verify', 'Company', 'Departments', 'Plan']} />
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
               <div className="gs-field">
@@ -2286,7 +2421,7 @@ export default function GetStartedPage() {
         {/* Step 4A — Departments */}
         {path === 'owner' && step === 4 && (
           <Card>
-            <StepHeading headline={ownerStep4.headline} subheadline={ownerStep4.subheadline} onBack={() => setStep(3)} />
+            <StepHeading headline={ownerStep4.headline} subheadline={ownerStep4.subheadline} onBack={() => setStep(3)} onStartOver={() => setShowStartOverConfirm(true)} />
             <ProgressBar current={4} steps={['Account', 'Verify', 'Company', 'Departments', 'Plan']} />
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               {departments.map((dep, i) => (
@@ -2351,7 +2486,7 @@ export default function GetStartedPage() {
         {/* Step 5A — Choose plan */}
         {path === 'owner' && step === 5 && (
           <Card maxWidth="900px">
-            <StepHeading headline={ownerStep5.headline} subheadline={ownerStep5.subheadline} onBack={(showProMsg || showFreeMsg) ? undefined : () => setStep(4)} />
+            <StepHeading headline={ownerStep5.headline} subheadline={ownerStep5.subheadline} onBack={(showProMsg || showFreeMsg) ? undefined : () => setStep(4)} onStartOver={(showProMsg || showFreeMsg) ? undefined : () => setShowStartOverConfirm(true)} />
             <ProgressBar current={5} steps={['Account', 'Verify', 'Company', 'Departments', 'Plan']} />
 
             {(showProMsg || showFreeMsg) ? (
@@ -2550,7 +2685,7 @@ export default function GetStartedPage() {
             <StepHeading headline="Check your email" subheadline="" onBack={() => {
               setStep(1);
               setConfirmationEmail(null);
-            }} />
+            }} onStartOver={() => setShowStartOverConfirm(true)} />
             <ProgressBar current={2} steps={['Account', 'Verify', 'Profile']} />
             <VerifyEmailStep
               email={confirmationEmail}
@@ -2568,6 +2703,7 @@ export default function GetStartedPage() {
               headline="Create your account"
               subheadline=""
               onBack={() => router.push('/job-board')}
+              onStartOver={() => setShowStartOverConfirm(true)}
             />
             <ProgressBar current={1} steps={['Account', 'Verify', 'Profile']} />
             <AccountFields
@@ -2620,7 +2756,7 @@ export default function GetStartedPage() {
         {/* Step 2B — Create account */}
         {path === 'invitation' && step === 1 && (
           <Card>
-            <StepHeading headline={invitedStep2.headline} subheadline={invitedStep2.subheadline} onBack={goBack} />
+            <StepHeading headline={invitedStep2.headline} subheadline={invitedStep2.subheadline} onBack={goBack} onStartOver={() => setShowStartOverConfirm(true)} />
             <ProgressBar current={1} steps={['Account', 'Join']} />
             <AccountFields form={invitedAccount} setForm={setInvitedAccount} phoneError={invitedPhoneError} clearPhoneError={() => setInvitedPhoneError('')} profilePhotoUrl={profilePhotoUrl} onProfilePhotoChange={handleProfilePhotoChange} />
             <div style={{ marginTop: '28px' }}>
@@ -2653,7 +2789,7 @@ export default function GetStartedPage() {
           if (storedCode && !inviteCode) setInviteCode(storedCode);
           return (
           <Card>
-            <StepHeading headline={invitedStep3.headline} subheadline={invitedStep3.subheadline} onBack={goBack} />
+            <StepHeading headline={invitedStep3.headline} subheadline={invitedStep3.subheadline} onBack={goBack} onStartOver={() => setShowStartOverConfirm(true)} />
             <ProgressBar current={2} steps={['Account', 'Join']} />
             <div className="gs-field">
               <label style={labelStyle}>Invitation Code</label>
@@ -2691,6 +2827,57 @@ export default function GetStartedPage() {
       </div>
       </div>
     </div>
+
+    {/* Start-over confirmation */}
+    {showStartOverConfirm && typeof window !== 'undefined' && createPortal(
+      <div style={{
+        position: 'fixed', inset: 0, zIndex: 100000,
+        background: 'rgba(28,25,23,0.45)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: '24px',
+      }}>
+        <div style={{
+          background: '#FFFFFF', border: '1px solid #F0E8D8', borderRadius: '20px',
+          padding: '32px 32px 28px', width: '100%', maxWidth: '400px',
+          boxShadow: '0 4px 32px rgba(0,0,0,0.12)',
+        }}>
+          <h2 style={{ fontFamily: fH, fontWeight: 700, fontSize: '1.25rem', color: '#1C1917', marginBottom: '10px' }}>
+            Start over?
+          </h2>
+          <p style={{ fontFamily: fB, fontSize: '0.9375rem', color: '#78716C', lineHeight: 1.6, marginBottom: '24px' }}>
+            This discards everything you&apos;ve entered so far and takes you back to the beginning. This can&apos;t be undone.
+          </p>
+          <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+            <button
+              onClick={() => setShowStartOverConfirm(false)}
+              disabled={startingOver}
+              style={{
+                padding: '10px 18px', background: 'none', border: '1.5px solid #E5E7EB', borderRadius: '10px',
+                fontFamily: fB, fontWeight: 600, fontSize: '0.875rem', color: '#57534E',
+                cursor: startingOver ? 'default' : 'pointer',
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleStartOver}
+              disabled={startingOver}
+              style={{
+                padding: '10px 20px', background: '#DC2626', border: 'none', borderRadius: '10px',
+                fontFamily: fB, fontWeight: 700, fontSize: '0.875rem', color: '#FFFFFF',
+                cursor: startingOver ? 'default' : 'pointer',
+                display: 'flex', alignItems: 'center', gap: '8px',
+                opacity: startingOver ? 0.85 : 1,
+              }}
+            >
+              {startingOver && <Spinner />}
+              Start Over
+            </button>
+          </div>
+        </div>
+      </div>,
+      document.body
+    )}
 
     {/* Page transition overlay */}
     {navigating && typeof window !== 'undefined' && createPortal(

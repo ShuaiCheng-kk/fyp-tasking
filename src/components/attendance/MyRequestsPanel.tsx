@@ -139,17 +139,23 @@ function computeWeekStartKey(dateKey: string): string {
   return toISODate(addDays(date, -dow))
 }
 // Mirrors attendanceService.resolveActiveSubmissionWeekStart — the week currently open for
-// submission shifts forward once its own deadline passes.
-function resolveActiveSubmissionWeekStart(deadlineWeekday: number, deadlineTime: string): string {
+// submission shifts forward once its own deadline passes. deadline === null means the company
+// hasn't configured one yet, which the server treats as "no gating" and returns next week
+// immediately — this must short-circuit the same way, or a fresh company (no deadline row) computes
+// an extra week ahead of what the server will actually accept.
+function resolveActiveSubmissionWeekStart(deadline: { weekday: number; time: string } | null): string {
   const todayKey = new Date().toISOString().slice(0, 10)
-  let candidateWeekStart = computeWeekStartKey(todayKey)
+  const candidateWeekStart = computeWeekStartKey(todayKey)
+  const targetWeek = toISODate(addDays(new Date(`${candidateWeekStart}T00:00:00`), 7))
+  if (!deadline) return targetWeek
+  let candidate = candidateWeekStart
   for (;;) {
-    const targetWeek = toISODate(addDays(new Date(`${candidateWeekStart}T00:00:00`), 7))
-    const offsetFromMonday = (deadlineWeekday + 6) % 7
-    const deadlineDate = toISODate(addDays(new Date(`${candidateWeekStart}T00:00:00`), offsetFromMonday))
-    const deadlineMoment = new Date(`${deadlineDate}T${deadlineTime}:00`)
-    if (Date.now() <= deadlineMoment.getTime()) return targetWeek
-    candidateWeekStart = targetWeek
+    const target = toISODate(addDays(new Date(`${candidate}T00:00:00`), 7))
+    const offsetFromMonday = (deadline.weekday + 6) % 7
+    const deadlineDate = toISODate(addDays(new Date(`${candidate}T00:00:00`), offsetFromMonday))
+    const deadlineMoment = new Date(`${deadlineDate}T${deadline.time}:00`)
+    if (Date.now() <= deadlineMoment.getTime()) return target
+    candidate = target
   }
 }
 
@@ -222,7 +228,7 @@ function AttendanceRequestDropdown({ value, options, onChange, placeholder, disa
 }
 
 export default function MyRequestsPanel({
-  companyId, internalUserId, variant, showSuccessToast, showErrorToast, onAttentionCount,
+  companyId, internalUserId, variant, showSuccessToast, showErrorToast, onAttentionCount, autoSelectFirst = true, wideEmployeeLayout = false, readOnly = false,
 }: {
   companyId: string
   internalUserId: string
@@ -230,6 +236,21 @@ export default function MyRequestsPanel({
   showSuccessToast: (message: string) => void
   showErrorToast: (message: string) => void
   onAttentionCount?: (count: number) => void
+  // Employee-only (confirmed 2026-07-31): the Request Detail panel starts empty ("Select a
+  // request to see details") instead of defaulting to the first request in the list — the user
+  // should only ever see a request's detail after actually clicking one. Manager and Owner/
+  // Partner (both also render this panel — see the two call sites this defaults true for) keep
+  // the existing auto-select-first behavior unchanged.
+  autoSelectFirst?: boolean
+  // Employee-only (confirmed 2026-07-31): widens the My Requests column (narrowing Request Detail
+  // in return) and sizes the Submit button to match Tasks' AI Assign button (height/padding/font/
+  // icon/radius — not its color or position). Manager and Owner/Partner keep the original sizing.
+  wideEmployeeLayout?: boolean
+  // Employee-only (2026-08-02): once clocked out of every shift today, submitting/editing/
+  // withdrawing/responding to a request all lock — matches the same rule now applied to the
+  // Dashboard's My Tasks board and the Tasks page's Casual Worker assignment actions. Manager
+  // (the panel's other variant) is unaffected — always false for that call site.
+  readOnly?: boolean
 }) {
   const [myReqError, setMyReqError] = useState('')
   const [myReqLoading, setMyReqLoading] = useState(false)
@@ -240,12 +261,13 @@ export default function MyRequestsPanel({
   // editing lives in Owner/Partner's Attendance settings, unaffected by this extraction).
   const [deadlineWeekday, setDeadlineWeekday] = useState(2)
   const [deadlineTime, setDeadlineTime] = useState('17:00')
+  const [deadlineConfigured, setDeadlineConfigured] = useState(false)
   const [swapMonthlyLimit, setSwapMonthlyLimit] = useState<number | null>(null)
   const [swapDeadlineHours, setSwapDeadlineHours] = useState<number | null>(null)
 
   const activeSubmissionWeekStart = useMemo(
-    () => resolveActiveSubmissionWeekStart(deadlineWeekday, deadlineTime),
-    [deadlineWeekday, deadlineTime],
+    () => resolveActiveSubmissionWeekStart(deadlineConfigured ? { weekday: deadlineWeekday, time: deadlineTime } : null),
+    [deadlineConfigured, deadlineWeekday, deadlineTime],
   )
   const myFixedOffForActiveWeek = useMemo(
     () => myFixedOff.filter(req => req.requested_week === activeSubmissionWeekStart && req.source === 'submitted'),
@@ -296,9 +318,18 @@ export default function MyRequestsPanel({
     return latestDecisionAt ? `offday-${weekStart}-${latestDecisionAt}` : `offday-${weekStart}`
   }, [])
 
+  // Realtime invalidation (see useResourceInvalidation below) can retrigger fetchMyRequests
+  // several times in the first few seconds after mount (each of shifts/shift_assignments/
+  // attendance_records/off_day_requests/shift_swap_requests changing invalidates 'attendance').
+  // Only the very first call should show the loading spinner — every call after that is a silent
+  // background refresh, or the list would keep flashing back to "Loading…" every time one of
+  // those tables changes, which is what made this panel look stuck spinning for several seconds
+  // (confirmed 2026-07-31).
+  const myReqLoadedOnceRef = useRef(false)
   const fetchMyRequests = useCallback(async (uid: string) => {
     if (!uid) return
-    setMyReqLoading(true); setMyReqError('')
+    if (!myReqLoadedOnceRef.current) setMyReqLoading(true)
+    setMyReqError('')
     try {
       const res = await fetch(`/api/attendance?resource=my_requests&user_id=${uid}`)
       const data = await res.json()
@@ -307,7 +338,7 @@ export default function MyRequestsPanel({
       setMyFixedOff(data.fixed_off ?? [])
     } catch (err) {
       setMyReqError(err instanceof Error ? err.message : 'Failed to load requests')
-    } finally { setMyReqLoading(false) }
+    } finally { setMyReqLoading(false); myReqLoadedOnceRef.current = true }
   }, [])
 
   const [swapCandidateRows, setSwapCandidateRows] = useState<TimelineRow[]>([])
@@ -393,6 +424,7 @@ export default function MyRequestsPanel({
       const res = await fetch(`/api/attendance/off-day-settings?company_id=${cid}&owner_id=${uid}&resource=deadline`)
       const data = await res.json()
       if (data.success) {
+        setDeadlineConfigured(!!data.deadline)
         setDeadlineWeekday(data.deadline?.deadline_weekday ?? 2)
         setDeadlineTime(data.deadline?.deadline_time ?? '17:00')
       }
@@ -525,6 +557,7 @@ export default function MyRequestsPanel({
   }, [checkShiftSwapConflict])
 
   const handleSubmitSwap = async () => {
+    if (readOnly) return
     if (!swapShiftId || !swapCounterpartId || !swapCounterpartAssignmentId) { setMyReqError('Select a shift, a colleague, and their shift.'); return }
     if (pendingSwapAssignmentIds.has(swapShiftId)) { setMyReqError('This shift already has a pending swap request.'); return }
     if (pendingSwapAssignmentIds.has(swapCounterpartAssignmentId)) { setMyReqError("This colleague's shift already has a pending swap request."); return }
@@ -560,7 +593,7 @@ export default function MyRequestsPanel({
   const [withdrawingSwapId, setWithdrawingSwapId] = useState<string | null>(null)
   const [withdrawConfirmSwapId, setWithdrawConfirmSwapId] = useState<string | null>(null)
   const handleRespondSwap = async (id: string, decision: 'approved' | 'rejected') => {
-    if (!internalUserId) return
+    if (readOnly || !internalUserId) return
     setRespondingSwapId(id)
     try {
       const res = await fetch('/api/attendance', {
@@ -580,7 +613,7 @@ export default function MyRequestsPanel({
   }
 
   const handleWithdrawSwap = async (id: string) => {
-    if (!internalUserId) return
+    if (readOnly || !internalUserId) return
     setWithdrawingSwapId(id)
     try {
       const res = await fetch('/api/attendance', {
@@ -602,6 +635,7 @@ export default function MyRequestsPanel({
   }
 
   const handleSubmitFixedOff = async () => {
+    if (readOnly) return
     if (hasMyFixedOffForActiveWeek) {
       setMyReqError(hasPendingMyFixedOffRequest
         ? 'You already submitted an Off Day request for the currently open week.'
@@ -642,7 +676,7 @@ export default function MyRequestsPanel({
   }
 
   const handleEditFixedOff = async () => {
-    if (!editingFixedOffGroup || !internalUserId || !companyId) return
+    if (readOnly || !editingFixedOffGroup || !internalUserId || !companyId) return
     if (editingFixedOffDates.length !== fixedOffQuota) {
       setEditingFixedOffError(`Select exactly ${fixedOffQuota} day(s).`)
       return
@@ -739,7 +773,7 @@ export default function MyRequestsPanel({
     if (myReqFilter === 'offday') return i.kind === 'offday'
     return true
   })
-  const selected = items.find(i => i.key === selectedMyReqKey) ?? filteredItems[0] ?? null
+  const selected = items.find(i => i.key === selectedMyReqKey) ?? (autoSelectFirst ? filteredItems[0] : undefined) ?? null
 
   const isMeRequester = (s: ShiftSwapRequestView) => s.requester_id === internalUserId
   const cardTitle = (i: MyReqItem): string => {
@@ -792,7 +826,12 @@ export default function MyRequestsPanel({
     && !!selected.offdayGroup?.length
     && selected.offdayGroup.every(req => req.source === 'submitted' && req.status === 'pending')
     && selected.offdayGroup[0].requested_week === activeSubmissionWeekStart
-  const MYREQ_HEADER_HEIGHT = 64
+  const MYREQ_HEADER_HEIGHT = wideEmployeeLayout ? 72 : 64
+  // Matches Tasks page's AI Assign button exactly (height/padding/radius/font/gap) — see
+  // wideEmployeeLayout doc above.
+  const submitBtnStyle: React.CSSProperties = wideEmployeeLayout
+    ? { marginLeft: 'auto', height: 36, padding: '0 14px', borderRadius: 10, border: 0, background: 'linear-gradient(135deg, #F97316, #EA580C)', color: '#FFFFFF', fontWeight: 700, fontSize: 13, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7, flexShrink: 0, whiteSpace: 'nowrap' }
+    : { marginLeft: 'auto', height: 32, padding: '0 12px', borderRadius: 8, border: '1.5px solid transparent', background: 'linear-gradient(135deg, #F97316, #EA580C)', color: '#FFFFFF', fontWeight: 700, fontSize: 12.5, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0, whiteSpace: 'nowrap' }
   const filterLabel = myReqFilter === 'swap' ? 'Shift Swap Requests' : myReqFilter === 'offday' ? 'Off Day Requests' : 'My Requests'
 
   // ── Submit Request modal derived state ──
@@ -801,7 +840,9 @@ export default function MyRequestsPanel({
   const candidateColleagueRole = variant === 'employee' ? 'Employee' : 'Manager'
   const colleagueRows = swapCandidateRows.filter(r => r.user_id !== internalUserId && r.role === candidateColleagueRole && (scopedDeptRef.current?.ids.has(r.department_id) ?? false))
   const selectedColleague = colleagueRows.find(r => r.user_id === swapCounterpartId)
-  const colleagueShifts = (selectedColleague?.shifts ?? []).filter(s => s.shift_date > todayStr && s.assignment_id)
+  const colleagueShifts = (selectedColleague?.shifts ?? [])
+    .filter(s => s.shift_date > todayStr && s.assignment_id)
+    .sort((a, b) => a.shift_date.localeCompare(b.shift_date) || a.start_time.localeCompare(b.start_time))
   const resetRequestForms = () => {
     setSwapShiftId(''); setSwapCounterpartId(''); setSwapCounterpartAssignmentId(''); setSwapReason('')
     setSelectedFixedOffDates([])
@@ -819,7 +860,9 @@ export default function MyRequestsPanel({
     ? hasPendingMyFixedOffRequest
       ? 'Already submitted.'
       : 'This open week has already been reviewed.'
-    : `Submit before every ${offDayWeekdayName} ${offDayTimeLabel}.`
+    : deadlineConfigured
+      ? `Submit before every ${offDayWeekdayName} ${offDayTimeLabel}.`
+      : 'No off day deadline configured.'
   const selectedOwnShift = mySwappableShifts.find(s => s.assignment.id === swapShiftId)?.shift
   const selectedTargetShift = colleagueShifts.find(s => s.assignment_id === swapCounterpartAssignmentId)
   const selectedOwnShiftHasPending = !!swapShiftId && pendingSwapAssignmentIds.has(swapShiftId)
@@ -854,7 +897,7 @@ export default function MyRequestsPanel({
 
   return (
     <>
-      <div style={{ padding: 0, boxSizing: 'border-box', height: '100%', minHeight: 0, overflow: 'hidden', display: 'grid', gridTemplateColumns: 'minmax(340px, 390px) minmax(0, 1fr)', gap: 16 }}>
+      <div style={{ padding: 0, boxSizing: 'border-box', height: '100%', minHeight: 0, overflow: 'hidden', display: 'grid', gridTemplateColumns: wideEmployeeLayout ? 'minmax(420px, 480px) minmax(0, 1fr)' : 'minmax(340px, 390px) minmax(0, 1fr)', gap: 16 }}>
         {/* LEFT: My Requests list */}
         <section style={{ height: '100%', minHeight: 0, background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <div style={{ height: MYREQ_HEADER_HEIGHT, padding: '0 18px', boxSizing: 'border-box', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
@@ -889,10 +932,12 @@ export default function MyRequestsPanel({
                 </div>
               )}
             </div>
-            <button onClick={() => { setRequestModalStep('choose'); setMyReqError(''); setRequestModalOpen(true) }}
-              style={{ marginLeft: 'auto', height: 32, padding: '0 12px', borderRadius: 8, border: '1.5px solid transparent', background: 'linear-gradient(135deg, #F97316, #EA580C)', color: '#FFFFFF', fontWeight: 700, fontSize: 12.5, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0, whiteSpace: 'nowrap' }}>
-              <Plus size={12} /> Submit
-            </button>
+            {!readOnly && (
+              <button onClick={() => { setRequestModalStep('choose'); setMyReqError(''); setRequestModalOpen(true) }}
+                style={submitBtnStyle}>
+                <Plus size={wideEmployeeLayout ? 15 : 12} strokeWidth={wideEmployeeLayout ? 2.5 : undefined} /> Submit
+              </button>
+            )}
           </div>
           <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
             {myReqLoading ? (
@@ -928,14 +973,51 @@ export default function MyRequestsPanel({
                       display: 'flex', flexDirection: 'column', gap: 10, position: 'relative',
                     }}>
                     {isUnseen && !showActionDot && <span style={{ position: 'absolute', left: -6, top: 14, width: 8, height: 8, borderRadius: '50%', background: '#EF4444', boxShadow: '0 0 0 2px #FFFFFF' }} />}
+                    {/* No separate kind badge (Shift Swap / Off Day) — the title itself already
+                        says which one it is ("Shift swap with X" vs "Week of X - Y"), so a
+                        colored category badge on top of that was redundant clutter. Status sits
+                        on the same row as the title instead of its own row above it (confirmed
+                        2026-07-31). */}
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, whiteSpace: 'nowrap', flexShrink: 0, ...(i.kind === 'swap' ? { background: '#FFF7ED', color: '#C2410C', border: '1px solid #FED7AA' } : { background: '#F5F3FF', color: '#7C3AED', border: '1px solid #DDD6FE' }) }}>
-                        {i.kind === 'swap' ? <ArrowLeftRight size={11} /> : <Calendar size={11} />} {i.kind === 'swap' ? 'Shift Swap' : 'Off Day'}
-                      </span>
+                      <div style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#0F172A', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cardTitle(i)}</div>
                       <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 700, background: badge.bg, color: badge.text, border: `1px solid ${badge.border}`, whiteSpace: 'nowrap', flexShrink: 0 }}>{badge.label}</span>
                     </div>
-                    <div style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#0F172A' }}>{cardTitle(i)}</div>
-                    <div style={{ fontSize: '0.75rem', color: '#9CA3AF', textAlign: 'right' }}>Submitted {formatRelativeTime(i.createdAt)}</div>
+                    {/* Rule-check badges (Shift Swap) / requested weekdays (Off Day) sit on the
+                        same line as the submitted-time stamp — badges left, stamp right — instead
+                        of stacking as a separate row. A Shift Swap card always has exactly these
+                        two fixed-text badges (never more), so badge + stamp font/padding are sized
+                        down just enough that the worst case — both badges plus a "Submitted NN
+                        minutes ago" stamp — still fits one line at the card's minimum width,
+                        instead of the stamp wrapping to its own line (confirmed 2026-07-31). */}
+                    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', rowGap: 4, columnGap: 8 }}>
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        {i.kind === 'swap' && i.swap && i.swap.monthly_swap_limit != null && (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10.5, fontWeight: 700, padding: '4px 8px', borderRadius: 999, background: i.swap.limit_exceeded ? '#FEF2F2' : '#ECFDF5', color: i.swap.limit_exceeded ? '#B91C1C' : '#047857' }}>
+                            {i.swap.limit_exceeded ? <X size={10} /> : <Check size={10} />} Monthly Limit
+                          </span>
+                        )}
+                        {i.kind === 'swap' && i.swap && i.swap.deadline_exceeded != null && (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10.5, fontWeight: 700, padding: '4px 8px', borderRadius: 999, background: i.swap.deadline_exceeded ? '#FEF2F2' : '#ECFDF5', color: i.swap.deadline_exceeded ? '#B91C1C' : '#047857' }}>
+                            {i.swap.deadline_exceeded ? <X size={10} /> : <Check size={10} />} Before Deadline
+                          </span>
+                        )}
+                        {/* One pill per requested date (e.g. "Mon", "Wed") instead of a plain day
+                            count — same green as an already-satisfied swap rule, not the Off Day
+                            category's purple, since this isn't a category label. */}
+                        {i.kind === 'offday' && [...(i.offdayGroup ?? [])]
+                          .sort((a, b) => a.requested_date.localeCompare(b.requested_date))
+                          .map(req => (
+                            <span key={req.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10.5, fontWeight: 700, padding: '4px 8px', borderRadius: 999, background: '#ECFDF5', color: '#047857' }}>
+                              {new Date(`${req.requested_date}T00:00:00`).toLocaleDateString('en-US', { weekday: 'short' })}
+                            </span>
+                          ))}
+                      </div>
+                      {/* marginLeft: auto (not justifyContent on the parent) so this stays pinned
+                          to the right whether it shares the line with the badges or, once there
+                          isn't room, wraps to a line of its own — the parent wrapping is what
+                          keeps the badges themselves from ever being split across two lines. */}
+                      <div style={{ fontSize: '0.75rem', color: '#9CA3AF', textAlign: 'right', flexShrink: 0, whiteSpace: 'nowrap', marginLeft: 'auto' }}>Submitted {formatRelativeTime(i.createdAt)}</div>
+                    </div>
                   </div>
                 </div>
               )
@@ -1034,7 +1116,7 @@ export default function MyRequestsPanel({
                         )}
                       </div>
                     )}
-                    {needsMyResponse && (
+                    {needsMyResponse && !readOnly && (
                       <div style={{ display: 'flex', gap: 10, paddingTop: 2, justifyContent: 'center', flexWrap: 'wrap' }}>
                         <button type="button" disabled={responding} onClick={() => handleRespondSwap(s.id, 'approved')}
                           style={{ minWidth: 132, height: 34, padding: '0 20px', border: '1.5px solid #A7F3D0', borderRadius: 999, background: '#ECFDF5', color: '#047857', fontWeight: 800, fontSize: 13, cursor: responding ? 'default' : 'pointer', opacity: responding ? 0.6 : 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7 }}>
@@ -1071,7 +1153,7 @@ export default function MyRequestsPanel({
                       <div style={{ height: 52, padding: '0 16px', borderBottom: `1px solid ${done ? '#BBF7D0' : blocked ? '#FECACA' : active ? '#FED7AA' : '#F3F4F6'}`, display: 'flex', alignItems: 'center', gap: 9 }}>
                         <span style={{ width: 28, height: 28, borderRadius: 9, background: iconBoxBg, color: iconColor, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{done ? <Check size={14} /> : blocked ? <X size={14} /> : icon}</span>
                         <span style={{ fontSize: 14, fontWeight: 800, color: '#0F172A', whiteSpace: 'nowrap' }}>{title}</span>
-                        {showWithdrawHere && (
+                        {showWithdrawHere && !readOnly && (
                           <button
                             type="button"
                             aria-label="Delete shift swap request"
@@ -1243,7 +1325,7 @@ export default function MyRequestsPanel({
                             )
                           })}
                         </div>
-                        {selectedCanEditFixedOff && !isEditingThisFixedOff && (
+                        {selectedCanEditFixedOff && !isEditingThisFixedOff && !readOnly && (
                           <button
                             type="button"
                             aria-label="Edit off day request"

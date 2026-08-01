@@ -8,6 +8,11 @@ import ApplyJobModal from '@/components/guest/ApplyJobModal'
 import { JobCard, JobDetailPanel, JobView } from '@/components/jobs/JobPresentation'
 import { FLOW_STEPS, FlowTone, getApplicationFlowState } from '@/components/guest/ApplicationFlow'
 import { useResourceInvalidation } from '@/components/realtime/RealtimeNotificationsProvider'
+import { modalLabelStyle } from '@/components/modal'
+import { DASHBOARD_SKELETON_KEYFRAMES, SkeletonLine } from '@/components/dashboard/ClockFlow'
+import { useLayoutWorkerProfile } from '@/app/guest/layout'
+import type { ApplicantCertificateSnapshot } from '@/types/Recruitment'
+import type { WorkerProfile } from '@/types/WorkerProfile'
 
 // One icon per step, matching FLOW_STEPS' order (Pending Review / Accept-Reject Job Offer / Confirmed).
 const STEP_ICONS = [Clock, Mail, CheckCircle2]
@@ -26,16 +31,6 @@ const pageKeyframes = `
 
 type ApplicationStatus = 'pending' | 'accepted' | 'rejected' | 'withdrawn' | 'cancelled_by_employer' | 'job_closed'
 
-type Profile = {
-  id: string
-  full_name: string
-  email_address: string
-  phone_number: string | null
-  date_of_birth: string | null
-  profile_photo_url: string | null
-  role: string
-}
-
 type InvitationStatus = 'sent' | 'accepted' | 'declined' | 'expired' | 'position_filled' | 'cancelled'
 
 type Application = {
@@ -50,6 +45,13 @@ type Application = {
   invitation_sent_at?: string
   invitation_responded_at?: string
   resume?: string
+  // Snapshotted at apply time (workerApplicationService.submitApplication) — must reflect what the
+  // worker submitted THEN, not their current live profile (BUG-076: the applications page fetched
+  // `resume` but dropped it — and never fetched skills/certificates at all — so a worker could never
+  // see what they'd actually submitted for a past application). Named applicant_* to avoid colliding
+  // with the job posting's own unrelated `skills` field below (the posting's required skills text).
+  applicant_skills?: string | null
+  applicant_certificates?: ApplicantCertificateSnapshot[] | null
   salary_amount?: number
   salary_type?: string
   responsibilities?: string
@@ -123,6 +125,8 @@ type RawApplication = {
   applied_at: string
   decided_at?: string | null
   resume?: string
+  skills?: string | null
+  certificates?: ApplicantCertificateSnapshot[] | null
   job_postings?: (Partial<Application> & { title?: string }) | null
   job_invitations?: {
     id: string
@@ -136,11 +140,15 @@ type RawApplication = {
 function ApplicationsContent() {
   const searchParams = useSearchParams()
   const isCompact = useIsCompactViewport(1366)
+  // guest/layout.tsx already fetches the full WorkerProfile for its own role-guard check —
+  // reuse it instead of this page redoing the same `/api/guest/profile` round trip a second
+  // time right after the layout's own "Loading…" gate clears (2026-07-31).
+  const layoutProfile = useLayoutWorkerProfile()
   const [showApplyModal, setShowApplyModal] = useState(false)
   const [jobId, setJobId] = useState<string | null>(null)
   const [applications, setApplications] = useState<Application[]>([])
   const [selectedApplication, setSelectedApplication] = useState<Application | null>(null)
-  const [profile, setProfile] = useState<Profile | null>(null)
+  const [profile, setProfile] = useState<WorkerProfile | null>(layoutProfile)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [respondingId, setRespondingId] = useState<string | null>(null)
@@ -150,6 +158,9 @@ function ApplicationsContent() {
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Pill tab: applications still moving through the happy path vs. ones that ended off it.
   const [viewTab, setViewTab] = useState<'ongoing' | 'closed'>('ongoing')
+  // Which terminal-outcome signatures the worker has already seen (BUG-032) — drives the dot on
+  // the History pill itself instead of a generic sidebar notification with nowhere to point to.
+  const [seenApplicationSignatures, setSeenApplicationSignatures] = useState<Set<string>>(new Set())
   // Confirming an offer promotes the account to Casual Worker behind the scenes, but the session
   // stays put — no forced sign-out. Unlike the toast (which fades in 3s), this sits next to the
   // Ongoing/History pills with no dismiss control — it stays through reloads (persisted in
@@ -166,7 +177,9 @@ function ApplicationsContent() {
     toastTimerRef.current = setTimeout(() => setToast(''), durationMs)
   }
 
+  const lastLoadedAtRef = useRef(0)
   const loadApplications = async (userId: string) => {
+    lastLoadedAtRef.current = Date.now()
     const res = await fetch(`/api/guest/applications?user_id=${userId}`)
     const data = await res.json()
 
@@ -193,6 +206,8 @@ function ApplicationsContent() {
           applied_at: app.applied_at,
           decided_at: app.decided_at ?? undefined,
           resume: app.resume,
+          applicant_skills: app.skills,
+          applicant_certificates: app.certificates,
           invitation_id: invite?.id,
           invitation_status: invite?.status,
           invitation_sent_at: invite?.sent_at ?? undefined,
@@ -203,15 +218,25 @@ function ApplicationsContent() {
   }
 
   useResourceInvalidation(['applications'], () => {
+    // Skip the realtime echo of our own just-completed accept/decline/withdraw (same fix as
+    // BUG-060) — this fires ~250-500ms after a manual reload already ran for the same write.
+    if (Date.now() - lastLoadedAtRef.current < 1500) return
     if (profile?.id) void loadApplications(profile.id)
   })
 
+  // BUG-032: this used to only ever write the current signature set, immediately overwriting
+  // itself on every load — it never read the previous set back for comparison, so it could never
+  // actually detect "what changed since I last looked," and the History pill had no dot of its
+  // own even though a stray notification showed up elsewhere (the sidebar's generic realtime
+  // 'applications' dot, which isn't scoped to this specific tab). Read-before-write, and only
+  // mark seen when the worker actually opens History (see viewTab click below) — a dot on the
+  // pill itself is the one place that should show it. (hasUnseenHistory/markHistorySeen defined
+  // below, after closedApplications.)
   useEffect(() => {
     if (!profile?.id || applications.length === 0) return
-    const signatures = applications
-      .filter(app => app.status !== 'pending')
-      .map(app => `${app.id}:${app.status}:${app.invitation_status ?? ''}:`)
-    try { localStorage.setItem(`applications_seen_${profile.id}`, JSON.stringify(signatures)) } catch {}
+    let previous: string[] = []
+    try { previous = JSON.parse(localStorage.getItem(`applications_seen_${profile.id}`) ?? '[]') } catch {}
+    setSeenApplicationSignatures(new Set(previous))
   }, [applications, profile?.id])
 
   useEffect(() => {
@@ -219,21 +244,23 @@ function ApplicationsContent() {
       try {
         setLoading(true)
 
-        const authId = localStorage.getItem('tasking_user_id')
-        if (!authId) {
-          window.location.href = '/signin'
-          return
+        let currentProfile = layoutProfile
+        if (!currentProfile) {
+          // Fallback for the rare case the layout's own fetch hit its error path (transient
+          // failure) — fetch directly instead of leaving the page stuck on skeletons forever.
+          const authId = localStorage.getItem('tasking_user_id')
+          if (!authId) {
+            window.location.href = '/signin'
+            return
+          }
+          const profileRes = await fetch(`/api/guest/profile?user_id=${authId}`)
+          const profileData = await profileRes.json()
+          if (!profileData.success) throw new Error(profileData.message || 'Failed to load profile')
+          currentProfile = profileData.profile
         }
 
-        const profileRes = await fetch(`/api/guest/profile?user_id=${authId}`)
-        const profileData = await profileRes.json()
-
-        if (!profileData.success) {
-          throw new Error(profileData.message || 'Failed to load profile')
-        }
-
-        setProfile(profileData.profile)
-        await loadApplications(profileData.profile.id)
+        setProfile(currentProfile)
+        await loadApplications(currentProfile!.id)
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load applications')
       } finally {
@@ -242,7 +269,7 @@ function ApplicationsContent() {
     }
 
     loadPageData()
-  }, [])
+  }, [layoutProfile])
 
   useEffect(() => {
     const selectedJobId = searchParams.get('job_id') || localStorage.getItem('apply_job_id')
@@ -291,12 +318,22 @@ function ApplicationsContent() {
       if (profile?.id) await loadApplications(profile.id)
 
       if (response === 'accepted') {
-        // Confirming promoted the account to Casual Worker, but the session carries on as-is —
-        // a persistent banner (not a fading toast) tells them, since it stays relevant until they
-        // next sign in. Written to localStorage (not just state) so it survives reloads too.
-        const msg = `"${app.job_title}" confirmed! Sign in again next time to access your Casual Worker workspace.`
-        localStorage.setItem(CONFIRMED_BANNER_KEY, msg)
-        setConfirmedBanner(msg)
+        // BUG-033: this used to always claim the account was "confirmed" into a brand-new Casual
+        // Worker workspace, even for someone already a Casual Worker confirming their 2nd/3rd job
+        // — profile.role here still reflects the role BEFORE this confirmation (profile hasn't
+        // been refetched yet), so it's the right check for "is this actually their first job."
+        const isFirstEverConfirmation = profile?.role !== 'Casual Worker'
+        const msg = isFirstEverConfirmation
+          ? `"${app.job_title}" confirmed! Sign in again next time to access your Casual Worker workspace.`
+          : `"${app.job_title}" confirmed!`
+        if (isFirstEverConfirmation) {
+          // Only the first-ever promotion needs a persistent (not fading) banner, since only then
+          // does it stay relevant until the worker's next sign-in.
+          localStorage.setItem(CONFIRMED_BANNER_KEY, msg)
+          setConfirmedBanner(msg)
+        } else {
+          showToast(msg)
+        }
       } else {
         showToast('Invitation declined.')
       }
@@ -331,6 +368,19 @@ function ApplicationsContent() {
         </button>
       )
     }
+    // getApplicationFlowState's fallback puts a status==='accepted' application with no real
+    // invitation row into this same step 2 column ("the employer said yes, an offer is coming")
+    // — normally momentary, but if the invitation row genuinely never gets created (a seed/data
+    // gap, or the accept-then-invite write in recruitmentService.ts partially failing), this used
+    // to be a silent dead end: sorted into "needs your action" with nothing actually clickable.
+    // Say so instead of showing nothing (2026-07-31).
+    if (app.status === 'accepted' && !app.invitation_id) {
+      return (
+        <p style={{ margin: 0, fontSize: '0.8125rem', color: '#9CA3AF', fontStyle: 'italic' }}>
+          Offer being prepared — check back soon.
+        </p>
+      )
+    }
     return null
   }
 
@@ -355,6 +405,30 @@ function ApplicationsContent() {
     [applications]
   )
 
+  const currentApplicationSignatures = useMemo(
+    () => new Map(applications.filter(app => app.status !== 'pending').map(app => [app.id, `${app.id}:${app.status}:${app.invitation_status ?? ''}:`])),
+    [applications],
+  )
+  const hasUnseenHistory = useMemo(
+    () => closedApplications.some(app => {
+      const sig = currentApplicationSignatures.get(app.id)
+      return sig !== undefined && !seenApplicationSignatures.has(sig)
+    }),
+    [closedApplications, currentApplicationSignatures, seenApplicationSignatures],
+  )
+  // Ongoing pill's dot: "you have an offer waiting on your response" — presence-based, not a
+  // seen/unseen thing like History's dot. It lights up the moment a job lands in step 2
+  // (Accept/Reject Job Offer) and clears itself the moment the worker actually accepts/declines,
+  // since the job then moves out of step 2 — no separate seen-tracking needed (2026-07-31).
+  const hasPendingOffer = (ongoingByStep[2]?.length ?? 0) > 0
+
+  const markHistorySeen = () => {
+    if (!profile?.id) return
+    const signatures = [...currentApplicationSignatures.values()]
+    try { localStorage.setItem(`applications_seen_${profile.id}`, JSON.stringify(signatures)) } catch {}
+    setSeenApplicationSignatures(new Set(signatures))
+  }
+
   return (
     <>
       <style>{pageKeyframes}</style>
@@ -375,10 +449,20 @@ function ApplicationsContent() {
                 <button
                   key={tab}
                   type="button"
-                  onClick={() => setViewTab(tab)}
-                  style={{ ...pillTabButtonStyle, ...(active ? pillTabButtonActiveStyle : null) }}
+                  onClick={() => { setViewTab(tab); if (tab === 'closed') markHistorySeen() }}
+                  style={{ ...pillTabButtonStyle, ...(active ? pillTabButtonActiveStyle : null), display: 'inline-flex', alignItems: 'center', gap: 8 }}
                 >
                   {tab === 'ongoing' ? 'Ongoing' : 'History'}
+                  {/* Same capsule-tab red-dot spec as Owner Communication's Chat/Announcements
+                      pill tabs (CommunicationView.tsx tab.badge) — 10x10 with a border matching
+                      the tab's own background, confirmed against a side-by-side screenshot
+                      (2026-08-01). */}
+                  {tab === 'ongoing' && hasPendingOffer && (
+                    <span style={{ width: 10, height: 10, borderRadius: 999, background: '#EF4444', flexShrink: 0, border: active ? '1.5px solid #111827' : '1.5px solid #fff' }} />
+                  )}
+                  {tab === 'closed' && hasUnseenHistory && (
+                    <span style={{ width: 10, height: 10, borderRadius: 999, background: '#EF4444', flexShrink: 0, border: active ? '1.5px solid #111827' : '1.5px solid #fff' }} />
+                  )}
                 </button>
               )
             })}
@@ -398,7 +482,16 @@ function ApplicationsContent() {
             fully settled, well before the real cards show up. */}
         <section key={loading ? 'loading' : viewTab} style={{ ...sectionStyle, animation: 'blockSlideUp 0.28s ease-out both' }}>
           {loading ? (
-            <div style={emptyCardStyle}>Loading applications...</div>
+            <div style={stepsRowStyle}>
+              <style>{DASHBOARD_SKELETON_KEYFRAMES}</style>
+              {FLOW_STEPS.map(label => (
+                <div key={label} style={{ ...stepPanelStyle, padding: 14, gap: 10 }}>
+                  <SkeletonLine width="50%" height={14} />
+                  <SkeletonLine height={70} radius={12} />
+                  <SkeletonLine height={70} radius={12} />
+                </div>
+              ))}
+            </div>
           ) : error ? (
             <div style={errorCardStyle}>{error}</div>
           ) : viewTab === 'ongoing' ? (
@@ -488,6 +581,44 @@ function ApplicationsContent() {
               job={toJobView(selectedApplication)}
               onClose={() => setSelectedApplication(null)}
               variant="modal"
+              // What was actually submitted with this application — a frozen snapshot from apply
+              // time (workerApplicationService.submitApplication), not the worker's current live
+              // profile. Rendered as a section inside the same panel (after Company Profile) so
+              // it scrolls together with the rest of the job detail instead of sitting as its own
+              // floating block below the modal.
+              afterCompanyProfile={
+                (selectedApplication.resume || selectedApplication.applicant_skills || (selectedApplication.applicant_certificates?.length ?? 0) > 0) ? (
+                  <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 20 }}>
+                    <p style={{ ...modalLabelStyle, margin: '0 0 8px' }}>Submitted With This Application</p>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                      {selectedApplication.applicant_skills && (
+                        <div>
+                          <p style={{ margin: '0 0 4px', fontSize: '0.75rem', fontWeight: 600, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.03em' }}>Skills</p>
+                          <p style={{ margin: 0, fontSize: '0.9rem', color: '#111827', lineHeight: 1.5 }}>{selectedApplication.applicant_skills}</p>
+                        </div>
+                      )}
+                      {(selectedApplication.applicant_certificates?.length ?? 0) > 0 && (
+                        <div>
+                          <p style={{ margin: '0 0 4px', fontSize: '0.75rem', fontWeight: 600, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.03em' }}>Certificates</p>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            {selectedApplication.applicant_certificates!.map((c, i) => (
+                              c.file_url
+                                ? <a key={i} href={c.file_url} target="_blank" rel="noreferrer" style={{ fontSize: '0.9rem', color: '#EA580C', textDecoration: 'underline' }}>{c.name}</a>
+                                : <p key={i} style={{ margin: 0, fontSize: '0.9rem', color: '#111827' }}>{c.name}</p>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {selectedApplication.resume && (
+                        <div>
+                          <p style={{ margin: '0 0 4px', fontSize: '0.75rem', fontWeight: 600, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.03em' }}>Resume</p>
+                          <a href={selectedApplication.resume} target="_blank" rel="noreferrer" style={{ fontSize: '0.9rem', color: '#EA580C', textDecoration: 'underline' }}>View Resume</a>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : undefined
+              }
             />
           </div>
         </div>

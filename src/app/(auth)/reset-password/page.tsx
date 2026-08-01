@@ -43,10 +43,24 @@ export default function ResetPasswordPage() {
   const [error, setError] = useState('');
   const [sessionReady, setSessionReady] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [recoveryUserId, setRecoveryUserId] = useState('');
+  // A used/expired reset link doesn't fire PASSWORD_RECOVERY at all — Supabase instead redirects
+  // here with an error in the URL hash (#error=access_denied&error_code=otp_expired&...), which the
+  // page previously never looked at, so it sat on "Verifying reset link…" forever with no
+  // indication anything was wrong (BUG-070).
+  const [linkError, setLinkError] = useState('');
 
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
-      if (event === 'PASSWORD_RECOVERY') {
+    const hash = typeof window !== 'undefined' ? window.location.hash.replace(/^#/, '') : '';
+    const params = new URLSearchParams(hash);
+    const errorDescription = params.get('error_description');
+    if (errorDescription) {
+      setLinkError(errorDescription.replace(/\+/g, ' '));
+      return;
+    }
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'PASSWORD_RECOVERY' && session?.user) {
+        setRecoveryUserId(session.user.id);
         setSessionReady(true);
       }
     });
@@ -64,10 +78,19 @@ export default function ResetPasswordPage() {
       setError('Password must be at least 6 characters.');
       return;
     }
+    if (!recoveryUserId) {
+      setError('This reset link is invalid or has expired. Request a new one from the sign-in page.');
+      return;
+    }
     setIsLoading(true);
-    const { error: updateError } = await supabase.auth.updateUser({ password });
-    if (updateError) {
-      setError(updateError.message);
+    const res = await fetch('/api/auth/reset-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: recoveryUserId, password }),
+    });
+    const data = await res.json();
+    if (!data.success) {
+      setError(data.message || 'Failed to reset password');
       setIsLoading(false);
     } else {
       setSuccess(true);
@@ -141,7 +164,26 @@ export default function ResetPasswordPage() {
           </p>
         </div>
 
-        {!sessionReady ? (
+        {linkError ? (
+          <div style={{ textAlign: 'center' }}>
+            <div style={{
+              background: '#FEF2F2',
+              border: '1px solid #FECACA',
+              borderRadius: '10px',
+              padding: '16px',
+              fontFamily: fB,
+              fontSize: '0.9375rem',
+              color: '#DC2626',
+              lineHeight: 1.5,
+              marginBottom: '20px',
+            }}>
+              This reset link is invalid or has expired. Request a new one from the sign-in page.
+            </div>
+            <a href="/forgot-password" style={{ fontFamily: fB, fontWeight: 600, fontSize: '0.9375rem', color: '#F97316', textDecoration: 'none' }}>
+              Request a new reset link
+            </a>
+          </div>
+        ) : !sessionReady ? (
           <div style={{ textAlign: 'center', fontFamily: fB, fontSize: '0.9375rem', color: '#78716C', padding: '20px 0' }}>
             Verifying reset link…
           </div>
