@@ -26,8 +26,10 @@ export const taskTemplateRepository = {
 
   // department_id null = an Owner/Partner template, shared only between the two of them — never
   // department-scoped, never shown to a Manager. department_ids omitted (Owner/Partner viewer) →
-  // every template in the company, both kinds. Passed (Manager viewer) → ONLY templates tagged to
-  // a department the manager is in; null (Owner/Partner) templates are excluded, not included.
+  // ONLY the null (Owner/Partner) templates, never a Manager's — Owner/Partner shouldn't see (or
+  // be able to edit) a Manager's own department template here, same as a Manager never sees an
+  // Owner/Partner template. department_ids passed (Manager viewer) → ONLY templates tagged to a
+  // department the manager is in.
   async getTemplatesByCompany(company_id: string, department_ids?: string[]): Promise<TaskTemplate[]> {
     let query = supabase
       .from('task_templates')
@@ -36,6 +38,8 @@ export const taskTemplateRepository = {
     if (department_ids) {
       if (department_ids.length === 0) return []
       query = query.in('department_id', department_ids)
+    } else {
+      query = query.is('department_id', null)
     }
     const { data, error } = await query.order('created_at', { ascending: true })
     if (error) throw new Error(error.message)

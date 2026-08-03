@@ -590,7 +590,6 @@ function CurrentShiftsBlock({ show, deptName, rows, loading, panelBorder, highli
   }, [show])
 
   if (!show) return null
-  const today = new Date()
   // Rolling 7-day window starting exactly at anchorDate (not snapped to Mon-Sun) — a swap can
   // straddle a calendar-week boundary, so the window must be free to start on any weekday.
   const mon = new Date(`${anchorDate}T00:00:00`)
@@ -598,7 +597,10 @@ function CurrentShiftsBlock({ show, deptName, rows, loading, panelBorder, highli
     const d = new Date(mon); d.setDate(mon.getDate() + i)
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   })
-  const todayKey2 = today.toISOString().slice(0, 10)
+  // sgtTodayKey(), not a UTC toISOString() slice — the latter lags the real Singapore calendar
+  // day by one for the 8 hours between 00:00-08:00 SGT (still "yesterday" in UTC), which is
+  // exactly when this mislabels today's own column as not-today (see BUG report 2026-08-XX).
+  const todayKey2 = sgtTodayKey()
   const csIconButtonStyle: React.CSSProperties = {
     width: 28, height: 28, borderRadius: 8, border: `1px solid ${panelBorder}`,
     background: '#FFFFFF', display: 'inline-grid', placeItems: 'center', cursor: 'pointer', color: TEXT_DARK, flexShrink: 0,
@@ -1001,6 +1003,11 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
   const [casualJobType, setCasualJobType] = useState<'all' | 'shift' | 'one-off' | null>(null)
   const [weekRecords, setWeekRecords] = useState<AttendanceDashboardRecord[]>([])
   const [weekLoading, setWeekLoading] = useState(false)
+
+  // Completed Requests: a rejected swap's reason is hidden behind a click on its "Rejected by
+  // X" badge (same badge shape as the "Approved by X" one) instead of always showing the raw
+  // reason text inline — id of whichever rejected request's reason is currently expanded, or null.
+  const [expandedRejectReasonId, setExpandedRejectReasonId] = useState<string | null>(null)
 
   // review modal (from Records tab) — editing itself now lives in EditAttendanceRecordModal;
   // this page only tracks which record (if any) is open for review.
@@ -2327,7 +2334,10 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
   ]
 
   // ── Today's date key for AR status reference ──────────────────────────────
-  const todayKey = useMemo(() => new Date().toISOString().slice(0, 10), [])
+  // sgtTodayKey(), not a UTC toISOString() slice — see the matching fix on todayKey2 above for
+  // why the UTC version mislabels today's own attendance records as "not today" every day
+  // between 00:00-08:00 SGT.
+  const todayKey = sgtTodayKey()
 
   // Per-block entrance stagger: every newly mounted section gets an incremental animation-delay
   // in DOM order, so the tab's blocks cascade in one after another instead of moving as one page.
@@ -3229,18 +3239,33 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                             const dc = deptColor(req.department_name)
                             return <span style={{ fontSize: '0.72rem', fontWeight: 800, color: dc, background: `${dc}1a`, borderRadius: 999, padding: '4px 10px', flexShrink: 0 }}>{req.department_name}</span>
                           })()}
-                          {req.owner_review_reason && (
+                          {req.owner_review_reason && (req.reviewer_name ? (
+                            // Same badge shape as "Approved by X" — the reason itself is hidden
+                            // behind a click on the badge instead of always sitting inline.
+                            <span
+                              onClick={e => { e.stopPropagation(); setExpandedRejectReasonId(id => id === req.id ? null : req.id) }}
+                              title="Click to see the reason"
+                              style={{ fontSize: '0.68rem', fontWeight: 700, color: '#B91C1C', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 999, padding: '3px 10px', whiteSpace: 'nowrap', flexShrink: 0, cursor: 'pointer' }}
+                            >
+                              Rejected by {req.reviewer_name}
+                            </span>
+                          ) : (
                             <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#B91C1C', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 999, padding: '3px 10px', whiteSpace: 'nowrap', flexShrink: 0 }}>{req.owner_review_reason}</span>
-                          )}
+                          ))}
                           {approved && req.reviewer_name && (
                             <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#047857', background: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: 999, padding: '3px 10px', whiteSpace: 'nowrap', flexShrink: 0 }}>Approved by {req.reviewer_name}</span>
+                          )}
+                          {expandedRejectReasonId === req.id && req.owner_review_reason && (
+                            <div onClick={e => e.stopPropagation()} style={{ width: '100%', fontSize: '0.72rem', fontWeight: 500, color: '#7F1D1D', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 10, padding: '8px 10px', lineHeight: 1.4 }}>
+                              {req.owner_review_reason}
+                            </div>
                           )}
                           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, minWidth: 0, flexWrap: 'wrap', rowGap: 6 }}>
                             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
                               <span style={{ fontSize: '0.76rem', fontWeight: 800, color: '#64748B', whiteSpace: 'nowrap' }}>
                                 {isPending ? formatOwnerDecisionTime(req.created_at) : formatOwnerDecisionTime(req.reviewed_at)}
                               </span>
-                              {!isPending && !approved && req.reviewer_name && (
+                              {!isPending && !approved && !req.owner_review_reason && req.reviewer_name && (
                                 <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#94A3B8', whiteSpace: 'nowrap' }}>by {req.reviewer_name}</span>
                               )}
                             </div>
@@ -4260,7 +4285,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                       value={exportFrom}
                       onChange={setExportFrom}
                       placeholder="Select date"
-                      max={exportTo || new Date().toISOString().slice(0, 10)}
+                      max={exportTo || sgtTodayKey()}
                       clearable={false}
                     />
                   </div>
@@ -4271,7 +4296,7 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                       onChange={setExportTo}
                       placeholder="Select date"
                       min={exportFrom || undefined}
-                      max={new Date().toISOString().slice(0, 10)}
+                      max={sgtTodayKey()}
                       clearable={false}
                     />
                   </div>

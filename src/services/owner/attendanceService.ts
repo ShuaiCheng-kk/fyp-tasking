@@ -1290,13 +1290,15 @@ export const attendanceService = {
         const counterpart = usersById.get(req.counterpart_id)
 
         // Same live rule check the reviewer's queue shows (getShiftSwapRequests) — surfaced here
-        // too so the requester can see, before Owner/Partner even decide, whether they're over
-        // their monthly quota or past the submission deadline for this shift.
+        // too so the requester can see whether they're over their monthly quota or past the
+        // submission deadline for this shift. Shown regardless of status (not just while
+        // pending) so every card in My Requests carries the same badges consistently — an
+        // already-decided request still tells the requester what the rule check looked like.
         let monthly_swap_limit: number | null = null
         let requester_swaps_left: number | null = null
         let limit_exceeded: boolean | null = null
         let deadline_exceeded: boolean | null = null
-        if (req.status === 'pending') {
+        {
           const departmentId = reqAss?.shifts?.department_id ?? ctrAss?.shifts?.department_id ?? null
           const settings = await cachedSwapRuleSettings(req.company_id, requester?.role ?? '', departmentId)
           if (settings?.monthly_swap_limit != null) {

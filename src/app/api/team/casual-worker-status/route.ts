@@ -37,6 +37,13 @@ export async function PATCH(req: NextRequest) {
       )
     }
 
+    if (worker_status.toLowerCase() === 'inactive' && (typeof inactivate_reason !== 'string' || !inactivate_reason.trim())) {
+      return NextResponse.json(
+        { success: false, message: 'A reason is required to inactivate this Casual Worker.' },
+        { status: 400 }
+      )
+    }
+
     await casualWorkerStatusService.updateStatus({
       user_id,
       company_id,

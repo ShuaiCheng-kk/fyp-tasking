@@ -6232,6 +6232,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                     setDuplicateShiftForm(prev => {
                       const stillAvailable = prev.assigned_user_id
                         && !(futureShiftMap.get(`${prev.assigned_user_id}_${nextDate}`) ?? []).length
+                        && !fixedOffByUserDate.has(`${prev.assigned_user_id}|${nextDate}`)
                       return { ...prev, shift_date: nextDate, assigned_user_id: stillAvailable ? prev.assigned_user_id : '' }
                     })
                   }}
@@ -6276,7 +6277,8 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
 
               {(() => {
                 const availableMembers = members.filter(member =>
-                  !(futureShiftMap.get(`${member.id}_${duplicateShiftForm.shift_date}`) ?? []).length,
+                  !(futureShiftMap.get(`${member.id}_${duplicateShiftForm.shift_date}`) ?? []).length
+                  && !fixedOffByUserDate.has(`${member.id}|${duplicateShiftForm.shift_date}`),
                 )
                 const noOneAvailable = availableMembers.length === 0
                 return (
@@ -6291,7 +6293,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                     />
                     {noOneAvailable && (
                       <p style={{ margin: '6px 0 0', fontSize: 12, color: '#B45309', whiteSpace: 'nowrap' }}>
-                        Everyone already has a shift this date.
+                        Everyone already has a shift or an approved day off on this date.
                       </p>
                     )}
                   </div>

@@ -16,7 +16,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: 'Tasking — Hire, Schedule, Track',
+  title: 'Tasking',
   description:
     'The all-in-one casual workforce management platform that helps SMEs hire, schedule, and track their teams.',
 };

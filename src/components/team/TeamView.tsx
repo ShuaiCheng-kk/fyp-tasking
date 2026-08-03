@@ -4253,6 +4253,10 @@ export default function TeamView({ sidebar, basePath, permissions, hidePlanBadge
               <button
                 onClick={async () => {
                   if (!cwInactiveReasonModal) return
+                  if (!cwInactiveReason.trim()) {
+                    setCWStatusError('Please enter a reason for inactivation.')
+                    return
+                  }
                   try {
                     const res = await fetch('/api/team/casual-worker-status', {
                       method: 'PATCH',
