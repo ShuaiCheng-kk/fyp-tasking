@@ -42,9 +42,9 @@ export const taskTemplateService = {
     })
   },
 
-  // department_ids omitted → Owner/Partner see every template in the company (their own
-  // Owner/Partner-only templates plus every Manager's). Passed (Manager, resolved server-side
-  // from manager_scope_id) → only templates tagged to their own department — never another
+  // department_ids omitted → Owner/Partner see only their own Owner/Partner-tier templates
+  // (never a Manager's department template). Passed (Manager, resolved server-side from
+  // manager_scope_id) → only templates tagged to their own department — never another
   // department's, and never an Owner/Partner template (those carry no department at all).
   async listTemplates(company_id: string, department_ids?: string[]): Promise<TaskTemplate[]> {
     if (!company_id) throw new Error('company_id is required')

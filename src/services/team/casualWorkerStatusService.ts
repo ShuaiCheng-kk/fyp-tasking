@@ -19,6 +19,9 @@ export const casualWorkerStatusService = {
     inactivate_reason: string | null
   }): Promise<void> {
     const isBan = worker_status === 'inactive'
+    if (isBan && !inactivate_reason?.trim()) {
+      throw new Error('A reason is required to inactivate this Casual Worker.')
+    }
     // Reactivating clears the stored reason; banning keeps it.
     const reasonToStore = isBan ? inactivate_reason : null
 
