@@ -6,9 +6,18 @@ import { JobTemplate, JobTemplateInput, JobTemplateUpdateInput, JobTemplateUsage
 
 export const jobTemplateService = {
 
+  // UC35: Title, Responsibilities, Skills, Department, and Pay amount are all required to save a
+  // template — mirrors the check the Create Job wizard's "Save as Template" button already does
+  // client-side, so a caller that bypasses the UI can't skip it.
   async createTemplate(input: JobTemplateInput): Promise<JobTemplate> {
     if (!input.company_id || !input.title?.trim() || !input.created_by) {
       throw new Error('Missing required job template fields')
+    }
+    if (!input.responsibilities?.trim()) throw new Error('Responsibilities is required to save a template')
+    if (!input.skills?.trim()) throw new Error('Skills is required to save a template')
+    if (!input.department_id) throw new Error('Department is required to save a template')
+    if (input.salary_amount === undefined || input.salary_amount === null) {
+      throw new Error('Pay amount is required to save a template')
     }
     return jobTemplateRepository.createTemplate(input)
   },
@@ -46,6 +55,16 @@ export const jobTemplateService = {
     const minimum_age = fields.minimum_age !== undefined ? fields.minimum_age : existing.minimum_age
     const estimated_hours = fields.estimated_hours !== undefined ? fields.estimated_hours : existing.estimated_hours
     const urgency = fields.urgency !== undefined ? fields.urgency : existing.urgency
+    // UC36: Job Type, Responsibilities, Skills, Department, and Pay amount are all required to
+    // save changes — same required-field list as UC35's create, checked here against the merged
+    // (existing + incoming) values so clearing a field via a direct API call is caught too.
+    if (!job_type) throw new Error('Job Type is required to save this template')
+    if (!responsibilities?.trim()) throw new Error('Responsibilities is required to save this template')
+    if (!skills?.trim()) throw new Error('Skills is required to save this template')
+    if (!department_id) throw new Error('Department is required to save this template')
+    if (salary_amount === undefined || salary_amount === null) {
+      throw new Error('Pay amount is required to save this template')
+    }
     return jobTemplateRepository.updateTemplate(id, {
       title, responsibilities, skills, job_type,
       department_id, salary_amount,

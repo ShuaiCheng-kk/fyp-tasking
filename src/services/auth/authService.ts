@@ -13,6 +13,16 @@ function getAdminClient() {
   )
 }
 
+// UC70 Alt Flow A2 (Email Not Confirmed) vs A1 (Wrong Credentials): Supabase's own signIn error
+// message is the only signal distinguishing the two, so both authService.signIn and the
+// cookie-based /api/auth/signin route (which needs Next.js request-scoped cookies() and so can't
+// route through this service) classify it through this one shared function.
+export function classifySignInError(rawMessage?: string | null): string {
+  const msg = rawMessage?.toLowerCase() ?? ''
+  if (msg.includes('email not confirmed')) return 'Email not confirmed'
+  return 'Invalid email or password'
+}
+
 export const authService = {
 
   async deleteOrphanedAuthUser(email_address: string): Promise<void> {
@@ -31,7 +41,7 @@ export const authService = {
         email: email_address,
         password,
       })
-    if (authError) throw new Error('Invalid email or password')
+    if (authError) throw new Error(classifySignInError(authError.message))
     if (!authData.user) throw new Error('Sign in failed')
 
     const user = await authRepository.findByAuthId(authData.user.id)

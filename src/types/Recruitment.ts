@@ -38,6 +38,9 @@ export interface JobPosting {
   // approve/resubmit so a fresh submission never carries a stale rejection record.
   rejected_by: string | null
   expires_at: string | null
+  // Set when the creator explicitly picked "No Deadline" — expires_at alone can't tell that
+  // apart from a deadline nobody has chosen yet (both leave expires_at null).
+  no_deadline: boolean
   template_id: string | null
   experience_required: string | null
   minimum_age: number | null
@@ -68,6 +71,7 @@ export interface JobPostingInput {
   assigned_employee_id?: string | null
   job_type?: string | null
   expires_at?: string | null
+  no_deadline?: boolean
   template_id?: string | null
   experience_required?: string | null
   minimum_age?: number | null

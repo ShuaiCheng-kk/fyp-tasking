@@ -75,9 +75,6 @@ export const invitationService = {
     const normalizedRole = ROLE_MAP[data.role] ?? (data.role as InvitationCode['role'])
     const inviter = await authRepository.findByAuthIdOrInternalId(data.invited_by)
     if (!inviter) throw new Error('User not found')
-    if (inviter.role === 'Partner') {
-      throw new Error('Partners cannot invite members.')
-    }
     if (inviter.email_address.toLowerCase() === data.email.toLowerCase()) {
       throw new Error('You cannot send an invitation to yourself.')
     }

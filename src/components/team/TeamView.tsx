@@ -3554,7 +3554,7 @@ export default function TeamView({ sidebar, basePath, permissions, hidePlanBadge
                 </div>
                 <div style={{ padding: '0 24px 20px', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10 }}>
                   {(() => {
-                    const hasMembers = teamMembers.filter(m => m.department_id === activeDepartment.id).length > 0
+                    const hasMembers = teamMembers.some(m => (m.role === 'Manager' || m.role === 'Employee') && m.department_id === activeDepartment.id)
                     const deleteDisabled = departmentActionLoading || hasMembers
                     return (
                       <button type="button" onClick={handleDeleteDepartment} disabled={deleteDisabled} title={hasMembers ? 'Reassign or remove all members before deleting this department' : undefined} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, border: 'none', borderRadius: 8, background: deleteDisabled ? '#F3A8A8' : 'linear-gradient(135deg, #EF4444, #DC2626)', color: '#FFFFFF', height: 36, padding: '0 14px', fontSize: '0.8125rem', fontWeight: 600, cursor: deleteDisabled ? 'not-allowed' : 'pointer', opacity: deleteDisabled ? 0.7 : 1, marginRight: 'auto' }}>{departmentActionLoading ? <Spinner size={13} /> : <Trash2 size={13} />} Delete</button>

@@ -30,11 +30,13 @@ export const ownerAnnouncementService = {
     if (requester.role === 'Manager' && (!departmentId || departmentId !== requester.department_id)) {
       throw new Error('Managers can only post announcements to their own department')
     }
-    return ownerAnnouncementRepository.updateAnnouncement(announcementId, requestingUserId, title.trim(), content.trim(), departmentId)
+    return ownerAnnouncementRepository.updateAnnouncement(announcementId, title.trim(), content.trim(), departmentId)
   },
 
   async deleteAnnouncement(announcementId: string, requestingUserId: string) {
-    await ownerAnnouncementRepository.deleteAnnouncement(announcementId, requestingUserId)
+    const existing = await ownerAnnouncementRepository.getAnnouncementOwner(announcementId)
+    if (existing.user_id !== requestingUserId) throw new Error('You can only delete your own announcements')
+    await ownerAnnouncementRepository.deleteAnnouncement(announcementId)
   },
 
   async markAnnouncementsRead(userId: string, announcementIds: string[]) {

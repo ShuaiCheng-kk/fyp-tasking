@@ -56,15 +56,7 @@ export const ownerAnnouncementRepository = {
     return data
   },
 
-  async updateAnnouncement(announcementId: string, requestingUserId: string, title: string, content: string, departmentId: string | null) {
-    const { data: existing, error: fetchError } = await supabase
-      .from('announcements')
-      .select('user_id')
-      .eq('id', announcementId)
-      .single()
-    if (fetchError || !existing) throw new Error('Announcement not found')
-    if (existing.user_id !== requestingUserId) throw new Error('You can only edit your own announcements')
-
+  async updateAnnouncement(announcementId: string, title: string, content: string, departmentId: string | null) {
     const { data, error } = await supabase
       .from('announcements')
       .update({ title, content, audience_department_id: departmentId, updated_at: new Date().toISOString() })
@@ -84,15 +76,7 @@ export const ownerAnnouncementRepository = {
     return data
   },
 
-  async deleteAnnouncement(announcementId: string, requestingUserId: string) {
-    const { data: existing, error: fetchError } = await supabase
-      .from('announcements')
-      .select('user_id')
-      .eq('id', announcementId)
-      .single()
-    if (fetchError || !existing) throw new Error('Announcement not found')
-    if (existing.user_id !== requestingUserId) throw new Error('You can only delete your own announcements')
-
+  async deleteAnnouncement(announcementId: string) {
     const { error } = await supabase
       .from('announcements')
       .delete()

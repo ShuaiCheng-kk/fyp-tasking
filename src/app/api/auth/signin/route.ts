@@ -4,7 +4,7 @@
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
-import { authService } from '@/services/auth/authService'
+import { authService, classifySignInError } from '@/services/auth/authService'
 
 export async function POST(req: NextRequest) {
   let body: unknown
@@ -50,11 +50,7 @@ export async function POST(req: NextRequest) {
     })
 
     if (authError || !authData.user) {
-      const msg = authError?.message?.toLowerCase() ?? ''
-      if (msg.includes('email not confirmed')) {
-        throw new Error('Email not confirmed')
-      }
-      throw new Error('Invalid email or password')
+      throw new Error(classifySignInError(authError?.message))
     }
 
     const user = await authService.getUserProfile(authData.user.id)
