@@ -8,9 +8,16 @@ import {
   suspendUser,
   unsuspendUser,
 } from '@/services/userAdmin/userAdminService'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 export async function POST(req: NextRequest) {
   try {
+    const session = await getServerSessionUser()
+    if (!session) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+    if (session.user.role !== 'User Admin') {
+      return NextResponse.json({ error: 'Only a User Admin can perform this action' }, { status: 403 })
+    }
+
     const body = await req.json()
     const { action, company_id, user_id, reason } = body
 

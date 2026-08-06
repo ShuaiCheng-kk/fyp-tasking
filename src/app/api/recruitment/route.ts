@@ -110,6 +110,7 @@ export async function POST(req: NextRequest) {
     assigned_employee_id: typeof data.assigned_employee_id === 'string' && data.assigned_employee_id ? data.assigned_employee_id : null,
     job_type: typeof data.jobType === 'string' && data.jobType ? data.jobType : null,
     expires_at: typeof data.expires_at === 'string' && data.expires_at ? data.expires_at : null,
+    no_deadline: data.no_deadline === true,
     template_id: typeof data.template_id === 'string' && data.template_id ? data.template_id : null,
     experience_required: typeof data.experience_required === 'string' && data.experience_required ? data.experience_required : null,
     minimum_age: parseNullableInt(data.minimum_age),
@@ -159,6 +160,7 @@ export async function PATCH(req: NextRequest) {
       if ('break_end_time' in data) patch.break_end_time = nullableString(data.break_end_time)
       if ('assigned_employee_id' in data) patch.assigned_employee_id = nullableString(data.assigned_employee_id)
       if ('expires_at' in data) patch.expires_at = nullableString(data.expires_at)
+      if ('no_deadline' in data) patch.no_deadline = data.no_deadline === true
       if ('experience_required' in data) patch.experience_required = nullableString(data.experience_required)
       if ('minimum_age' in data) patch.minimum_age = parseNullableInt(data.minimum_age)
       if ('openings' in data) patch.openings = parseNullableInt(data.openings)
@@ -229,7 +231,7 @@ export async function PATCH(req: NextRequest) {
     }
 
     if (action === 'approve_posting') {
-      const posting = await recruitmentService.approveJobPosting(String(data.job_id ?? ''))
+      const posting = await recruitmentService.approveJobPosting(String(data.job_id ?? ''), String(data.approved_by ?? ''))
       return NextResponse.json({ success: true, posting })
     }
 

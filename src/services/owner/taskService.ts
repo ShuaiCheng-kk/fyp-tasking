@@ -57,6 +57,10 @@ export const taskService = {
       if (!input.assigned_by || parent.assigned_by !== input.assigned_by) {
         throw new Error('Only the user who assigned this task can perform this action')
       }
+      // UC18: sub-tasks are single-level only — a sub-task can't itself become a parent.
+      if (parent.parent_task_id !== null) {
+        throw new Error('A sub-task cannot have its own sub-tasks')
+      }
       // Sub-tasks inherit the parent's priority/deadline so they stay aligned with the main task
       // in UI and recurrence flows. They are not scored separately for workload/delay alerts.
       // They also inherit the parent's assignee when none is given, so a sub-task never ends up
@@ -102,6 +106,7 @@ export const taskService = {
   async editTask(id: string, input: Partial<TaskInput>, actingUserId?: string | null): Promise<Task> {
     if (!id) throw new Error('Task id is required')
     const existing = await assertIsTaskOwner(id, actingUserId)
+    assertTaskIsActive(existing, 'edit')
     // Same single-assignee rule as assignTask — assigned_user_ids is only a one-element alias
     // for assigned_user_id, and an edit can reassign the task but never unassign it.
     const assigneeIds = input.assigned_user_ids?.filter(Boolean) ?? null
@@ -173,6 +178,7 @@ export const taskService = {
   async deleteTask(id: string, actingUserId?: string | null): Promise<void> {
     if (!id) throw new Error('Task id is required')
     const task = await assertIsTaskOwner(id, actingUserId)
+    assertTaskIsActive(task, 'delete')
 
     // Deleting the original of a recurring series takes the whole series with it — mirrors
     // recurring Shift deletion. Deleting a sibling occurrence only removes that one occurrence.
@@ -229,6 +235,12 @@ export const taskService = {
 
   async createRecurringTasks(id: string, input: TaskRecurrenceInput): Promise<Task[]> {
     const original = await assertIsTaskOwner(id, input.assigned_by)
+    // UC16: Recurring is available only to Owner, Partner, and Manager — an Employee's own tasks
+    // (for supervised Casual Workers) can't be recurred, even though they can assign/edit/delete them.
+    const actor = input.assigned_by ? await taskRepository.getUserById(input.assigned_by) : null
+    if (!actor || actor.role === 'Employee') {
+      throw new Error('Only Owner, Partner, or Manager can set a recurring task')
+    }
     if (!['daily', 'weekly', 'custom'].includes(input.recurrence_rule)) {
       throw new Error('recurrence_rule must be daily, weekly, or custom')
     }
@@ -344,6 +356,7 @@ export const taskService = {
   async archiveTask(id: string, actingUserId?: string | null): Promise<Task> {
     if (!id) throw new Error('Task id is required')
     const task = await assertIsTaskOwner(id, actingUserId)
+    assertTaskIsActive(task, 'archive')
     // Archiving hides the task from the board — it does not change its status, so an archived
     // task that gets restored picks up exactly where it was instead of resetting to Complete/Assigned.
     const isRecurrenceOriginal = task.recurrence_group_id && task.source_task_id === null
@@ -797,6 +810,16 @@ function deadlineUrgencyWeight(due_at: string | null): number {
   if (hoursRemaining <= 24) return 3 // due within a day
   if (hoursRemaining <= 72) return 2 // due within 3 days
   return 1                            // plenty of time
+}
+
+// UC12/UC14/UC17: editing, deleting, and archiving are only allowed while a task is still active
+// (Assigned or In Progress) — once it reaches Review or Complete it's locked. Duplicate, extend
+// recurrence, unarchive, and reorder sub-tasks are deliberately NOT gated by this (none of their
+// use cases document a status restriction).
+function assertTaskIsActive(task: Task, actionLabel: string): void {
+  if (task.status === 'Review' || task.status === 'Complete') {
+    throw new Error(`Cannot ${actionLabel} a task that is in ${task.status} status`)
+  }
 }
 
 // The user who originally assigned a task may edit, delete, archive, duplicate, extend its

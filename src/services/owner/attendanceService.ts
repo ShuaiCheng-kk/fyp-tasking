@@ -831,11 +831,42 @@ export const attendanceService = {
   // Owner/Manager: approve or reject after counterpart has agreed
   async decideShiftSwapRequest(input: ShiftSwapOwnerDecisionInput) {
     if (!['approved', 'rejected'].includes(input.decision)) throw new Error('Invalid swap decision')
+    if (input.decision === 'rejected' && !input.reason?.trim()) {
+      throw new Error('A reason is required to reject a shift swap request')
+    }
     let request = await attendanceRepository.getShiftSwapRequestById(input.id)
     if (!request) throw new Error('Shift swap request not found')
     request = await autoExpireSwapRequestIfNeeded(request)
     if (request.status !== 'pending') throw new Error('Request is no longer pending')
     if (request.counterpart_status !== 'approved') throw new Error('Counterpart has not agreed yet')
+
+    // UC55/56: routing is by the REQUESTER's role, mirroring the queue split in getShiftSwapRequests
+    // above — an Employee's swap can only be decided by a Manager who manages the department the
+    // requester's shift belongs to; a Manager's own swap can only be decided by Owner/Partner. This
+    // is enforced here (not just by which queue the UI shows) so a direct API call can't cross into
+    // a queue the caller was never shown.
+    const [requester, reviewer] = await attendanceRepository
+      .getUsersByIds([request.requester_id, input.reviewer_id])
+      .then(users => [
+        users.find(u => u.id === request!.requester_id),
+        users.find(u => u.id === input.reviewer_id),
+      ])
+    if (!reviewer) throw new Error('Reviewer not found')
+    if (requester?.role === 'Employee') {
+      if (reviewer.role !== 'Manager') {
+        throw new Error("Only a Manager can decide an Employee's shift swap request")
+      }
+      const assignment = await attendanceRepository.getShiftAssignmentById(request.requester_assignment_id)
+      const deptId = assignment?.shifts?.department_id
+      const managedDeptIds = new Set(
+        (await ownerTeamRepository.findManagerDepartments(input.reviewer_id, request.company_id)).map(d => d.department_id),
+      )
+      if (!deptId || !managedDeptIds.has(deptId)) {
+        throw new Error('You can only decide shift swap requests within your own department')
+      }
+    } else if (reviewer.role !== 'Owner' && reviewer.role !== 'Partner') {
+      throw new Error("Only Owner or Partner can decide a Manager's shift swap request")
+    }
 
     if (input.decision === 'approved') {
       return finalizeApprovedShiftSwap(request, input.reviewer_id)

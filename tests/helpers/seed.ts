@@ -71,3 +71,46 @@ export async function cleanupTestOwnerAndCompany(seeded: TestOwner) {
   await admin.from('users').delete().eq('id', seeded.ownerId)
   await admin.auth.admin.deleteUser(seeded.authUserId)
 }
+
+export interface TestUserAdmin {
+  authUserId: string
+  userId: string
+  email: string
+  password: string
+}
+
+// Platform-level role (Module 10) — not scoped to any company, so no companies/departments
+// cleanup needed, only the users row and its auth user.
+export async function seedTestUserAdmin(label: string): Promise<TestUserAdmin> {
+  const email = `test-${label}-${Date.now()}@tasking-tests.local`
+  const password = 'Test-Password-123!'
+
+  const { data: authData, error: authError } = await admin.auth.admin.createUser({
+    email,
+    password,
+    email_confirm: true,
+  })
+  if (authError || !authData.user) throw new Error(`Failed to create auth user: ${authError?.message}`)
+
+  const { data: user, error: userError } = await admin
+    .from('users')
+    .insert({
+      supabase_auth_id: authData.user.id,
+      full_name: `Test User Admin ${label}`,
+      email_address: email,
+      phone_number: `T${Date.now()}${Math.floor(Math.random() * 1000)}`.slice(0, 20),
+      date_of_birth: '1990-01-01',
+      profile_photo_url: '',
+      role: 'User Admin',
+    })
+    .select()
+    .single()
+  if (userError || !user) throw new Error(`Failed to create user admin row: ${userError?.message}`)
+
+  return { authUserId: authData.user.id, userId: user.id, email, password }
+}
+
+export async function cleanupTestUserAdmin(seeded: TestUserAdmin) {
+  await admin.from('users').delete().eq('id', seeded.userId)
+  await admin.auth.admin.deleteUser(seeded.authUserId)
+}

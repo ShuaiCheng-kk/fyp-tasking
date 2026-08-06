@@ -1290,8 +1290,9 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
     setFormIndustry(''); setFormBenefits('')
     setFormOpenings(p.openings != null ? String(p.openings) : '')
     const savedExpiresAt = typeof raw.expires_at === 'string' && raw.expires_at ? new Date(raw.expires_at) : null
-    // A draft with no expiry simply hasn't chosen a deadline yet — don't imply "No Deadline"
-    setFormDeadlineChoice(savedExpiresAt ? 'date' : '')
+    // A draft with no expiry and no_deadline unset simply hasn't chosen a deadline yet — don't
+    // imply "No Deadline" in that case.
+    setFormDeadlineChoice(savedExpiresAt ? 'date' : raw.no_deadline ? 'never' : '')
     setFormExpiresAt(savedExpiresAt ? localDateKey(savedExpiresAt) : '')
     setFormDeadlineTime(savedExpiresAt ? `${String(savedExpiresAt.getHours()).padStart(2, '0')}:${String(savedExpiresAt.getMinutes()).padStart(2, '0')}` : '23:59')
     setFormIsRecurring(false); setFormRecurInterval(1); setFormRecurUnit('week')
@@ -1405,6 +1406,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
       expires_at: scheduleReached && formDeadlineChoice === 'date' && formExpiresAt && formDeadlineTime
         ? new Date(`${formExpiresAt}T${formDeadlineTime}:00`).toISOString()
         : null,
+      no_deadline: scheduleReached && formDeadlineChoice === 'never',
       template_id: formTemplateId || null,
       status,
     }
@@ -1975,7 +1977,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
     try {
       const res = await fetch('/api/recruitment', {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: decision, job_id: jobId, rejection_reason: rejection_reason ?? '', rejected_by: internalUserId }),
+        body: JSON.stringify({ action: decision, job_id: jobId, rejection_reason: rejection_reason ?? '', rejected_by: internalUserId, approved_by: internalUserId }),
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'Failed to update posting')

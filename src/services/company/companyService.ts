@@ -1,6 +1,7 @@
 import { companyRepository } from '@/repositories/company/companyRepository'
 import { departmentRepository } from '@/repositories/department/departmentRepository'
 import { authRepository } from '@/repositories/auth/authRepository'
+import { userService } from '@/services/auth/userService'
 import { getSupabaseAdmin } from '@/lib/supabaseAdmin'
 import { Company, } from '@/types/company.types'
 import { Department } from '@/types/department.types'
@@ -175,7 +176,12 @@ export const companyService = {
     return { role: user.role, company: null, companies: [] }
   },
 
-  async updateCompany(id: string, data: {
+  // UC33: every field is required (Name, Description, Postal Code, Number of Staff, Location,
+  // Address, Industry), Postal Code must be exactly 6 digits, Number of Staff cannot be '0', and
+  // only the company's original creator (Owner, never a Partner) may edit the profile — mirrors
+  // the validation that used to live only in TeamView.tsx's client-side handler, so a caller that
+  // bypasses the UI can't skip it.
+  async updateCompany(id: string, requester_user_id: string, data: {
     name: string
     description: string | null
     location?: string | null
@@ -184,7 +190,29 @@ export const companyService = {
     industry?: string | null
     size?: string | null
   }): Promise<Company> {
-    return await companyRepository.updateCompany(id, data)
+    await userService.assertOwnerRole(requester_user_id)
+
+    const name = data.name?.trim() ?? ''
+    const description = data.description?.trim() ?? ''
+    const postal_code = data.postal_code?.trim() ?? ''
+    const location = data.location?.trim() ?? ''
+    const address = data.address?.trim() ?? ''
+    const industry = data.industry?.trim() ?? ''
+    const size = data.size?.trim() ?? ''
+
+    if (!name) throw new Error('Company name is required.')
+    if (!description) throw new Error('Company description is required.')
+    if (!postal_code) throw new Error('Postal code is required.')
+    if (!/^\d{6}$/.test(postal_code)) throw new Error('Postal code must be exactly 6 digits.')
+    if (!location) throw new Error('Location is required.')
+    if (!address) throw new Error('Address is required.')
+    if (!industry) throw new Error('Industry is required.')
+    if (size === '0') throw new Error('Number of staff cannot be 0.')
+    if (!size) throw new Error('Number of staff is required.')
+
+    return await companyRepository.updateCompany(id, {
+      name, description, location, address, postal_code, industry, size,
+    })
   },
 
   async deleteCompany(company_id: string): Promise<void> {

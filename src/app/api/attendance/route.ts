@@ -105,9 +105,6 @@ export async function PATCH(req: NextRequest) {
       if (typeof b.id !== 'string' || typeof b.reviewer_id !== 'string' || typeof b.decision !== 'string') {
         return NextResponse.json({ success: false, message: 'id, reviewer_id and decision are required' }, { status: 400 })
       }
-      if (b.decision === 'rejected' && (typeof b.reason !== 'string' || !b.reason.trim())) {
-        return NextResponse.json({ success: false, message: 'A reason is required to reject a shift swap request' }, { status: 400 })
-      }
       const request = await attendanceService.decideShiftSwapRequest({
         id: b.id,
         reviewer_id: b.reviewer_id,

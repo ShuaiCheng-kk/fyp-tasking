@@ -33,6 +33,15 @@ async function assertCanManageApplicants(job_id: string, actor_id: string): Prom
   return job
 }
 
+// UC41/UC42: a Manager's Pending Approval submission can only be decided (approved or rejected)
+// by Owner or Partner — a Manager, even the one who submitted it, is never a valid decider.
+async function assertCanDecidePosting(actor_id: string): Promise<void> {
+  const role = await recruitmentRepository.getUserRole(actor_id)
+  if (role !== 'Owner' && role !== 'Partner') {
+    throw new Error('Only Owner or Partner can approve or reject a job posting')
+  }
+}
+
 // Shared by every "list of live/closed postings" entry point (company-wide, department-scoped) —
 // resolves department names, applicant counts, and the handful of user names (creator, assigned
 // employee, whoever rejected it) each summary card needs.
@@ -74,16 +83,25 @@ export const recruitmentService = {
     return recruitmentRepository.getJobPostingById(id)
   },
 
+  // UC43 Auto-Close: closes any 'open' posting whose application deadline has already passed.
+  // Lazily run on-read (there is no cron/job-runner in this app — same pattern as
+  // autoExpireSwapRequestIfNeeded in attendanceService), not a separate manual step.
+  async sweepExpiredJobPostings(company_id?: string): Promise<void> {
+    const ids = await recruitmentRepository.getExpiredOpenJobPostingIds(company_id)
+    if (ids.length === 0) return
+    await recruitmentRepository.closeJobPostingsByIds(ids)
+  },
+
   async getJobPostingsByDepartment(company_id: string, department_id: string): Promise<JobPostingSummary[]> {
     if (!company_id || !department_id) throw new Error('company_id and department_id are required')
-    await recruitmentRepository.sweepExpiredJobPostings(company_id)
+    await this.sweepExpiredJobPostings(company_id)
     const postings = await recruitmentRepository.getJobPostingsByDepartment(company_id, department_id)
     return buildJobPostingSummaries(postings)
   },
 
   async getJobPostings(company_id: string): Promise<JobPostingSummary[]> {
     if (!company_id) throw new Error('company_id is required')
-    await recruitmentRepository.sweepExpiredJobPostings(company_id)
+    await this.sweepExpiredJobPostings(company_id)
     const postings = await recruitmentRepository.getJobPostingsByCompany(company_id)
     return buildJobPostingSummaries(postings)
   },
@@ -405,10 +423,10 @@ export const recruitmentService = {
     const applicant = await recruitmentRepository.getApplicantById(input.applicant_id)
     if (!applicant) throw new Error('Applicant not found')
     await assertCanManageApplicants(applicant.job_id, input.decided_by)
-    // A worker who already confirmed the offer is a committed hire — reversing that goes through
-    // removeConfirmedWorker (mandatory reason, shift cancellation, opening reopened), not this
-    // quick reject.
-    if (input.decision === 'rejected' && applicant.invitation_status === 'accepted') {
+    // A worker who already confirmed the offer is a committed hire — reversing or re-deciding that
+    // goes through removeConfirmedWorker (mandatory reason, shift cancellation, opening reopened),
+    // not this quick accept/reject (re-accepting would duplicate the invitation and re-send email).
+    if (applicant.invitation_status === 'accepted') {
       throw new Error('This worker already confirmed the offer — use Remove Worker instead')
     }
     const updated = await recruitmentRepository.updateApplicantStatus(input.applicant_id, input.decision)
@@ -464,15 +482,21 @@ export const recruitmentService = {
     return recruitmentRepository.getPendingApprovalPostings(company_id, include_rejected, department_ids)
   },
 
-  async approveJobPosting(id: string): Promise<JobPosting> {
+  // UC41: only Owner/Partner decide a Manager's pending submission — Manager (even the one who
+  // submitted it) is not a valid approver.
+  async approveJobPosting(id: string, approved_by: string): Promise<JobPosting> {
     if (!id) throw new Error('job_id is required')
+    if (!approved_by) throw new Error('approved_by is required')
+    await assertCanDecidePosting(approved_by)
     return recruitmentRepository.approveJobPosting(id)
   },
 
+  // UC42: same approver restriction as approveJobPosting.
   async rejectJobPosting(id: string, rejection_reason: string, rejected_by: string): Promise<JobPosting> {
     if (!id) throw new Error('job_id is required')
     if (!rejection_reason?.trim()) throw new Error('rejection_reason is required')
     if (!rejected_by) throw new Error('rejected_by is required')
+    await assertCanDecidePosting(rejected_by)
     return recruitmentRepository.rejectJobPosting(id, rejection_reason.trim(), rejected_by)
   },
 
@@ -592,6 +616,11 @@ function validateJobPostingInput(input: JobPostingInput): void {
   if (!isDraft && input.job_type === 'oneoff' && !input.job_start_time) {
     throw new Error('job_start_time is required to publish a one-off job')
   }
+  // Shift jobs (unlike one-off) need a scheduled end time — that's the "schedule" half of the
+  // required-field list alongside job_start_time.
+  if (!isDraft && input.job_type !== 'oneoff' && !input.job_end_time) {
+    throw new Error('job_end_time is required to publish a shift job')
+  }
   // BUG-030: the date picker already refuses a past date, but the paired time field had no
   // matching check — picking today's date with an earlier-than-now start time (Shift Job or
   // One-off) published a job that was already expired the moment it went live.
@@ -604,6 +633,28 @@ function validateJobPostingInput(input: JobPostingInput): void {
   // the worker reports to, and the supervising Employee the attendance approval chain starts at.
   if (!isDraft && !input.assigned_employee_id) {
     throw new Error('A responsible employee is required to publish a job')
+  }
+  // UC34: the rest of the "required to publish" field list — department, skills, experience,
+  // minimum age, uniform, pay, and number of positions. Draft only ever needs a Title.
+  if (!isDraft) {
+    if (!input.department_id) throw new Error('department_id is required to publish a job')
+    if (!input.skills?.trim()) throw new Error('skills is required to publish a job')
+    if (!input.experience_required?.trim()) throw new Error('experience_required is required to publish a job')
+    if (input.minimum_age === undefined || input.minimum_age === null) {
+      throw new Error('minimum_age is required to publish a job')
+    }
+    if (!input.uniform_type?.trim()) throw new Error('uniform_type is required to publish a job')
+    if (input.salary_amount === undefined || input.salary_amount === null) {
+      throw new Error('salary_amount is required to publish a job')
+    }
+    if (input.openings === undefined || input.openings === null) {
+      throw new Error('openings is required to publish a job')
+    }
+    // UC43: an explicit deadline choice is required to publish — expires_at alone can't tell
+    // "chose No Deadline" apart from "hasn't chosen yet", so no_deadline carries that intent.
+    if (!input.expires_at && !input.no_deadline) {
+      throw new Error('Application deadline is required to publish — choose a date or "No Deadline"')
+    }
   }
   validateMinimumAge(input.minimum_age)
   validateOpenings(input.openings)
@@ -635,8 +686,29 @@ async function assertPublishable(id: string): Promise<JobPosting> {
   if (posting.job_type === 'oneoff' && !posting.job_start_time) {
     throw new Error('job_start_time is required to publish a one-off job')
   }
+  if (posting.job_type !== 'oneoff' && !posting.job_end_time) {
+    throw new Error('job_end_time is required to publish a shift job')
+  }
   if (posting.job_date && posting.job_start_time && sgtInstant(posting.job_date, posting.job_start_time).getTime() < Date.now()) {
     throw new Error('The job\'s start time cannot be in the past')
+  }
+  // UC34: same required-to-publish field list as validateJobPostingInput — a draft only ever
+  // needed a Title, so these are unchecked until the draft -> open/pending_approval transition.
+  if (!posting.department_id) throw new Error('department_id is required to publish a job')
+  if (!posting.skills?.trim()) throw new Error('skills is required to publish a job')
+  if (!posting.experience_required?.trim()) throw new Error('experience_required is required to publish a job')
+  if (posting.minimum_age === undefined || posting.minimum_age === null) {
+    throw new Error('minimum_age is required to publish a job')
+  }
+  if (!posting.uniform_type?.trim()) throw new Error('uniform_type is required to publish a job')
+  if (posting.salary_amount === undefined || posting.salary_amount === null) {
+    throw new Error('salary_amount is required to publish a job')
+  }
+  if (posting.openings === undefined || posting.openings === null) {
+    throw new Error('openings is required to publish a job')
+  }
+  if (!posting.expires_at && !posting.no_deadline) {
+    throw new Error('Application deadline is required to publish — choose a date or "No Deadline"')
   }
   await assertWithinSupervisorShift(posting)
   return posting

@@ -93,9 +93,28 @@ OPENAI_TIMEOUT_MS=
 ### Seeding data
 
 ```bash
-node scripts/seed.js     # wipes and rebuilds a full demo dataset (companies, users, shifts, tasks, etc.)
+node scripts/seed.js          # wipes and rebuilds a full demo dataset (companies, users, shifts, tasks, etc.)
 node scripts/reset.js --yes   # wipes to a brand-new empty system (0 companies, 0 users)
 ```
+
+The app has no data until `node scripts/seed.js` is run. Do this once after `.env.local` is set up, before logging in or exploring the app. `node scripts/reset.js --yes` wipes everything back to an empty system (used to test first-time-registration/empty-state flows); it keeps the two platform admin accounts but removes all companies and demo users, so run `node scripts/seed.js` again afterwards to restore the demo dataset.
+
+### Test accounts
+
+All accounts created by `scripts/seed.js` share the password `111111`.
+
+| Role | Email | Notes |
+|---|---|---|
+| Owner | `owner@test.com` | Sarah Mitchell, full company owner |
+| Partner | `partner1@test.com` | James Tan |
+| Manager | `manager1@test.com` | David Lim, Operations department |
+| Employee | `employee1@test.com` | Ben Seah, Operations department |
+| Casual Worker | `casual1@test.com` | Marcus Lee, has an open shift ready to Clock In immediately after seeding |
+| Guest | `guest1@test.com` | Wei Jie Lim, job applicant, not employed by any company |
+| Marketing Admin | `madmin@tasking.com` | Platform-level, manages marketing site content only |
+| User Admin | `uadmin@tasking.com` | Platform-level, manages users/companies across the platform |
+
+`scripts/seed.js` creates more accounts than this (8 Managers, 8 Employees, 5 Guests, 8 Casual Workers across 4 departments). See the header comment in that file for the full list and department mapping.
 
 ## Available Scripts
 
@@ -113,6 +132,18 @@ node scripts/reset.js --yes   # wipes to a brand-new empty system (0 companies, 
 - **Unit tests** — co-located next to each service file as `*.test.ts`, mocking the repository layer.
 - **Integration/API tests** — Playwright `request` fixture hitting real API routes, grouped by module under `tests/module<N>/`.
 - **E2E tests** — Playwright browser tests for core user journeys (e.g. job posting → hire → schedule → assign task → clock in → attendance).
+
+### Running the test suite
+
+```bash
+npm test                    # unit tests (Vitest) — no env vars or network needed, repository layer is mocked
+npm run test:playwright     # integration/API + E2E tests (Playwright)
+npm run test:playwright -- tests/module5   # run a single module's tests only
+```
+
+Unit tests run standalone with no setup. Playwright tests need `.env.local` configured (they hit the real dev Supabase project) and, for E2E specs, the dev server running (`npm run dev`). They create and clean up their own throwaway company/user data (`tests/helpers/seed.ts`), so they do not depend on `scripts/seed.js` having been run first.
+
+Per-use-case Test Case Description documents (with pass/fail evidence) are maintained outside this repo. `docs/testing/` holds the manual test plan, and `docs/testing/BUGLOG.md` tracks defects found during testing.
 
 ## Project Structure
 

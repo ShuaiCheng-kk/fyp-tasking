@@ -181,6 +181,7 @@ export const recruitmentRepository = {
         assigned_employee_id: input.assigned_employee_id ?? null,
         job_type: input.job_type ?? null,
         expires_at: input.expires_at ?? null,
+        no_deadline: input.no_deadline ?? false,
         template_id: input.template_id ?? null,
         experience_required: input.experience_required ?? null,
         minimum_age: input.minimum_age ?? null,
@@ -210,15 +211,12 @@ export const recruitmentRepository = {
     return data as JobPosting
   },
 
-  // Lazily run on-read (there is no cron/job-runner in this app — same pattern as
-  // autoExpireSwapRequestIfNeeded in attendanceService) — flips any 'open' posting whose deadline
-  // has passed to 'closed', the same terminal state a fully-confirmed posting auto-closes to
-  // (confirmed 2026-07-23: a deadline passing and a posting filling up are both just "no longer
-  // accepting applicants" — one shared bucket, visible in Closed Jobs to Owner/Partner/Manager
-  // alike, not the separate Owner/Partner-only Archived bucket manual Archive produces).
+  // UC43 Auto-Close, read half: which 'open' postings have a deadline that has already passed.
   // Scoping to company_id keeps the owner/manager dashboard sweep cheap; omit it to sweep globally
-  // (used by the public job board, which has no company context).
-  async sweepExpiredJobPostings(company_id?: string): Promise<void> {
+  // (used by the public job board, which has no company context). Deciding what to do about the
+  // result (and orchestrating the write half below) is recruitmentService.sweepExpiredJobPostings
+  // — this stays a plain read query, no business logic.
+  async getExpiredOpenJobPostingIds(company_id?: string): Promise<string[]> {
     let selectQuery = supabase
       .from('job_postings')
       .select('id')
@@ -228,17 +226,24 @@ export const recruitmentRepository = {
     if (company_id) selectQuery = selectQuery.eq('company_id', company_id)
     const { data: expired, error: selectError } = await selectQuery
     if (selectError) throw new Error(selectError.message)
-    const ids = (expired ?? []).map(row => row.id)
-    if (ids.length === 0) return
+    return (expired ?? []).map(row => row.id)
+  },
 
+  // UC43 Auto-Close, write half — flips the given postings to 'closed' (the same terminal state a
+  // fully-confirmed posting auto-closes to; confirmed 2026-07-23: a deadline passing and a posting
+  // filling up are both just "no longer accepting applicants" — one shared bucket, visible in
+  // Closed Jobs to Owner/Partner/Manager alike, not the separate Owner/Partner-only Archived bucket
+  // manual Archive produces) and voids their still-pending applications — same resolution the
+  // fill-path already gives pending applicants (markPendingApplicantsJobClosed), since a deadline
+  // passing must not leave them waiting on a job no longer accepting anyone.
+  async closeJobPostingsByIds(ids: string[]): Promise<void> {
+    if (ids.length === 0) return
     const { error } = await supabase
       .from('job_postings')
       .update({ status: 'closed', archived_at: new Date().toISOString() })
       .in('id', ids)
     if (error) throw new Error(error.message)
 
-    // Same resolution the fill-path already gives pending applicants (markPendingApplicantsJobClosed)
-    // — a deadline passing must not leave them waiting on a job no longer accepting anyone.
     const { error: pendingError } = await supabase
       .from('job_applicants')
       .update({ status: 'job_closed', decided_at: new Date().toISOString() })

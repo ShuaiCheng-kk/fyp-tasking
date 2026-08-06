@@ -1,6 +1,7 @@
 // src/app/api/guest/profile/route.ts
 import { NextResponse } from 'next/server'
 import { workerProfileService } from '@/services/guest/workerProfileService'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 export async function GET(req: Request) {
   try {
@@ -18,7 +19,15 @@ export async function GET(req: Request) {
       )
     }
 
-    const profile = await workerProfileService.getProfile(user_id)
+    const session = await getServerSessionUser()
+    if (!session) {
+      return NextResponse.json({ success: false, message: 'Not authenticated', profile: null }, { status: 401 })
+    }
+    if (user_id !== session.auth_id && user_id !== session.user.id) {
+      return NextResponse.json({ success: false, message: 'You can only view your own profile', profile: null }, { status: 403 })
+    }
+
+    const profile = await workerProfileService.getProfile(session.auth_id)
 
     if (!profile) {
       return NextResponse.json(
@@ -61,9 +70,17 @@ export async function PATCH(req: Request) {
       )
     }
 
+    const session = await getServerSessionUser()
+    if (!session) {
+      return NextResponse.json({ success: false, message: 'Not authenticated', profile: null }, { status: 401 })
+    }
+    if (user_id !== session.auth_id && user_id !== session.user.id) {
+      return NextResponse.json({ success: false, message: 'You can only edit your own profile', profile: null }, { status: 403 })
+    }
+
     const body = await req.json()
 
-    const profile = await workerProfileService.updateProfile(user_id, {
+    const profile = await workerProfileService.updateProfile(session.auth_id, {
       full_name: body.full_name,
       phone_number: body.phone_number,
       date_of_birth: body.date_of_birth ?? null,

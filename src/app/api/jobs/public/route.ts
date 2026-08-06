@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
-import { recruitmentRepository } from '@/repositories/owner/recruitmentRepository'
+import { recruitmentService } from '@/services/owner/recruitmentService'
 import { workerApplicationRepository } from '@/repositories/guest/workerApplicationRepository'
 
 // GET /api/jobs/public?user_id=...
@@ -12,9 +12,9 @@ export async function GET(req: NextRequest) {
     const user_id = req.nextUrl.searchParams.get('user_id')
 
     // No cron in this app — lazily flip any posting whose deadline just passed to 'archived'
-    // before listing (see recruitmentRepository.sweepExpiredJobPostings). The .gt('expires_at', ...)
+    // before listing (see recruitmentService.sweepExpiredJobPostings). The .gt('expires_at', ...)
     // filter below is defense-in-depth so a posting never appears even in the gap before this runs.
-    await recruitmentRepository.sweepExpiredJobPostings()
+    await recruitmentService.sweepExpiredJobPostings()
 
     const blockingCompanyIds = user_id
       ? await workerApplicationRepository.getBlockingCompanyIds(user_id)
