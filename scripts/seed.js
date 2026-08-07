@@ -1015,8 +1015,12 @@ async function main() {
   // Waiting On You, Recruitment Overview, Task Overview, Internal Attendance, and Casual Attendance.
   console.log('\nStep 8c: Create manager1 dashboard data pack...')
   const todayKey = dateKey(TODAY)
-  const managerClockStart = new Date(Date.now() + 30 * 60000)
-  const managerClockEnd = new Date(managerClockStart.getTime() + 8 * 60 * 60000)
+  // 2026-08-07: shrunk from a +30min-future start / 8h-long shift to a tight "now, 2 minutes long"
+  // window — demo needs Clock Out to be genuinely time-gated (is_open_ended:false below) rather
+  // than bypassed, but nobody's waiting 8 real hours to show that off. 2 minutes is long enough to
+  // demo Clock In → (wait) → Clock Out without either step being instant.
+  const managerClockStart = new Date(Date.now())
+  const managerClockEnd = new Date(managerClockStart.getTime() + 2 * 60000)
   const managerClockDate = dateKeySGT(managerClockStart)
   const managerClockStartTime = toHM(managerClockStart)
   const managerClockEndTime = toHM(managerClockEnd)
@@ -1157,14 +1161,11 @@ async function main() {
     end_time: managerClockEndTime,
     created_by: ownerUser.id,
     publication_status: 'published',
-    // canClockOut (AttendanceView.tsx) only unlocks Clock Out at the shift's own end_time for a
-    // fixed shift — with an 8h end_time (kept long so the Shift Timeline bar still looks like a
-    // normal full shift, not a sliver), that meant manager1 had to wait ~8 real hours after
-    // Clock In before Clock Out unlocked. is_open_ended makes canClockOut return true right after
-    // Clock In regardless of end_time, so the whole flow is completable the moment seed finishes,
-    // while the Timeline bar (which reads start_time/end_time directly, not is_open_ended) still
-    // shows the full 8h block.
-    is_open_ended: true,
+    // 2026-08-07: back to a real fixed shift (is_open_ended:false) — canClockOut (AttendanceView.tsx)
+    // only unlocks Clock Out once the shift's own end_time actually arrives, and the demo should show
+    // that gating for real rather than bypass it. The 2-minute window above (not 8h) is what makes
+    // that wait demo-sized: Clock In works immediately, Clock Out unlocks ~2 minutes later.
+    is_open_ended: false,
   })
   const todayAssignments = []
   for (const email of ['manager1@test.com']) {
@@ -1207,23 +1208,21 @@ async function main() {
   }
 
   // employee1's own "click through it yourself" shift (UC49, same idea as Marcus Lee's Step 18
-  // CW demo) — starts 45 minutes ago, runs a full ~8h workday from there (same length as manager1's
-  // clock-in-window demo shift above, so it reads as a normal full shift bar on the Owner Shift
-  // Timeline instead of a truncated sliver), no attendance_records row at all, so Clock In is live
-  // right away. is_open_ended:true (not false) so canClockOut (AttendanceView.tsx) doesn't force a
-  // real ~8h wait for the fixed end_time before Clock Out unlocks — the whole Clock In→Clock Out
-  // flow is completable immediately, same fix as manager1's shift above.
-  const employee1ShiftStart = new Date(Date.now() - 45 * 60000)
-  const employee1ShiftEnd = new Date(employee1ShiftStart.getTime() + 8 * 60 * 60000)
+  // CW demo) — no attendance_records row at all, so Clock In is live right away. 2026-08-07: back
+  // to a real fixed shift (is_open_ended:false, same reasoning as manager1's shift above) — start
+  // is "now" and the window is just 2 minutes, so Clock Out's real end-time gate is demo-sized
+  // (Clock In immediately, Clock Out unlocks ~2 minutes later) instead of bypassed or an 8h wait.
+  const employee1ShiftStart = new Date(Date.now())
+  const employee1ShiftEnd = new Date(employee1ShiftStart.getTime() + 2 * 60000)
   const employee1ShiftDate = dateKeySGT(employee1ShiftStart)
   const employee1LiveShift = await createShift({
     company_id: company.id, department_id: opsDept.id, shift_date: employee1ShiftDate,
-    start_time: toHM(employee1ShiftStart), end_time: toHM(employee1ShiftEnd), is_open_ended: true,
+    start_time: toHM(employee1ShiftStart), end_time: toHM(employee1ShiftEnd), is_open_ended: false,
     created_by: ownerUser.id, publication_status: 'published',
   })
   if (employee1LiveShift) {
     await assignShift(employee1LiveShift.id, employee1UserId, ownerUser.id)
-    console.log(`  ✓ Ben Seah（employee1）今天 ${toHM(employee1ShiftStart)}–${toHM(employee1ShiftEnd)} UTC 排班，未打卡 —— 登录 employee1@test.com 立刻可以自己点完 Clock In → Break In → Break Out → Clock Out 整套流程`)
+    console.log(`  ✓ Ben Seah（employee1）今天 ${toHM(employee1ShiftStart)}–${toHM(employee1ShiftEnd)} UTC 排班，未打卡 —— 登录 employee1@test.com 立刻可 Clock In → Break In/Out，Clock Out 要等到排班结束（2分钟后）才会解锁`)
   }
 
   const ownerDashboardAttendanceDefs = [
@@ -1307,7 +1306,7 @@ async function main() {
       await clockRecord(assignments.find(a => a.email === row.email)?.assignment, row.userId, { ...row.options, endStr: endTime })
     }
   }
-  console.log(`  ✓ manager1@test.com test shift starts in the clock-in window: ${managerClockDate} ${managerClockStartTime}-${managerClockEndTime} UTC`)
+  console.log(`  ✓ manager1@test.com 今天 ${managerClockDate} ${managerClockStartTime}-${managerClockEndTime} UTC 排班，未打卡 —— 立刻可 Clock In，Clock Out 要等到排班结束（2分钟后）才会解锁`)
 
   if (userIdMap['casual1@test.com']) {
     const casualPreStartStart = new Date(Date.now() + 30 * 60 * 1000)
@@ -2418,53 +2417,62 @@ async function main() {
   }
   console.log('  ✓ 4 条 Split Shift（每个部门各一条：Fiona Chen/David Lim/Chloe Yeo/Ivan Koh），All Departments Shift Timeline 上能看到分块班次')
 
-  // Marcus Lee 的另外 2 个未来班次（不打卡，不建 attendance_record）——让 CW Dashboard 的
-  // Upcoming Jobs 除了今天这个即时可 Clock In 的班次外，还能看到「之后」的排班，符合正常使用场景。
-  const cwFutShift1 = await createShift({
-    company_id: company.id,
-    department_id: depts[0].id,
-    shift_date: dateKey(addDays(TODAY, 2)),
-    start_time: '11:00',
-    end_time: '15:00',
-    created_by: ownerUser.id,
-    publication_status: 'published',
-  })
-  const cwFutShift2 = await createShift({
-    company_id: company.id,
-    department_id: depts[0].id,
-    shift_date: dateKey(addDays(TODAY, 5)),
-    start_time: '09:00',
-    end_time: '13:00',
-    created_by: ownerUser.id,
-    publication_status: 'published',
-  })
-  await assignShift(cwFutShift1?.id, userIdMap['casual1@test.com'].internalId, ownerUser.id, userIdMap['employee1@test.com'].internalId)
-  await assignShift(cwFutShift2?.id, userIdMap['casual1@test.com'].internalId, ownerUser.id, userIdMap['employee1@test.com'].internalId)
-  console.log('  ✓ Marcus Lee 另外 2 条未来班次（Upcoming Jobs 列表用）')
-
-  // Marcus Lee 再多 3 条未来班次，铺满 Upcoming Jobs（2026-07-31：单独 2 条太单薄，Casual
-  // Dashboard 看起来像个几乎没排班的账号）——凑成一个排班很满的活跃 Casual Worker。
-  // casualDashboardService.UPCOMING_WINDOW_DAYS = 7（今天含在内，窗口到 TODAY+6）——超出这个
-  // 窗口的班次不会出现在 Dashboard 的 Upcoming Jobs 里，所以这几条必须落在 +1..+6 天内，且避开
-  // 已有的 +2 / +5，让一周内每天最多一条，看起来是排得满满的一周而不是同一天撞两条。
-  const cwMoreFutureDefs = [
-    { days: 1, start: '10:00', end: '14:00' },
-    { days: 3, start: '17:00', end: '21:00' },
-    { days: 6, start: '09:00', end: '13:00' },
+  // Marcus Lee 的另外 5 个未来班次——让 CW Dashboard 的 Upcoming Jobs 除了今天这个即时可 Clock In
+  // 的班次外，还能看到「之后」的排班，符合正常使用场景。casualDashboardService.UPCOMING_WINDOW_DAYS
+  // = 7（今天含在内，窗口到 TODAY+6）——超出这个窗口的班次不会出现在 Dashboard 的 Upcoming Jobs
+  // 里，所以这几条必须落在 +1..+6 天内，且一周内每天最多一条，看起来是排得满满的一周而不是同一天
+  // 撞两条。
+  //
+  // 每一条都要建一个已关闭（已确认）的 job_posting 并挂 source_job_posting_id——
+  // casualDashboardService.getDashboard 的 title/company_name/location/address 全部来自这个关联
+  // 的 job_posting（location/address 再从 job_posting 的 company 关联读出），没有关联的话
+  // Upcoming Jobs 卡片和 Job Detail 面板只有时间，其余全空白（2026-08-07 demo 前发现：只有今天
+  // 这条 Same-Day Café Cover Shift 挂了 job_posting，未来 5 条全部空白）。
+  const cwFutureJobDefs = [
+    { days: 1, start: '10:00', end: '14:00', title: 'Café Late-Morning Shift', desc: 'Cover the café counter through the late-morning rush.' },
+    { days: 2, start: '11:00', end: '15:00', title: 'Café Midday Shift', desc: 'Cover the café counter over the lunch period.' },
+    { days: 3, start: '17:00', end: '21:00', title: 'Café Evening Shift', desc: 'Cover the café counter through the evening dinner crowd.' },
+    { days: 5, start: '09:00', end: '13:00', title: 'Café Morning Shift', desc: 'Open the café counter and cover the morning rush.' },
+    { days: 6, start: '09:00', end: '13:00', title: 'Weekend Café Morning Shift', desc: 'Open the café counter and cover the weekend morning rush.' },
   ]
-  for (const def of cwMoreFutureDefs) {
-    const shift = await createShift({
-      company_id: company.id,
-      department_id: depts[0].id,
-      shift_date: dateKey(addDays(TODAY, def.days)),
-      start_time: def.start,
-      end_time: def.end,
-      created_by: ownerUser.id,
-      publication_status: 'published',
+  for (const def of cwFutureJobDefs) {
+    const shiftDate = dateKey(addDays(TODAY, def.days))
+    const { data: cwFutJob, error: cwFutJobErr } = await supabase.from('job_postings').insert({
+      company_id: company.id, department_id: depts[0].id, created_by: ownerUser.id,
+      title: def.title, responsibilities: def.desc,
+      skills: 'Available for the scheduled shift, comfortable handling cash and orders.',
+      status: 'closed', archived_at: new Date().toISOString(), job_type: 'shift', urgency: 'normal',
+      job_date: shiftDate, job_start_time: def.start, job_end_time: def.end,
+      openings: 1, experience_required: 'Not Required', minimum_age: 16,
+      salary_amount: 16, expires_at: dateKey(addDays(TODAY, def.days + 3)),
+    }).select().single()
+    if (cwFutJobErr) {
+      console.warn(`  ⚠ 创建 job_posting 失败 (${def.title}): ${cwFutJobErr.message}`)
+      continue
+    }
+    const { data: cwFutApp, error: cwFutAppErr } = await supabase.from('job_applicants').insert({
+      job_id: cwFutJob.id, user_id: userIdMap['casual1@test.com'].internalId,
+      resume: 'https://example.com/demo-resumes/marcus-lee-resume.pdf', status: 'accepted',
+      additional_note: 'Happy to cover this shift.',
+    }).select().single()
+    if (cwFutAppErr) {
+      console.warn(`  ⚠ 创建 job_applicant 失败 (${def.title}): ${cwFutAppErr.message}`)
+      continue
+    }
+    const { error: cwFutInviteErr } = await supabase.from('job_invitations').insert({
+      job_id: cwFutJob.id, applicant_id: cwFutApp.id, sent_by: ownerUser.id, status: 'accepted',
     })
-    await assignShift(shift?.id, userIdMap['casual1@test.com'].internalId, ownerUser.id, userIdMap['employee1@test.com'].internalId)
+    if (cwFutInviteErr) console.warn(`  ⚠ 创建 job_invitation 失败 (${def.title}): ${cwFutInviteErr.message}`)
+
+    const cwFutShift = await createShift({
+      company_id: company.id, department_id: depts[0].id, shift_date: shiftDate,
+      start_time: def.start, end_time: def.end, is_open_ended: false,
+      created_by: ownerUser.id, publication_status: 'published',
+      source_job_posting_id: cwFutJob.id, hourly_rate: 16,
+    })
+    await assignShift(cwFutShift?.id, userIdMap['casual1@test.com'].internalId, ownerUser.id, userIdMap['employee1@test.com'].internalId)
   }
-  console.log('  ✓ Marcus Lee 再 3 条未来班次（共 5 条未来班次，Upcoming Jobs 列表铺满）')
+  console.log('  ✓ Marcus Lee 5 条未来班次，各挂一个已关闭 job_posting（Upcoming Jobs 卡片 + Job Detail 有完整 title/location/supervisor）')
 
   // ── Step 13: 创建 Attendance Records（Present / Late / Absent 状态混合，UC50/51/56）──
   console.log('\nStep 13: 创建 Attendance Records...')
@@ -2921,15 +2929,16 @@ async function main() {
   })
 
   // ── Step 18: 给 Marcus Lee 建一个"现在就能打卡"的 Shift Casual Worker 工作（UC49）──
-  // 时间从真实当下往前推 45 分钟起、往后推 20 分钟止，跑完 seed 立刻登录 casual1@test.com 就能
-  // Clock In。job_type: 'shift'（2026-08-XX 从 'oneoff' 换过来）—— 真实 app 里
-  // workerApplicationService 对 shift 职位建 shift 时 is_open_ended: false：有 Break In/Break
-  // Out，到点（或 Clock In 后随时，因为这是活的当下窗口）自己 Clock Out，不需要主管
-  // （Ben Seah / employee1@test.com）批准放行。shift_date 用 UTC 日历日，跟打卡窗口判定用的
+  // 2026-08-07：从「往前 45 分钟起、往后 20 分钟止」收紧到「现在起，2 分钟止」——is_open_ended:
+  // false，Clock Out 真的要等排班结束才解锁（跟 manager1/employee1 那两条一样，同一次改动统一
+  // 收紧成 2 分钟），演示时 Clock In 之后只需要等 2 分钟就能正常点 Clock Out，不用真的等 20 分钟。
+  // job_type: 'shift'（2026-08-XX 从 'oneoff' 换过来）—— 真实 app 里 workerApplicationService 对
+  // shift 职位建 shift 时 is_open_ended: false：有 Break In/Break Out，到点自己 Clock Out，不需要
+  // 主管（Ben Seah / employee1@test.com）批准放行。shift_date 用 UTC 日历日，跟打卡窗口判定用的
   // 时区口径保持一致。
   console.log('\nStep 18: 创建 Casual Worker 当前可打卡的工作...')
-  const cwOpenStart = new Date(Date.now() - 45 * 60000)
-  const cwOpenEnd = new Date(Date.now() + 20 * 60000)
+  const cwOpenStart = new Date(Date.now())
+  const cwOpenEnd = new Date(cwOpenStart.getTime() + 2 * 60000)
   // UTC calendar date — matches both the Clock In gate (casualAttendanceService.clockIn) and the
   // Casual Dashboard's "which jobs show up" query (casualDashboardService.findCurrentAssignment,
   // fixed to use the same UTC day instead of local — see that file for why the two need to agree).
@@ -2978,7 +2987,7 @@ async function main() {
     })
     if (cwOpenShift) {
       await assignShift(cwOpenShift.id, userIdMap['casual1@test.com'].internalId, ownerUser.id, userIdMap['employee1@test.com'].internalId)
-      console.log(`  ✓ Marcus Lee 的开放班次（Shift）：${cwOpenJob.title}（今天 ${toHM(cwOpenStart)}–${toHM(cwOpenEnd)} UTC，登录 casual1@test.com 立刻可 Clock In → Break In → Break Out → Clock Out 一路点完，不需要主管放行）`)
+      console.log(`  ✓ Marcus Lee 的开放班次（Shift）：${cwOpenJob.title}（今天 ${toHM(cwOpenStart)}–${toHM(cwOpenEnd)} UTC，登录 casual1@test.com 立刻可 Clock In → Break In → Break Out，Clock Out 要等到排班结束（2分钟后）才会解锁，不需要主管放行）`)
 
       // Ben Seah（主管，employee1）给 Marcus 分派的 Task——挂在这个当前班次的 shift_id 上，
       // CasualTaskBoard 是按 shift_id 过滤 + 前端再按 assigned_user_id 过滤当前用户的任务，
@@ -3008,6 +3017,52 @@ async function main() {
         status: 'Complete', due_at: dueAtOn(YESTERDAY),
       })
       console.log('  ✓ Ben Seah 给 Marcus Lee 分派的 4 条 Task（挂在当前班次 shift_id 上，Kanban 三列 + 1 条历史）')
+    }
+  }
+
+  // ── Step 18b: Marcus Lee 当天第二份工作——紧接在上面 Shift Job 后面的一个 One-off Job
+  // （2026-08-07）。job_start_time 直接卡在 cwOpenEnd（Shift Job 的结束时刻），这样 Marcus 把
+  // Shift Job 的 Clock Out 点完的那一刻，这份 One-off Job 也刚好到点，可以立刻 Clock In，不用
+  // 等待。is_open_ended:true——Clock Out 不看时间，要等 Ben Seah 在 Clock-Out Release Queue 里
+  // 放行才能完成，跟上面 Shift Job「等到点」是两种不同的门槛，一次 demo 里两种规则都能看到。
+  const cwOneOffStart = cwOpenEnd
+  const cwOneOffEnd = new Date(cwOneOffStart.getTime() + 60 * 60000)
+  const cwOneOffShiftDate = dateKeySGT(cwOneOffStart)
+  const { data: cwOneOffJob, error: cwOneOffJobErr } = await supabase.from('job_postings').insert({
+    company_id: company.id, department_id: depts[0].id, created_by: ownerUser.id,
+    title: 'Same-Day Stockroom Tidy-Up', responsibilities: 'One-off tidy and restock of the back-of-house stockroom once the counter shift wraps up.',
+    skills: 'Available immediately after the café shift, comfortable with physical work.',
+    status: 'closed', archived_at: new Date().toISOString(), job_type: 'oneoff', urgency: 'urgent',
+    estimated_hours: '1', job_date: cwOneOffShiftDate, job_start_time: toHM(cwOneOffStart),
+    openings: 1, experience_required: 'Not Required', minimum_age: 16,
+    salary_amount: 20, expires_at: dateKey(addDays(TODAY, 3)),
+  }).select().single()
+  if (cwOneOffJobErr) {
+    console.warn(`  ⚠ 创建 job_posting 失败 (Same-Day Stockroom Tidy-Up): ${cwOneOffJobErr.message}`)
+  } else {
+    const { data: cwOneOffApp, error: cwOneOffAppErr } = await supabase.from('job_applicants').insert({
+      job_id: cwOneOffJob.id, user_id: userIdMap['casual1@test.com'].internalId,
+      resume: 'https://example.com/demo-resumes/marcus-lee-resume.pdf', status: 'accepted',
+      additional_note: 'Happy to stay on and sort the stockroom after my shift.',
+    }).select().single()
+    if (cwOneOffAppErr) {
+      console.warn(`  ⚠ 创建 job_applicant 失败 (Marcus Lee, one-off): ${cwOneOffAppErr.message}`)
+    } else {
+      const { error: cwOneOffInviteErr } = await supabase.from('job_invitations').insert({
+        job_id: cwOneOffJob.id, applicant_id: cwOneOffApp.id, sent_by: ownerUser.id, status: 'accepted',
+      })
+      if (cwOneOffInviteErr) console.warn(`  ⚠ 创建 job_invitation 失败: ${cwOneOffInviteErr.message}`)
+    }
+
+    const cwOneOffShift = await createShift({
+      company_id: company.id, department_id: depts[0].id, shift_date: cwOneOffShiftDate,
+      start_time: toHM(cwOneOffStart), end_time: toHM(cwOneOffEnd), is_open_ended: true,
+      created_by: ownerUser.id, publication_status: 'published',
+      source_job_posting_id: cwOneOffJob.id,
+    })
+    if (cwOneOffShift) {
+      await assignShift(cwOneOffShift.id, userIdMap['casual1@test.com'].internalId, ownerUser.id, userIdMap['employee1@test.com'].internalId)
+      console.log(`  ✓ Marcus Lee 当天第二份工作（One-off）：${cwOneOffJob.title}（今天 ${toHM(cwOneOffStart)} UTC 起，紧接在 Shift Job 结束后可 Clock In，Clock Out 要等 Ben Seah 放行）`)
     }
   }
 
