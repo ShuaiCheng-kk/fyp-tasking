@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { importService } from '@/services/owner/importService'
 import { userService } from '@/services/auth/userService'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 export async function POST(req: NextRequest) {
   let body: unknown
@@ -17,11 +18,13 @@ export async function POST(req: NextRequest) {
   if (typeof b.company_id !== 'string') {
     return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
   }
-  if (typeof b.requester_user_id !== 'string' || !b.requester_user_id) {
-    return NextResponse.json({ success: false, message: 'requester_user_id is required' }, { status: 400 })
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+  if (session.user.company_id !== b.company_id) {
+    return NextResponse.json({ success: false, message: 'You can only import departments into your own company' }, { status: 403 })
   }
   try {
-    await userService.assertOwnerRole(b.requester_user_id)
+    await userService.assertOwnerRole(session.user.id)
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Forbidden'
     return NextResponse.json({ success: false, message }, { status: 403 })

@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { shiftService } from '@/services/owner/shiftService'
 import { BulkShiftAssignmentInput } from '@/types/Shift'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 export async function POST(req: NextRequest) {
   let body: unknown
@@ -13,7 +14,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, message: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { company_id, department_id, created_by, assignments } = body as Record<string, unknown>
+  const { company_id, department_id, assignments } = body as Record<string, unknown>
 
   if (!company_id || typeof company_id !== 'string') {
     return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
@@ -21,8 +22,10 @@ export async function POST(req: NextRequest) {
   if (!department_id || typeof department_id !== 'string') {
     return NextResponse.json({ success: false, message: 'department_id is required' }, { status: 400 })
   }
-  if (!created_by || typeof created_by !== 'string') {
-    return NextResponse.json({ success: false, message: 'created_by is required' }, { status: 400 })
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+  if (session.user.company_id !== company_id) {
+    return NextResponse.json({ success: false, message: 'You can only manage your own company\'s shifts' }, { status: 403 })
   }
   if (!Array.isArray(assignments)) {
     return NextResponse.json({ success: false, message: 'assignments must be an array' }, { status: 400 })
@@ -43,7 +46,7 @@ export async function POST(req: NextRequest) {
     const result = await shiftService.assignShiftsInBulk({
       company_id,
       department_id,
-      created_by,
+      created_by: session.user.id,
       assignments: cleanedAssignments,
     })
     return NextResponse.json({ success: true, result }, { status: 201 })

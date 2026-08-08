@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { ownerAnnouncementService } from '@/services/owner/ownerAnnouncementService'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 const PERMISSION_ERRORS = new Set([
   'Employees cannot post announcements',
@@ -16,6 +17,11 @@ export async function GET(req: NextRequest) {
     if (!company_id) {
       return NextResponse.json({ success: false, error: 'Missing company_id' }, { status: 400 })
     }
+    const session = await getServerSessionUser()
+    if (!session) return NextResponse.json({ success: false, error: 'Not authenticated' }, { status: 401 })
+    if (session.user.company_id !== company_id) {
+      return NextResponse.json({ success: false, error: 'You can only view your own company\'s announcements' }, { status: 403 })
+    }
     const announcements = await ownerAnnouncementService.getAnnouncements(company_id, user_id, role, department_id)
     return NextResponse.json({ success: true, announcements })
   } catch (error: any) {
@@ -26,11 +32,13 @@ export async function GET(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   try {
     const body = await req.json()
-    const { announcement_id, requesting_user_id } = body
-    if (!announcement_id || !requesting_user_id) {
+    const { announcement_id } = body
+    if (!announcement_id) {
       return NextResponse.json({ success: false, error: 'Missing required fields' }, { status: 400 })
     }
-    await ownerAnnouncementService.deleteAnnouncement(announcement_id, requesting_user_id)
+    const session = await getServerSessionUser()
+    if (!session) return NextResponse.json({ success: false, error: 'Not authenticated' }, { status: 401 })
+    await ownerAnnouncementService.deleteAnnouncement(announcement_id, session.user.id)
     return NextResponse.json({ success: true })
   } catch (error: any) {
     return NextResponse.json({ success: false, error: error.message }, { status: 400 })
@@ -40,13 +48,15 @@ export async function DELETE(req: NextRequest) {
 export async function PATCH(req: NextRequest) {
   try {
     const body = await req.json()
-    const { announcement_id, requesting_user_id, title, content, audience_department_id: department_id } = body
-    if (!announcement_id || !requesting_user_id || !title || !content) {
+    const { announcement_id, title, content, audience_department_id: department_id } = body
+    if (!announcement_id || !title || !content) {
       return NextResponse.json({ success: false, error: 'Missing required fields' }, { status: 400 })
     }
+    const session = await getServerSessionUser()
+    if (!session) return NextResponse.json({ success: false, error: 'Not authenticated' }, { status: 401 })
     const announcement = await ownerAnnouncementService.updateAnnouncement(
       announcement_id,
-      requesting_user_id,
+      session.user.id,
       title,
       content,
       department_id ?? null
@@ -61,12 +71,17 @@ export async function PATCH(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
-    const { user_id, company_id, audience_department_id, title, content } = body
-    if (!user_id || !company_id || !title || !content) {
+    const { company_id, audience_department_id, title, content } = body
+    if (!company_id || !title || !content) {
       return NextResponse.json({ success: false, error: 'Missing required fields' }, { status: 400 })
     }
+    const session = await getServerSessionUser()
+    if (!session) return NextResponse.json({ success: false, error: 'Not authenticated' }, { status: 401 })
+    if (session.user.company_id !== company_id) {
+      return NextResponse.json({ success: false, error: 'You can only post to your own company' }, { status: 403 })
+    }
     const announcement = await ownerAnnouncementService.postAnnouncement(
-      user_id,
+      session.user.id,
       company_id,
       audience_department_id ?? null,
       title,

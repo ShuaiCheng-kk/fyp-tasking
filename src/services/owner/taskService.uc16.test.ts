@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
+vi.mock('@/lib/supabaseAdmin', () => ({
+  getSupabaseAdmin: () => ({}),
+}))
+
 vi.mock('@/lib/supabase', () => ({
   supabase: {},
   createClient: () => ({}),

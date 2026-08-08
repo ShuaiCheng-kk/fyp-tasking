@@ -2,7 +2,9 @@
 // RULE: Parse request, validate, call service, return response. No business logic, no DB access.
 
 import { NextRequest, NextResponse } from 'next/server'
-import { supabase } from '@/lib/supabase'
+import { getSupabaseAdmin } from '@/lib/supabaseAdmin'
+
+const supabase = getSupabaseAdmin()
 import { authService } from '@/services/auth/authService'
 
 export async function POST(req: NextRequest) {

@@ -5,22 +5,21 @@ export const dynamic = 'force-dynamic'
 
 import { NextRequest, NextResponse } from 'next/server'
 import { marketingAdminService } from '@/services/marketingadmin/marketingAdminService'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 export async function GET(req: NextRequest) {
-  const admin_user_id = req.nextUrl.searchParams.get('admin_user_id')
   const slug = req.nextUrl.searchParams.get('slug')
 
-  if (!admin_user_id) {
-    return NextResponse.json({ success: false, message: 'admin_user_id is required' }, { status: 400 })
-  }
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
 
   try {
     if (slug) {
-      const page = await marketingAdminService.getMarketingPageForAdmin(admin_user_id, slug)
+      const page = await marketingAdminService.getMarketingPageForAdmin(session.auth_id, slug)
       return NextResponse.json({ success: true, page }, { status: 200 })
     }
 
-    const pages = await marketingAdminService.listMarketingPages(admin_user_id)
+    const pages = await marketingAdminService.listMarketingPages(session.auth_id)
     return NextResponse.json({ success: true, pages }, { status: 200 })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to fetch marketing pages'
@@ -37,17 +36,16 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ success: false, message: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { admin_user_id, updates } = body as Record<string, unknown>
+  const { updates } = body as Record<string, unknown>
 
-  if (!admin_user_id || typeof admin_user_id !== 'string') {
-    return NextResponse.json({ success: false, message: 'admin_user_id is required' }, { status: 400 })
-  }
   if (!Array.isArray(updates)) {
     return NextResponse.json({ success: false, message: 'updates must be an array' }, { status: 400 })
   }
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
 
   try {
-    await marketingAdminService.reorderMarketingContentBlocks(admin_user_id, updates as { id: string; sort_order: number }[])
+    await marketingAdminService.reorderMarketingContentBlocks(session.auth_id, updates as { id: string; sort_order: number }[])
     return NextResponse.json({ success: true }, { status: 200 })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to reorder blocks'
@@ -64,20 +62,19 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ success: false, message: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { admin_user_id, block_id, value } = body as Record<string, unknown>
+  const { block_id, value } = body as Record<string, unknown>
 
-  if (!admin_user_id || typeof admin_user_id !== 'string') {
-    return NextResponse.json({ success: false, message: 'admin_user_id is required' }, { status: 400 })
-  }
   if (!block_id || typeof block_id !== 'string') {
     return NextResponse.json({ success: false, message: 'block_id is required' }, { status: 400 })
   }
   if (typeof value !== 'string') {
     return NextResponse.json({ success: false, message: 'value is required' }, { status: 400 })
   }
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
 
   try {
-    const block = await marketingAdminService.updateMarketingContentBlock(admin_user_id, { block_id, value })
+    const block = await marketingAdminService.updateMarketingContentBlock(session.auth_id, { block_id, value })
     return NextResponse.json({ success: true, block }, { status: 200 })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to update content'

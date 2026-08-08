@@ -3,6 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { workerProfileService } from '@/services/guest/workerProfileService'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 export async function PATCH(req: NextRequest) {
   let body: { user_id?: string; skills?: string | null }
@@ -14,6 +15,11 @@ export async function PATCH(req: NextRequest) {
 
   if (!body.user_id) {
     return NextResponse.json({ success: false, message: 'user_id is required' }, { status: 400 })
+  }
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+  if (body.user_id !== session.user.id && body.user_id !== session.auth_id) {
+    return NextResponse.json({ success: false, message: 'You can only edit your own profile' }, { status: 403 })
   }
 
   try {

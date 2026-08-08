@@ -3,6 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { ownerTeamService as teamService } from '@/services/owner/ownerTeamService'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 export async function GET(req: NextRequest) {
   const manager_id = req.nextUrl.searchParams.get('manager_id')
@@ -10,6 +11,12 @@ export async function GET(req: NextRequest) {
 
   if (!manager_id || !company_id) {
     return NextResponse.json({ success: false, message: 'manager_id and company_id are required' }, { status: 400 })
+  }
+
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+  if (session.user.company_id !== company_id) {
+    return NextResponse.json({ success: false, message: 'You can only view your own company\'s data' }, { status: 403 })
   }
 
   try {
@@ -34,6 +41,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, message: 'manager_id, company_id, and department_id are required' }, { status: 400 })
   }
 
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+  if (session.user.company_id !== company_id) {
+    return NextResponse.json({ success: false, message: 'You can only manage your own company\'s data' }, { status: 403 })
+  }
+
   try {
     await teamService.assignManagerToDepartment(manager_id, company_id, department_id)
     return NextResponse.json({ success: true }, { status: 201 })
@@ -56,6 +69,9 @@ export async function DELETE(req: NextRequest) {
   if (!manager_id || !department_id) {
     return NextResponse.json({ success: false, message: 'manager_id and department_id are required' }, { status: 400 })
   }
+
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
 
   try {
     await teamService.removeManagerFromDepartment(manager_id, department_id)

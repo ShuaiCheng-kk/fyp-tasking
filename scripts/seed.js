@@ -1111,6 +1111,13 @@ async function main() {
         verified_at: new Date().toISOString(),
       }, { onConflict: 'casual_worker_id,department_id' })
       if (casualDeptErr) console.warn(`  ⚠ Failed to verify casual1@test.com in Operations: ${casualDeptErr.message}`)
+      await supabase.from('casual_worker_profiles').insert({
+        user_id: dashboardCasualUser.id,
+        skills: 'Comfortable with physical, repetitive work; reliable and punctual.',
+      })
+      await supabase.from('user_certificates').insert({
+        user_id: dashboardCasualUser.id, name: 'Forklift Licence', certificate_url: 'https://example.com/demo-certs/forklift-licence.pdf',
+      })
     }
   }
   const { data: dashboardCasual2Auth, error: dashboardCasual2AuthErr } = await supabase.auth.admin.createUser({
@@ -1146,6 +1153,13 @@ async function main() {
         verified_at: new Date().toISOString(),
       }, { onConflict: 'casual_worker_id,department_id' })
       if (casual2DeptErr) console.warn(`  ⚠ Failed to verify casual2@test.com in Marketing: ${casual2DeptErr.message}`)
+      await supabase.from('casual_worker_profiles').insert({
+        user_id: dashboardCasual2User.id,
+        skills: 'Social media content, customer service, comfortable working events.',
+      })
+      await supabase.from('user_certificates').insert({
+        user_id: dashboardCasual2User.id, name: 'Digital Marketing Certificate', certificate_url: 'https://example.com/demo-certs/digital-marketing.pdf',
+      })
     }
   }
 
@@ -1427,6 +1441,13 @@ async function main() {
         verified_at: new Date().toISOString(),
       }, { onConflict: 'casual_worker_id,department_id' })
       if (casual3DeptErr) console.warn(`  ⚠ Failed to verify casual3@test.com in Operations: ${casual3DeptErr.message}`)
+      await supabase.from('casual_worker_profiles').insert({
+        user_id: casual3User.id,
+        skills: 'Barista basics, comfortable on your feet for a full shift, food handling.',
+      })
+      await supabase.from('user_certificates').insert({
+        user_id: casual3User.id, name: 'Food Hygiene Certificate', certificate_url: 'https://example.com/demo-certs/food-hygiene.pdf',
+      })
 
       // Dynamic "now"-relative shift (not a fixed UTC clock time) — same reasoning as
       // casualPreStartStart above: a fixed UTC window can fall outside "now" depending on when the
@@ -1518,6 +1539,13 @@ async function main() {
         verified_at: new Date().toISOString(),
       }, { onConflict: 'casual_worker_id,department_id' })
       if (casual4DeptErr) console.warn(`  ⚠ Failed to verify casual4@test.com in Operations: ${casual4DeptErr.message}`)
+      await supabase.from('casual_worker_profiles').insert({
+        user_id: casual4User.id,
+        skills: 'Comfortable handling cash, friendly with customers, basic food prep.',
+      })
+      await supabase.from('user_certificates').insert({
+        user_id: casual4User.id, name: 'Food Hygiene Certificate', certificate_url: null,
+      })
 
       // Same dynamic "now"-relative reasoning as casual3's shift above — started 90 min ago on a
       // 9h shift, staggered slightly from casual3's so the two Casual Workers aren't identical.
@@ -2170,6 +2198,13 @@ async function main() {
       .single()
     if (casualUserErr) { console.error('  ✗ 插入 Casual Worker users 失败:', casualUserErr.message); process.exit(1) }
     userIdMap['casual1@test.com'] = { authId: casualAuth.user.id, internalId: casualUser.id }
+    await supabase.from('casual_worker_profiles').insert({
+      user_id: casualUser.id,
+      skills: 'Comfortable with physical, repetitive work; reliable and punctual.',
+    })
+    await supabase.from('user_certificates').insert({
+      user_id: casualUser.id, name: 'Forklift Licence', certificate_url: 'https://example.com/demo-certs/forklift-licence.pdf',
+    })
     console.log(`  ✓ Casual Worker: Marcus Lee → ${casualUser.id}`)
   }
 
@@ -2564,6 +2599,13 @@ async function main() {
       .single()
     if (casual2UserErr) { console.error('  ✗ 插入第二个 Casual Worker users 失败:', casual2UserErr.message); process.exit(1) }
     userIdMap['casual2@test.com'] = { authId: casual2Auth.user.id, internalId: casual2User.id }
+    await supabase.from('casual_worker_profiles').insert({
+      user_id: casual2User.id,
+      skills: 'Social media content, customer service, comfortable working events.',
+    })
+    await supabase.from('user_certificates').insert({
+      user_id: casual2User.id, name: 'Digital Marketing Certificate', certificate_url: 'https://example.com/demo-certs/digital-marketing.pdf',
+    })
     console.log(`  ✓ Casual Worker: Farah Aziz → ${casual2User.id}`)
   }
 
@@ -3047,6 +3089,13 @@ async function main() {
         verified_at: new Date().toISOString(),
       }, { onConflict: 'casual_worker_id,department_id' })
       if (casual8DeptErr) console.warn(`  ⚠ Failed to verify casual8@test.com in Operations: ${casual8DeptErr.message}`)
+      await supabase.from('casual_worker_profiles').insert({
+        user_id: casual8User.id,
+        skills: 'Available immediately, comfortable with customer-facing retail work.',
+      })
+      await supabase.from('user_certificates').insert({
+        user_id: casual8User.id, name: 'Retail Service Certificate', certificate_url: 'https://example.com/demo-certs/retail-service.pdf',
+      })
     }
   }
 
@@ -3188,6 +3237,13 @@ async function main() {
         verified_at: new Date().toISOString(),
       }, { onConflict: 'casual_worker_id,department_id' })
       if (casual5DeptErr) console.warn(`  ⚠ Failed to verify casual5@test.com in Operations: ${casual5DeptErr.message}`)
+      await supabase.from('casual_worker_profiles').insert({
+        user_id: casual5User.id,
+        skills: 'Stock counting, comfortable with manual labour, own transport.',
+      })
+      await supabase.from('user_certificates').insert({
+        user_id: casual5User.id, name: 'First Aid Certificate', certificate_url: null,
+      })
 
       // Shift job — regular fixed-end shift, "now"-relative so it always reads as in-progress
       // whenever the seed is run. is_open_ended stays false: this worker clocks out on their own
@@ -3242,6 +3298,13 @@ async function main() {
         verified_at: new Date().toISOString(),
       }, { onConflict: 'casual_worker_id,department_id' })
       if (casual6DeptErr) console.warn(`  ⚠ Failed to verify casual6@test.com in Operations: ${casual6DeptErr.message}`)
+      await supabase.from('casual_worker_profiles').insert({
+        user_id: casual6User.id,
+        skills: 'Outgoing personality, comfortable standing for long periods, available on short notice.',
+      })
+      await supabase.from('user_certificates').insert({
+        user_id: casual6User.id, name: 'Customer Service Certificate', certificate_url: 'https://example.com/demo-certs/customer-service.pdf',
+      })
 
       // One-off job — genuinely is_open_ended, so Clock Out needs Ben Seah's approval (the
       // Clock-Out Release Queue demo). end_time is a structural placeholder (job_start_time + 1h,
@@ -3333,6 +3396,13 @@ async function main() {
         verified_at: new Date().toISOString(),
       }, { onConflict: 'casual_worker_id,department_id' })
       if (casual7DeptErr) console.warn(`  ⚠ Failed to verify casual7@test.com in Operations: ${casual7DeptErr.message}`)
+      await supabase.from('casual_worker_profiles').insert({
+        user_id: casual7User.id,
+        skills: 'Comfortable handling cash, basic stocktaking, reliable with petty cash reconciliation.',
+      })
+      await supabase.from('user_certificates').insert({
+        user_id: casual7User.id, name: 'Cash Handling Certificate', certificate_url: null,
+      })
 
       // A short shift earlier today that's already over — clocked in AND out, both "now"-relative
       // so this reads as "already finished and left" no matter when the seed actually runs.

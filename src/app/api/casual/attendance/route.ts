@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { casualAttendanceService } from '@/services/casual/casualAttendanceService'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 export async function GET(req: Request) {
   try {
@@ -12,6 +13,11 @@ export async function GET(req: Request) {
         { success: false, message: 'Missing user_id' },
         { status: 400 }
       )
+    }
+    const session = await getServerSessionUser()
+    if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+    if (user_id !== session.user.id && user_id !== session.auth_id) {
+      return NextResponse.json({ success: false, message: 'You can only view your own attendance' }, { status: 403 })
     }
 
     if (resource === 'history') {
@@ -53,6 +59,11 @@ export async function POST(req: Request) {
   }
   if (typeof b.shift_assignment_id !== 'string' || !b.shift_assignment_id) {
     return NextResponse.json({ success: false, message: 'shift_assignment_id is required' }, { status: 400 })
+  }
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+  if (b.user_id !== session.user.id && b.user_id !== session.auth_id) {
+    return NextResponse.json({ success: false, message: 'You can only act on your own attendance' }, { status: 403 })
   }
 
   try {

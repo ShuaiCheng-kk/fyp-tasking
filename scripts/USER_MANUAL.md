@@ -13,13 +13,8 @@ against the same project when you run it, their in-progress data will disappear.
 **Check with the team before running it if you're not sure you're the only one using the
 dev environment right now.**
 
-There are three similar-looking scripts in this folder — use the right one:
-
-| Script | What it does | Use it when |
-|---|---|---|
-| **`seed.js`** | Wipes everything, rebuilds a full realistic demo company | **This is the one you want** — full data for screenshots |
-| `reset.js` | Wipes everything, builds **nothing** (empty system) | Testing "brand new company" / empty-state flows only |
-| `seed-demo.js` | A separate, smaller demo dataset (different account set) | Not this task — ignore it |
+`seed.js` is the only database seed script in this folder — it wipes everything and
+rebuilds a full realistic demo company.
 
 ## How to run it
 
@@ -131,11 +126,10 @@ History states.
   **before** clicking Clock Out on that account — or just re-run `seed.js` again, which
   wipes attendance records and clears the lock.
 - **Marketing site content** (what `madmin@tasking.com` edits) is **not** touched by
-  `seed.js` at all — it's a separate system. If that ever shows up empty, run the
-  `seed-marketing-pages.mjs` → `seed-subpages.mjs` → `seed-about-blocks.mjs` →
-  `seed-products-blocks.mjs` → `seed-comparison-rows.mjs` → `seed-toggle-url-blocks.mjs`
-  → `seed-visibility-blocks.mjs` → `seed-real-page-text.mjs` → `seed-extra-buttons.mjs`
-  scripts in that exact order (each one prints its own success line).
+  `seed.js` at all — it's a separate system. If that ever shows up empty, run
+  `node scripts/seed-marketing-pages.mjs` — it's a full idempotent snapshot of every
+  marketing page and content block, regenerated from the live database after each content
+  change, so it alone restores everything (no other scripts needed).
 
 ## If something looks wrong
 

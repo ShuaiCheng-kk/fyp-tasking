@@ -1,7 +1,9 @@
 // LAYER: Repository
 // RULE: Supabase queries only. No business logic. No HTTP handling.
 
-import { supabase } from '@/lib/supabase'
+import { getSupabaseAdmin } from '@/lib/supabaseAdmin'
+
+const supabase = getSupabaseAdmin()
 import { UACompany, UACompanyDetail, UACompanyMember, UAUser, UAReportStats } from '@/types/UserAdmin'
 
 export async function getAllCompanies(search?: string): Promise<UACompany[]> {

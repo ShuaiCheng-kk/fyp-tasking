@@ -140,31 +140,38 @@ export const workerApplicationService = {
 
   // Only an application still awaiting the employer's decision can be pulled back — once they've
   // accepted or rejected it, withdrawing is no longer the worker's call to make.
-  async withdrawApplication(applicationId: string) {
+  async withdrawApplication(applicationId: string, viewer_user_id: string) {
     if (!applicationId) throw new Error('Application ID is required')
+
+    const owner = await workerApplicationRepository.getApplicationOwner(applicationId)
+    if (!owner) throw new Error('Application not found or already processed.')
+    if (owner.user_id !== viewer_user_id) throw new Error('You can only withdraw your own application')
 
     const withdrawn = await workerApplicationRepository.withdrawPendingApplication(applicationId)
     if (!withdrawn) throw new Error('Application not found or already processed.')
     return withdrawn
   },
 
-  async respondToInvitation(invitationId: string, response: 'accepted' | 'declined'): Promise<void> {
+  async respondToInvitation(invitationId: string, response: 'accepted' | 'declined', viewer_user_id: string): Promise<void> {
     if (!invitationId) throw new Error('Invitation ID is required')
     if (response !== 'accepted' && response !== 'declined') throw new Error('Invalid response')
 
     if (response === 'declined') {
+      const invitation = await workerApplicationRepository.getInvitationBasic(invitationId)
+      if (!invitation) throw new Error('Invitation not found')
+      const owner = await workerApplicationRepository.getApplicationOwner(invitation.applicant_id)
+      if (!owner || owner.user_id !== viewer_user_id) throw new Error('You can only respond to your own invitations')
+
       await workerApplicationRepository.updateInvitationStatus(invitationId, 'declined')
       // The worker walked away from the offer — mark the application withdrawn so the employer's
       // applicant list drops it (no point keeping a declined offer on screen).
-      const invitation = await workerApplicationRepository.getInvitationBasic(invitationId)
-      if (invitation) {
-        await workerApplicationRepository.updateApplicantStatusById(invitation.applicant_id, 'withdrawn')
-      }
+      await workerApplicationRepository.updateApplicantStatusById(invitation.applicant_id, 'withdrawn')
       return
     }
 
     const context = await workerApplicationRepository.getInvitationContext(invitationId)
     if (!context) throw new Error('Invitation not found')
+    if (context.user_id !== viewer_user_id) throw new Error('You can only respond to your own invitations')
     const { job } = context
 
     // An offer nobody confirmed before the work begins is worthless — void it. For recurring

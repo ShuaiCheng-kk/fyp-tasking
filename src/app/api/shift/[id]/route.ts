@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { shiftService } from '@/services/owner/shiftService'
 import { Shift } from '@/types/Shift'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 export async function PATCH(
   req: NextRequest,
@@ -11,6 +12,9 @@ export async function PATCH(
 ) {
   const { id } = await params
   if (!id) return NextResponse.json({ success: false, message: 'id is required' }, { status: 400 })
+
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
 
   let body: unknown
   try {
@@ -49,7 +53,7 @@ export async function PATCH(
     ? undefined
     : {
         assigned_user_id: typeof assigned_user_id === 'string' && assigned_user_id ? assigned_user_id : null,
-        assigned_by: typeof assigned_by === 'string' ? assigned_by : '',
+        assigned_by: session.user.id,
         supervisor_employee_id: supervisorProvided
           ? (typeof supervisor_employee_id === 'string' && supervisor_employee_id ? supervisor_employee_id : null)
           : undefined,
@@ -78,10 +82,10 @@ export async function DELETE(
 ) {
   const { id } = await params
   if (!id) return NextResponse.json({ success: false, message: 'id is required' }, { status: 400 })
-  const { searchParams } = new URL(req.url)
-  const performedBy = searchParams.get('performed_by') ?? undefined
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
   try {
-    const result = await shiftService.deleteShift(id, performedBy)
+    const result = await shiftService.deleteShift(id, session.user.id)
     return NextResponse.json({ success: true, skipped_shifts: result.skipped_shifts })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to delete shift'

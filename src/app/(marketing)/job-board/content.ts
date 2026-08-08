@@ -1,7 +1,7 @@
 export const hero = {
-  headline: 'Find your next opportunity.',
+  headline: 'Find casual work near you.',
   subheadline:
-    'Hundreds of SMEs across Singapore are hiring casual workers right now — browse open positions and apply in minutes. No account needed to get started.',
+    'Looking for shift or one-off work? Hundreds of SMEs across Singapore are hiring casual workers right now. Browse open positions and apply in minutes.',
   cta: 'Browse Jobs',
 }
 
@@ -25,27 +25,6 @@ export const listings = {
   sectionSubtitle: 'Updated in real-time as SMEs post new opportunities.',
   placeholderBanner:
     '⚠️ These are placeholder cards. Real job postings will appear here once the Manager post job feature is connected to this page.',
-}
-
-export const whyTasking = {
-  sectionTitle: 'Why find work through Tasking?',
-  cards: [
-    {
-      iconName: 'Zap' as const,
-      title: 'Apply in minutes',
-      body: 'No lengthy forms. Browse open positions and submit your application in just a few clicks — no account needed to get started.',
-    },
-    {
-      iconName: 'Shield' as const,
-      title: 'Transparent process',
-      body: 'Track your application status in real time. Know exactly where you stand — no more waiting and wondering.',
-    },
-    {
-      iconName: 'Star' as const,
-      title: 'Build your work history',
-      body: 'Every completed shift builds your profile. A stronger work history means better opportunities and higher match scores from our AI.',
-    },
-  ],
 }
 
 export const cta = {

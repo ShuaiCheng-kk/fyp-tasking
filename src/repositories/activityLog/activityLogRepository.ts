@@ -1,7 +1,9 @@
 // LAYER: Repository
 // RULE: DB access only. Supabase queries only. No business logic.
 
-import { supabase } from '@/lib/supabase'
+import { getSupabaseAdmin } from '@/lib/supabaseAdmin'
+
+const supabase = getSupabaseAdmin()
 import { ActivityLog, ActivityLogInput } from '@/types/ActivityLog'
 
 export const activityLogRepository = {

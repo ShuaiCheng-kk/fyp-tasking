@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { importService } from '@/services/owner/importService'
 import { userService } from '@/services/auth/userService'
 import { MemberImportRow } from '@/types/Import'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 export async function POST(req: NextRequest) {
   let body: unknown
@@ -15,14 +16,19 @@ export async function POST(req: NextRequest) {
   }
 
   const b = body as Record<string, unknown>
-  if (typeof b.company_id !== 'string' || typeof b.invited_by !== 'string') {
-    return NextResponse.json({ success: false, message: 'company_id and invited_by are required' }, { status: 400 })
+  if (typeof b.company_id !== 'string') {
+    return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
   }
   if (!Array.isArray(b.members)) {
     return NextResponse.json({ success: false, message: 'members must be an array' }, { status: 400 })
   }
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+  if (session.user.company_id !== b.company_id) {
+    return NextResponse.json({ success: false, message: 'You can only import members into your own company' }, { status: 403 })
+  }
   try {
-    await userService.assertOwnerOrPartnerRole(b.invited_by)
+    await userService.assertOwnerOrPartnerRole(session.user.id)
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Forbidden'
     return NextResponse.json({ success: false, message }, { status: 403 })
@@ -31,7 +37,7 @@ export async function POST(req: NextRequest) {
   try {
     const result = await importService.importMembers({
       company_id: b.company_id,
-      invited_by: b.invited_by,
+      invited_by: session.user.id,
       members: b.members as MemberImportRow[],
     })
     return NextResponse.json({ success: true, result })

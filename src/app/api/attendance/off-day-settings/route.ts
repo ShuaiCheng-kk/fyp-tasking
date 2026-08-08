@@ -3,6 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { offDaySettingsService } from '@/services/owner/offDaySettingsService'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 // CHANGE TYPE: Code only
 
@@ -13,6 +14,11 @@ export async function GET(req: NextRequest) {
 
   if (!company_id) {
     return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
+  }
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+  if (session.user.company_id !== company_id) {
+    return NextResponse.json({ success: false, message: 'You can only view your own company\'s settings' }, { status: 403 })
   }
 
   try {
@@ -55,19 +61,24 @@ export async function POST(req: NextRequest) {
   const b = body as Record<string, unknown>
   const action = b.action
 
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+
   try {
     if (action === 'set_default_quota') {
       if (
         typeof b.company_id !== 'string' ||
-        typeof b.owner_id !== 'string' ||
         (b.role !== 'Manager' && b.role !== 'Employee') ||
         typeof b.max_days_per_week !== 'number'
       ) {
-        return NextResponse.json({ success: false, message: 'company_id, owner_id, role and max_days_per_week are required' }, { status: 400 })
+        return NextResponse.json({ success: false, message: 'company_id, role and max_days_per_week are required' }, { status: 400 })
+      }
+      if (session.user.company_id !== b.company_id) {
+        return NextResponse.json({ success: false, message: 'You can only manage your own company\'s settings' }, { status: 403 })
       }
       const setting = await offDaySettingsService.setDefaultQuota({
         company_id: b.company_id,
-        owner_id: b.owner_id,
+        owner_id: session.user.id,
         role: b.role,
         max_days_per_week: b.max_days_per_week,
       })
@@ -77,15 +88,17 @@ export async function POST(req: NextRequest) {
     if (action === 'set_user_quota_override') {
       if (
         typeof b.company_id !== 'string' ||
-        typeof b.owner_id !== 'string' ||
         typeof b.user_id !== 'string' ||
         typeof b.max_days_per_week !== 'number'
       ) {
-        return NextResponse.json({ success: false, message: 'company_id, owner_id, user_id and max_days_per_week are required' }, { status: 400 })
+        return NextResponse.json({ success: false, message: 'company_id, user_id and max_days_per_week are required' }, { status: 400 })
+      }
+      if (session.user.company_id !== b.company_id) {
+        return NextResponse.json({ success: false, message: 'You can only manage your own company\'s settings' }, { status: 403 })
       }
       const setting = await offDaySettingsService.setUserQuotaOverride({
         company_id: b.company_id,
-        owner_id: b.owner_id,
+        owner_id: session.user.id,
         user_id: b.user_id,
         max_days_per_week: b.max_days_per_week,
       })
@@ -93,12 +106,15 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === 'remove_user_quota_override') {
-      if (typeof b.company_id !== 'string' || typeof b.owner_id !== 'string' || typeof b.user_id !== 'string') {
-        return NextResponse.json({ success: false, message: 'company_id, owner_id and user_id are required' }, { status: 400 })
+      if (typeof b.company_id !== 'string' || typeof b.user_id !== 'string') {
+        return NextResponse.json({ success: false, message: 'company_id and user_id are required' }, { status: 400 })
+      }
+      if (session.user.company_id !== b.company_id) {
+        return NextResponse.json({ success: false, message: 'You can only manage your own company\'s settings' }, { status: 403 })
       }
       await offDaySettingsService.removeUserQuotaOverride({
         company_id: b.company_id,
-        owner_id: b.owner_id,
+        owner_id: session.user.id,
         user_id: b.user_id,
       })
       return NextResponse.json({ success: true })
@@ -107,15 +123,17 @@ export async function POST(req: NextRequest) {
     if (action === 'set_deadline') {
       if (
         typeof b.company_id !== 'string' ||
-        typeof b.owner_id !== 'string' ||
         typeof b.deadline_weekday !== 'number' ||
         typeof b.deadline_time !== 'string'
       ) {
-        return NextResponse.json({ success: false, message: 'company_id, owner_id, deadline_weekday and deadline_time are required' }, { status: 400 })
+        return NextResponse.json({ success: false, message: 'company_id, deadline_weekday and deadline_time are required' }, { status: 400 })
+      }
+      if (session.user.company_id !== b.company_id) {
+        return NextResponse.json({ success: false, message: 'You can only manage your own company\'s settings' }, { status: 403 })
       }
       const deadline = await offDaySettingsService.setDeadline({
         company_id: b.company_id,
-        owner_id: b.owner_id,
+        owner_id: session.user.id,
         deadline_weekday: b.deadline_weekday,
         deadline_time: b.deadline_time,
       })

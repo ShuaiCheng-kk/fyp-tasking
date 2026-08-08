@@ -1,4 +1,6 @@
-import { supabase } from '@/lib/supabase'
+import { getSupabaseAdmin } from '@/lib/supabaseAdmin'
+
+const supabase = getSupabaseAdmin()
 import { AttendanceRecord, AttendanceRecordCreate, AttendanceRecordUpdate } from '@/types/Attendance'
 import { Shift } from '@/types/Shift'
 import { ShiftAssignment } from '@/types/ShiftAssignment'

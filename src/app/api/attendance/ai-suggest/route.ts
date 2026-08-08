@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requestAISuggestService } from '@/services/ai/requestAISuggestService'
 import { attendanceService } from '@/services/owner/attendanceService'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 // CHANGE TYPE: Code only
 
@@ -21,6 +22,11 @@ export async function POST(req: NextRequest) {
 
   if (!request_type || !company_id) {
     return NextResponse.json({ success: false, message: 'request_type and company_id are required' }, { status: 400 })
+  }
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+  if (session.user.company_id !== company_id) {
+    return NextResponse.json({ success: false, message: 'You can only use this for your own company' }, { status: 403 })
   }
 
   try {

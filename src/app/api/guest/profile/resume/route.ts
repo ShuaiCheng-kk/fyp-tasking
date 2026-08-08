@@ -3,6 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { workerProfileService } from '@/services/guest/workerProfileService'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 export async function POST(req: NextRequest) {
   let formData: FormData
@@ -21,6 +22,11 @@ export async function POST(req: NextRequest) {
   if (!(resume instanceof File)) {
     return NextResponse.json({ success: false, message: 'resume file is required' }, { status: 400 })
   }
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+  if (userId !== session.user.id && userId !== session.auth_id) {
+    return NextResponse.json({ success: false, message: 'You can only edit your own profile' }, { status: 403 })
+  }
 
   try {
     const profile = await workerProfileService.uploadResume(userId, resume)
@@ -37,6 +43,11 @@ export async function DELETE(req: NextRequest) {
 
   if (!userId) {
     return NextResponse.json({ success: false, message: 'user_id is required' }, { status: 400 })
+  }
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+  if (userId !== session.user.id && userId !== session.auth_id) {
+    return NextResponse.json({ success: false, message: 'You can only edit your own profile' }, { status: 403 })
   }
 
   try {

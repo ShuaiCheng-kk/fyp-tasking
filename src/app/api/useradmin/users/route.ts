@@ -3,9 +3,15 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { listUsers } from '@/services/userAdmin/userAdminService'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 export async function GET(req: NextRequest) {
   try {
+    const session = await getServerSessionUser()
+    if (!session) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+    if (session.user.role !== 'User Admin') {
+      return NextResponse.json({ error: 'Only a User Admin can perform this action' }, { status: 403 })
+    }
     const search = req.nextUrl.searchParams.get('search') ?? undefined
     const roles = req.nextUrl.searchParams.getAll('role')
     const statuses = req.nextUrl.searchParams.getAll('status')

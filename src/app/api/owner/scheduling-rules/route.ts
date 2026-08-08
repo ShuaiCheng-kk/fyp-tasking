@@ -4,16 +4,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { schedulingRuleService } from '@/services/owner/schedulingRuleService'
 import { SchedulingRuleKey, SchedulingRuleValue } from '@/types/SchedulingRule'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 export async function GET(req: NextRequest) {
   const company_id = req.nextUrl.searchParams.get('company_id')
-  const user_id = req.nextUrl.searchParams.get('user_id')
 
   if (!company_id) return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
-  if (!user_id) return NextResponse.json({ success: false, message: 'user_id is required' }, { status: 400 })
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
 
   try {
-    await schedulingRuleService.assertOwner(user_id, company_id)
+    await schedulingRuleService.assertOwner(session.user.id, company_id)
     const rules = await schedulingRuleService.getRules(company_id)
     return NextResponse.json({ success: true, rules })
   } catch (err) {
@@ -34,17 +35,16 @@ export async function PATCH(req: NextRequest) {
   if (typeof b.company_id !== 'string' || !b.company_id) {
     return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
   }
-  if (typeof b.user_id !== 'string' || !b.user_id) {
-    return NextResponse.json({ success: false, message: 'user_id is required' }, { status: 400 })
-  }
   if (typeof b.rule_key !== 'string' || !b.rule_key) {
     return NextResponse.json({ success: false, message: 'rule_key is required' }, { status: 400 })
   }
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
 
   try {
     const rule = await schedulingRuleService.updateRule({
       company_id: b.company_id,
-      user_id: b.user_id,
+      user_id: session.user.id,
       rule_key: b.rule_key as SchedulingRuleKey,
       value: b.value as SchedulingRuleValue,
       active: b.active === true,

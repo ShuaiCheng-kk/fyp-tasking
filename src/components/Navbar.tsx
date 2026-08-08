@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import type { Session } from '@supabase/supabase-js';
 import { createBrowserClient } from '@supabase/ssr';
+import { CalendarDays, CheckSquare, Building2, MessageCircle, UserPlus, ClipboardList, BarChart2, ArrowRight } from 'lucide-react';
 
 const supabase = createBrowserClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -42,107 +43,254 @@ const ChevronDown = () => (
   </svg>
 );
 
-const MenuIcon = () => (
+const MenuIcon = ({ stroke = '#FFFBF5' }: { stroke?: string }) => (
   <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
-    <path d="M3 5.5h16M3 11h16M3 16.5h16" stroke="#FFFBF5" strokeWidth="1.75" strokeLinecap="round" />
+    <path d="M3 5.5h16M3 11h16M3 16.5h16" stroke={stroke} strokeWidth="1.75" strokeLinecap="round" />
   </svg>
 );
 
-const CloseIcon = () => (
+const CloseIcon = ({ stroke = '#FFFBF5' }: { stroke?: string }) => (
   <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
-    <path d="M5 5l12 12M17 5L5 17" stroke="#FFFBF5" strokeWidth="1.75" strokeLinecap="round" />
+    <path d="M5 5l12 12M17 5L5 17" stroke={stroke} strokeWidth="1.75" strokeLinecap="round" />
   </svg>
 );
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-interface DropdownItem {
+// ─── Products mega menu ────────────────────────────────────────────────────
+
+interface ProductModule {
+  key: string;
   label: string;
+  desc: string;
   href: string;
+  Icon: React.FC<{ size?: number; color?: string; strokeWidth?: number }>;
+  features: string[];
 }
 
-interface NavDropdownProps {
-  label: string;
-  href: string;
-  items: DropdownItem[];
-  isActive?: boolean;
-}
+const PRODUCT_MODULES: ProductModule[] = [
+  {
+    key: 'shift',
+    label: 'Shift Management',
+    desc: 'Manage schedules and workforce availability.',
+    href: '/products/shift-management',
+    Icon: CalendarDays,
+    features: [
+      'Shift assignment',
+      'Schedule publishing',
+      'Recurring shifts',
+      'Split shifts',
+      'Bulk shift editing',
+      'AI schedule generation',
+    ],
+  },
+  {
+    key: 'task',
+    label: 'Task Management',
+    desc: 'Organise, assign, and track work.',
+    href: '/products/task-management',
+    Icon: CheckSquare,
+    features: [
+      'Task assignment',
+      'Recurring tasks',
+      'Sub-task checklists',
+      'AI task matching',
+      'Workload rebalancing',
+      'Task dependencies',
+    ],
+  },
+  {
+    key: 'company',
+    label: 'Company Management',
+    desc: 'Manage people, departments, roles, and company structure.',
+    href: '/products/team-management',
+    Icon: Building2,
+    features: [
+      'Department management',
+      'Department transfers',
+      'CSV bulk invites',
+      'Company profile',
+    ],
+  },
+  {
+    key: 'communication',
+    label: 'Communication',
+    desc: 'Keep teams connected and information in one place.',
+    href: '/products/communication',
+    Icon: MessageCircle,
+    features: [
+      'Announcements',
+      'Edit announcements',
+      'Delete announcements',
+      'Direct messaging',
+    ],
+  },
+  {
+    key: 'recruitment',
+    label: 'Recruitment',
+    desc: 'Manage hiring from job posting to candidate selection.',
+    href: '/products/recruitment',
+    Icon: UserPlus,
+    features: [
+      'Job postings',
+      'AI job descriptions',
+      'AI candidate ranking',
+      'Offer invitations',
+      'Application deadlines',
+      'Job templates',
+    ],
+  },
+  {
+    key: 'attendance',
+    label: 'Attendance',
+    desc: 'Track working hours, attendance, and workforce records.',
+    href: '/products/attendance',
+    Icon: ClipboardList,
+    features: [
+      'Clock in / clock out',
+      'Break tracking',
+      'Shift swap requests',
+      'Day-off requests',
+      'Clock time edits',
+      'AI day-off triage',
+    ],
+  },
+  {
+    key: 'reports',
+    label: 'Reports & Insights',
+    desc: 'Turn workforce data into useful business insights.',
+    href: '/products/reports-insights',
+    Icon: BarChart2,
+    features: [
+      'Workforce analytics',
+      'AI anomaly detection',
+    ],
+  },
+];
 
-// ─── Nav Sub-Components ───────────────────────────────────────────────────────
-
-const NavDropdown = ({ label, href, items, isActive }: NavDropdownProps) => {
+const ProductsMegaMenu = ({ isActive, light }: { isActive?: boolean; light?: boolean }) => {
   const [open, setOpen] = useState(false);
-  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [activeKey, setActiveKey] = useState(PRODUCT_MODULES[0].key);
+  const containerRef = useRef<HTMLDivElement>(null);
 
-  const handleEnter = () => {
-    if (hideTimer.current) clearTimeout(hideTimer.current);
-    setOpen(true);
-  };
+  useEffect(() => {
+    if (!open) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [open]);
 
-  const handleLeave = () => {
-    hideTimer.current = setTimeout(() => setOpen(false), 150);
-  };
+  const activeModule = PRODUCT_MODULES.find((m) => m.key === activeKey) ?? PRODUCT_MODULES[0];
+  const close = () => setOpen(false);
 
   return (
-    <div
-      style={{ position: 'relative' }}
-      onMouseEnter={handleEnter}
-      onMouseLeave={handleLeave}
-    >
-      <Link
-        href={href}
+    <div ref={containerRef} style={{ position: 'relative' }}>
+      <button
+        onClick={() => setOpen((v) => !v)}
         style={{
           display: 'flex',
           alignItems: 'center',
           gap: '4px',
           padding: '8px 12px',
-          color: isActive ? '#F97316' : '#FFFBF5',
-          fontSize: '0.875rem',
+          color: isActive || open ? '#F97316' : light ? '#44403C' : '#FFFBF5',
+          fontSize: '1rem',
           fontFamily: 'var(--font-body)',
           borderRadius: '6px',
-          fontWeight: isActive ? 600 : 400,
+          fontWeight: isActive || open ? 600 : 400,
           transition: 'color 0.15s',
+          background: 'none',
+          border: 'none',
+          cursor: 'pointer',
         }}
       >
-        {label}
-        <ChevronDown />
-      </Link>
-      {/* invisible bridge fills the gap between trigger and panel */}
-      {open && (
-        <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, height: '8px' }} />
-      )}
+        Features
+        <span style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s', display: 'flex' }}>
+          <ChevronDown />
+        </span>
+      </button>
       {open && (
         <div
           style={{
-            position: 'absolute',
-            top: 'calc(100% + 4px)',
-            left: '0',
-            minWidth: '210px',
+            position: 'fixed',
+            top: '68px',
+            left: 0,
+            right: 0,
             background: '#FFFFFF',
-            borderRadius: '10px',
-            boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
-            border: '1px solid #F0E8D8',
-            padding: '6px 0',
+            borderTop: '1px solid #F0E8D8',
+            boxShadow: '0 12px 40px rgba(0,0,0,0.12)',
             zIndex: 100,
           }}
         >
-          {items.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className="hover:bg-[#FEF3C7]"
-              style={{
-                display: 'block',
-                padding: '10px 16px',
-                color: '#1C1917',
-                fontSize: '0.875rem',
-                fontFamily: 'var(--font-body)',
-                transition: 'background 0.15s',
-              }}
-            >
-              {item.label}
-            </Link>
-          ))}
+          <div
+            style={{
+              maxWidth: '1280px',
+              margin: '0 auto',
+              padding: '0 24px',
+              display: 'flex',
+              alignItems: 'stretch',
+            }}
+          >
+            {/* Left column — module list, aligned with the logo */}
+            <div style={{ width: '270px', flexShrink: 0, padding: '18px 0', borderRight: '1px solid #F0E8D8' }}>
+              {PRODUCT_MODULES.map((m) => {
+                const rowActive = m.key === activeKey;
+                return (
+                  <Link
+                    key={m.key}
+                    href={m.href}
+                    onClick={close}
+                    onMouseEnter={() => setActiveKey(m.key)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: '10px',
+                      padding: '11px 16px 11px 4px',
+                      background: rowActive ? '#FEF3C7' : 'transparent',
+                      transition: 'background 0.15s',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <m.Icon size={20} color="#F97316" strokeWidth={2} />
+                      <span style={{ fontFamily: 'var(--font-body)', fontWeight: 500, fontSize: '1.0625rem', color: '#1C1917' }}>
+                        {m.label}
+                      </span>
+                    </div>
+                    {rowActive && <ArrowRight size={16} color="#F97316" strokeWidth={2} />}
+                  </Link>
+                );
+              })}
+            </div>
+
+            {/* Right column — active module's highlight card + feature grid */}
+            <div style={{ flex: 1, minWidth: 0, padding: '22px 0 26px 32px' }}>
+              <div style={{ border: '1px solid #F0E8D8', borderRadius: '10px', padding: '18px 20px', marginBottom: '20px' }}>
+                <div style={{ fontFamily: 'var(--font-heading)', fontWeight: 700, fontSize: '1.1875rem', color: '#1C1917', marginBottom: '5px' }}>
+                  {activeModule.label}
+                </div>
+                <div style={{ fontFamily: 'var(--font-body)', fontSize: '1rem', color: '#78716C', lineHeight: 1.55 }}>
+                  {activeModule.desc}
+                </div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', columnGap: '24px', rowGap: '6px' }}>
+                {activeModule.features.map((f) => (
+                  <div
+                    key={f}
+                    style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '9px 6px' }}
+                  >
+                    <activeModule.Icon size={16} color="#D6D3D1" strokeWidth={2} />
+                    <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.9375rem', color: '#44403C' }}>
+                      {f}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -153,18 +301,20 @@ const NavLink = ({
   label,
   href,
   isActive,
+  light,
 }: {
   label: string;
   href: string;
   isActive?: boolean;
+  light?: boolean;
 }) => (
   <Link
     href={href}
     style={{
       display: 'block',
       padding: '8px 12px',
-      color: isActive ? '#F97316' : '#FFFBF5',
-      fontSize: '0.875rem',
+      color: isActive ? '#F97316' : light ? '#44403C' : '#FFFBF5',
+      fontSize: '1rem',
       fontFamily: 'var(--font-body)',
       borderRadius: '6px',
       fontWeight: isActive ? 600 : 400,
@@ -215,7 +365,8 @@ function clearTaskingAuthStorage() {
   localStorage.removeItem('tasking_active_session')
 }
 
-export default function Navbar() {
+export default function Navbar({ theme = 'dark' }: { theme?: 'dark' | 'light' }) {
+  const light = theme === 'light';
   const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [session, setSession] = useState<Session | null>(null);
@@ -307,13 +458,12 @@ export default function Navbar() {
   return (
     <header
       style={{
-        background: scrolled
-          ? '#1C1917'
-          : 'rgba(28,25,23,0.82)',
+        background: light
+          ? (scrolled ? '#FFFBF5' : 'rgba(255,251,245,0.85)')
+          : (scrolled ? '#1C1917' : 'rgba(28,25,23,0.82)'),
         backdropFilter: scrolled ? 'none' : 'blur(14px)',
         WebkitBackdropFilter: scrolled ? 'none' : 'blur(14px)',
-        boxShadow: scrolled ? '0 2px 24px rgba(0,0,0,0.28)' : 'none',
-        borderBottom: '1px solid rgba(255,251,245,0.06)',
+        boxShadow: scrolled ? '0 2px 24px rgba(0,0,0,0.1)' : 'none',
         transition: 'background 0.35s ease, box-shadow 0.35s ease',
         position: 'sticky',
         top: 0,
@@ -338,8 +488,8 @@ export default function Navbar() {
           <LogoSVG />
           <span
             style={{
-              color: '#FFFBF5',
-              fontSize: '1.125rem',
+              color: light ? '#1C1917' : '#FFFBF5',
+              fontSize: '1.3125rem',
               fontWeight: 600,
               fontFamily: 'var(--font-heading)',
               marginLeft: '10px',
@@ -351,32 +501,10 @@ export default function Navbar() {
 
         {/* Center nav — hidden on mobile */}
         <nav className="nav-links" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-          <NavDropdown
-            label="Products"
-            href="/products"
-            isActive={isActive('/products')}
-            items={[
-              { label: 'AI Features', href: '/products/ai-features' },
-              { label: 'Recruitment', href: '/products/recruitment' },
-              { label: 'Attendance', href: '/products/attendance' },
-              { label: 'Team Management', href: '/products/team-management' },
-              { label: 'Smart Notifications', href: '/products/smart-notifications' },
-            ]}
-          />
-          <NavLink label="Industries" href="/industries" isActive={isActive('/industries')} />
-          <NavLink label="Pricing" href="/pricing" isActive={isActive('/pricing')} />
-          <NavDropdown
-            label="About"
-            href="/about"
-            isActive={isActive('/about')}
-            items={[
-              { label: 'Mission', href: '/about/mission' },
-              { label: 'Problem & Solution', href: '/about/problem-solution' },
-              { label: 'Team', href: '/about/team' },
-              { label: 'FAQ', href: '/about/faq' },
-            ]}
-          />
-          <NavLink label="Job Board" href="/job-board" isActive={isActive('/job-board')} />
+          <ProductsMegaMenu isActive={isActive('/products')} light={light} />
+          <NavLink label="Industries" href="/industries" isActive={isActive('/industries')} light={light} />
+          <NavLink label="Pricing" href="/pricing" isActive={isActive('/pricing')} light={light} />
+          <NavLink label="Job Board" href="/job-board" isActive={isActive('/job-board')} light={light} />
         </nav>
 
         {/* Right CTAs — hidden on mobile */}
@@ -388,11 +516,11 @@ export default function Navbar() {
                 onClick={handleDashboardClick}
                 style={{
                   padding: '8px 18px',
-                  color: '#FFFBF5',
-                  fontSize: '0.875rem',
+                  color: light ? '#1C1917' : '#FFFBF5',
+                  fontSize: '0.9375rem',
                   fontFamily: 'var(--font-body)',
                   fontWeight: 500,
-                  border: '1px solid rgba(255,251,245,0.25)',
+                  border: light ? '1px solid rgba(28,25,23,0.2)' : '1px solid rgba(255,251,245,0.25)',
                   borderRadius: '8px',
                   background: 'none',
                   cursor: 'pointer',
@@ -411,7 +539,7 @@ export default function Navbar() {
                   padding: '8px 18px',
                   background: '#F97316',
                   color: '#FFFFFF',
-                  fontSize: '0.875rem',
+                  fontSize: '0.9375rem',
                   fontFamily: 'var(--font-body)',
                   fontWeight: 600,
                   borderRadius: '8px',
@@ -429,11 +557,11 @@ export default function Navbar() {
                 className="btn-press"
                 style={{
                   padding: '8px 18px',
-                  color: '#FFFBF5',
-                  fontSize: '0.875rem',
+                  color: light ? '#1C1917' : '#FFFBF5',
+                  fontSize: '0.9375rem',
                   fontFamily: 'var(--font-body)',
                   fontWeight: 500,
-                  border: '1px solid rgba(255,251,245,0.25)',
+                  border: light ? '1px solid rgba(28,25,23,0.2)' : '1px solid rgba(255,251,245,0.25)',
                   borderRadius: '8px',
                 }}
               >
@@ -446,7 +574,7 @@ export default function Navbar() {
                   padding: '8px 18px',
                   background: '#F97316',
                   color: '#FFFFFF',
-                  fontSize: '0.875rem',
+                  fontSize: '0.9375rem',
                   fontFamily: 'var(--font-body)',
                   fontWeight: 600,
                   borderRadius: '8px',
@@ -473,7 +601,9 @@ export default function Navbar() {
             justifyContent: 'center',
           }}
         >
-          {mobileOpen ? <CloseIcon /> : <MenuIcon />}
+          {mobileOpen
+            ? <CloseIcon stroke={light ? '#1C1917' : '#FFFBF5'} />
+            : <MenuIcon stroke={light ? '#1C1917' : '#FFFBF5'} />}
         </button>
       </div>
 
@@ -487,15 +617,16 @@ export default function Navbar() {
           transition: 'max-height 0.35s ease',
         }}
       >
-        <MobileNavLink label="Products" href="/products" onClick={close} />
-        <MobileNavLink label="AI Features" href="/products/ai-features" onClick={close} />
+        <MobileNavLink label="Features" href="/products" onClick={close} />
+        <MobileNavLink label="Shift Management" href="/products/shift-management" onClick={close} />
+        <MobileNavLink label="Task Management" href="/products/task-management" onClick={close} />
+        <MobileNavLink label="Company Management" href="/products/team-management" onClick={close} />
+        <MobileNavLink label="Communication" href="/products/communication" onClick={close} />
         <MobileNavLink label="Recruitment" href="/products/recruitment" onClick={close} />
         <MobileNavLink label="Attendance" href="/products/attendance" onClick={close} />
-        <MobileNavLink label="Team Management" href="/products/team-management" onClick={close} />
-        <MobileNavLink label="Smart Notifications" href="/products/smart-notifications" onClick={close} />
+        <MobileNavLink label="Reports & Insights" href="/products/reports-insights" onClick={close} />
         <MobileNavLink label="Industries" href="/industries" onClick={close} />
         <MobileNavLink label="Pricing" href="/pricing" onClick={close} />
-        <MobileNavLink label="About" href="/about" onClick={close} />
         <MobileNavLink label="Job Board" href="/job-board" onClick={close} />
         <div style={{ padding: '16px 20px', display: 'flex', gap: '10px' }}>
           {authLoading ? null : session ? (

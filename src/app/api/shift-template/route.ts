@@ -3,6 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { shiftTemplateService } from '@/services/owner/shiftTemplateService'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
@@ -10,6 +11,12 @@ export async function GET(req: NextRequest) {
 
   if (!company_id) {
     return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
+  }
+
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+  if (session.user.company_id !== company_id) {
+    return NextResponse.json({ success: false, message: 'You can only view your own company\'s templates' }, { status: 403 })
   }
 
   try {
@@ -29,7 +36,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, message: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { company_id, name, start_time, end_time, created_by } = body as Record<string, unknown>
+  const { company_id, name, start_time, end_time } = body as Record<string, unknown>
 
   if (!company_id || typeof company_id !== 'string')
     return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
@@ -39,8 +46,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, message: 'start_time is required' }, { status: 400 })
   if (!end_time || typeof end_time !== 'string')
     return NextResponse.json({ success: false, message: 'end_time is required' }, { status: 400 })
-  if (!created_by || typeof created_by !== 'string')
-    return NextResponse.json({ success: false, message: 'created_by is required' }, { status: 400 })
+
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+  if (session.user.company_id !== company_id) {
+    return NextResponse.json({ success: false, message: 'You can only manage your own company\'s templates' }, { status: 403 })
+  }
 
   try {
     const template = await shiftTemplateService.createTemplate({
@@ -48,7 +59,7 @@ export async function POST(req: NextRequest) {
       name,
       start_time,
       end_time,
-      created_by,
+      created_by: session.user.id,
     })
     return NextResponse.json({ success: true, template }, { status: 201 })
   } catch (err) {

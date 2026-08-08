@@ -1,7 +1,9 @@
 // LAYER: Repository
 // RULE: Supabase queries only. No business logic.
 
-import { supabase } from '@/lib/supabase'
+import { getSupabaseAdmin } from '@/lib/supabaseAdmin'
+
+const supabase = getSupabaseAdmin()
 import { ShiftSwapDepartmentSettings, ShiftSwapDepartmentSettingsUpsertInput } from '@/types/Attendance'
 
 const SETTINGS_COLUMNS = 'company_id, department_id, auto_approval_enabled, monthly_swap_limit, deadline_hours_before_shift, require_review_on_limit_exceeded, require_review_on_deadline_exceeded, updated_by, updated_at'

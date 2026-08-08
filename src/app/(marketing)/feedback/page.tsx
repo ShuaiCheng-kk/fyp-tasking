@@ -61,9 +61,7 @@ export default async function FeedbackPage() {
               style={{
                 fontFamily: "var(--font-heading)",
                 fontWeight: 600,
-                fontSize: "0.8125rem",
-                textTransform: "uppercase",
-                letterSpacing: "0.08em",
+                fontSize: "1.375rem",
                 color: "#1C1917",
                 marginBottom: "16px",
               }}

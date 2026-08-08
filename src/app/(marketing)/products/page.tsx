@@ -68,17 +68,32 @@ const TeamIcon = () => (
   </svg>
 );
 
-const BellIcon = () => (
+const ShiftIcon = () => (
   <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
-    <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" stroke="#F97316" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M13.73 21a2 2 0 0 1-3.46 0" stroke="#F97316" strokeWidth="2" strokeLinecap="round" />
+    <rect x="3" y="4" width="18" height="18" rx="2" stroke="#F97316" strokeWidth="2" />
+    <path d="M16 2v4M8 2v4M3 10h18" stroke="#F97316" strokeWidth="2" strokeLinecap="round" />
+    <path d="M8 15h3M13 15h3M8 18h3" stroke="#F97316" strokeWidth="1.75" strokeLinecap="round" />
   </svg>
 );
 
-const AIIcon = () => (
+const TaskIcon = () => (
   <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
-    <path d="M12 2L13.8 8.2L20 10L13.8 11.8L12 18L10.2 11.8L4 10L10.2 8.2L12 2Z" stroke="#F97316" strokeWidth="2" strokeLinejoin="round" />
-    <path d="M19 15l1 3 3 1-3 1-1 3-1-3-3-1 3-1 1-3z" stroke="#F97316" strokeWidth="1.5" strokeLinejoin="round" />
+    <rect x="3" y="3" width="18" height="18" rx="2" stroke="#F97316" strokeWidth="2" />
+    <path d="M7.5 12l2.5 2.5 5-5" stroke="#F97316" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+const CommunicationIcon = () => (
+  <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+    <path d="M4 4h16v12H8l-4 4V4Z" stroke="#F97316" strokeWidth="2" strokeLinejoin="round" />
+    <path d="M8 9h8M8 12.5h5" stroke="#F97316" strokeWidth="1.75" strokeLinecap="round" />
+  </svg>
+);
+
+const ReportsIcon = () => (
+  <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+    <path d="M4 20V10M12 20V4M20 20v-7" stroke="#F97316" strokeWidth="2" strokeLinecap="round" />
+    <path d="M3 20h18" stroke="#F97316" strokeWidth="2" strokeLinecap="round" />
   </svg>
 );
 
@@ -295,8 +310,8 @@ export default function ProductsPage() {
       <section style={{ ...sectionBase, background: '#FFFBF5' }}>
         <div style={inner}>
           <div style={{ textAlign: 'center', marginBottom: '52px' }}>
-            <h2 style={h2Style}>Built different. Here&apos;s the proof.</h2>
-            <p style={subtitleStyle}>Features that exist in Tasking and nowhere else.</p>
+            <h2 style={h2Style}>{copy('comparison.title', "Built different. Here's the proof.")}</h2>
+            <p style={subtitleStyle}>{copy('comparison.subtitle', 'Features that exist in Tasking and nowhere else.')}</p>
           </div>
 
           <div className="table-scroll" style={{ maxWidth: '720px', margin: '0 auto' }}>
@@ -329,22 +344,9 @@ export default function ProductsPage() {
             </div>
 
             {/* Table rows */}
-            {[
-              'Split shift timeline',
-              'Shift acceptance deadlines',
-              'Clopening detection',
-              'Reverse actions',
-              'Support sub-tasks',
-              'Recurring job posting',
-              'Duplicate job posting',
-              'Archive job posting',
-              'Photo-based clock-in verification',
-              'AI candidate recommendation',
-              'AI job description generator',
-              'AI anomaly detection',
-            ].map((feature, i) => (
+            {copy.keys('comparison.row.', '').map((rowKey, i) => (
               <div
-                key={feature}
+                key={rowKey}
                 style={{
                   display: 'grid',
                   gridTemplateColumns: '1fr 180px 180px',
@@ -361,7 +363,7 @@ export default function ProductsPage() {
                     color: '#1C1917',
                   }}
                 >
-                  {feature}
+                  {copy(`comparison.row.${rowKey}`, '')}
                 </span>
                 <div style={{ display: 'flex', justifyContent: 'center' }}>
                   <Cross />
@@ -382,7 +384,7 @@ export default function ProductsPage() {
       <section id="modules" style={{ ...sectionBase, background: '#FFFFFF' }}>
         <div style={inner}>
           <div style={{ textAlign: 'center', marginBottom: '52px' }}>
-            <h2 style={h2Style}>{copy('modules.title', 'Five modules. One workflow. Zero gaps.')}</h2>
+            <h2 style={h2Style}>{copy('modules.title', 'Seven modules. One workflow. Zero gaps.')}</h2>
             <p style={subtitleStyle}>
               {copy('modules.subtitle', 'Every module in Tasking is designed to work together — from the moment you post a job to the moment the shift ends.')}
             </p>
@@ -400,6 +402,54 @@ export default function ProductsPage() {
           >
             {[
               {
+                Icon: ShiftIcon,
+                name: 'Shift Management',
+                tagline: copy('module.shift.tagline', 'Build the schedule in minutes, not hours.'),
+                body: copy('module.shift.body', 'Assign shifts across departments and publish schedules instantly, or let AI draft a conflict-free week from your team\'s availability. Recurring shifts, split shifts, and bulk edits mean you set it up once and adjust as you go.'),
+                link: copy('module.shift.link', 'See how Shift Management works →'),
+                href: '/products/shift-management',
+              },
+              {
+                Icon: TaskIcon,
+                name: 'Task Management',
+                tagline: copy('module.task.tagline', 'Assign work. Track it to done.'),
+                body: copy('module.task.body', 'Break work into tasks and sub-tasks, assign them down the hierarchy, and watch status move from Todo to Done in real time. AI matches tasks to the right person and rebalances workload the moment someone\'s overloaded.'),
+                link: copy('module.task.link', 'See how Task Management works →'),
+                href: '/products/task-management',
+              },
+              {
+                Icon: TeamIcon,
+                name: 'Company Management',
+                tagline: copy('module.team.tagline', 'Your company structure, exactly how you need it.'),
+                body: copy('module.team.body', 'Set up departments, assign managers, and define who can do what — all from one place. Owners have full visibility across the entire organisation while managers stay focused on their own teams.'),
+                link: copy('module.team.link', 'See how Company Management works →'),
+                href: '/products/team-management',
+              },
+            ].map(({ Icon, name, tagline, body, link, href }) => (
+              <ModuleCard key={href} Icon={Icon} name={name} tagline={tagline} body={body} link={link} href={href} />
+            ))}
+          </div>
+
+          {/* Row 2: 3 cards */}
+          <div
+            className="grid-features-3"
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(3, 1fr)',
+              gap: '20px',
+              marginBottom: '20px',
+            }}
+          >
+            {[
+              {
+                Icon: CommunicationIcon,
+                name: 'Communication',
+                tagline: copy('module.communication.tagline', 'Keep everyone in the loop, in one place.'),
+                body: copy('module.communication.body', 'Post announcements to the whole company or a single department, and message anyone directly without leaving Tasking. No more chasing updates across WhatsApp threads and group chats.'),
+                link: copy('module.communication.link', 'See how Communication works →'),
+                href: '/products/communication',
+              },
+              {
                 Icon: RecruitmentIcon,
                 name: 'Recruitment',
                 tagline: copy('module.recruitment.tagline', 'Find the right people. Fast.'),
@@ -415,46 +465,28 @@ export default function ProductsPage() {
                 link: copy('module.attendance.link', 'See how Attendance works →'),
                 href: '/products/attendance',
               },
-              {
-                Icon: TeamIcon,
-                name: 'Team Management',
-                tagline: copy('module.team.tagline', 'Your company structure, exactly how you need it.'),
-                body: copy('module.team.body', 'Set up departments, assign managers, and define who can do what — all from one place. Owners have full visibility across the entire organisation while managers stay focused on their own teams.'),
-                link: copy('module.team.link', 'See how Team Management works →'),
-                href: '/products/team-management',
-              },
             ].map(({ Icon, name, tagline, body, link, href }) => (
               <ModuleCard key={href} Icon={Icon} name={name} tagline={tagline} body={body} link={link} href={href} />
             ))}
           </div>
 
-          {/* Row 2: 2 cards centered */}
+          {/* Row 3: 1 card centered */}
           <div
-            className="grid-features-2"
             style={{
               display: 'grid',
-              gridTemplateColumns: 'repeat(2, 1fr)',
-              gap: '20px',
-              maxWidth: '860px',
+              gridTemplateColumns: '1fr',
+              maxWidth: '400px',
               margin: '0 auto',
             }}
           >
             {[
               {
-                Icon: BellIcon,
-                name: 'Smart Notifications',
-                tagline: copy('module.notifications.tagline', 'No more chasing people for updates.'),
-                body: copy('module.notifications.body', 'Tasking handles the follow-ups automatically. Shift reminders go out before deadlines. Managers get notified the moment an attendance record is submitted. Your team stays in sync without you having to send a single message.'),
-                link: copy('module.notifications.link', 'See how Smart Notifications works →'),
-                href: '/products/smart-notifications',
-              },
-              {
-                Icon: AIIcon,
-                name: 'AI Features',
-                tagline: copy('module.ai.tagline', 'Enterprise-grade AI. Free for everyone.'),
-                body: copy('module.ai.body', 'Four AI tools built directly into your workflow — and none of them are locked behind a paywall. Generate a job description in seconds. Let the system rank your applicants. Auto-approve timesheets that check out. Get alerted the moment something looks off.'),
-                link: copy('module.ai.link', 'See how AI Features works →'),
-                href: '/products/ai-features',
+                Icon: ReportsIcon,
+                name: 'Reports & Insights',
+                tagline: copy('module.reports.tagline', 'Turn attendance and task data into decisions.'),
+                body: copy('module.reports.body', 'See workforce trends at a glance, and let AI flag the anomalies you\'d otherwise miss — like a task that keeps stalling in the same department, or an attendance pattern worth a second look.'),
+                link: copy('module.reports.link', 'See how Reports & Insights works →'),
+                href: '/products/reports-insights',
               },
             ].map(({ Icon, name, tagline, body, link, href }) => (
               <ModuleCard key={href} Icon={Icon} name={name} tagline={tagline} body={body} link={link} href={href} />

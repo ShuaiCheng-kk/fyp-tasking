@@ -3,22 +3,23 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { schedulingRuleService } from '@/services/owner/schedulingRuleService'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 export async function GET(req: NextRequest) {
   const company_id = req.nextUrl.searchParams.get('company_id')
-  const user_id = req.nextUrl.searchParams.get('user_id')
   const date_from = req.nextUrl.searchParams.get('date_from')
   const date_to = req.nextUrl.searchParams.get('date_to')
 
   if (!company_id) return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
-  if (!user_id) return NextResponse.json({ success: false, message: 'user_id is required' }, { status: 400 })
   if (!date_from) return NextResponse.json({ success: false, message: 'date_from is required' }, { status: 400 })
   if (!date_to) return NextResponse.json({ success: false, message: 'date_to is required' }, { status: 400 })
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
 
   try {
     const context = await schedulingRuleService.getScheduleContext({
       company_id,
-      user_id,
+      user_id: session.user.id,
       date_from,
       date_to,
     })

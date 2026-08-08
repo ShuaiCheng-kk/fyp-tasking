@@ -3,8 +3,12 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { shiftSchedulingService } from '@/services/owner/shiftSchedulingService'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 export async function POST(req: NextRequest) {
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+
   let body: unknown
   try {
     body = await req.json()

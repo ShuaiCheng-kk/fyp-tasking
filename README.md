@@ -94,10 +94,9 @@ OPENAI_TIMEOUT_MS=
 
 ```bash
 node scripts/seed.js          # wipes and rebuilds a full demo dataset (companies, users, shifts, tasks, etc.)
-node scripts/reset.js --yes   # wipes to a brand-new empty system (0 companies, 0 users)
 ```
 
-The app has no data until `node scripts/seed.js` is run. Do this once after `.env.local` is set up, before logging in or exploring the app. `node scripts/reset.js --yes` wipes everything back to an empty system (used to test first-time-registration/empty-state flows); it keeps the two platform admin accounts but removes all companies and demo users, so run `node scripts/seed.js` again afterwards to restore the demo dataset.
+The app has no data until `node scripts/seed.js` is run. Do this once after `.env.local` is set up, before logging in or exploring the app.
 
 ### Test accounts
 
@@ -162,5 +161,5 @@ src/
   types/           # one interface per entity
   lib/              # Supabase client, shared utilities
 tests/             # Playwright integration + E2E specs, grouped by module
-scripts/           # seed.js / reset.js and one-off data scripts
+scripts/           # seed.js and NFR verification scripts (compatibility/perf/security/scale)
 ```

@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { taskService } from '@/services/owner/taskService'
 import { TaskInput, TaskRecurrenceInput } from '@/types/Task'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
@@ -37,6 +38,12 @@ export async function GET(req: NextRequest) {
 
   if (!company_id) {
     return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
+  }
+
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+  if (session.user.company_id !== company_id) {
+    return NextResponse.json({ success: false, message: 'You can only view your own company\'s tasks' }, { status: 403 })
   }
 
   try {
@@ -123,14 +130,20 @@ export async function POST(req: NextRequest) {
 
   const b = body as Record<string, unknown>
 
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+
   if (b.action === 'set_delay_threshold') {
     if (!b.company_id || typeof b.company_id !== 'string')
       return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
+    if (session.user.company_id !== b.company_id) {
+      return NextResponse.json({ success: false, message: 'You can only manage your own company\'s settings' }, { status: 403 })
+    }
     try {
       const settings = await taskService.updateTaskDelayThreshold(
         b.company_id,
         Number(b.threshold_percent),
-        b.updated_by as string | undefined,
+        session.user.id,
       )
       return NextResponse.json({ success: true, settings })
     } catch (err) {
@@ -142,7 +155,7 @@ export async function POST(req: NextRequest) {
   if (b.action === 'mark_delay_alerts_read') {
     try {
       const task_ids = Array.isArray(b.task_ids) ? b.task_ids.filter((v): v is string => typeof v === 'string') : []
-      await taskService.markTaskDelayAlertsRead(task_ids, b.user_id as string | undefined)
+      await taskService.markTaskDelayAlertsRead(task_ids, session.user.id)
       return NextResponse.json({ success: true })
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to mark delay alerts as read'
@@ -153,7 +166,7 @@ export async function POST(req: NextRequest) {
   // Handle duplicate action
   if (b.action === 'duplicate' && typeof b.id === 'string') {
     try {
-      const task = await taskService.duplicateTask(b.id, b.assigned_by as string | undefined)
+      const task = await taskService.duplicateTask(b.id, session.user.id)
       return NextResponse.json({ success: true, task }, { status: 201 })
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to duplicate task'
@@ -167,7 +180,7 @@ export async function POST(req: NextRequest) {
         recurrence_rule: b.recurrence_rule as 'daily' | 'weekly' | 'custom',
         recurrence_end_date: String(b.recurrence_end_date ?? ''),
         custom_interval_days: typeof b.custom_interval_days === 'number' ? b.custom_interval_days : undefined,
-        assigned_by: b.assigned_by as string | undefined,
+        assigned_by: session.user.id,
         deadline_rule: b.deadline_rule as TaskRecurrenceInput['deadline_rule'],
       })
       return NextResponse.json({ success: true, tasks }, { status: 201 })
@@ -179,6 +192,9 @@ export async function POST(req: NextRequest) {
 
   if (!b.company_id || typeof b.company_id !== 'string')
     return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
+  if (session.user.company_id !== b.company_id) {
+    return NextResponse.json({ success: false, message: 'You can only create tasks for your own company' }, { status: 403 })
+  }
   if (!b.department_id || typeof b.department_id !== 'string')
     return NextResponse.json({ success: false, message: 'department_id is required' }, { status: 400 })
   if (!b.title || typeof b.title !== 'string')
@@ -192,7 +208,7 @@ export async function POST(req: NextRequest) {
     parent_task_id: (b.parent_task_id as string) ?? null,
     description: (b.description as string) ?? null,
     assigned_user_id: (b.assigned_user_id as string) ?? null,
-    assigned_by: (b.assigned_by as string) ?? null,
+    assigned_by: session.user.id,
     status: (b.status as TaskInput['status']) ?? 'Assigned',
     priority: (b.priority as string) ?? null,
     due_at: (b.due_at as string) ?? null,
@@ -227,9 +243,12 @@ export async function PATCH(req: NextRequest) {
   if (!b.id || typeof b.id !== 'string')
     return NextResponse.json({ success: false, message: 'id is required' }, { status: 400 })
 
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+
   if (b.action === 'approve') {
     try {
-      const task = await taskService.approveTask(b.id, b.assigned_by as string | undefined)
+      const task = await taskService.approveTask(b.id, session.user.id)
       return NextResponse.json({ success: true, task })
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to approve task'
@@ -242,7 +261,7 @@ export async function PATCH(req: NextRequest) {
       const task = await taskService.applyWorkloadSuggestionReassignment(
         b.id,
         b.assigned_user_id as string,
-        b.assigned_by as string | undefined,
+        session.user.id,
       )
       return NextResponse.json({ success: true, task })
     } catch (err) {
@@ -253,7 +272,7 @@ export async function PATCH(req: NextRequest) {
 
   if (b.action === 'reject') {
     try {
-      const task = await taskService.rejectTask(b.id, String(b.reason ?? ''), b.assigned_by as string | undefined)
+      const task = await taskService.rejectTask(b.id, String(b.reason ?? ''), session.user.id)
       return NextResponse.json({ success: true, task })
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to reject task'
@@ -263,7 +282,7 @@ export async function PATCH(req: NextRequest) {
 
   if (b.action === 'archive') {
     try {
-      const task = await taskService.archiveTask(b.id, b.assigned_by as string | undefined)
+      const task = await taskService.archiveTask(b.id, session.user.id)
       return NextResponse.json({ success: true, task })
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to archive task'
@@ -273,7 +292,7 @@ export async function PATCH(req: NextRequest) {
 
   if (b.action === 'unarchive') {
     try {
-      const task = await taskService.unarchiveTask(b.id, b.assigned_by as string | undefined)
+      const task = await taskService.unarchiveTask(b.id, session.user.id)
       return NextResponse.json({ success: true, task })
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to unarchive task'
@@ -286,7 +305,7 @@ export async function PATCH(req: NextRequest) {
       const subTasks = await taskService.reorderSubTasks(
         b.id,
         Array.isArray(b.sub_task_ids) ? b.sub_task_ids.map(String) : [],
-        b.assigned_by as string | undefined,
+        session.user.id,
       )
       return NextResponse.json({ success: true, subTasks })
     } catch (err) {
@@ -297,7 +316,7 @@ export async function PATCH(req: NextRequest) {
 
   if (b.action === 'complete_subtask') {
     try {
-      const [subTask, parent] = await taskService.completeSubTask(b.id, b.assigned_by as string | undefined)
+      const [subTask, parent] = await taskService.completeSubTask(b.id, session.user.id)
       return NextResponse.json({ success: true, subTask, parent })
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to complete sub-task'
@@ -319,9 +338,9 @@ export async function PATCH(req: NextRequest) {
     }
   }
 
-  const { id, assigned_by, ...rest } = b
+  const { id, assigned_by: _assigned_by, ...rest } = b
   try {
-    const task = await taskService.editTask(id as string, rest as Partial<TaskInput>, assigned_by as string | undefined)
+    const task = await taskService.editTask(id as string, rest as Partial<TaskInput>, session.user.id)
     return NextResponse.json({ success: true, task })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to update task'
@@ -332,12 +351,13 @@ export async function PATCH(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const id = searchParams.get('id')
-  const assigned_by = searchParams.get('assigned_by') ?? undefined
   if (!id) {
     return NextResponse.json({ success: false, message: 'id is required' }, { status: 400 })
   }
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
   try {
-    await taskService.deleteTask(id, assigned_by)
+    await taskService.deleteTask(id, session.user.id)
     return NextResponse.json({ success: true })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to delete task'

@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
+vi.mock('@/lib/supabaseAdmin', () => ({
+  getSupabaseAdmin: () => ({}),
+}))
+
 vi.mock('@/lib/supabase', () => ({
   supabase: {},
   createClient: () => ({}),
@@ -31,7 +35,7 @@ describe('UC23 Edit Department', () => {
     ])
     vi.mocked(departmentRepository.updateById).mockResolvedValue(undefined as never)
 
-    await companyService.updateDepartment('dept-1', 'Growth Marketing', '#22C55E')
+    await companyService.updateDepartment('dept-1', 'Growth Marketing', '#22C55E', 'comp-1')
 
     expect(departmentRepository.updateById).toHaveBeenCalledWith('dept-1', 'Growth Marketing', '#22C55E')
   })
@@ -45,7 +49,7 @@ describe('UC23 Edit Department', () => {
       { id: 'dept-2', company_id: 'comp-1', name: 'Sales', color: '#F97316' } as never,
     ])
 
-    await expect(companyService.updateDepartment('dept-1', 'sales', '#3B82F6'))
+    await expect(companyService.updateDepartment('dept-1', 'sales', '#3B82F6', 'comp-1'))
       .rejects.toThrow('A department named "sales" already exists')
 
     expect(departmentRepository.updateById).not.toHaveBeenCalled()

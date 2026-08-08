@@ -3,6 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { casualShiftCancellationService } from '@/services/casual/casualShiftCancellationService'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 export async function POST(req: NextRequest) {
   let body: { user_id?: string; shift_id?: string; reason?: string | null }
@@ -17,6 +18,11 @@ export async function POST(req: NextRequest) {
   }
   if (!body.shift_id) {
     return NextResponse.json({ success: false, message: 'shift_id is required' }, { status: 400 })
+  }
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+  if (body.user_id !== session.user.id && body.user_id !== session.auth_id) {
+    return NextResponse.json({ success: false, message: 'You can only cancel your own shift' }, { status: 403 })
   }
 
   try {

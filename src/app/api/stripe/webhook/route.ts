@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { stripe } from '@/lib/stripe'
 import { stripeRepository } from '@/repositories/stripeRepository'
+import { getSupabaseAdmin } from '@/lib/supabaseAdmin'
 import Stripe from 'stripe'
 
 export async function POST(req: NextRequest) {
@@ -64,7 +65,7 @@ export async function POST(req: NextRequest) {
     if (customerId) {
       try {
         // Find company by stripe_customer_id and downgrade
-        const { data } = await (await import('@/lib/supabase')).supabase
+        const { data } = await getSupabaseAdmin()
           .from('companies')
           .select('id')
           .eq('stripe_customer_id', customerId)

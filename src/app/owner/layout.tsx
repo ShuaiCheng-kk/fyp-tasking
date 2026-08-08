@@ -74,14 +74,15 @@ export default function OwnerLayout({
       }
       const data = await res.json()
       const role: string = data.success ? (data.user?.role ?? '') : ''
-      const redirect = ROLE_DASHBOARD[role]
-      if (redirect) {
-        router.replace(redirect)
-      } else if (!data.success || !role) {
-        router.replace('/')
-      } else {
+      // Whitelist, not blacklist: only 'Owner' may render this layout. Any other role either goes
+      // to its own dashboard (if mapped) or to '/' — an unmapped role (e.g. Guest User, Marketing
+      // Admin, User Admin) must never fall through to rendering the Owner shell.
+      if (role === 'Owner') {
         setChecking(false)
+        return
       }
+      const redirect = ROLE_DASHBOARD[role]
+      router.replace(redirect ?? '/')
     }
 
     checkAuth()

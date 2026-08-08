@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { attendanceService } from '@/services/owner/attendanceService'
 import { FixedOffDayDecision } from '@/types/Attendance'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 // CHANGE TYPE: Code only
 
@@ -12,9 +13,15 @@ export async function GET(req: NextRequest) {
   const company_id = searchParams.get('company_id')
   const resource = searchParams.get('resource') ?? 'dashboard'
 
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+
   if (resource === 'my_requests') {
     const user_id = searchParams.get('user_id')
     if (!user_id) return NextResponse.json({ success: false, message: 'user_id is required' }, { status: 400 })
+    if (user_id !== session.user.id && user_id !== session.auth_id) {
+      return NextResponse.json({ success: false, message: 'You can only view your own requests' }, { status: 403 })
+    }
     try {
       const requests = await attendanceService.getMyRequests(user_id)
       return NextResponse.json({ success: true, ...requests })
@@ -26,6 +33,9 @@ export async function GET(req: NextRequest) {
 
   if (!company_id) {
     return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
+  }
+  if (session.user.company_id !== company_id) {
+    return NextResponse.json({ success: false, message: 'You can only view your own company\'s attendance' }, { status: 403 })
   }
 
   try {
@@ -84,14 +94,17 @@ export async function PATCH(req: NextRequest) {
   const b = body as Record<string, unknown>
   const action = b.action
 
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+
   try {
     if (action === 'modify_times') {
-      if (typeof b.id !== 'string' || typeof b.actor_id !== 'string') {
-        return NextResponse.json({ success: false, message: 'id and actor_id are required' }, { status: 400 })
+      if (typeof b.id !== 'string') {
+        return NextResponse.json({ success: false, message: 'id is required' }, { status: 400 })
       }
       const record = await attendanceService.modifyAttendanceTimes({
         id: b.id,
-        actor_id: b.actor_id,
+        actor_id: session.user.id,
         reason: (b.reason as string | null) ?? null,
         clock_in_time: (b.clock_in_time as string | null) ?? null,
         clock_out_time: (b.clock_out_time as string | null) ?? null,
@@ -102,12 +115,12 @@ export async function PATCH(req: NextRequest) {
     }
 
     if (action === 'decide_shift_swap') {
-      if (typeof b.id !== 'string' || typeof b.reviewer_id !== 'string' || typeof b.decision !== 'string') {
-        return NextResponse.json({ success: false, message: 'id, reviewer_id and decision are required' }, { status: 400 })
+      if (typeof b.id !== 'string' || typeof b.decision !== 'string') {
+        return NextResponse.json({ success: false, message: 'id and decision are required' }, { status: 400 })
       }
       const request = await attendanceService.decideShiftSwapRequest({
         id: b.id,
-        reviewer_id: b.reviewer_id,
+        reviewer_id: session.user.id,
         decision: b.decision as 'approved' | 'rejected',
         reason: typeof b.reason === 'string' ? b.reason.trim() : null,
       })
@@ -115,31 +128,31 @@ export async function PATCH(req: NextRequest) {
     }
 
     if (action === 'respond_shift_swap') {
-      if (typeof b.id !== 'string' || typeof b.counterpart_id !== 'string' || typeof b.decision !== 'string') {
-        return NextResponse.json({ success: false, message: 'id, counterpart_id and decision are required' }, { status: 400 })
+      if (typeof b.id !== 'string' || typeof b.decision !== 'string') {
+        return NextResponse.json({ success: false, message: 'id and decision are required' }, { status: 400 })
       }
       const request = await attendanceService.respondShiftSwapRequest({
         id: b.id,
-        counterpart_id: b.counterpart_id,
+        counterpart_id: session.user.id,
         decision: b.decision as 'approved' | 'rejected',
       })
       return NextResponse.json({ success: true, request })
     }
 
     if (action === 'withdraw_shift_swap') {
-      if (typeof b.id !== 'string' || typeof b.requester_id !== 'string') {
-        return NextResponse.json({ success: false, message: 'id and requester_id are required' }, { status: 400 })
+      if (typeof b.id !== 'string') {
+        return NextResponse.json({ success: false, message: 'id is required' }, { status: 400 })
       }
       const request = await attendanceService.withdrawShiftSwapRequest({
         id: b.id,
-        requester_id: b.requester_id,
+        requester_id: session.user.id,
       })
       return NextResponse.json({ success: true, request })
     }
 
     if (action === 'decide_fixed_off_day') {
-      if (typeof b.reviewer_id !== 'string' || typeof b.decision !== 'string') {
-        return NextResponse.json({ success: false, message: 'reviewer_id and decision are required' }, { status: 400 })
+      if (typeof b.decision !== 'string') {
+        return NextResponse.json({ success: false, message: 'decision is required' }, { status: 400 })
       }
       if (Array.isArray(b.ids)) {
         if (!b.ids.every((id): id is string => typeof id === 'string')) {
@@ -150,7 +163,7 @@ export async function PATCH(req: NextRequest) {
         }
         const requests = await attendanceService.decideFixedOffDayRequestGroup({
           ids: b.ids,
-          reviewer_id: b.reviewer_id,
+          reviewer_id: session.user.id,
           decision: b.decision as FixedOffDayDecision,
           new_dates: b.new_dates as string[] | undefined,
         })
@@ -164,7 +177,7 @@ export async function PATCH(req: NextRequest) {
       }
       const request = await attendanceService.decideFixedOffDayRequest({
         id: b.id,
-        reviewer_id: b.reviewer_id,
+        reviewer_id: session.user.id,
         decision: b.decision as FixedOffDayDecision,
         new_date: b.new_date as string | undefined,
       })
@@ -173,16 +186,15 @@ export async function PATCH(req: NextRequest) {
 
     if (action === 'edit_fixed_off_day') {
       if (
-        typeof b.user_id !== 'string' ||
         typeof b.company_id !== 'string' ||
         typeof b.requested_week !== 'string' ||
         !Array.isArray(b.dates) ||
         !b.dates.every((d): d is string => typeof d === 'string')
       ) {
-        return NextResponse.json({ success: false, message: 'user_id, company_id, requested_week and dates (string[]) are required' }, { status: 400 })
+        return NextResponse.json({ success: false, message: 'company_id, requested_week and dates (string[]) are required' }, { status: 400 })
       }
       const requests = await attendanceService.editFixedOffDayRequest({
-        user_id: b.user_id,
+        user_id: session.user.id,
         company_id: b.company_id,
         requested_week: b.requested_week,
         dates: b.dates,
@@ -208,20 +220,25 @@ export async function POST(req: NextRequest) {
   const b = body as Record<string, unknown>
   const action = b.action
 
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+
   try {
     if (action === 'submit_shift_swap') {
       if (
         typeof b.company_id !== 'string' ||
-        typeof b.requester_id !== 'string' ||
         typeof b.requester_assignment_id !== 'string' ||
         typeof b.counterpart_id !== 'string' ||
         typeof b.counterpart_assignment_id !== 'string'
       ) {
-        return NextResponse.json({ success: false, message: 'company_id, requester_id, requester_assignment_id, counterpart_id and counterpart_assignment_id are required' }, { status: 400 })
+        return NextResponse.json({ success: false, message: 'company_id, requester_assignment_id, counterpart_id and counterpart_assignment_id are required' }, { status: 400 })
+      }
+      if (session.user.company_id !== b.company_id) {
+        return NextResponse.json({ success: false, message: 'You can only submit requests for your own company' }, { status: 403 })
       }
       const request = await attendanceService.submitShiftSwapRequest({
         company_id: b.company_id,
-        requester_id: b.requester_id,
+        requester_id: session.user.id,
         requester_assignment_id: b.requester_assignment_id,
         counterpart_id: b.counterpart_id,
         counterpart_assignment_id: b.counterpart_assignment_id,
@@ -232,15 +249,17 @@ export async function POST(req: NextRequest) {
 
     if (action === 'submit_fixed_off_day') {
       if (
-        typeof b.user_id !== 'string' ||
         typeof b.company_id !== 'string' ||
         !Array.isArray(b.dates) ||
         !b.dates.every((d): d is string => typeof d === 'string')
       ) {
-        return NextResponse.json({ success: false, message: 'user_id, company_id and dates (string[]) are required' }, { status: 400 })
+        return NextResponse.json({ success: false, message: 'company_id and dates (string[]) are required' }, { status: 400 })
+      }
+      if (session.user.company_id !== b.company_id) {
+        return NextResponse.json({ success: false, message: 'You can only submit requests for your own company' }, { status: 403 })
       }
       const request = await attendanceService.submitFixedOffDayRequest({
-        user_id: b.user_id,
+        user_id: session.user.id,
         company_id: b.company_id,
         dates: b.dates,
       })

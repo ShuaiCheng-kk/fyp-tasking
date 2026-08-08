@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { companyService } from '@/services/company/companyService'
 import { userService } from '@/services/auth/userService'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 export async function POST(req: NextRequest) {
   let body: unknown
@@ -13,16 +14,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, message: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { company_id, name, color, requester_user_id } = body as Record<string, unknown>
+  const { company_id, name, color } = body as Record<string, unknown>
 
   if (!company_id || typeof company_id !== 'string') {
     return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
   }
-  if (!requester_user_id || typeof requester_user_id !== 'string') {
-    return NextResponse.json({ success: false, message: 'requester_user_id is required' }, { status: 400 })
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+  if (session.user.company_id !== company_id) {
+    return NextResponse.json({ success: false, message: 'You can only manage your own company' }, { status: 403 })
   }
   try {
-    await userService.assertOwnerRole(requester_user_id)
+    await userService.assertOwnerRole(session.user.id)
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Forbidden'
     return NextResponse.json({ success: false, message }, { status: 403 })

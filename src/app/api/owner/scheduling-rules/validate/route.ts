@@ -4,8 +4,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { schedulingRuleService } from '@/services/owner/schedulingRuleService'
 import { ScheduleValidationItem } from '@/types/SchedulingRule'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 export async function POST(req: NextRequest) {
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+
   let body: unknown
   try {
     body = await req.json()
@@ -16,6 +20,9 @@ export async function POST(req: NextRequest) {
   const b = body as Record<string, unknown>
   if (typeof b.company_id !== 'string' || !b.company_id) {
     return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
+  }
+  if (session.user.company_id !== b.company_id) {
+    return NextResponse.json({ success: false, message: 'You can only validate your own company\'s schedule' }, { status: 403 })
   }
   if (typeof b.date_from !== 'string' || !b.date_from) {
     return NextResponse.json({ success: false, message: 'date_from is required' }, { status: 400 })

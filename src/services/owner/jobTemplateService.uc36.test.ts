@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
+vi.mock('@/lib/supabaseAdmin', () => ({
+  getSupabaseAdmin: () => ({}),
+}))
+
 vi.mock('@/lib/supabase', () => ({
   supabase: {},
   createClient: () => ({}),
@@ -43,7 +47,7 @@ describe('UC36 Edit Job Template', () => {
     const updated = { ...existingTemplate, salary_amount: 14 }
     vi.mocked(jobTemplateRepository.updateTemplate).mockResolvedValue(updated as never)
 
-    const result = await jobTemplateService.updateTemplate('template-1', { salary_amount: 14 })
+    const result = await jobTemplateService.updateTemplate('template-1', { salary_amount: 14 }, 'comp-1')
 
     expect(result).toEqual(updated)
     expect(jobTemplateRepository.updateTemplate).toHaveBeenCalledWith('template-1', expect.objectContaining({ salary_amount: 14, title: 'Weekend Cashier' }))
@@ -53,7 +57,7 @@ describe('UC36 Edit Job Template', () => {
     const updated = { ...existingTemplate, salary_amount: 15 }
     vi.mocked(jobTemplateRepository.updateTemplate).mockResolvedValue(updated as never)
 
-    const result = await jobTemplateService.updateTemplate('template-1', { salary_amount: 15 })
+    const result = await jobTemplateService.updateTemplate('template-1', { salary_amount: 15 }, 'comp-1')
 
     expect(result).toEqual(updated)
   })
@@ -62,28 +66,35 @@ describe('UC36 Edit Job Template', () => {
     const updated = { ...existingTemplate, title: 'Weekend Cashier (Updated)' }
     vi.mocked(jobTemplateRepository.updateTemplate).mockResolvedValue(updated as never)
 
-    const result = await jobTemplateService.updateTemplate('template-1', { title: 'Weekend Cashier (Updated)' })
+    const result = await jobTemplateService.updateTemplate('template-1', { title: 'Weekend Cashier (Updated)' }, 'comp-1')
 
     expect(result).toEqual(updated)
   })
 
   it('UC36-A1-UT-O: Owner is blocked from saving changes with Skills cleared', async () => {
-    await expect(jobTemplateService.updateTemplate('template-1', { skills: '' }))
+    await expect(jobTemplateService.updateTemplate('template-1', { skills: '' }, 'comp-1'))
       .rejects.toThrow('Skills is required to save this template')
 
     expect(jobTemplateRepository.updateTemplate).not.toHaveBeenCalled()
   })
 
   it('UC36-A1-UT-P: Partner is blocked from saving changes with Skills cleared', async () => {
-    await expect(jobTemplateService.updateTemplate('template-1', { skills: '' }))
+    await expect(jobTemplateService.updateTemplate('template-1', { skills: '' }, 'comp-1'))
       .rejects.toThrow('Skills is required to save this template')
 
     expect(jobTemplateRepository.updateTemplate).not.toHaveBeenCalled()
   })
 
   it('UC36-A1-UT-M: Manager is blocked from saving changes with Skills cleared', async () => {
-    await expect(jobTemplateService.updateTemplate('template-1', { skills: '' }))
+    await expect(jobTemplateService.updateTemplate('template-1', { skills: '' }, 'comp-1'))
       .rejects.toThrow('Skills is required to save this template')
+
+    expect(jobTemplateRepository.updateTemplate).not.toHaveBeenCalled()
+  })
+
+  it('UC36-BR-UT-O: Owner is blocked from editing a template belonging to another company', async () => {
+    await expect(jobTemplateService.updateTemplate('template-1', { salary_amount: 14 }, 'comp-2'))
+      .rejects.toThrow('You can only manage your own company\'s templates')
 
     expect(jobTemplateRepository.updateTemplate).not.toHaveBeenCalled()
   })

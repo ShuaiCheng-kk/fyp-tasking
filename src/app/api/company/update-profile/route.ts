@@ -1,6 +1,7 @@
 // LAYER: Controller only
 import { NextRequest, NextResponse } from 'next/server'
 import { companyService } from '@/services/company/companyService'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 export async function PATCH(req: NextRequest) {
   let body: unknown
@@ -10,17 +11,19 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ success: false, message: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { company_id, name, description, location, address, postal_code, industry, size, requester_user_id } = body as Record<string, unknown>
+  const { company_id, name, description, location, address, postal_code, industry, size } = body as Record<string, unknown>
 
   if (!company_id || typeof company_id !== 'string') {
     return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
   }
-  if (!requester_user_id || typeof requester_user_id !== 'string') {
-    return NextResponse.json({ success: false, message: 'requester_user_id is required' }, { status: 400 })
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+  if (session.user.company_id !== company_id) {
+    return NextResponse.json({ success: false, message: 'You can only edit your own company' }, { status: 403 })
   }
 
   try {
-    const company = await companyService.updateCompany(company_id, requester_user_id, {
+    const company = await companyService.updateCompany(company_id, session.user.id, {
       name: typeof name === 'string' ? name : '',
       description: typeof description === 'string' ? description : null,
       location: typeof location === 'string' ? location : null,

@@ -1,7 +1,9 @@
 // LAYER: Repository
 // RULE: Supabase queries only. No business logic.
 
-import { supabase } from '@/lib/supabase'
+import { getSupabaseAdmin } from '@/lib/supabaseAdmin'
+
+const supabase = getSupabaseAdmin()
 import { Shift, ShiftInput } from '@/types/Shift'
 import { ShiftAssignment } from '@/types/ShiftAssignment'
 import { ShiftActionHistory, ShiftActionHistoryInput, ShiftActionRedoPayload } from '@/types/ShiftActionHistory'

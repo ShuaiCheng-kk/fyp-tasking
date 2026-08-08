@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { companyService } from '@/services/company/companyService'
 import type { Company } from '@/types/company.types'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 const VALID_PLANS: Company['plan'][] = ['Free', 'Paid']
 
@@ -25,6 +26,11 @@ export async function POST(req: NextRequest) {
       { success: false, message: `plan must be one of: ${VALID_PLANS.join(', ')}` },
       { status: 400 },
     )
+  }
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+  if (session.user.company_id !== company_id) {
+    return NextResponse.json({ success: false, message: 'You can only manage your own company\'s plan' }, { status: 403 })
   }
 
   try {

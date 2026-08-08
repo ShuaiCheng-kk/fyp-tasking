@@ -45,18 +45,6 @@ export type JobView = {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function timeAgo(dateStr: string) {
-  const seconds = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000)
-  if (seconds < 60) return 'just now'
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes}m ago`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h ago`
-  const days = Math.floor(hours / 24)
-  if (days < 30) return `${days}d ago`
-  return `${Math.floor(days / 30)}mo ago`
-}
-
 // How long until a posting's application deadline auto-closes it — shown as a header pill.
 export function deadlineCountdown(expiresAt: string | null | undefined): { label: string; expired: boolean } | null {
   if (!expiresAt) return null
@@ -143,13 +131,12 @@ export function JobCard({
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: -4 }}>{statusBadge}</div>
       )}
 
-      {/* Requirement badges — urgency / minimum age / experience / uniform */}
+      {/* Badges — priority (one-off jobs only) / age requirement / application deadline */}
       {(() => {
         const isShiftJob = resolveJobType(job) === 'shift'
-        const uniformLabel = uniformLabelOf(job)
         const showUrgency = !isShiftJob && (job.urgency === 'high' || job.urgency === 'urgent')
-        const showExp = job.experience_required && job.experience_required !== 'Not Required'
-        if (!showUrgency && !job.minimum_age && !showExp && !uniformLabel) return null
+        const cd = !hideDeadline ? deadlineCountdown(job.expires_at) : null
+        if (!showUrgency && !job.minimum_age && !cd) return null
         return (
           <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
             {showUrgency && (
@@ -162,14 +149,9 @@ export function JobCard({
                 <Cake size={12} />{job.minimum_age}+
               </span>
             )}
-            {showExp && (
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#ECFEFF', color: '#0891B2', fontFamily: fB, fontSize: '0.75rem', fontWeight: 800, padding: '4px 10px', borderRadius: 999 }}>
-                <UserCheck size={12} />{job.experience_required}
-              </span>
-            )}
-            {uniformLabel && (
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#FFFBEB', color: '#B45309', fontFamily: fB, fontSize: '0.75rem', fontWeight: 800, padding: '4px 10px', borderRadius: 999 }}>
-                <Shirt size={12} />{job.uniform_type === 'dress_code' ? 'Dress Code' : 'Uniform Provided'}
+            {cd && (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: cd.expired ? '#FEF2F2' : '#FFFBEB', color: cd.expired ? '#B91C1C' : '#B45309', fontFamily: fB, fontSize: '0.75rem', fontWeight: 800, padding: '4px 10px', borderRadius: 999 }}>
+                <Clock size={12} />{cd.label}
               </span>
             )}
           </div>
@@ -186,8 +168,8 @@ export function JobCard({
         </p>
       </div>
 
-      {/* Location + pay + estimated hours */}
-      {(job.company_location || job.salary_amount || job.estimated_hours) && (
+      {/* Location + pay */}
+      {(job.company_location || job.salary_amount) && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
           {job.company_location && (
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontFamily: fB, fontSize: '0.75rem', fontWeight: 800, color: '#4B5563', background: '#F3F4F6', borderRadius: 999, padding: '4px 10px' }}>
@@ -199,35 +181,8 @@ export function JobCard({
               {formatSalary(job)}
             </span>
           )}
-          {resolveJobType(job) === 'oneoff' && job.estimated_hours && (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontFamily: fB, fontSize: '0.75rem', fontWeight: 800, color: '#1D4ED8', background: '#EFF6FF', borderRadius: 999, padding: '4px 10px' }}>
-              <Clock size={12} />{job.estimated_hours}h
-            </span>
-          )}
         </div>
       )}
-
-      {/* Application deadline countdown, or the posted time when no deadline is set. */}
-      {!hideDeadline && (() => {
-        const cd = deadlineCountdown(job.expires_at)
-        if (cd) {
-          return (
-            <div style={{ paddingTop: '2px' }}>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 10px', borderRadius: 99, fontFamily: fB, fontSize: '0.72rem', fontWeight: 700, background: cd.expired ? '#FEF2F2' : '#FFFBEB', color: cd.expired ? '#B91C1C' : '#B45309', border: `1px solid ${cd.expired ? '#FECACA' : '#FDE68A'}`, whiteSpace: 'nowrap' }}>
-                <Clock size={11} />{cd.label}
-              </span>
-            </div>
-          )
-        }
-        if (job.created_at) {
-          return (
-            <p style={{ fontFamily: fB, fontSize: '0.75rem', color: '#9CA3AF', margin: 0, paddingTop: '2px' }}>
-              Posted {timeAgo(job.created_at)}
-            </p>
-          )
-        }
-        return null
-      })()}
 
       {footer}
     </div>

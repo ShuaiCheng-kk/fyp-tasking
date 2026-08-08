@@ -1,7 +1,9 @@
 // LAYER: Repository
 // RULE: Supabase queries only. No business logic.
 
-import { supabase } from '@/lib/supabase'
+import { getSupabaseAdmin } from '@/lib/supabaseAdmin'
+
+const supabase = getSupabaseAdmin()
 
 export const casualInboxRepository = {
   async getUserByAuthId(authId: string): Promise<{ id: string; full_name: string } | null> {

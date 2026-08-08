@@ -3,12 +3,15 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { workerApplicationService } from '@/services/guest/workerApplicationService'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ applicationId: string }> }
 ) {
   const { applicationId } = await params
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
 
   let body: unknown
   try {
@@ -30,10 +33,11 @@ export async function PATCH(
   void applicationId
 
   try {
-    await workerApplicationService.respondToInvitation(invitation_id, response)
+    await workerApplicationService.respondToInvitation(invitation_id, response, session.user.id)
     return NextResponse.json({ success: true })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to respond to invitation'
-    return NextResponse.json({ success: false, message }, { status: 400 })
+    const status = message.includes('your own') ? 403 : 400
+    return NextResponse.json({ success: false, message }, { status })
   }
 }

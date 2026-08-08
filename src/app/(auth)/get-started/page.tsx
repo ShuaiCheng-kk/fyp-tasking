@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { createClient } from '@/lib/supabase';
+import { createClient } from '@/lib/supabaseBrowser';
 import { createBrowserClient } from '@supabase/ssr';
 import { isValidImageFile } from '@/lib/imageValidation';
 import { Building2, UserPlus, Eye, EyeOff, ChevronLeft, ChevronDown, Check, X } from 'lucide-react';
@@ -2602,7 +2602,7 @@ export default function GetStartedPage() {
                   {/* Pro plan */}
                   <div style={{
                     background: '#FFFFFF',
-                    border: '2px solid #F97316',
+                    border: '1.5px solid #F0E8D8',
                     borderRadius: '18px',
                     padding: '32px',
                     display: 'flex',

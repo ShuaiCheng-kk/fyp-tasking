@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { ownerInboxService } from '@/services/owner/ownerInboxService'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 export async function GET(req: NextRequest) {
   try {
@@ -9,6 +10,11 @@ export async function GET(req: NextRequest) {
     const last_announcement_read_at = searchParams.get('last_announcement_read_at')
     if (!user_id) {
       return NextResponse.json({ success: false, error: 'Missing user_id' }, { status: 400 })
+    }
+    const session = await getServerSessionUser()
+    if (!session) return NextResponse.json({ success: false, error: 'Not authenticated' }, { status: 401 })
+    if (user_id !== session.user.id && user_id !== session.auth_id) {
+      return NextResponse.json({ success: false, error: 'You can only view your own unread count' }, { status: 403 })
     }
     const result = await ownerInboxService.getUnreadCount(user_id, company_id, last_announcement_read_at)
     return NextResponse.json({ success: true, ...result })

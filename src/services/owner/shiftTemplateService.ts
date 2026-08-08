@@ -26,17 +26,19 @@ export const shiftTemplateService = {
     return shiftTemplateRepository.getTemplatesByCompany(company_id)
   },
 
-  async deleteTemplate(id: string): Promise<void> {
+  async deleteTemplate(id: string, company_id: string): Promise<void> {
     if (!id) throw new Error('Template id is required')
     const existing = await shiftTemplateRepository.getTemplateById(id)
     if (!existing) throw new Error('Template not found')
+    if (existing.company_id !== company_id) throw new Error('You can only manage your own company\'s templates')
     await shiftTemplateRepository.deleteTemplate(id)
   },
 
-  async updateTemplate(id: string, fields: Partial<Pick<ShiftTemplateInput, 'name' | 'start_time' | 'end_time'>>): Promise<ShiftTemplate> {
+  async updateTemplate(id: string, fields: Partial<Pick<ShiftTemplateInput, 'name' | 'start_time' | 'end_time'>>, company_id: string): Promise<ShiftTemplate> {
     if (!id) throw new Error('Template id is required')
     const existing = await shiftTemplateRepository.getTemplateById(id)
     if (!existing) throw new Error('Template not found')
+    if (existing.company_id !== company_id) throw new Error('You can only manage your own company\'s templates')
     const name = fields.name !== undefined ? fields.name.trim() : existing.name
     if (!name) throw new Error('Please name this template.')
     const start_time = fields.start_time ?? existing.start_time

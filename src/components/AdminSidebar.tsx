@@ -1,37 +1,55 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { usePathname } from 'next/navigation'
 import Link from 'next/link'
-import { FileText, LogOut, Settings, ChevronDown, ChevronRight } from 'lucide-react'
+import { FileText, LogOut, Star } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
-import { MarketingPageSummary } from '@/types/MarketingPage'
 
 const THEME = {
-  sidebarBg:         '#27272A',
-  sidebarText:       '#A1A1AA',
-  sidebarActiveBg:   '#3F3F46',
-  sidebarActiveText: '#FAFAFA',
-  sidebarHoverBg:    'rgba(255,255,255,0.06)',
-  sidebarBorder:     'rgba(255,255,255,0.1)',
-  logoBorder:        '#27272A',
-  subText:           '#71717A',
-  subActive:         '#FAFAFA',
-  subHover:          'rgba(255,255,255,0.06)',
+  sidebarBg:         '#FFFFFF',
+  sidebarText:       '#374151',
+  sidebarActiveBg:   'transparent',
+  sidebarActiveText: '#F97316',
+  sidebarHoverBg:    '#F9FAFB',
+  sidebarBorder:     '#E5E7EB',
+  logoBorder:        '#E5E7EB',
+  logoutHoverBg:     '#FEF2F2',
+  subText:           '#9CA3AF',
+  subActive:         '#F97316',
+  subHover:          '#F9FAFB',
 }
 
-interface Props {
-  pages?: MarketingPageSummary[]
-  selectedSlug?: string
-  onSelectSlug?: (slug: string) => void
-  loadingPages?: boolean
-}
-
-export default function AdminSidebar({ pages = [], selectedSlug = '', onSelectSlug, loadingPages }: Props) {
+export default function AdminSidebar() {
   const pathname = usePathname()
   const [expanded, setExpanded] = useState(false)
   const [hoveredKey, setHoveredKey] = useState<string | null>(null)
-  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({ marketingPages: false, products: true, about: true })
+  const [pendingReviewCount, setPendingReviewCount] = useState(0)
+
+  // Live-updates the Reviews nav dot so it reflects new pending reviews immediately,
+  // not just on next page load/navigation — matches the pending count shown on the
+  // Reviews page's own "Pending" tab.
+  useEffect(() => {
+    const supabase = createBrowserClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    )
+
+    const fetchPendingCount = () => {
+      fetch('/api/marketingadmin/reviews')
+        .then(r => r.json())
+        .then(d => { if (d.success) setPendingReviewCount((d.reviews ?? []).filter((r: { approved: boolean }) => !r.approved).length) })
+        .catch(() => {})
+    }
+    fetchPendingCount()
+
+    const channel = supabase
+      .channel('admin-sidebar-reviews')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'reviews' }, fetchPendingCount)
+      .subscribe()
+
+    return () => { supabase.removeChannel(channel) }
+  }, [])
 
   const handleLogout = async () => {
     const supabase = createBrowserClient(
@@ -42,51 +60,6 @@ export default function AdminSidebar({ pages = [], selectedSlug = '', onSelectSl
     localStorage.removeItem('tasking_user_id')
     localStorage.removeItem('tasking_company_id')
     window.location.href = '/signout'
-  }
-
-  const hasPageTree = onSelectSlug !== undefined
-
-  const PRODUCTS_ORDER = ['products-ai-features', 'products-recruitment', 'products-attendance', 'products-team-management', 'products-smart-notifications']
-  const productsParent = pages.find(p => p.slug === 'products')
-  const productsSubs   = PRODUCTS_ORDER.map(slug => pages.find(p => p.slug === slug)).filter(Boolean) as MarketingPageSummary[]
-  const ABOUT_ORDER = ['about-mission', 'about-problem-solution', 'about-team', 'about-faq']
-  const aboutParent    = pages.find(p => p.slug === 'about')
-  const aboutSubs      = ABOUT_ORDER.map(slug => pages.find(p => p.slug === slug)).filter(Boolean) as MarketingPageSummary[]
-  // Order: Home, Products (+subs), Industries, Pricing, About (+subs)
-  const STANDALONE_ORDER = ['industries', 'pricing']
-  const standalonePages = STANDALONE_ORDER
-    .map(slug => pages.find(p => p.slug === slug))
-    .filter(Boolean) as MarketingPageSummary[]
-
-  const toggleGroup = (key: string) =>
-    setOpenGroups(prev => ({ ...prev, [key]: !prev[key] }))
-
-  const pageBtn = (page: MarketingPageSummary, indent = false) => {
-    const active = page.slug === selectedSlug
-    return (
-      <button
-        key={page.id}
-        type="button"
-        onClick={() => onSelectSlug?.(page.slug)}
-        style={{
-          width: '100%', textAlign: 'left',
-          display: 'flex', alignItems: 'center', gap: 6,
-          padding: indent ? '6px 8px 6px 28px' : '6px 8px',
-          borderRadius: 7, border: 'none', cursor: 'pointer',
-          background: active ? THEME.sidebarActiveBg : 'transparent',
-          color: active ? THEME.subActive : THEME.sidebarText,
-          fontWeight: active ? 700 : 400,
-          fontSize: indent ? 12 : 13,
-          whiteSpace: 'nowrap',
-          transition: 'background 0.12s',
-        }}
-        onMouseEnter={e => { if (!active) e.currentTarget.style.background = THEME.subHover }}
-        onMouseLeave={e => { if (!active) e.currentTarget.style.background = 'transparent' }}
-      >
-        {active && <span style={{ width: 3, height: 12, borderRadius: 2, background: THEME.subActive, flexShrink: 0 }} />}
-        {page.title}
-      </button>
-    )
   }
 
   return (
@@ -106,6 +79,10 @@ export default function AdminSidebar({ pages = [], selectedSlug = '', onSelectSl
         transition: 'width 0.22s cubic-bezier(0.4,0,0.2,1)',
         overflow: 'hidden',
         flexShrink: 0,
+        // The admin <main> wrapper forces Inter for the editor UI, but the sidebar
+        // should render in the same default sans stack as OwnerSidebar (which never
+        // overrides font-family) so the nav labels look identical to Owner's.
+        fontFamily: "ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji'",
       }}
     >
       {/* Logo */}
@@ -127,7 +104,7 @@ export default function AdminSidebar({ pages = [], selectedSlug = '', onSelectSl
           <path d="M20.3 10.25L21.5 11.5L23.8 9" stroke="white" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
         <span style={{
-          fontWeight: 700, fontSize: '1.0625rem', color: '#FFFFFF',
+          fontWeight: 700, fontSize: '1.0625rem', color: THEME.sidebarText,
           letterSpacing: '-0.01em', whiteSpace: 'nowrap',
           opacity: expanded ? 1 : 0, transition: 'opacity 0.15s',
         }}>
@@ -138,96 +115,12 @@ export default function AdminSidebar({ pages = [], selectedSlug = '', onSelectSl
       {/* Scrollable body */}
       <div className="admin-sidebar-body" style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', display: 'flex', flexDirection: 'column', scrollbarWidth: 'none' } as React.CSSProperties}>
 
-        {/* Marketing Pages + page tree */}
-        <div style={{ padding: '12px 8px 0' }}>
-          <div style={{ display: 'flex', alignItems: 'center', marginBottom: 2 }}>
-            <a
-              href="/admin/dashboard"
-              onMouseEnter={() => setHoveredKey('marketing')}
-              onMouseLeave={() => setHoveredKey(null)}
-              style={{
-                flex: 1, display: 'flex', alignItems: 'center', gap: '10px',
-                padding: '10px 12px', borderRadius: '8px',
-                background: pathname === '/admin/dashboard' ? THEME.sidebarActiveBg : hoveredKey === 'marketing' ? THEME.sidebarHoverBg : 'transparent',
-                color: pathname === '/admin/dashboard' ? THEME.sidebarActiveText : THEME.sidebarText,
-                fontWeight: pathname === '/admin/dashboard' ? 600 : 500,
-                fontSize: '0.9rem', textDecoration: 'none', whiteSpace: 'nowrap',
-              }}
-            >
-              <FileText size={18} strokeWidth={2.1} style={{ display: 'block', flexShrink: 0 }} />
-              <span style={{ opacity: expanded ? 1 : 0, maxWidth: expanded ? 200 : 0, overflow: 'hidden', transition: 'opacity 0.15s' }}>Marketing Pages</span>
-            </a>
-            {hasPageTree && expanded && (
-              <button type="button" onClick={() => toggleGroup('marketingPages')}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: THEME.subText, padding: '0 6px', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
-                {openGroups.marketingPages ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-              </button>
-            )}
-          </div>
-
-          {/* Page tree — shown only when expanded and props provided */}
-          {hasPageTree && openGroups.marketingPages && (
-            <div style={{
-              opacity: expanded ? 1 : 0,
-              transition: 'opacity 0.15s',
-              pointerEvents: expanded ? 'auto' : 'none',
-              paddingLeft: 8,
-              borderLeft: `1.5px solid ${THEME.sidebarBorder}`,
-              marginLeft: 20,
-              marginBottom: 8,
-            }}>
-              {loadingPages ? (
-                <p style={{ fontSize: 12, color: THEME.subText, padding: '4px 8px', whiteSpace: 'nowrap' }}>Loading…</p>
-              ) : (
-                <>
-                  {/* Home */}
-                  {pages.find(p => p.slug === 'home') && pageBtn(pages.find(p => p.slug === 'home')!, false)}
-
-                  {/* Products group */}
-                  {productsParent && (
-                    <div>
-                      <div style={{ display: 'flex', alignItems: 'center' }}>
-                        <div style={{ flex: 1 }}>{pageBtn(productsParent, false)}</div>
-                        {productsSubs.length > 0 && (
-                          <button type="button" onClick={() => toggleGroup('products')}
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: THEME.subText, padding: '0 4px', display: 'flex', alignItems: 'center' }}>
-                            {openGroups.products ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                          </button>
-                        )}
-                      </div>
-                      {openGroups.products && productsSubs.map(p => pageBtn(p, true))}
-                    </div>
-                  )}
-
-                  {/* Industries, Pricing */}
-                  {standalonePages.map(p => pageBtn(p, false))}
-
-                  {/* About group */}
-                  {aboutParent && (
-                    <div>
-                      <div style={{ display: 'flex', alignItems: 'center' }}>
-                        <div style={{ flex: 1 }}>{pageBtn(aboutParent, false)}</div>
-                        {aboutSubs.length > 0 && (
-                          <button type="button" onClick={() => toggleGroup('about')}
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: THEME.subText, padding: '0 4px', display: 'flex', alignItems: 'center' }}>
-                            {openGroups.about ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                          </button>
-                        )}
-                      </div>
-                      {openGroups.about && aboutSubs.map(p => pageBtn(p, true))}
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Other nav items */}
-        <div style={{ padding: '0 8px 12px' }}>
+        {/* Nav items — page selection now lives in the editor's own title dropdown, not here */}
+        <div style={{ padding: '12px 8px' }}>
           {[
-            { label: 'Settings', Icon: Settings, href: '/admin/settings', external: false },
-          ].map(({ label, Icon, href, external }) => (
+            { label: 'Editor', Icon: FileText, href: '/admin/dashboard', external: false, showDot: false },
+            { label: 'Reviews', Icon: Star, href: '/admin/reviews', external: false, showDot: pendingReviewCount > 0 },
+          ].map(({ label, Icon, href, external, showDot }) => (
             <a
               key={label}
               href={href}
@@ -239,13 +132,23 @@ export default function AdminSidebar({ pages = [], selectedSlug = '', onSelectSl
                 display: 'flex', alignItems: 'center', gap: '10px',
                 padding: '10px 12px', borderRadius: '8px', marginBottom: 2,
                 background: pathname === href ? THEME.sidebarActiveBg : hoveredKey === label ? THEME.sidebarHoverBg : 'transparent',
+                border: pathname === href ? `1.5px solid ${THEME.sidebarActiveText}` : '1.5px solid transparent',
                 color: pathname === href ? THEME.sidebarActiveText : THEME.sidebarText,
                 fontWeight: pathname === href ? 600 : 500,
                 fontSize: '0.9rem',
                 textDecoration: 'none', whiteSpace: 'nowrap',
               }}
             >
-              <Icon size={18} strokeWidth={2.1} style={{ display: 'block', flexShrink: 0 }} />
+              <span style={{ position: 'relative', flexShrink: 0 }}>
+                <Icon size={18} strokeWidth={2.1} style={{ display: 'block' }} />
+                {showDot && (
+                  <span style={{
+                    position: 'absolute', top: -3, right: -3,
+                    width: 8, height: 8, borderRadius: '50%',
+                    background: '#EF4444', border: '1.5px solid #fff',
+                  }} />
+                )}
+              </span>
               <span style={{ opacity: expanded ? 1 : 0, maxWidth: expanded ? 200 : 0, overflow: 'hidden', transition: 'opacity 0.15s' }}>{label}</span>
             </a>
           ))}
@@ -262,8 +165,8 @@ export default function AdminSidebar({ pages = [], selectedSlug = '', onSelectSl
           style={{
             display: 'flex', alignItems: 'center', gap: '10px',
             width: '100%', padding: '10px 12px', borderRadius: '8px',
-            background: hoveredKey === 'logout' ? 'rgba(248,113,113,0.1)' : 'transparent',
-            border: 'none', color: '#F87171', cursor: 'pointer',
+            background: hoveredKey === 'logout' ? THEME.logoutHoverBg : 'transparent',
+            border: 'none', color: '#DC2626', cursor: 'pointer',
             fontSize: '0.9rem', fontWeight: 500, whiteSpace: 'nowrap',
             transition: 'background 0.15s',
           }}

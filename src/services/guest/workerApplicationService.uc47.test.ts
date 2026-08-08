@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
+vi.mock('@/lib/supabaseAdmin', () => ({
+  getSupabaseAdmin: () => ({}),
+}))
+
 vi.mock('@/lib/supabase', () => ({
   supabase: {},
   createClient: () => ({}),
@@ -10,6 +14,7 @@ vi.mock('@/repositories/guest/workerApplicationRepository', () => ({
     updateInvitationStatus: vi.fn(),
     getInvitationBasic: vi.fn(),
     updateApplicantStatusById: vi.fn(),
+    getApplicationOwner: vi.fn(),
   },
 }))
 
@@ -32,9 +37,10 @@ describe('UC47 Reject Job Offer', () => {
   it('UC47-M-UT-GU: Guest User declines a pending job invitation', async () => {
     vi.mocked(workerApplicationRepository.updateInvitationStatus).mockResolvedValue(undefined as never)
     vi.mocked(workerApplicationRepository.getInvitationBasic).mockResolvedValue({ applicant_id: 'app-1' } as never)
+    vi.mocked(workerApplicationRepository.getApplicationOwner).mockResolvedValue({ user_id: 'guest-1' } as never)
     vi.mocked(workerApplicationRepository.updateApplicantStatusById).mockResolvedValue(undefined as never)
 
-    await workerApplicationService.respondToInvitation('inv-1', 'declined')
+    await workerApplicationService.respondToInvitation('inv-1', 'declined', 'guest-1')
 
     expect(workerApplicationRepository.updateInvitationStatus).toHaveBeenCalledWith('inv-1', 'declined')
     expect(workerApplicationRepository.updateApplicantStatusById).toHaveBeenCalledWith('app-1', 'withdrawn')

@@ -4,17 +4,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { ownerTeamService } from '@/services/owner/ownerTeamService'
 import { userService } from '@/services/auth/userService'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 export async function PATCH(req: NextRequest) {
   try {
     const body = await req.json()
-    const { user_id, department_id, company_id, requester_user_id } = body
+    const { user_id, department_id, company_id } = body
 
-    if (!requester_user_id || typeof requester_user_id !== 'string') {
-      return NextResponse.json({ success: false, message: 'requester_user_id is required' }, { status: 400 })
-    }
+    const session = await getServerSessionUser()
+    if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
     try {
-      await userService.assertOwnerRole(requester_user_id)
+      await userService.assertOwnerRole(session.user.id)
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Forbidden'
       return NextResponse.json({ success: false, message }, { status: 403 })
