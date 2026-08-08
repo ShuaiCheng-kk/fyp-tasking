@@ -29,6 +29,8 @@ const baseTask = {
   sequence_order: null,
   title: 'Restock shelves',
   description: null,
+  assigned_user_id: null,
+  assigned_by: null,
   status: 'Assigned' as const,
   priority: 'Medium',
   due_at: null,

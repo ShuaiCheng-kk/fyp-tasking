@@ -35,7 +35,7 @@ export async function createDepartment(companyId: string, name: string): Promise
 export async function createCompanyMember(input: {
   companyId: string
   departmentId?: string
-  role: 'Partner' | 'Manager' | 'Employee'
+  role: 'Partner' | 'Manager' | 'Employee' | 'Casual Worker'
   label: string
 }): Promise<SeededMember> {
   const email = `test-module1-e2e-${input.label}-${Date.now()}-${Math.floor(Math.random() * 10000)}@tasking-tests.local`
