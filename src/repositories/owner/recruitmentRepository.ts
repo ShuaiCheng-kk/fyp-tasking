@@ -1,7 +1,9 @@
 // LAYER: Repository
 // RULE: Supabase queries only. No business logic.
 
-import { supabase } from '@/lib/supabase'
+import { getSupabaseAdmin } from '@/lib/supabaseAdmin'
+
+const supabase = getSupabaseAdmin()
 import { ApplicantCertificateSnapshot, JobApplicant, JobInvitation, JobPosting, JobPostingInput, JobPostingPendingApproval, PoolWorker } from '@/types/Recruitment'
 
 export const recruitmentRepository = {

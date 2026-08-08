@@ -3,12 +3,18 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { employeeAttendanceService } from '@/services/employee/employeeAttendanceService'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 export async function GET(req: NextRequest) {
   const user_id = req.nextUrl.searchParams.get('user_id')
   const resource = req.nextUrl.searchParams.get('resource')
   if (!user_id) {
     return NextResponse.json({ success: false, message: 'user_id is required' }, { status: 400 })
+  }
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+  if (user_id !== session.user.id && user_id !== session.auth_id) {
+    return NextResponse.json({ success: false, message: 'You can only view your own attendance' }, { status: 403 })
   }
   try {
     if (resource === 'my_shift') {
@@ -44,6 +50,11 @@ export async function POST(req: NextRequest) {
   const b = body as Record<string, unknown>
   if (typeof b.user_id !== 'string' || !b.user_id) {
     return NextResponse.json({ success: false, message: 'user_id is required' }, { status: 400 })
+  }
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+  if (b.user_id !== session.user.id && b.user_id !== session.auth_id) {
+    return NextResponse.json({ success: false, message: 'You can only act on your own attendance' }, { status: 403 })
   }
 
   try {

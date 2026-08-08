@@ -1,7 +1,9 @@
 // LAYER: Repository
 // RULE: Supabase queries only. No business logic.
 
-import { supabase } from '@/lib/supabase'
+import { getSupabaseAdmin } from '@/lib/supabaseAdmin'
+
+const supabase = getSupabaseAdmin()
 import { TaskTemplate, TaskTemplateInput, TaskTemplateUpdateInput } from '@/types/TaskTemplate'
 
 export const taskTemplateRepository = {

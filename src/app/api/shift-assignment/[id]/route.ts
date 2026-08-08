@@ -3,6 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { shiftService } from '@/services/owner/shiftService'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 export async function DELETE(
   req: NextRequest,
@@ -11,11 +12,15 @@ export async function DELETE(
   const { id } = await params
   if (!id) return NextResponse.json({ success: false, message: 'id is required' }, { status: 400 })
 
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+
   try {
-    await shiftService.deleteShiftAssignment(id)
+    await shiftService.deleteShiftAssignment(id, session.user.company_id ?? '')
     return NextResponse.json({ success: true }, { status: 200 })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to delete shift assignment'
-    return NextResponse.json({ success: false, message }, { status: 400 })
+    const status = message.includes('own company') ? 403 : 400
+    return NextResponse.json({ success: false, message }, { status })
   }
 }

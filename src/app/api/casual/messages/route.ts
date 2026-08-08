@@ -3,12 +3,18 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { casualInboxService } from '@/services/casual/casualInboxService'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 export async function GET(req: NextRequest) {
   const user_id = req.nextUrl.searchParams.get('user_id')
   const other_user_id = req.nextUrl.searchParams.get('other_user_id')
   if (!user_id || !other_user_id) {
     return NextResponse.json({ success: false, message: 'user_id and other_user_id are required' }, { status: 400 })
+  }
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+  if (user_id !== session.user.id && user_id !== session.auth_id) {
+    return NextResponse.json({ success: false, message: 'You can only view your own messages' }, { status: 403 })
   }
   try {
     const { messages, self_id } = await casualInboxService.getMessages(user_id, other_user_id)
@@ -39,6 +45,11 @@ export async function POST(req: NextRequest) {
   }
   if (typeof b.content !== 'string' || !b.content.trim()) {
     return NextResponse.json({ success: false, message: 'content is required' }, { status: 400 })
+  }
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+  if (b.user_id !== session.user.id && b.user_id !== session.auth_id) {
+    return NextResponse.json({ success: false, message: 'You can only send messages as yourself' }, { status: 403 })
   }
 
   try {

@@ -3,6 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { availabilityService } from '@/services/user/availabilityService'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 export async function POST(req: NextRequest) {
   let body: unknown
@@ -16,8 +17,10 @@ export async function POST(req: NextRequest) {
   if (typeof b.company_id !== 'string' || !b.company_id) {
     return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
   }
-  if (typeof b.requester_id !== 'string' || !b.requester_id) {
-    return NextResponse.json({ success: false, message: 'requester_id is required' }, { status: 400 })
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+  if (session.user.company_id !== b.company_id) {
+    return NextResponse.json({ success: false, message: 'You can only submit requests for your own company' }, { status: 403 })
   }
 
   try {
@@ -27,7 +30,7 @@ export async function POST(req: NextRequest) {
     ) {
       const request = await availabilityService.submitLegacyShiftSwapRequest({
         company_id: b.company_id,
-        requester_id: b.requester_id,
+        requester_id: session.user.id,
         shift_assignment_id: b.shift_assignment_id,
         replacement_user_id: b.replacement_user_id,
         reason: typeof b.reason === 'string' ? b.reason : null,
@@ -47,7 +50,7 @@ export async function POST(req: NextRequest) {
 
     const request = await availabilityService.submitShiftSwapRequest({
       company_id: b.company_id,
-      requester_id: b.requester_id,
+      requester_id: session.user.id,
       requester_assignment_id: b.requester_assignment_id,
       counterpart_id: b.counterpart_id,
       counterpart_assignment_id: b.counterpart_assignment_id,

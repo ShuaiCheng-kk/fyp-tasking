@@ -3,6 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { shiftService } from '@/services/owner/shiftService'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 export async function POST(
   req: NextRequest,
@@ -10,6 +11,9 @@ export async function POST(
 ) {
   const { id } = await params
   if (!id) return NextResponse.json({ success: false, message: 'id is required' }, { status: 400 })
+
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
 
   let body: unknown
   try {
@@ -22,7 +26,6 @@ export async function POST(
     recurrence_rule,
     recurrence_end_date,
     custom_interval_days,
-    created_by,
     assigned_user_id,
   } = body as Record<string, unknown>
 
@@ -32,16 +35,13 @@ export async function POST(
   if (typeof recurrence_end_date !== 'string' || !recurrence_end_date) {
     return NextResponse.json({ success: false, message: 'recurrence_end_date is required' }, { status: 400 })
   }
-  if (typeof created_by !== 'string' || !created_by) {
-    return NextResponse.json({ success: false, message: 'created_by is required' }, { status: 400 })
-  }
 
   try {
     const shifts = await shiftService.createRecurringShifts(id, {
       recurrence_rule,
       recurrence_end_date,
       custom_interval_days: typeof custom_interval_days === 'number' ? custom_interval_days : undefined,
-      created_by,
+      created_by: session.user.id,
       assigned_user_id: typeof assigned_user_id === 'string' && assigned_user_id ? assigned_user_id : null,
     })
     return NextResponse.json({ success: true, shifts }, { status: 201 })

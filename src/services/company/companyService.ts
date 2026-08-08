@@ -87,14 +87,18 @@ export const companyService = {
     await companyRepository.updatePlanByOwnerId(company.owner_id, plan)
   },
 
-  async updateDepartment(department_id: string, name: string, color?: string | null): Promise<void> {
+  async updateDepartment(department_id: string, name: string, color: string | null | undefined, company_id: string): Promise<void> {
     const current = await departmentRepository.findById(department_id)
     if (!current) throw new Error('Department not found')
+    if (current.company_id !== company_id) throw new Error('You can only manage your own company\'s departments')
     const validName = await validateDepartmentName(current.company_id, name, department_id)
     await departmentRepository.updateById(department_id, validName, color)
   },
 
-  async deleteDepartment(department_id: string): Promise<void> {
+  async deleteDepartment(department_id: string, company_id: string): Promise<void> {
+    const current = await departmentRepository.findById(department_id)
+    if (!current) throw new Error('Department not found')
+    if (current.company_id !== company_id) throw new Error('You can only manage your own company\'s departments')
     const memberCount = await departmentRepository.countMembers(department_id)
     if (memberCount > 0) throw new Error('Department still has active members. Reassign or remove all members before deleting this department.')
     await departmentRepository.deleteById(department_id)
@@ -107,7 +111,7 @@ export const companyService = {
   },
 
   async getManagersByDepartment(company_id: string, department_id: string): Promise<{ id: string; full_name: string }[]> {
-    const { supabase } = await import('@/lib/supabase')
+    const supabase = getSupabaseAdmin()
     const { data, error } = await supabase
       .from('manager_departments')
       .select('manager_id, users!manager_departments_manager_id_fkey!inner(id, full_name)')
@@ -121,7 +125,7 @@ export const companyService = {
   },
 
   async getAllManagersByCompany(company_id: string): Promise<{ id: string; full_name: string; department_id: string | null }[]> {
-    const { supabase } = await import('@/lib/supabase')
+    const supabase = getSupabaseAdmin()
     const { data, error } = await supabase
       .from('users')
       .select('id, full_name, manager_departments!manager_departments_manager_id_fkey(department_id)')

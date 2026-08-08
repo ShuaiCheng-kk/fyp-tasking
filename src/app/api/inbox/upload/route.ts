@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 const serviceSupabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -14,6 +15,11 @@ export async function POST(req: NextRequest) {
 
     if (!file || !companyId) {
       return NextResponse.json({ success: false, error: 'Missing file or company_id' }, { status: 400 })
+    }
+    const session = await getServerSessionUser()
+    if (!session) return NextResponse.json({ success: false, error: 'Not authenticated' }, { status: 401 })
+    if (session.user.company_id !== companyId) {
+      return NextResponse.json({ success: false, error: 'You can only upload for your own company' }, { status: 403 })
     }
 
     const ext = file.name.split('.').pop() ?? 'bin'

@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { schedulingRuleService } from '@/services/owner/schedulingRuleService'
 import { ShiftTypeInput } from '@/types/SchedulingRule'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 function normalizeDateKey(value: string) {
   const trimmed = value.trim().replace(/[^\d/-]/g, '')
@@ -55,8 +56,11 @@ export async function POST(req: NextRequest) {
   const b = body as Record<string, unknown>
   if (typeof b.company_id !== 'string' || !b.company_id)
     return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
-  if (typeof b.user_id !== 'string' || !b.user_id)
-    return NextResponse.json({ success: false, message: 'user_id is required' }, { status: 400 })
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+  if (session.user.company_id !== b.company_id) {
+    return NextResponse.json({ success: false, message: 'You can only generate schedules for your own company' }, { status: 403 })
+  }
   if (typeof b.date_from !== 'string' || !b.date_from)
     return NextResponse.json({ success: false, message: 'date_from is required' }, { status: 400 })
   if (typeof b.date_to !== 'string' || !b.date_to)
@@ -101,7 +105,7 @@ export async function POST(req: NextRequest) {
         const result = await schedulingRuleService.generateScheduleWithAIStream(
           {
             company_id: b.company_id as string,
-            user_id: b.user_id as string,
+            user_id: session.user.id,
             date_from: dateFrom,
             date_to: dateTo,
             department_ids: b.department_ids as string[],

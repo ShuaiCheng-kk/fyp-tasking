@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { aiTaskAssignService } from '@/services/owner/aiTaskAssignService'
 import { taskService } from '@/services/owner/taskService'
 import { employeeDashboardService } from '@/services/employee/employeeDashboardService'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 export async function POST(req: NextRequest) {
   let body: unknown
@@ -17,6 +18,11 @@ export async function POST(req: NextRequest) {
   const b = body as Record<string, unknown>
   if (typeof b.company_id !== 'string' || !b.company_id) {
     return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
+  }
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+  if (session.user.company_id !== b.company_id) {
+    return NextResponse.json({ success: false, message: 'You can only use this for your own company' }, { status: 403 })
   }
   if (typeof b.title !== 'string' || !b.title.trim()) {
     return NextResponse.json({ success: false, message: 'title is required' }, { status: 400 })

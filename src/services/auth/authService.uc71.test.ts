@@ -3,6 +3,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const getUserByIdMock = vi.fn()
 const signInWithPasswordMock = vi.fn()
 
+vi.mock('@/lib/supabaseAdmin', () => ({
+  getSupabaseAdmin: () => ({}),
+}))
+
 vi.mock('@/lib/supabase', () => ({
   supabase: {
     auth: {

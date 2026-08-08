@@ -19,6 +19,10 @@
  * against casual1@test.com's ready-to-clock-in shift, so it can only succeed once
  * per seed run. Re-run `node scripts/seed.js` before running this script again if
  * you need a fresh successful clock-in measurement.
+ *
+ * Every route now requires a real server-side session (see src/lib/serverAuth.ts),
+ * so this script signs in for real and replays the resulting Set-Cookie header on
+ * every subsequent request for that user, the same way a browser would.
  */
 
 const BASE_URL = process.env.BASE_URL || 'http://localhost:3000'
@@ -29,6 +33,11 @@ const PASSWORD = '111111'
 
 function pad(str, len) {
   return String(str).padEnd(len)
+}
+
+function withCookie(options, cookie) {
+  if (!cookie) return options
+  return { ...options, headers: { ...(options?.headers ?? {}), Cookie: cookie } }
 }
 
 async function timeRequest(url, options) {
@@ -54,10 +63,10 @@ async function benchmark(label, url, options, repeats = REPEATS) {
   return { label, repeats, avg, min, max, p95 }
 }
 
-async function concurrentBenchmark(label, url, concurrency = CONCURRENCY) {
+async function concurrentBenchmark(label, url, options, concurrency = CONCURRENCY) {
   const wallStart = performance.now()
   const settled = await Promise.all(
-    Array.from({ length: concurrency }, () => timeRequest(url))
+    Array.from({ length: concurrency }, () => timeRequest(url, options))
   )
   const wallElapsed = performance.now() - wallStart
   settled.forEach((r, i) => {
@@ -88,106 +97,124 @@ async function signIn(email) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email_address: email, password: PASSWORD }),
-  }).then(r => r.json())
-  if (!res.success) {
-    console.error(`Sign-in failed for ${email}: ${res.message}`)
+  })
+  const body = await res.json()
+  if (!body.success) {
+    console.error(`Sign-in failed for ${email}: ${body.message}`)
     process.exit(1)
   }
-  return res.user
+  const setCookies = res.headers.getSetCookie?.() ?? []
+  const cookie = setCookies.map(c => c.split(';')[0]).join('; ')
+  return { user: body.user, cookie }
 }
 
 async function main() {
   console.log(`Performance test against ${BASE_URL}`)
   console.log(`Requirement: concurrent access without significant latency; clock-in/out and schedule retrieval within ${THRESHOLD_MS}ms.\n`)
 
-  const owner = await signIn('owner@test.com')
-  const casual = await signIn('casual1@test.com')
+  const ownerEmail = process.env.OWNER_EMAIL || 'owner@test.com'
+  const casualEmail = process.env.CASUAL_EMAIL || 'casual1@test.com'
+  const owner = await signIn(ownerEmail)
+  const casual = await signIn(casualEmail)
+  const ownerId = owner.user.company_id
+  const casualAuthId = casual.user.auth_id
 
   const today = new Date()
   const dateFrom = new Date(today.getTime() - 14 * 86400000).toISOString().slice(0, 10)
   const dateTo = new Date(today.getTime() + 14 * 86400000).toISOString().slice(0, 10)
 
-  const scheduleUrl = `${BASE_URL}/api/shift?company_id=${owner.company_id}&date_from=${dateFrom}&date_to=${dateTo}`
+  const scheduleUrl = `${BASE_URL}/api/shift?company_id=${ownerId}&date_from=${dateFrom}&date_to=${dateTo}`
+  const ownerOpts = withCookie({}, owner.cookie)
+  const casualOpts = withCookie({}, casual.cookie)
 
   console.log('--- Sequential, one endpoint per module ---')
   const results = []
+  let allPass = true
 
-  results.push(await benchmark(
-    'Module 1 Shift: schedule retrieval',
-    scheduleUrl,
-  ))
+  async function run(promise) {
+    const result = await promise
+    const pass = report(result)
+    allPass = allPass && pass
+    results.push(result)
+    return result
+  }
 
-  results.push(await benchmark(
+  await run(benchmark('Module 1 Shift: schedule retrieval', scheduleUrl, ownerOpts))
+
+  await run(benchmark(
     'Module 2 Task: kanban board',
-    `${BASE_URL}/api/task?company_id=${owner.company_id}&kanban=true`,
+    `${BASE_URL}/api/task?company_id=${ownerId}&kanban=true`,
+    ownerOpts,
   ))
 
-  results.push(await benchmark(
+  await run(benchmark(
     'Module 3 Team: member list',
-    `${BASE_URL}/api/team/members?company_id=${owner.company_id}`,
+    `${BASE_URL}/api/team/members?company_id=${ownerId}`,
+    ownerOpts,
   ))
 
-  results.push(await benchmark(
+  await run(benchmark(
     'Module 4 Recruitment: job postings',
-    `${BASE_URL}/api/recruitment?company_id=${owner.company_id}`,
+    `${BASE_URL}/api/recruitment?company_id=${ownerId}`,
+    ownerOpts,
   ))
 
-  results.push(await benchmark(
+  await run(benchmark(
     'Module 5 Attendance: retrieval',
-    `${BASE_URL}/api/casual/attendance?user_id=${casual.auth_id}`,
+    `${BASE_URL}/api/casual/attendance?user_id=${casualAuthId}`,
+    casualOpts,
   ))
 
-  results.push(await benchmark(
+  await run(benchmark(
     'Module 6 Communication: announcements',
-    `${BASE_URL}/api/inbox/announcements?company_id=${owner.company_id}`,
+    `${BASE_URL}/api/inbox/announcements?company_id=${ownerId}`,
+    ownerOpts,
   ))
 
-  results.push(await benchmark(
+  await run(benchmark(
     'Module 7 Report: company report',
-    `${BASE_URL}/api/report/company?company_id=${owner.company_id}&date_from=${dateFrom}&date_to=${dateTo}`,
+    `${BASE_URL}/api/report/company?company_id=${ownerId}&date_from=${dateFrom}&date_to=${dateTo}`,
+    ownerOpts,
   ))
 
-  results.push(await benchmark(
+  await run(benchmark(
     'Module 8 Auth: sign-in',
     `${BASE_URL}/api/auth/signin`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email_address: 'owner@test.com', password: PASSWORD }),
+      body: JSON.stringify({ email_address: ownerEmail, password: PASSWORD }),
     },
     5,
   ))
 
   console.log('')
-  console.log(`--- Clock-in/out (named explicitly in the requirement) ---`)
-  const attendance = await fetch(`${BASE_URL}/api/casual/attendance?user_id=${casual.auth_id}`).then(r => r.json())
+  console.log('--- Clock-in/out (named explicitly in the requirement) ---')
+  const attendance = await fetch(`${BASE_URL}/api/casual/attendance?user_id=${casualAuthId}`, casualOpts).then(r => r.json())
   const readyShift = attendance.attendance?.shifts?.find(s => !s.record?.clock_in_time)
 
   if (!readyShift) {
-    console.log('! No un-clocked-in shift found for casual1@test.com. Run `node scripts/seed.js` again before this script, skipping the clock-in measurement.\n')
+    console.log('! No un-clocked-in shift found for casual1@test.com. Run `node scripts/seed.js` again before this script, skipping the clock-in measurement.')
   } else {
-    results.push(await benchmark(
+    await run(benchmark(
       'Clock-in (POST /api/casual/attendance)',
       `${BASE_URL}/api/casual/attendance`,
-      {
+      withCookie({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          user_id: casual.auth_id,
+          user_id: casualAuthId,
           shift_assignment_id: readyShift.assignment.id,
           action: 'clock_in',
         }),
-      },
+      }, casual.cookie),
       1, // real write, can only run once per seed
     ))
   }
 
   console.log('')
   console.log(`--- Concurrent access: ${CONCURRENCY} simultaneous requests (schedule retrieval) ---`)
-  results.push(await concurrentBenchmark('Concurrent schedule retrieval', scheduleUrl))
-
-  console.log('')
-  const allPass = results.map(report).every(Boolean)
+  await run(concurrentBenchmark('Concurrent schedule retrieval', scheduleUrl, ownerOpts))
 
   console.log('')
   console.log(allPass

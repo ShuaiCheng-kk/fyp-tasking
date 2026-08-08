@@ -2,9 +2,9 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
-import { Zap, Shield, Star, Search, Briefcase, ChevronDown, LogIn, UserPlus } from 'lucide-react';
+import { Search, Briefcase, ChevronDown, LogIn, UserPlus } from 'lucide-react';
 import { createBrowserClient } from '@supabase/ssr';
-import { hero, search, whyTasking, listings } from './content';
+import { hero, search, listings } from './content';
 import { JobPosting as BaseJobPosting } from '@/types/Recruitment';
 import ApplyJobModal from '@/components/guest/ApplyJobModal';
 import Toast from '@/components/Toast';
@@ -28,11 +28,6 @@ type JobPosting = BaseJobPosting & { department_name: string | null; job_type: s
 
 const fH = 'var(--font-heading)';
 const fB = 'var(--font-body)';
-
-// ─── Icon map ─────────────────────────────────────────────────────────────────
-
-const iconMap = { Zap, Shield, Star } as const;
-type IconName = keyof typeof iconMap;
 
 // ─── Tab type ─────────────────────────────────────────────────────────────────
 
@@ -318,42 +313,6 @@ export default function JobBoardPage() {
           }}>
             {hero.subheadline}
           </p>
-        </div>
-      </section>
-
-      {/* ========== WHY TASKING ========== */}
-      <section className="page-section" style={{ background: '#FFFFFF', padding: '80px 0' }}>
-        <div className="section-inner" style={{ maxWidth: '1280px', margin: '0 auto', padding: '0 24px' }}>
-          <div style={{ textAlign: 'center', marginBottom: '52px' }}>
-            <h2 className="sub-h2" style={{ fontFamily: fH, fontWeight: 700, fontSize: '2.25rem', color: '#1C1917' }}>
-              {whyTasking.sectionTitle}
-            </h2>
-          </div>
-          <div className="grid-features-3" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '28px' }}>
-            {whyTasking.cards.map(({ iconName, title, body }) => {
-              const Icon = iconMap[iconName as IconName];
-              return (
-                <div key={title} style={{
-                  background: '#FFFBF5', border: '1px solid #F0E8D8',
-                  borderRadius: '16px', padding: '32px',
-                }}>
-                  <div style={{
-                    width: 48, height: 48, background: 'rgba(249,115,22,0.1)',
-                    borderRadius: '12px', display: 'flex', alignItems: 'center',
-                    justifyContent: 'center', marginBottom: '20px',
-                  }}>
-                    <Icon size={22} color="#F97316" strokeWidth={2} />
-                  </div>
-                  <h3 style={{ fontFamily: fH, fontWeight: 700, fontSize: '1.125rem', color: '#1C1917', marginBottom: '10px' }}>
-                    {title}
-                  </h3>
-                  <p style={{ fontFamily: fB, fontSize: '0.9375rem', color: '#78716C', lineHeight: 1.75 }}>
-                    {body}
-                  </p>
-                </div>
-              );
-            })}
-          </div>
         </div>
       </section>
 

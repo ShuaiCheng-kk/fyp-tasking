@@ -1,7 +1,9 @@
 // LAYER: Repository
 // RULE: DB access only. Supabase queries only. No business logic.
 
-import { supabase } from '@/lib/supabase'
+import { getSupabaseAdmin } from '@/lib/supabaseAdmin'
+
+const supabase = getSupabaseAdmin()
 
 export const casualWorkerStatusRepository = {
   // Per-company ban: stamp (or clear) inactive_at on every casualworker_departments row this worker

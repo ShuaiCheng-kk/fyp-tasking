@@ -37,6 +37,21 @@ a {
   transform: scale(0.97) !important;
 }
 
+/* ── Hero scroll-hint button (down arrow) — keeps its own translateX(-50%) centering,
+   so hover/press motion must animate the Y component only, never swap out the transform ── */
+.hero-scroll-hint {
+  transform: translate(-50%, 0);
+  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.25s ease;
+}
+.hero-scroll-hint:hover {
+  transform: translate(-50%, 6px);
+  box-shadow: 0 6px 22px rgba(249,115,22,0.55);
+}
+.hero-scroll-hint:active {
+  transform: translate(-50%, 10px) scale(0.94);
+}
+
+
 /* ── CTA shimmer sweep ── */
 @keyframes shimmer-sweep {
   0%   { background-position: -200% center; }
@@ -98,6 +113,22 @@ a {
   background-size: 200% auto !important;
   animation: off-shimmer 1.2s linear infinite;
   transform: scaleY(1.08);
+}
+
+/* ── Pricing "See all features" toggle hover ── */
+.see-all-features-btn {
+  transition: color 0.15s ease;
+}
+.see-all-features-btn:hover {
+  color: #C2410C !important;
+}
+
+/* ── Pricing comparison-table module header hover ── */
+.comparison-module-header {
+  transition: background 0.15s ease;
+}
+.comparison-module-header:hover {
+  background: #33302C !important;
 }
 
 /* ── Timeline row hover ── */
@@ -260,6 +291,31 @@ a {
     padding-right: 20px !important;
   }
 
+  /* Sticky scroll-narrative section: stack vertically, drop the pin — on a narrow
+     viewport there's no room for a side-by-side preview, so it just reads top to bottom */
+  .sticky-scroll-row {
+    flex-direction: column !important;
+    gap: 32px !important;
+  }
+  .sticky-scroll-preview {
+    position: static !important;
+    order: -1;
+  }
+  .sticky-scroll-item {
+    min-height: 0 !important;
+    opacity: 1 !important;
+    margin-bottom: 28px !important;
+  }
+
+  /* Products tabbed accordion: stack, preview image moves above the accordion */
+  .products-accordion-row {
+    grid-template-columns: 1fr !important;
+    gap: 28px !important;
+  }
+  .products-accordion-preview {
+    order: -1;
+  }
+
   /* Hero: stack vertically */
   .hero-flex {
     flex-direction: column !important;
@@ -295,9 +351,9 @@ a {
     grid-template-columns: repeat(2, 1fr) !important;
   }
 
-  /* Industries: 2 columns */
-  .grid-industries {
-    grid-template-columns: repeat(2, 1fr) !important;
+  /* Industries carousel: 2 cards per view */
+  .industry-carousel-item {
+    flex: 0 0 calc(50% - 24px) !important;
   }
 
   /* Sub-page feature grids: 2 columns */
@@ -489,10 +545,9 @@ a {
     gap: 24px !important;
   }
 
-  /* Industries: keep 2 columns, just smaller */
-  .grid-industries {
-    grid-template-columns: repeat(2, 1fr) !important;
-    gap: 12px !important;
+  /* Industries carousel: 1 card per view, slight peek of the next */
+  .industry-carousel-item {
+    flex: 0 0 85% !important;
   }
 
   /* Industry rows: stack vertically */
@@ -543,6 +598,17 @@ a {
 /* Hide AdminSidebar scrollbar (Webkit) */
 .admin-sidebar-body::-webkit-scrollbar { display: none; }
 
+/* Hide industries carousel scrollbar (Webkit) — auto-advancing, not a manual-drag block */
+.industry-carousel-track::-webkit-scrollbar { display: none; }
+
+/* Industries carousel slide — flat (no card box), hover moves the arrow + tints the icon */
+.industry-slide-item:hover .industry-slide-arrow {
+  transform: translateX(4px);
+}
+.industry-slide-item:hover .industry-slide-icon {
+  background: #FDE3A8 !important;
+}
+
 /* ── Hover-revealed scrollbars, app-wide ─────────────────────────────────────
    Every scrollable block keeps its scrollbar INVISIBLE until the pointer is over that block —
    a page full of Blocks otherwise shows a permanent scrollbar per Block, which reads as clutter.
@@ -560,4 +626,19 @@ a {
 *::-webkit-scrollbar-track { background: transparent; }
 *::-webkit-scrollbar-thumb { background: transparent; border-radius: 99px; }
 *:hover::-webkit-scrollbar-thumb { background: #CBD5E1; }
+
+/* ── Marketing site: dark page scrollbar ─────────────────────────────────────
+   The root scrollbar's track is transparent (rule above), so it paints the canvas
+   background — cream — which reads as a bright strip running down the right edge next
+   to the dark hero. Only the root element can style the page scrollbar, so the marketing
+   pages are targeted from html via :has() on their layout wrapper. Always visible here
+   (not hover-revealed) because a page-level scrollbar is a navigation affordance, unlike
+   the in-Block scrollbars the rule above is written for. */
+html:has(.marketing-page) {
+  scrollbar-width: thin;
+  scrollbar-color: #57534E #1C1917;
+}
+html:has(.marketing-page)::-webkit-scrollbar-track { background: #1C1917; }
+html:has(.marketing-page)::-webkit-scrollbar-thumb { background: #57534E; }
+html:has(.marketing-page)::-webkit-scrollbar-thumb:hover { background: #78716C; }
 

@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react
 import { createPortal } from 'react-dom'
 import OwnerPlanBadge from '@/components/owner/PlanBadge'
 import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
-import { createClient } from '@/lib/supabase'
+import { createClient } from '@/lib/supabaseBrowser'
 import { ModalOverlay, ModalBox, ModalHeader, modalInputStyle, modalLabelStyle, modalErrorBoxStyle, modalGhostButtonStyle, modalPrimaryButtonStyle, modalDestructiveButtonStyle } from '@/components/modal'
 import Spinner from '@/components/Spinner'
 import Toast from '@/components/Toast'

@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
+vi.mock('@/lib/supabaseAdmin', () => ({
+  getSupabaseAdmin: () => ({}),
+}))
+
 vi.mock('@/lib/supabase', () => ({
   supabase: {},
   createClient: () => ({}),
@@ -25,6 +29,7 @@ const baseTask = {
   sequence_order: null,
   title: 'Restock shelves',
   description: null,
+  assigned_user_id: null,
   status: 'Assigned' as const,
   priority: 'Medium',
   due_at: null,

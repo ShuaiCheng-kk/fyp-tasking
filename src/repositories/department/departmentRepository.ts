@@ -1,4 +1,6 @@
-import { supabase } from '@/lib/supabase'
+import { getSupabaseAdmin } from '@/lib/supabaseAdmin'
+
+const supabase = getSupabaseAdmin()
 import { Department } from '@/types/department.types'
 
 export const departmentRepository = {

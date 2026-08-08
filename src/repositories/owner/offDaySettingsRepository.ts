@@ -1,7 +1,9 @@
 // LAYER: Repository
 // RULE: Supabase queries only. No business logic.
 
-import { supabase } from '@/lib/supabase'
+import { getSupabaseAdmin } from '@/lib/supabaseAdmin'
+
+const supabase = getSupabaseAdmin()
 import { OffDayQuotaDefaultRole, OffDayQuotaSetting, OffDayQuotaUpsertInput, OffDaySubmissionDeadline, OffDaySubmissionDeadlineUpsertInput } from '@/types/Attendance'
 
 const QUOTA_SETTING_COLUMNS = 'company_id, user_id, max_days_per_week, role'

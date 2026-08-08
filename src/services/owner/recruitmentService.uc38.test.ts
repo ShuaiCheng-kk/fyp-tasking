@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
+vi.mock('@/lib/supabaseAdmin', () => ({
+  getSupabaseAdmin: () => ({}),
+}))
+
 vi.mock('@/lib/supabase', () => ({
   supabase: {},
   createClient: () => ({}),
@@ -41,7 +45,7 @@ describe('UC38 Duplicate Draft Job', () => {
 
   it('UC38-M-UT-O: Owner duplicates a draft job posting', async () => {
     vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue(draftPosting as never)
-    const duplicated = { id: 'job-2', ...draftPosting, title: 'Weekend Cashier (copy)', created_by: 'owner-1' }
+    const duplicated = { ...draftPosting, id: 'job-2', title: 'Weekend Cashier (copy)', created_by: 'owner-1' }
     vi.mocked(recruitmentRepository.createJobPosting).mockResolvedValue(duplicated as never)
 
     const result = await recruitmentService.duplicateJobPosting('job-1', 'owner-1')
@@ -54,7 +58,7 @@ describe('UC38 Duplicate Draft Job', () => {
 
   it('UC38-M-UT-P: Partner duplicates a draft job posting', async () => {
     vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue(draftPosting as never)
-    const duplicated = { id: 'job-3', ...draftPosting, title: 'Weekend Cashier (copy)', created_by: 'partner-1' }
+    const duplicated = { ...draftPosting, id: 'job-3', title: 'Weekend Cashier (copy)', created_by: 'partner-1' }
     vi.mocked(recruitmentRepository.createJobPosting).mockResolvedValue(duplicated as never)
 
     const result = await recruitmentService.duplicateJobPosting('job-1', 'partner-1')
@@ -67,7 +71,7 @@ describe('UC38 Duplicate Draft Job', () => {
 
   it('UC38-M-UT-M: Manager duplicates a draft job posting', async () => {
     vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue(draftPosting as never)
-    const duplicated = { id: 'job-4', ...draftPosting, title: 'Weekend Cashier (copy)', created_by: 'mgr-1' }
+    const duplicated = { ...draftPosting, id: 'job-4', title: 'Weekend Cashier (copy)', created_by: 'mgr-1' }
     vi.mocked(recruitmentRepository.createJobPosting).mockResolvedValue(duplicated as never)
 
     const result = await recruitmentService.duplicateJobPosting('job-1', 'mgr-1')

@@ -1,4 +1,5 @@
 import { authRepository } from '@/repositories/auth/authRepository'
+import { getSupabaseAdmin } from '@/lib/supabaseAdmin'
 import { User } from '@/types/auth.types'
 
 const ROLE_ORDER: Record<string, number> = { Owner: 0, Partner: 1, Manager: 2, Employee: 3, 'Casual Worker': 4, 'Guest User': 5 }
@@ -52,7 +53,7 @@ export const userService = {
   },
 
   async getUserById(id: string): Promise<User & { department_id: string | null }> {
-    const { supabase } = await import('@/lib/supabase')
+    const supabase = getSupabaseAdmin()
     const { data: user, error } = await supabase
       .from('users')
       .select('*, manager_departments!manager_departments_manager_id_fkey(department_id), employee_departments(department_id), casualworker_departments(department_id)')
@@ -69,7 +70,7 @@ export const userService = {
   },
 
   async getTeamByCompany(company_id: string): Promise<TeamMemberRow[]> {
-    const { supabase } = await import('@/lib/supabase')
+    const supabase = getSupabaseAdmin()
     // Owner/Partner/Manager/Employee are linked via users.company_id. Recruited Casual Workers
     // never get that column set (they join via recruitment two-way-confirm, not invite-code) — the
     // authoritative link for them is casualworker_departments, so that's unioned in below on top of
@@ -108,7 +109,7 @@ export const userService = {
   },
 
   async getTeamByDepartment(company_id: string, department_id: string): Promise<TeamMemberRow[]> {
-    const { supabase } = await import('@/lib/supabase')
+    const supabase = getSupabaseAdmin()
     // Get employee IDs in this department via employee_departments (column is employee_id)
     const { data: edRows, error: edErr } = await supabase
       .from('employee_departments')
@@ -150,7 +151,7 @@ export const userService = {
   },
 
   async countMembersForOwner(internal_owner_id: string): Promise<number> {
-    const { supabase } = await import('@/lib/supabase')
+    const supabase = getSupabaseAdmin()
     const { data: ownedCompanies, error: compErr } = await supabase
       .from('companies')
       .select('id')

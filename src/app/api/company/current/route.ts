@@ -3,6 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { companyService } from '@/services/company/companyService'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 export async function GET(req: NextRequest) {
   const user_id = req.nextUrl.searchParams.get('user_id')
@@ -10,6 +11,12 @@ export async function GET(req: NextRequest) {
 
   if (!user_id) {
     return NextResponse.json({ success: false, message: 'user_id is required' }, { status: 400 })
+  }
+
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+  if (user_id !== session.user.id && user_id !== session.auth_id) {
+    return NextResponse.json({ success: false, message: 'You can only view your own company context' }, { status: 403 })
   }
 
   try {

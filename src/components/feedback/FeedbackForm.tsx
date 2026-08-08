@@ -84,24 +84,6 @@ export default function FeedbackForm() {
         <p style={{ fontFamily: "var(--font-body)", color: "rgba(28,25,23,0.6)", fontSize: "0.9375rem" }}>
           We read every review. If you left an email, we'll reach out if we have questions.
         </p>
-        <button
-          type="button"
-          onClick={() => setStatus("idle")}
-          className="hover:opacity-80"
-          style={{
-            marginTop: "20px",
-            background: "#1C1917",
-            color: "#FFFBF5",
-            border: "none",
-            borderRadius: "8px",
-            padding: "10px 20px",
-            fontFamily: "var(--font-body)",
-            fontSize: "0.875rem",
-            cursor: "pointer",
-          }}
-        >
-          Leave another review
-        </button>
       </div>
     );
   }
@@ -124,7 +106,7 @@ export default function FeedbackForm() {
           style={{
             display: "block",
             fontFamily: "var(--font-body)",
-            fontSize: "0.8125rem",
+            fontSize: "1.125rem",
             fontWeight: 600,
             color: "#1C1917",
             marginBottom: "8px",
@@ -132,7 +114,7 @@ export default function FeedbackForm() {
         >
           Your rating
         </label>
-        <StarRating value={rating} onChange={setRating} />
+        <StarRating value={rating} onChange={setRating} size={34} />
       </div>
 
       <div>
@@ -141,7 +123,7 @@ export default function FeedbackForm() {
           style={{
             display: "block",
             fontFamily: "var(--font-body)",
-            fontSize: "0.8125rem",
+            fontSize: "1.125rem",
             fontWeight: 600,
             color: "#1C1917",
             marginBottom: "8px",
@@ -164,7 +146,7 @@ export default function FeedbackForm() {
             borderRadius: "8px",
             padding: "12px 14px",
             fontFamily: "var(--font-body)",
-            fontSize: "0.9375rem",
+            fontSize: "1.1875rem",
             color: "#1C1917",
           }}
         />
@@ -177,7 +159,7 @@ export default function FeedbackForm() {
             style={{
               display: "block",
               fontFamily: "var(--font-body)",
-              fontSize: "0.8125rem",
+              fontSize: "1.125rem",
               fontWeight: 600,
               color: "#1C1917",
               marginBottom: "8px",
@@ -196,9 +178,9 @@ export default function FeedbackForm() {
               width: "100%",
               border: "1px solid rgba(28,25,23,0.15)",
               borderRadius: "8px",
-              padding: "10px 14px",
+              padding: "14px 16px",
               fontFamily: "var(--font-body)",
-              fontSize: "0.9375rem",
+              fontSize: "1.1875rem",
               color: "#1C1917",
             }}
           />
@@ -209,13 +191,13 @@ export default function FeedbackForm() {
             style={{
               display: "block",
               fontFamily: "var(--font-body)",
-              fontSize: "0.8125rem",
+              fontSize: "1.125rem",
               fontWeight: 600,
               color: "#1C1917",
               marginBottom: "8px",
             }}
           >
-            Email <span style={{ fontWeight: 400, color: "rgba(28,25,23,0.4)" }}>(if you'd like a reply)</span>
+            Email <span style={{ fontWeight: 400, color: "rgba(28,25,23,0.4)" }}>(optional)</span>
           </label>
           <input
             id="email"
@@ -228,9 +210,9 @@ export default function FeedbackForm() {
               width: "100%",
               border: "1px solid rgba(28,25,23,0.15)",
               borderRadius: "8px",
-              padding: "10px 14px",
+              padding: "14px 16px",
               fontFamily: "var(--font-body)",
-              fontSize: "0.9375rem",
+              fontSize: "1.1875rem",
               color: "#1C1917",
             }}
           />
@@ -238,7 +220,7 @@ export default function FeedbackForm() {
       </div>
 
       {errorMessage && (
-        <p style={{ color: "#B3261E", fontFamily: "var(--font-body)", fontSize: "0.8125rem" }}>
+        <p style={{ color: "#B3261E", fontFamily: "var(--font-body)", fontSize: "0.9375rem" }}>
           {errorMessage}
         </p>
       )}

@@ -3,6 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { taskTemplateService } from '@/services/owner/taskTemplateService'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 export async function DELETE(
   req: NextRequest,
@@ -10,11 +11,11 @@ export async function DELETE(
 ) {
   const { id } = await params
   if (!id) return NextResponse.json({ success: false, message: 'id is required' }, { status: 400 })
-  const { searchParams } = new URL(req.url)
-  const acting_user_id = searchParams.get('acting_user_id') ?? undefined
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
 
   try {
-    await taskTemplateService.deleteTemplate(id, acting_user_id)
+    await taskTemplateService.deleteTemplate(id, session.user.id)
     return NextResponse.json({ success: true })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to delete task template'
@@ -28,6 +29,8 @@ export async function PATCH(
 ) {
   const { id } = await params
   if (!id) return NextResponse.json({ success: false, message: 'id is required' }, { status: 400 })
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
 
   try {
     const body = await req.json()
@@ -37,7 +40,7 @@ export async function PATCH(
       description: body.description,
       priority: body.priority,
       sub_task_titles: body.sub_task_titles,
-    }, body.acting_user_id)
+    }, session.user.id)
     return NextResponse.json({ success: true, template })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to update task template'

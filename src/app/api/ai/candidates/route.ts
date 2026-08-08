@@ -3,6 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { candidateRecommendationService } from '@/services/owner/candidateRecommendationService'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
@@ -10,6 +11,8 @@ export async function GET(req: NextRequest) {
   if (!job_id) {
     return NextResponse.json({ success: false, message: 'job_id is required' }, { status: 400 })
   }
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
 
   const refresh = searchParams.get('refresh') === 'true'
 

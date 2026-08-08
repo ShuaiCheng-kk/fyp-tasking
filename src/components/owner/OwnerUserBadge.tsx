@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { createBrowserClient } from '@supabase/ssr'
-import { Crown, X, Check, Pencil, Camera } from 'lucide-react'
+import { Crown, X, Check, Pencil, Camera, Eye, EyeOff, KeyRound } from 'lucide-react'
 import DatePickerField from '@/components/DatePickerField'
 import Toast from '@/components/Toast'
 import { isValidImageFile } from '@/lib/imageValidation'
@@ -92,8 +92,19 @@ export default function OwnerUserBadge({ userId, companyId }: { userId: string; 
   const [error, setError] = useState('')
   const [successToast, setSuccessToast] = useState('')
   const [mounted, setMounted] = useState(false)
+  const [changingPassword, setChangingPassword] = useState(false)
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [showCurrent, setShowCurrent] = useState(false)
+  const [showNew, setShowNew] = useState(false)
+  const [showConfirm, setShowConfirm] = useState(false)
+  const [passwordError, setPasswordError] = useState('')
+  const [savingPassword, setSavingPassword] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const successToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const isMarketingAdmin = profile?.role === 'Marketing Admin'
 
   useEffect(() => () => { if (successToastTimerRef.current) clearTimeout(successToastTimerRef.current) }, [])
 
@@ -124,6 +135,11 @@ export default function OwnerUserBadge({ userId, companyId }: { userId: string; 
     setOpen(false)
     setEditing(false)
     setError('')
+    setChangingPassword(false)
+    setCurrentPassword('')
+    setNewPassword('')
+    setConfirmPassword('')
+    setPasswordError('')
   }
 
   const handlePhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -159,8 +175,10 @@ export default function OwnerUserBadge({ userId, companyId }: { userId: string; 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!name.trim()) { setError('Full name is required'); return }
-    if (!phone) { setError('Phone number is required'); return }
-    if (phone.length !== 8) { setError('Phone number must be exactly 8 digits'); return }
+    if (!isMarketingAdmin) {
+      if (!phone) { setError('Phone number is required'); return }
+      if (phone.length !== 8) { setError('Phone number must be exactly 8 digits'); return }
+    }
     setSaving(true)
     setError('')
     try {
@@ -178,6 +196,31 @@ export default function OwnerUserBadge({ userId, companyId }: { userId: string; 
       successToastTimerRef.current = setTimeout(() => setSuccessToast(''), 3000)
     } catch { setError('Something went wrong') }
     finally { setSaving(false) }
+  }
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setPasswordError('')
+    if (newPassword !== confirmPassword) { setPasswordError('New passwords do not match'); return }
+    if (newPassword.length < 6) { setPasswordError('Password must be at least 6 characters'); return }
+    setSavingPassword(true)
+    try {
+      const res = await fetch('/api/auth/change-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: profile?.email_address, current_password: currentPassword, new_password: newPassword }),
+      })
+      const data = await res.json()
+      if (!data.success) { setPasswordError(data.message ?? 'Failed to change password'); return }
+      setCurrentPassword('')
+      setNewPassword('')
+      setConfirmPassword('')
+      setChangingPassword(false)
+      if (successToastTimerRef.current) clearTimeout(successToastTimerRef.current)
+      setSuccessToast('Password changed successfully.')
+      successToastTimerRef.current = setTimeout(() => setSuccessToast(''), 3000)
+    } catch { setPasswordError('Something went wrong') }
+    finally { setSavingPassword(false) }
   }
 
   const modal = open && mounted ? createPortal(
@@ -240,6 +283,49 @@ export default function OwnerUserBadge({ userId, companyId }: { userId: string; 
           </div>
 
           {/* Fields */}
+          {changingPassword ? (
+            <form onSubmit={handleChangePassword}>
+              <div style={{ padding: '0 24px 4px', display: 'flex', flexDirection: 'column', animation: 'oubFieldsIn 0.22s ease both' }}>
+                {[
+                  { label: 'Current password', value: currentPassword, set: setCurrentPassword, show: showCurrent, toggle: () => setShowCurrent(v => !v) },
+                  { label: 'New password', value: newPassword, set: setNewPassword, show: showNew, toggle: () => setShowNew(v => !v) },
+                  { label: 'Confirm new password', value: confirmPassword, set: setConfirmPassword, show: showConfirm, toggle: () => setShowConfirm(v => !v) },
+                ].map(({ label, value, set, show, toggle }) => (
+                  <div key={label} style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6' }}>
+                    <label style={labelStyle}>{label}</label>
+                    <div style={{ position: 'relative' }}>
+                      <input
+                        type={show ? 'text' : 'password'}
+                        style={{ ...inputStyle, paddingRight: 40 }}
+                        value={value}
+                        onChange={e => { set(e.target.value); setPasswordError('') }}
+                        placeholder="••••••••"
+                        required
+                      />
+                      <button type="button" onClick={toggle} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#9CA3AF', display: 'flex', alignItems: 'center' }}>
+                        {show ? <EyeOff size={15} /> : <Eye size={15} />}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {passwordError && (
+                  <div style={{ padding: '12px 0 4px' }}>
+                    <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', fontSize: '0.875rem', color: '#DC2626' }}>{passwordError}</div>
+                  </div>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div style={{ padding: '16px 24px', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                <button type="button" onClick={() => { setChangingPassword(false); setCurrentPassword(''); setNewPassword(''); setConfirmPassword(''); setPasswordError('') }} style={{ padding: '7px 16px', border: '1px solid #E5E7EB', borderRadius: 8, background: '#FFFFFF', fontWeight: 600, fontSize: '0.8125rem', color: '#374151', cursor: 'pointer' }}>
+                  Cancel
+                </button>
+                <button type="submit" disabled={savingPassword} style={{ padding: '7px 18px', border: 'none', borderRadius: 8, background: savingPassword ? '#FDA060' : 'linear-gradient(135deg, #F97316, #EA580C)', fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: savingPassword ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: savingPassword ? 0.65 : 1 }}>
+                  {savingPassword ? <Spinner size={13} /> : <Check size={13} />} Change Password
+                </button>
+              </div>
+            </form>
+          ) : (
           <form onSubmit={handleSave}>
             <div key={String(editing)} style={{ padding: '0 24px 4px', display: 'flex', flexDirection: 'column', animation: 'oubFieldsIn 0.22s ease both' }}>
               {/* Email — read only */}
@@ -248,20 +334,23 @@ export default function OwnerUserBadge({ userId, companyId }: { userId: string; 
                 <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, sans-serif" }}>{profile?.email_address ?? '—'}</p>
               </div>
               {/* Full Name */}
-              <div style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6' }}>
+              <div style={{ padding: '14px 0', borderBottom: isMarketingAdmin ? (editing && error ? '1px solid #F3F4F6' : 'none') : '1px solid #F3F4F6' }}>
                 <label style={labelStyle}>Full Name</label>
                 {editing
                   ? <input value={name} onChange={e => setName(e.target.value)} style={inputStyle} autoFocus />
                   : <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, sans-serif" }}>{profile?.full_name ?? '—'}</p>}
               </div>
-              {/* Date of Birth */}
+              {/* Date of Birth — not shown for Marketing Admin (platform role, no HR fields) */}
+              {!isMarketingAdmin && (
               <div style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6' }}>
                 <label style={labelStyle}>Date of Birth</label>
                 {editing
                   ? <DatePickerField value={dob} onChange={setDob} placeholder="Select date" max={(() => { const d = new Date(); d.setFullYear(d.getFullYear() - 16); return d.toISOString().slice(0, 10) })()} />
                   : <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, sans-serif" }}>{formatDateDisplay(profile?.date_of_birth)}</p>}
               </div>
-              {/* Phone */}
+              )}
+              {/* Phone — not shown for Marketing Admin */}
+              {!isMarketingAdmin && (
               <div style={{ padding: '14px 0', borderBottom: editing && error ? '1px solid #F3F4F6' : 'none' }}>
                 <label style={labelStyle}>Phone Number</label>
                 {editing
@@ -275,6 +364,7 @@ export default function OwnerUserBadge({ userId, companyId }: { userId: string; 
                     />
                   : <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, sans-serif" }}>{profile?.phone_number ?? '—'}</p>}
               </div>
+              )}
               {editing && error && (
                 <div style={{ padding: '12px 0 4px' }}>
                   <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', fontSize: '0.875rem', color: '#DC2626' }}>{error}</div>
@@ -294,12 +384,20 @@ export default function OwnerUserBadge({ userId, companyId }: { userId: string; 
                   </button>
                 </>
               ) : (
-                <button type="button" onClick={() => { setName(profile?.full_name ?? ''); setPhone(profile?.phone_number ?? ''); setDob(profile?.date_of_birth ?? ''); setPhotoUrl(profile?.profile_photo_url ?? null); setError(''); setEditing(true) }} style={{ padding: '7px 16px', border: 'none', borderRadius: 8, background: 'linear-gradient(135deg, #F97316, #EA580C)', fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <Pencil size={13} /> Edit Profile
-                </button>
+                <>
+                  {isMarketingAdmin && (
+                    <button type="button" onClick={() => { setChangingPassword(true); setPasswordError('') }} style={{ padding: '7px 16px', border: '1px solid #E5E7EB', borderRadius: 8, background: '#FFFFFF', fontWeight: 600, fontSize: '0.8125rem', color: '#374151', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <KeyRound size={13} /> Change Password
+                    </button>
+                  )}
+                  <button type="button" onClick={() => { setName(profile?.full_name ?? ''); setPhone(profile?.phone_number ?? ''); setDob(profile?.date_of_birth ?? ''); setPhotoUrl(profile?.profile_photo_url ?? null); setError(''); setEditing(true) }} style={{ padding: '7px 16px', border: 'none', borderRadius: 8, background: 'linear-gradient(135deg, #F97316, #EA580C)', fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <Pencil size={13} /> Edit Profile
+                  </button>
+                </>
               )}
             </div>
           </form>
+          )}
         </div>
       </div>
     </div>,

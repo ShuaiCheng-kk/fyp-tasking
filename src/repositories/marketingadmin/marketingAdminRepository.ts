@@ -2,7 +2,9 @@
 // RULE: Supabase queries only. No business logic. No HTTP handling.
 
 import { createClient } from '@supabase/supabase-js'
-import { supabase } from '@/lib/supabase'
+import { getSupabaseAdmin } from '@/lib/supabaseAdmin'
+
+const supabase = getSupabaseAdmin()
 import { CreateMarketingContentBlockInput, MarketingContentBlock, MarketingPage, MarketingPageSummary } from '@/types/MarketingPage'
 
 type MarketingPageRow = Omit<MarketingPage, 'blocks'>

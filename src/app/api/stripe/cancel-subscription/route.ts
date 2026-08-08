@@ -3,6 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { stripeService } from '@/services/stripeService'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 export async function POST(req: NextRequest) {
   let body: unknown
@@ -16,6 +17,11 @@ export async function POST(req: NextRequest) {
 
   if (!companyId || typeof companyId !== 'string') {
     return NextResponse.json({ success: false, message: 'companyId is required' }, { status: 400 })
+  }
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+  if (session.user.company_id !== companyId) {
+    return NextResponse.json({ success: false, message: 'You can only manage your own company\'s billing' }, { status: 403 })
   }
 
   try {

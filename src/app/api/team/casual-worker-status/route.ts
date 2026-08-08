@@ -3,6 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { casualWorkerStatusService } from '@/services/team/casualWorkerStatusService'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 export async function PATCH(req: NextRequest) {
   try {
@@ -21,6 +22,12 @@ export async function PATCH(req: NextRequest) {
         { success: false, message: 'company_id is required' },
         { status: 400 }
       )
+    }
+
+    const session = await getServerSessionUser()
+    if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+    if (session.user.company_id !== company_id) {
+      return NextResponse.json({ success: false, message: 'You can only manage your own company\'s team' }, { status: 403 })
     }
 
     if (!worker_status || typeof worker_status !== 'string') {

@@ -615,10 +615,12 @@ export const shiftService = {
     return { skipped_shifts: skippedShifts }
   },
 
-  async deleteShiftAssignment(assignment_id: string): Promise<void> {
+  async deleteShiftAssignment(assignment_id: string, company_id: string): Promise<void> {
     if (!assignment_id) throw new Error('assignment_id is required')
     const assignment = await shiftRepository.getAssignmentById(assignment_id)
     if (!assignment) throw new Error('Shift assignment not found')
+    const shift = await shiftRepository.getShiftById(assignment.shift_id)
+    if (!shift || shift.company_id !== company_id) throw new Error('You can only manage your own company\'s shifts')
     await shiftRepository.deleteAssignmentById(assignment_id)
   },
 

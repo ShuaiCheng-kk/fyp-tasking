@@ -1,4 +1,5 @@
 import { reviewsRepository } from '@/repositories/marketing/reviewsRepository'
+import { marketingAdminService } from '@/services/marketingadmin/marketingAdminService'
 import { CreateReviewInput, Review, ReviewSummary } from '@/types/Review'
 
 const MAX_REVIEW_LENGTH = 2000
@@ -35,25 +36,31 @@ export const reviewsService = {
     return reviewsRepository.listApprovedReviews(limit)
   },
 
-  // Admin moderation below. Wire these behind an admin-role check before
-  // exposing them from an API route — see marketingService.verifyMarketingAdmin
-  // for the pattern (e.g. reviewsRepository could gain a findAdminByAuthId-style
-  // lookup, or reuse marketingRepository.findAdminByAuthId if the same admin
-  // role should manage reviews).
-  async listAllReviewsForAdmin(): Promise<Review[]> {
+  // Admin moderation below — every method re-verifies the caller is a Marketing Admin
+  // via marketingAdminService.verifyMarketingAdmin, same pattern as marketingAdminService itself.
+  async listAllReviewsForAdmin(admin_user_id: string): Promise<Review[]> {
+    await marketingAdminService.verifyMarketingAdmin(admin_user_id)
     return reviewsRepository.listAllReviews()
   },
 
-  async approveReview(review_id: string): Promise<Review> {
+  async approveReview(admin_user_id: string, review_id: string): Promise<Review> {
+    await marketingAdminService.verifyMarketingAdmin(admin_user_id)
     return reviewsRepository.setReviewApproval(review_id, true)
   },
 
-  async rejectReview(review_id: string): Promise<Review> {
+  async rejectReview(admin_user_id: string, review_id: string): Promise<Review> {
+    await marketingAdminService.verifyMarketingAdmin(admin_user_id)
     return reviewsRepository.setReviewApproval(review_id, false)
   },
 
   // Reserved for the future AI feature to flag its picks for the carousel.
-  async setFeatured(review_id: string, featured: boolean): Promise<Review> {
+  async setFeatured(admin_user_id: string, review_id: string, featured: boolean): Promise<Review> {
+    await marketingAdminService.verifyMarketingAdmin(admin_user_id)
     return reviewsRepository.setReviewFeatured(review_id, featured)
+  },
+
+  async deleteReview(admin_user_id: string, review_id: string): Promise<void> {
+    await marketingAdminService.verifyMarketingAdmin(admin_user_id)
+    await reviewsRepository.deleteReview(review_id)
   },
 }

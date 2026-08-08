@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import StarRating from "./StarRating";
 import { ReviewSummary } from "@/types/Review";
 
@@ -10,6 +10,19 @@ interface ReviewsCarouselProps {
 
 export default function ReviewsCarousel({ reviews }: ReviewsCarouselProps) {
   const [index, setIndex] = useState(0);
+  const [paused, setPaused] = useState(false);
+
+  // Same auto-advance/pause-on-hover/seamless-loop mechanics as the Home page's
+  // Industries and Reviews carousels. This one shows a single card at a time via
+  // an index (not a scrollable track), so the loop back to the first card is
+  // already seamless through plain modulo arithmetic — no clone-card trick needed.
+  useEffect(() => {
+    if (paused || reviews.length <= 1) return;
+    const timer = setInterval(() => {
+      setIndex((i) => (i + 1) % reviews.length);
+    }, 3500);
+    return () => clearInterval(timer);
+  }, [paused, reviews.length]);
 
   if (reviews.length === 0) {
     return (
@@ -21,7 +34,7 @@ export default function ReviewsCarousel({ reviews }: ReviewsCarouselProps) {
           textAlign: "center",
         }}
       >
-        <p style={{ fontFamily: "var(--font-body)", color: "rgba(28,25,23,0.5)", fontSize: "0.9375rem" }}>
+        <p style={{ fontFamily: "var(--font-body)", color: "rgba(28,25,23,0.5)", fontSize: "1.0625rem" }}>
           No reviews to show yet — be the first to leave one.
         </p>
       </div>
@@ -33,11 +46,12 @@ export default function ReviewsCarousel({ reviews }: ReviewsCarouselProps) {
   const goNext = () => setIndex((i) => (i + 1) % reviews.length);
 
   return (
-    <div>
+    <div onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
       <div
         style={{
-          background: "#1C1917",
-          color: "#FFFBF5",
+          background: "#FFFBF5",
+          border: "1px solid #F0E8D8",
+          color: "#1C1917",
           borderRadius: "12px",
           padding: "36px 32px",
           minHeight: "180px",
@@ -54,7 +68,7 @@ export default function ReviewsCarousel({ reviews }: ReviewsCarouselProps) {
               fontSize: "1.0625rem",
               lineHeight: 1.6,
               marginTop: "16px",
-              color: "#FFFBF5",
+              color: "#1C1917",
             }}
           >
             "{current.review}"
@@ -63,8 +77,8 @@ export default function ReviewsCarousel({ reviews }: ReviewsCarouselProps) {
         <p
           style={{
             fontFamily: "var(--font-body)",
-            fontSize: "0.8125rem",
-            color: "rgba(255,251,245,0.5)",
+            fontSize: "0.9375rem",
+            color: "#78716C",
             marginTop: "20px",
           }}
         >

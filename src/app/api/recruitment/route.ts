@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { recruitmentService } from '@/services/owner/recruitmentService'
 import { taskService } from '@/services/owner/taskService'
 import { JobPostingInput } from '@/types/Recruitment'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 function parseNullableInt(value: unknown): number | null {
   if (typeof value === 'number' && Number.isInteger(value)) return value
@@ -21,12 +22,13 @@ export async function GET(req: NextRequest) {
   const job_id = searchParams.get('job_id')
   const resource = searchParams.get('resource')
 
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+
   try {
     if (resource === 'applicants') {
       if (!job_id) return NextResponse.json({ success: false, message: 'job_id is required' }, { status: 400 })
-      const viewer_id = searchParams.get('viewer_id')
-      if (!viewer_id) return NextResponse.json({ success: false, message: 'viewer_id is required' }, { status: 400 })
-      const applicants = await recruitmentService.getApplicants(job_id, viewer_id)
+      const applicants = await recruitmentService.getApplicants(job_id, session.user.id)
       return NextResponse.json({ success: true, applicants })
     }
     if (resource === 'job_posting') {
@@ -37,6 +39,9 @@ export async function GET(req: NextRequest) {
     }
     if (resource === 'pool_workers') {
       if (!company_id) return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
+      if (session.user.company_id !== company_id) {
+        return NextResponse.json({ success: false, message: 'You can only view your own company\'s data' }, { status: 403 })
+      }
       // Manager scope: only workers verified in their own department(s) — same manager_scope_id
       // resolution as drafts/templates above.
       const manager_scope_id = searchParams.get('manager_scope_id') ?? undefined
@@ -46,6 +51,9 @@ export async function GET(req: NextRequest) {
     }
     if (resource === 'pending_approval') {
       if (!company_id) return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
+      if (session.user.company_id !== company_id) {
+        return NextResponse.json({ success: false, message: 'You can only view your own company\'s data' }, { status: 403 })
+      }
       const include_rejected = searchParams.get('include_rejected') === 'true'
       // Manager scope: same manager_scope_id resolution as drafts/templates/pool_workers above.
       const manager_scope_id = searchParams.get('manager_scope_id') ?? undefined
@@ -55,6 +63,9 @@ export async function GET(req: NextRequest) {
     }
     if (resource === 'drafts') {
       if (!company_id) return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
+      if (session.user.company_id !== company_id) {
+        return NextResponse.json({ success: false, message: 'You can only view your own company\'s data' }, { status: 403 })
+      }
       // Manager Recruitment page scope: same manager_scope_id resolution as /api/task-template —
       // Owner/Partner drafts excluded. Unlike Templates, a Draft is never shared even within the
       // same department — it's a private in-progress scratchpad, so this Manager only ever sees
@@ -65,6 +76,9 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: true, drafts })
     }
     if (!company_id) return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
+    if (session.user.company_id !== company_id) {
+      return NextResponse.json({ success: false, message: 'You can only view your own company\'s data' }, { status: 403 })
+    }
     const department_id = searchParams.get('department_id')
     // Job Visibility: a Manager's own department-scoped view is filtered client-side by
     // department (see RecruitmentView's scopeToManagerDepartments) — not by creator, so it
@@ -91,10 +105,17 @@ export async function POST(req: NextRequest) {
   }
 
   const data = body as Record<string, unknown>
+
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+  if (typeof data.company_id !== 'string' || session.user.company_id !== data.company_id) {
+    return NextResponse.json({ success: false, message: 'You can only create postings for your own company' }, { status: 403 })
+  }
+
   const input: JobPostingInput = {
-    company_id: typeof data.company_id === 'string' ? data.company_id : '',
+    company_id: data.company_id,
     department_id: typeof data.department_id === 'string' && data.department_id ? data.department_id : null,
-    created_by: typeof data.created_by === 'string' ? data.created_by : '',
+    created_by: session.user.id,
     title: typeof data.title === 'string' ? data.title : '',
     responsibilities: typeof data.responsibilities === 'string' ? data.responsibilities : '',
     skills: typeof data.skills === 'string' && data.skills ? data.skills : null,
@@ -139,6 +160,9 @@ export async function PATCH(req: NextRequest) {
   const data = body as Record<string, unknown>
   const action = data.action
 
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+
   try {
     if (action === 'edit_posting') {
       // Absent key = leave the field untouched; only keys present in the payload are written.
@@ -167,19 +191,19 @@ export async function PATCH(req: NextRequest) {
       if ('uniform_type' in data) patch.uniform_type = typeof data.uniform_type === 'string' && data.uniform_type ? data.uniform_type : 'none'
       if ('uniform_details' in data) patch.uniform_details = nullableString(data.uniform_details)
 
-      const posting = await recruitmentService.editJobPosting(String(data.job_id ?? ''), patch, typeof data.created_by === 'string' ? data.created_by : undefined)
+      const posting = await recruitmentService.editJobPosting(String(data.job_id ?? ''), patch, session.user.id)
       return NextResponse.json({ success: true, posting })
     }
 
     if (action === 'archive_posting') {
-      const posting = await recruitmentService.archiveJobPosting(String(data.job_id ?? ''), typeof data.created_by === 'string' ? data.created_by : undefined)
+      const posting = await recruitmentService.archiveJobPosting(String(data.job_id ?? ''), session.user.id)
       return NextResponse.json({ success: true, posting })
     }
 
     if (action === 'duplicate_posting') {
       const posting = await recruitmentService.duplicateJobPosting(
         String(data.job_id ?? ''),
-        String(data.created_by ?? ''),
+        session.user.id,
       )
       return NextResponse.json({ success: true, posting })
     }
@@ -190,7 +214,7 @@ export async function PATCH(req: NextRequest) {
       const applicant = await recruitmentService.decideApplicant({
         applicant_id: String(data.applicant_id ?? ''),
         decision,
-        decided_by: String(data.decided_by ?? ''),
+        decided_by: session.user.id,
       })
       return NextResponse.json({ success: true, applicant })
     }
@@ -199,7 +223,7 @@ export async function PATCH(req: NextRequest) {
       await recruitmentService.removeConfirmedWorker({
         job_id: String(data.job_id ?? ''),
         applicant_id: String(data.applicant_id ?? ''),
-        removed_by: String(data.removed_by ?? ''),
+        removed_by: session.user.id,
         reason: typeof data.reason === 'string' ? data.reason : '',
       })
       return NextResponse.json({ success: true })
@@ -221,7 +245,7 @@ export async function PATCH(req: NextRequest) {
     }
 
     if (action === 'delete_posting') {
-      await recruitmentService.deleteJobPosting(String(data.job_id ?? ''), typeof data.created_by === 'string' ? data.created_by : undefined)
+      await recruitmentService.deleteJobPosting(String(data.job_id ?? ''), session.user.id)
       return NextResponse.json({ success: true })
     }
 
@@ -231,13 +255,13 @@ export async function PATCH(req: NextRequest) {
     }
 
     if (action === 'approve_posting') {
-      const posting = await recruitmentService.approveJobPosting(String(data.job_id ?? ''), String(data.approved_by ?? ''))
+      const posting = await recruitmentService.approveJobPosting(String(data.job_id ?? ''), session.user.id)
       return NextResponse.json({ success: true, posting })
     }
 
     if (action === 'reject_posting') {
       const rejection_reason = typeof data.rejection_reason === 'string' ? data.rejection_reason : ''
-      const posting = await recruitmentService.rejectJobPosting(String(data.job_id ?? ''), rejection_reason, String(data.rejected_by ?? ''))
+      const posting = await recruitmentService.rejectJobPosting(String(data.job_id ?? ''), rejection_reason, session.user.id)
       return NextResponse.json({ success: true, posting })
     }
 
@@ -246,7 +270,7 @@ export async function PATCH(req: NextRequest) {
       const results = await recruitmentService.invitePoolWorkers({
         job_id: String(data.job_id ?? ''),
         user_ids,
-        sent_by: String(data.sent_by ?? ''),
+        sent_by: session.user.id,
       })
       return NextResponse.json({ success: true, results })
     }

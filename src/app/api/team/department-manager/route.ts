@@ -3,12 +3,19 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { ownerTeamService } from '@/services/owner/ownerTeamService'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 export async function GET(req: NextRequest) {
   const company_id = req.nextUrl.searchParams.get('company_id')
 
   if (!company_id) {
     return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
+  }
+
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+  if (session.user.company_id !== company_id) {
+    return NextResponse.json({ success: false, message: 'You can only view your own company\'s departments' }, { status: 403 })
   }
 
   try {
@@ -37,6 +44,9 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ success: false, message: 'department_id is required' }, { status: 400 })
   }
 
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+
   try {
     await ownerTeamService.removeManagerFromDepartment(manager_id, department_id)
     return NextResponse.json({ success: true })
@@ -64,6 +74,12 @@ export async function PATCH(req: NextRequest) {
   }
   if (!manager_id || typeof manager_id !== 'string') {
     return NextResponse.json({ success: false, message: 'manager_id is required' }, { status: 400 })
+  }
+
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+  if (session.user.company_id !== company_id) {
+    return NextResponse.json({ success: false, message: 'You can only manage your own company\'s departments' }, { status: 403 })
   }
 
   try {

@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
+vi.mock('@/lib/supabaseAdmin', () => ({
+  getSupabaseAdmin: () => ({}),
+}))
+
 vi.mock('@/lib/supabase', () => ({
   supabase: {},
   createClient: () => ({}),
@@ -78,7 +82,7 @@ describe('UC46 Accept Job Offer', () => {
     vi.mocked(workerApplicationRepository.claimJobOpening).mockResolvedValue('accepted' as never)
     vi.mocked(workerApplicationRepository.countAcceptedInvitations).mockResolvedValue(1)
 
-    await workerApplicationService.respondToInvitation('inv-1', 'accepted')
+    await workerApplicationService.respondToInvitation('inv-1', 'accepted', 'guest-1')
 
     expect(workerApplicationRepository.promoteGuestToWorker).toHaveBeenCalledWith('guest-1')
     expect(workerApplicationRepository.addCasualWorkerToDepartment).toHaveBeenCalledWith('guest-1', 'dept-1', 'comp-1')
@@ -91,7 +95,7 @@ describe('UC46 Accept Job Offer', () => {
   it('UC46-A1-UT-GU: Guest User is blocked from accepting an offer whose last opening was already claimed by another worker', async () => {
     vi.mocked(workerApplicationRepository.claimJobOpening).mockResolvedValue('position_filled' as never)
 
-    await expect(workerApplicationService.respondToInvitation('inv-2', 'accepted'))
+    await expect(workerApplicationService.respondToInvitation('inv-2', 'accepted', 'guest-1'))
       .rejects.toThrow('This position has already been filled by another worker')
 
     expect(workerApplicationRepository.promoteGuestToWorker).not.toHaveBeenCalled()
@@ -101,7 +105,7 @@ describe('UC46 Accept Job Offer', () => {
     vi.mocked(invitationHasExpired).mockReturnValue(true)
     vi.mocked(workerApplicationRepository.updateInvitationStatus).mockResolvedValue(undefined as never)
 
-    await expect(workerApplicationService.respondToInvitation('inv-3', 'accepted'))
+    await expect(workerApplicationService.respondToInvitation('inv-3', 'accepted', 'guest-1'))
       .rejects.toThrow('This offer has expired — the shift has already started')
 
     expect(workerApplicationRepository.updateInvitationStatus).toHaveBeenCalledWith('inv-3', 'expired')
@@ -115,7 +119,7 @@ describe('UC46 Accept Job Offer', () => {
     vi.mocked(workerApplicationRepository.markSentInvitationsPositionFilled).mockResolvedValue(undefined as never)
     vi.mocked(workerApplicationRepository.markPendingApplicantsJobClosed).mockResolvedValue(undefined as never)
 
-    await workerApplicationService.respondToInvitation('inv-4', 'accepted')
+    await workerApplicationService.respondToInvitation('inv-4', 'accepted', 'guest-1')
 
     expect(workerApplicationRepository.closeJobPosting).toHaveBeenCalledWith('job-1')
     expect(workerApplicationRepository.markSentInvitationsPositionFilled).toHaveBeenCalledWith('job-1')

@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { shiftService } from '@/services/owner/shiftService'
 import { BulkCreateShiftInput } from '@/types/Shift'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 export async function POST(req: NextRequest) {
   let body: unknown
@@ -13,13 +14,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, message: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { company_id, created_by, items } = body as Record<string, unknown>
+  const { company_id, items } = body as Record<string, unknown>
 
   if (!company_id || typeof company_id !== 'string') {
     return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
   }
-  if (!created_by || typeof created_by !== 'string') {
-    return NextResponse.json({ success: false, message: 'created_by is required' }, { status: 400 })
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+  if (session.user.company_id !== company_id) {
+    return NextResponse.json({ success: false, message: 'You can only manage your own company\'s shifts' }, { status: 403 })
   }
   if (!Array.isArray(items)) {
     return NextResponse.json({ success: false, message: 'items must be an array' }, { status: 400 })
@@ -37,7 +40,7 @@ export async function POST(req: NextRequest) {
     }))
 
   try {
-    const result = await shiftService.createShiftsInBulk({ company_id, created_by, items: cleanedItems })
+    const result = await shiftService.createShiftsInBulk({ company_id, created_by: session.user.id, items: cleanedItems })
     return NextResponse.json({ success: true, result }, { status: 201 })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to create shifts'

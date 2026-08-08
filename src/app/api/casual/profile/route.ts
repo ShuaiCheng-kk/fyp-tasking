@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { casualProfileService } from '@/services/casual/casualProfileService'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 export async function GET(req: NextRequest) {
   try {
@@ -11,6 +12,11 @@ export async function GET(req: NextRequest) {
         { success: false, message: 'Missing user_id' },
         { status: 400 }
       )
+    }
+    const session = await getServerSessionUser()
+    if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+    if (user_id !== session.user.id && user_id !== session.auth_id) {
+      return NextResponse.json({ success: false, message: 'You can only view your own profile' }, { status: 403 })
     }
 
     const profile = await casualProfileService.getProfile(user_id)
@@ -52,6 +58,11 @@ export async function PATCH(req: NextRequest) {
   }
   if (typeof payment_account !== 'string' || !payment_account) {
     return NextResponse.json({ success: false, message: 'payment_account is required' }, { status: 400 })
+  }
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+  if (user_id !== session.user.id && user_id !== session.auth_id) {
+    return NextResponse.json({ success: false, message: 'You can only edit your own profile' }, { status: 403 })
   }
 
   try {

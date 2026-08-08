@@ -3,6 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { workerApplicationService } from '@/services/guest/workerApplicationService'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 export async function POST(req: NextRequest) {
   let body: Record<string, unknown>
@@ -20,6 +21,11 @@ export async function POST(req: NextRequest) {
   }
   if (typeof userId !== 'string' || !userId) {
     return NextResponse.json({ success: false, message: 'user_id is required' }, { status: 400 })
+  }
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+  if (userId !== session.user.id && userId !== session.auth_id) {
+    return NextResponse.json({ success: false, message: 'You can only apply as yourself' }, { status: 403 })
   }
 
   try {
@@ -56,6 +62,11 @@ export async function GET(req: NextRequest) {
         { success: false, message: 'Missing user ID' },
         { status: 400 }
       )
+    }
+    const session = await getServerSessionUser()
+    if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+    if (userId !== session.user.id && userId !== session.auth_id) {
+      return NextResponse.json({ success: false, message: 'You can only view your own applications' }, { status: 403 })
     }
 
     const applications =

@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
+vi.mock('@/lib/supabaseAdmin', () => ({
+  getSupabaseAdmin: () => ({}),
+}))
+
 vi.mock('@/lib/supabase', () => ({
   supabase: {},
   createClient: () => ({}),
@@ -52,7 +56,7 @@ describe('UC7 Set Recurring Shift', () => {
 
   it('UC7-M-UT-O: Owner sets a weekly recurring rule on an existing shift', async () => {
     const original = { ...baseShift, id: 'shift-1', shift_date: '2026-08-10', recurrence_group_id: null, source_shift_id: null, created_by: 'owner-1' }
-    const generated = { ...baseShift, id: 'shift-2', shift_date: '2026-08-17', recurrence_group_id: 'rec-1', recurrence_rule: 'weekly', source_shift_id: 'shift-1', created_by: 'owner-1' }
+    const generated = { ...baseShift, id: 'shift-2', shift_date: '2026-08-17', recurrence_group_id: 'rec-1', recurrence_rule: 'weekly' as const, source_shift_id: 'shift-1', created_by: 'owner-1' }
 
     vi.mocked(shiftRepository.getShiftById).mockResolvedValue(original)
     vi.mocked(shiftRepository.getAssignmentsByShiftIds).mockResolvedValue([{
@@ -89,7 +93,7 @@ describe('UC7 Set Recurring Shift', () => {
 
   it('UC7-M-UT-P: Partner sets a weekly recurring rule on an existing shift', async () => {
     const original = { ...baseShift, id: 'shift-3', shift_date: '2026-08-10', recurrence_group_id: null, source_shift_id: null, created_by: 'partner-1' }
-    const generated = { ...baseShift, id: 'shift-4', shift_date: '2026-08-17', recurrence_group_id: 'rec-2', recurrence_rule: 'weekly', source_shift_id: 'shift-3', created_by: 'partner-1' }
+    const generated = { ...baseShift, id: 'shift-4', shift_date: '2026-08-17', recurrence_group_id: 'rec-2', recurrence_rule: 'weekly' as const, source_shift_id: 'shift-3', created_by: 'partner-1' }
 
     vi.mocked(shiftRepository.getShiftById).mockResolvedValue(original)
     vi.mocked(shiftRepository.getAssignmentsByShiftIds).mockResolvedValue([{

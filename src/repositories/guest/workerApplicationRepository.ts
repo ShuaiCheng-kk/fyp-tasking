@@ -1,10 +1,22 @@
 // LAYER: Repository
 // RULE: Supabase queries only. No business logic.
 
-import { supabase } from '@/lib/supabase'
+import { getSupabaseAdmin } from '@/lib/supabaseAdmin'
+
+const supabase = getSupabaseAdmin()
 import { ApplicantCertificateSnapshot } from '@/types/Recruitment'
 
 export const workerApplicationRepository = {
+  async getApplicationOwner(applicantId: string): Promise<{ user_id: string } | null> {
+    const { data, error } = await supabase
+      .from('job_applicants')
+      .select('user_id')
+      .eq('id', applicantId)
+      .maybeSingle()
+    if (error) throw new Error(error.message)
+    return data
+  },
+
   async checkExistingApplication(jobId: string, userId: string) {
     // 'withdrawn' means the WORKER walked away on their own (declined an offer, withdrew a
     // pending application, or cancelled a confirmed shift) — that's their call to unmake, so it

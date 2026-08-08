@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { ownerInboxService } from '@/services/owner/ownerInboxService'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 export async function GET(
   req: NextRequest,
@@ -11,6 +12,11 @@ export async function GET(
     const { conversation_id: other_user_id } = await params
     if (!user_id) {
       return NextResponse.json({ success: false, error: 'Missing user_id' }, { status: 400 })
+    }
+    const session = await getServerSessionUser()
+    if (!session) return NextResponse.json({ success: false, error: 'Not authenticated' }, { status: 401 })
+    if (user_id !== session.user.id && user_id !== session.auth_id) {
+      return NextResponse.json({ success: false, error: 'You can only view your own conversations' }, { status: 403 })
     }
     const messages = await ownerInboxService.getMessages(user_id, other_user_id)
     return NextResponse.json({ success: true, messages })
@@ -30,6 +36,11 @@ export async function PATCH(
     if (!user_id) {
       return NextResponse.json({ success: false, error: 'Missing user_id' }, { status: 400 })
     }
+    const session = await getServerSessionUser()
+    if (!session) return NextResponse.json({ success: false, error: 'Not authenticated' }, { status: 401 })
+    if (user_id !== session.user.id && user_id !== session.auth_id) {
+      return NextResponse.json({ success: false, error: 'You can only manage your own conversations' }, { status: 403 })
+    }
     await ownerInboxService.markMessagesAsRead(user_id, other_user_id)
     return NextResponse.json({ success: true })
   } catch (error: any) {
@@ -47,6 +58,11 @@ export async function DELETE(
     const { conversation_id: other_user_id } = await params
     if (!user_id) {
       return NextResponse.json({ success: false, error: 'Missing user_id' }, { status: 400 })
+    }
+    const session = await getServerSessionUser()
+    if (!session) return NextResponse.json({ success: false, error: 'Not authenticated' }, { status: 401 })
+    if (user_id !== session.user.id && user_id !== session.auth_id) {
+      return NextResponse.json({ success: false, error: 'You can only manage your own conversations' }, { status: 403 })
     }
     await ownerInboxService.deleteConversation(user_id, other_user_id)
     return NextResponse.json({ success: true })

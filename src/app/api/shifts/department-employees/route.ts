@@ -2,7 +2,10 @@
 // RULE: Only handles request/response. No business logic. No DB access.
 
 import { NextRequest, NextResponse } from 'next/server'
-import { supabase } from '@/lib/supabase'
+import { getSupabaseAdmin } from '@/lib/supabaseAdmin'
+
+const supabase = getSupabaseAdmin()
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 type JoinedUser = { id: string; full_name: string }
 
@@ -21,6 +24,12 @@ export async function GET(req: NextRequest) {
       { success: false, message: 'company_id and department_id are required' },
       { status: 400 },
     )
+  }
+
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+  if (session.user.company_id !== company_id) {
+    return NextResponse.json({ success: false, message: 'You can only view your own company\'s data' }, { status: 403 })
   }
 
   try {

@@ -3,6 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { shiftSwapSettingsService } from '@/services/owner/shiftSwapSettingsService'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 // CHANGE TYPE: Code only
 
@@ -16,6 +17,11 @@ export async function GET(req: NextRequest) {
   }
   if (!owner_id) {
     return NextResponse.json({ success: false, message: 'owner_id is required' }, { status: 400 })
+  }
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+  if (session.user.company_id !== company_id) {
+    return NextResponse.json({ success: false, message: 'You can only view your own company\'s settings' }, { status: 403 })
   }
 
   try {
@@ -38,22 +44,27 @@ export async function POST(req: NextRequest) {
   const b = body as Record<string, unknown>
   const action = b.action
 
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+
   try {
     if (action === 'set_settings') {
       if (
         typeof b.company_id !== 'string' ||
-        typeof b.owner_id !== 'string' ||
         typeof b.auto_approval_enabled !== 'boolean' ||
         (b.monthly_swap_limit !== null && typeof b.monthly_swap_limit !== 'number') ||
         (b.deadline_hours_before_shift !== null && typeof b.deadline_hours_before_shift !== 'number') ||
         typeof b.require_review_on_limit_exceeded !== 'boolean' ||
         typeof b.require_review_on_deadline_exceeded !== 'boolean'
       ) {
-        return NextResponse.json({ success: false, message: 'company_id, owner_id, auto_approval_enabled, monthly_swap_limit, deadline_hours_before_shift, require_review_on_limit_exceeded and require_review_on_deadline_exceeded are required' }, { status: 400 })
+        return NextResponse.json({ success: false, message: 'company_id, auto_approval_enabled, monthly_swap_limit, deadline_hours_before_shift, require_review_on_limit_exceeded and require_review_on_deadline_exceeded are required' }, { status: 400 })
+      }
+      if (session.user.company_id !== b.company_id) {
+        return NextResponse.json({ success: false, message: 'You can only manage your own company\'s settings' }, { status: 403 })
       }
       const settings = await shiftSwapSettingsService.setSettings({
         company_id: b.company_id,
-        owner_id: b.owner_id,
+        owner_id: session.user.id,
         auto_approval_enabled: b.auto_approval_enabled,
         monthly_swap_limit: b.monthly_swap_limit as number | null,
         deadline_hours_before_shift: b.deadline_hours_before_shift as number | null,

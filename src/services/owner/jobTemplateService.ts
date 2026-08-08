@@ -31,17 +31,19 @@ export const jobTemplateService = {
     return jobTemplateRepository.getTemplatesByCompany(company_id, department_ids)
   },
 
-  async deleteTemplate(id: string): Promise<void> {
+  async deleteTemplate(id: string, company_id: string): Promise<void> {
     if (!id) throw new Error('Template id is required')
     const existing = await jobTemplateRepository.getTemplateById(id)
     if (!existing) throw new Error('Template not found')
+    if (existing.company_id !== company_id) throw new Error('You can only manage your own company\'s templates')
     await jobTemplateRepository.deleteTemplate(id)
   },
 
-  async updateTemplate(id: string, fields: JobTemplateUpdateInput): Promise<JobTemplate> {
+  async updateTemplate(id: string, fields: JobTemplateUpdateInput, company_id: string): Promise<JobTemplate> {
     if (!id) throw new Error('Template id is required')
     const existing = await jobTemplateRepository.getTemplateById(id)
     if (!existing) throw new Error('Template not found')
+    if (existing.company_id !== company_id) throw new Error('You can only manage your own company\'s templates')
     const title = fields.title !== undefined ? fields.title.trim() : existing.title
     if (!title) throw new Error('Please give this template a job title.')
     const responsibilities = fields.responsibilities !== undefined ? fields.responsibilities : existing.responsibilities
@@ -73,10 +75,11 @@ export const jobTemplateService = {
     })
   },
 
-  async getTemplateUsageStats(id: string): Promise<JobTemplateUsageStats> {
+  async getTemplateUsageStats(id: string, company_id: string): Promise<JobTemplateUsageStats> {
     if (!id) throw new Error('Template id is required')
     const existing = await jobTemplateRepository.getTemplateById(id)
     if (!existing) throw new Error('Template not found')
+    if (existing.company_id !== company_id) throw new Error('You can only manage your own company\'s templates')
     return jobTemplateRepository.getUsageStats(id)
   },
 

@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { shiftService } from '@/services/owner/shiftService'
 import { ShiftInput } from '@/types/Shift'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
@@ -18,6 +19,12 @@ export async function GET(req: NextRequest) {
       { success: false, message: 'company_id, date_from, and date_to are required' },
       { status: 400 },
     )
+  }
+
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+  if (session.user.company_id !== company_id) {
+    return NextResponse.json({ success: false, message: 'You can only view your own company\'s schedule' }, { status: 403 })
   }
 
   try {
@@ -64,8 +71,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, message: 'start_time is required' }, { status: 400 })
   if (!end_time || typeof end_time !== 'string')
     return NextResponse.json({ success: false, message: 'end_time is required' }, { status: 400 })
-  if (!created_by || typeof created_by !== 'string')
-    return NextResponse.json({ success: false, message: 'created_by is required' }, { status: 400 })
+
+  const session = await getServerSessionUser()
+  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+  if (session.user.company_id !== company_id) {
+    return NextResponse.json({ success: false, message: 'You can only create shifts for your own company' }, { status: 403 })
+  }
 
   const input: ShiftInput = {
     company_id,
@@ -73,7 +84,7 @@ export async function POST(req: NextRequest) {
     shift_date,
     start_time,
     end_time,
-    created_by,
+    created_by: session.user.id,
     publication_status: publication_status === 'published' ? 'published' : 'draft',
     template_id: typeof template_id === 'string' && template_id ? template_id : null,
   }

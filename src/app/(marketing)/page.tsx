@@ -2,6 +2,20 @@
 
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
+import { CalendarDays, CheckSquare, UserPlus, ClipboardList, LayoutGrid, Unlock, Route, Building2 } from 'lucide-react';
+import AiScheduleDemo from '@/components/home/AiScheduleDemo';
+import RecurringShiftDemo from '@/components/home/RecurringShiftDemo';
+import SplitShiftDemo from '@/components/home/SplitShiftDemo';
+import AiTaskAssignDemo from '@/components/home/AiTaskAssignDemo';
+import SubtasksDemo from '@/components/home/SubtasksDemo';
+import WorkloadRebalanceDemo from '@/components/home/WorkloadRebalanceDemo';
+import AiJobDescriptionDemo from '@/components/home/AiJobDescriptionDemo';
+import AiCandidateRecommendationsDemo from '@/components/home/AiCandidateRecommendationsDemo';
+import JobPublishingDemo from '@/components/home/JobPublishingDemo';
+import AiDayOffDemo from '@/components/home/AiDayOffDemo';
+import ShiftSwapDemo from '@/components/home/ShiftSwapDemo';
+import ClockInOutDemo from '@/components/home/ClockInOutDemo';
+import ReviewsSection from '@/components/home/ReviewsSection';
 
 // ─── Shared style constants ───────────────────────────────────────────────────
 
@@ -20,17 +34,6 @@ const sectionSubtitle: React.CSSProperties = {
   lineHeight: 1.7,
   maxWidth: '560px',
   margin: '0 auto',
-};
-
-const btnPrimary: React.CSSProperties = {
-  display: 'inline-block',
-  background: '#F97316',
-  color: '#FFFFFF',
-  padding: '13px 28px',
-  borderRadius: '10px',
-  fontFamily: 'var(--font-body)',
-  fontWeight: 600,
-  fontSize: '0.9375rem',
 };
 
 const btnOutline: React.CSSProperties = {
@@ -93,130 +96,535 @@ function AnimatedSection({
   );
 }
 
-// ─── Scroll-to-top button ─────────────────────────────────────────────────────
+// ─── Sticky scroll-narrative section (Pitch-style: left text stack, right pinned preview) ─────
 
-function ScrollToTop() {
-  const [visible, setVisible] = useState(false);
+interface StickyScrollItem {
+  Icon: React.FC;
+  title: string;
+  desc: string;
+  image?: string;
+}
+
+function StickyScrollSection({ items }: { items: StickyScrollItem[] }) {
+  const [active, setActive] = useState(0);
+  const refs = useRef<(HTMLDivElement | null)[]>([]);
 
   useEffect(() => {
-    const handler = () => setVisible(window.scrollY > 300);
+    const handler = () => {
+      const triggerY = window.innerHeight * 0.5;
+      let closestIdx = 0;
+      let closestDist = Infinity;
+      refs.current.forEach((el, i) => {
+        if (!el) return;
+        const rect = el.getBoundingClientRect();
+        const center = rect.top + rect.height / 2;
+        const dist = Math.abs(center - triggerY);
+        if (dist < closestDist) {
+          closestDist = dist;
+          closestIdx = i;
+        }
+      });
+      setActive(closestIdx);
+    };
+    handler();
     window.addEventListener('scroll', handler, { passive: true });
-    return () => window.removeEventListener('scroll', handler);
+    window.addEventListener('resize', handler);
+    return () => {
+      window.removeEventListener('scroll', handler);
+      window.removeEventListener('resize', handler);
+    };
   }, []);
 
+  const ActiveIcon = items[active].Icon;
+
   return (
-    <button
-      onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
-      aria-label="Scroll to top"
-      style={{
-        position: 'fixed',
-        bottom: '32px',
-        right: '32px',
-        width: '44px',
-        height: '44px',
-        borderRadius: '50%',
-        background: '#F97316',
-        color: '#fff',
-        border: 'none',
-        cursor: 'pointer',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        boxShadow: '0 4px 18px rgba(249,115,22,0.45)',
-        opacity: visible ? 1 : 0,
-        transform: visible ? 'scale(1)' : 'scale(0.75)',
-        transition: 'opacity 0.3s ease, transform 0.3s ease',
-        pointerEvents: visible ? 'auto' : 'none',
-        zIndex: 40,
-      }}
-    >
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-        <path
-          d="M8 13V3M3 8l5-5 5 5"
-          stroke="white"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
-    </button>
+    <div style={{ display: 'flex', gap: '48px', alignItems: 'flex-start' }} className="sticky-scroll-row">
+      {/* Left — stacked text, one tall block per item so scrolling through them takes a beat */}
+      <div style={{ flex: '0 1 420px', minWidth: 0 }}>
+        {items.map(({ Icon, title, desc }, i) => (
+          <div
+            key={title}
+            ref={(el) => { refs.current[i] = el; }}
+            className="sticky-scroll-item"
+            style={{
+              minHeight: '52vh',
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'center',
+              paddingBottom: '40px',
+              opacity: active === i ? 1 : 0.35,
+              transition: 'opacity 0.35s ease',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '14px' }}>
+              <span style={{ display: 'inline-flex', flexShrink: 0 }}>
+                <Icon />
+              </span>
+              <h3
+                style={{
+                  fontFamily: 'var(--font-heading)',
+                  fontWeight: 600,
+                  fontSize: '1.5rem',
+                  color: '#F97316',
+                  margin: 0,
+                  whiteSpace: 'pre-line',
+                }}
+              >
+                {title}
+              </h3>
+            </div>
+            <p
+              style={{
+                fontFamily: 'var(--font-body)',
+                fontSize: '1rem',
+                color: '#1C1917',
+                lineHeight: 1.7,
+                maxWidth: '460px',
+              }}
+            >
+              {desc}
+            </p>
+          </div>
+        ))}
+      </div>
+
+      {/* Right — pinned preview, swaps content to match whichever left item is active */}
+      <div style={{ flex: 1, minWidth: 0, position: 'sticky', top: '270px' }} className="sticky-scroll-preview">
+        {items[active].image ? (
+          <div
+            key={active}
+            style={{
+              borderRadius: '20px',
+              background: '#1C1917',
+              padding: '20px',
+            }}
+          >
+            <img
+              src={items[active].image}
+              alt={items[active].title}
+              style={{ display: 'block', width: '100%', height: 'auto', borderRadius: '10px' }}
+            />
+          </div>
+        ) : (
+          <div
+            style={{
+              borderRadius: '20px',
+              border: '1px dashed #D6D3D1',
+              background: '#FBF9F4',
+              height: '440px',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '16px',
+            }}
+          >
+            <div
+              key={active}
+              style={{
+                width: '120px',
+                height: '120px',
+                background: '#FEF3C7',
+                borderRadius: '24px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <span style={{ display: 'inline-flex', transform: 'scale(1.8)' }}>
+                <ActiveIcon />
+              </span>
+            </div>
+            <span
+              style={{
+                fontFamily: 'var(--font-body)',
+                fontSize: '0.8125rem',
+                fontWeight: 600,
+                color: '#A8A29E',
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+                textAlign: 'center',
+                maxWidth: '280px',
+              }}
+            >
+              Image placeholder — {items[active].title}
+            </span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Tabbed accordion section (tabs = modules, accordion = that module's key features) ────
+
+interface AccordionFeature {
+  title: string;
+  desc: string;
+  demo?: React.ReactNode;
+}
+
+interface TabbedAccordionModule {
+  Icon: React.FC;
+  label: string;
+  href: string;
+  features: AccordionFeature[];
+}
+
+function TabbedAccordionSection({ modules }: { modules: TabbedAccordionModule[] }) {
+  const [activeTab, setActiveTab] = useState(0);
+  const [openIndex, setOpenIndex] = useState(0);
+  const activeModule = modules[activeTab];
+  const ActiveIcon = activeModule.Icon;
+  const activeFeature = activeModule.features[openIndex] ?? activeModule.features[0];
+
+  const selectTab = (i: number) => {
+    setActiveTab(i);
+    setOpenIndex(0);
+  };
+
+  const renderTabButton = (mod: TabbedAccordionModule, i: number) => {
+    const { Icon, label } = mod;
+    return (
+      <button
+        key={label}
+        onClick={() => selectTab(i)}
+        className="btn-press"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          padding: '10px 20px',
+          borderRadius: '100px',
+          border: 'none',
+          cursor: 'pointer',
+          background: activeTab === i ? '#FFFFFF' : 'transparent',
+          boxShadow: activeTab === i ? '0 2px 10px rgba(0,0,0,0.08)' : 'none',
+          color: activeTab === i ? '#1C1917' : '#78716C',
+          fontFamily: 'var(--font-body)',
+          fontWeight: 600,
+          fontSize: '1.0625rem',
+          transition: 'background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease',
+        }}
+      >
+        <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+          <Icon />
+        </span>
+        {label}
+      </button>
+    );
+  };
+
+  // Only split into two rows once there are enough modules that a single row would wrap awkwardly.
+  const topRow = modules.length > 4 ? modules.slice(0, 3) : modules;
+  const bottomRow = modules.length > 4 ? modules.slice(3) : [];
+
+  return (
+    <>
+      {/* Tab pills — one per module, laid out 3 on top / rest below once there are more than 4 */}
+      <AnimatedSection style={{ display: 'flex', justifyContent: 'center', marginBottom: '48px' }}>
+        <div
+          style={{
+            display: 'inline-flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: '4px',
+            background: '#F5F0E8',
+            borderRadius: '28px',
+            padding: '6px',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'center', gap: '4px' }}>
+            {topRow.map((mod, i) => renderTabButton(mod, i))}
+          </div>
+          {bottomRow.length > 0 && (
+            <div style={{ display: 'flex', justifyContent: 'center', gap: '4px' }}>
+              {bottomRow.map((mod, i) => renderTabButton(mod, i + topRow.length))}
+            </div>
+          )}
+        </div>
+      </AnimatedSection>
+
+      {/* Accordion (left) — the active module's 2–3 standout features — + pinned preview (right) */}
+      <div className="products-accordion-row" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '64px', alignItems: 'center' }}>
+        <div>
+          {activeModule.features.map(({ title, desc }, i) => {
+            const open = openIndex === i;
+            return (
+              <div key={title} style={{ borderBottom: '1px solid #F0E8D8' }}>
+                <button
+                  onClick={() => setOpenIndex(i)}
+                  style={{
+                    width: '100%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '16px',
+                    padding: '18px 0',
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                  }}
+                >
+                  <span style={{ fontFamily: 'var(--font-heading)', fontWeight: 600, fontSize: '1.25rem', color: '#1C1917' }}>
+                    {title}
+                  </span>
+                  <svg
+                    width="18"
+                    height="18"
+                    viewBox="0 0 18 18"
+                    fill="none"
+                    style={{ flexShrink: 0, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.25s ease' }}
+                  >
+                    <path d="M4.5 7l4.5 4.5L13.5 7" stroke="#78716C" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </button>
+                <div style={{ maxHeight: open ? '160px' : '0px', overflow: 'hidden', transition: 'max-height 0.3s ease' }}>
+                  <p style={{ fontFamily: 'var(--font-body)', fontSize: '1.0625rem', color: '#78716C', lineHeight: 1.7, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', paddingBottom: '22px' }}>
+                    {desc}
+                  </p>
+                </div>
+              </div>
+            );
+          })}
+
+          <div style={{ paddingTop: '22px' }}>
+            <Link href={activeModule.href} style={{ fontFamily: 'var(--font-body)', fontSize: '1rem', fontWeight: 600, color: '#F97316' }}>
+              Learn more about {activeModule.label} →
+            </Link>
+          </div>
+        </div>
+
+        <div className="products-accordion-preview">
+          {activeFeature.demo ? (
+            <div style={{ height: '440px' }}>{activeFeature.demo}</div>
+          ) : (
+            <div
+              style={{
+                borderRadius: '20px',
+                border: '1px dashed #D6D3D1',
+                background: '#FBF9F4',
+                height: '440px',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '16px',
+              }}
+            >
+              <div
+                key={activeTab}
+                style={{
+                  width: '100px',
+                  height: '100px',
+                  background: '#FEF3C7',
+                  borderRadius: '20px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <span style={{ display: 'inline-flex', transform: 'scale(1.6)' }}>
+                  <ActiveIcon />
+                </span>
+              </div>
+              <span
+                style={{
+                  fontFamily: 'var(--font-body)',
+                  fontSize: '0.8125rem',
+                  fontWeight: 600,
+                  color: '#A8A29E',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.05em',
+                  textAlign: 'center',
+                  maxWidth: '280px',
+                }}
+              >
+                Image placeholder — {activeFeature.title}
+              </span>
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ─── Industries carousel (horizontal slide, dot navigation) ───────────────────
+
+interface IndustryCarouselItem {
+  Icon: React.FC;
+  name: string;
+  desc: string;
+}
+
+function IndustryCarousel({ items }: { items: IndustryCarouselItem[] }) {
+  const [active, setActive] = useState(0);
+  const [paused, setPaused] = useState(false);
+  const trackRef = useRef<HTMLDivElement>(null);
+  const itemRefs = useRef<(HTMLAnchorElement | null)[]>([]);
+  const posRef = useRef(0);
+  const resetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // One clone of the first card appended at the end — scrolling onto it looks identical to
+  // being back at item 0, so the loop can snap back there instantly with no visible jump.
+  const displayItems = [...items, items[0]];
+
+  useEffect(() => {
+    const track = trackRef.current;
+    if (!track) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            const idx = itemRefs.current.findIndex((el) => el === entry.target);
+            if (idx !== -1) setActive(idx % items.length);
+          }
+        });
+      },
+      { root: track, threshold: 0.6 },
+    );
+    itemRefs.current.forEach((el) => el && observer.observe(el));
+    return () => observer.disconnect();
+  }, [items.length]);
+
+  const scrollToIndex = (i: number, instant = false) => {
+    const track = trackRef.current;
+    const item = itemRefs.current[i];
+    if (!track || !item) return;
+    // Scroll the track's own scrollLeft directly (not scrollIntoView) so this never drags
+    // the page's vertical scroll position along with it when the section is off-screen.
+    const target = item.getBoundingClientRect().left - track.getBoundingClientRect().left + track.scrollLeft;
+    track.scrollTo({ left: target, behavior: instant ? 'auto' : 'smooth' });
+  };
+
+  const goTo = (i: number) => {
+    if (resetTimeoutRef.current) clearTimeout(resetTimeoutRef.current);
+    posRef.current = i;
+    scrollToIndex(i);
+  };
+
+  useEffect(() => {
+    if (paused) return;
+    const timer = setInterval(() => {
+      const next = posRef.current + 1;
+      scrollToIndex(next);
+      if (next === items.length) {
+        // reached the clone of item 0 — once the scroll settles, snap back invisibly and keep going right
+        resetTimeoutRef.current = setTimeout(() => {
+          posRef.current = 0;
+          scrollToIndex(0, true);
+        }, 550);
+      } else {
+        posRef.current = next;
+      }
+    }, 3000);
+    return () => {
+      clearInterval(timer);
+      if (resetTimeoutRef.current) clearTimeout(resetTimeoutRef.current);
+    };
+  }, [paused, items.length]);
+
+  return (
+    <div onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
+      <div
+        ref={trackRef}
+        className="industry-carousel-track"
+        style={{
+          display: 'flex',
+          gap: '48px',
+          overflowX: 'auto',
+          scrollSnapType: 'x mandatory',
+          scrollbarWidth: 'none',
+          paddingBottom: '8px',
+          marginBottom: '32px',
+        }}
+      >
+        {displayItems.map(({ Icon, name, desc }, i) => (
+          <Link
+            key={`${name}-${i}`}
+            href="/industries"
+            ref={(el) => { itemRefs.current[i] = el; }}
+            className="industry-slide-item industry-carousel-item"
+            style={{
+              scrollSnapAlign: 'start',
+              flex: '0 0 calc(25% - 36px)',
+              minWidth: '220px',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'flex-start',
+              gap: '16px',
+              textDecoration: 'none',
+            }}
+          >
+            <div
+              className="industry-slide-icon"
+              style={{
+                width: '64px',
+                height: '64px',
+                background: '#FEF3C7',
+                borderRadius: '50%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                transition: 'background 0.2s ease',
+              }}
+            >
+              <Icon />
+            </div>
+            <span style={{ fontFamily: 'var(--font-heading)', fontWeight: 600, fontSize: '1.0625rem', color: '#1C1917' }}>
+              {name}
+            </span>
+            <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.9375rem', color: '#78716C', lineHeight: 1.6, margin: 0 }}>
+              {desc}
+            </p>
+            <svg className="industry-slide-arrow" width="18" height="18" viewBox="0 0 18 18" fill="none" style={{ transition: 'transform 0.2s ease' }}>
+              <path d="M3 9h12M11 4.5L15.5 9 11 13.5" stroke="#F97316" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </Link>
+        ))}
+      </div>
+
+      <div style={{ display: 'flex', justifyContent: 'center', gap: '8px' }}>
+        {items.map((item, i) => (
+          <button
+            key={item.name}
+            type="button"
+            aria-label={`Go to ${item.name}`}
+            onClick={() => goTo(i)}
+            style={{
+              width: active === i ? '24px' : '8px',
+              height: '8px',
+              borderRadius: '4px',
+              background: active === i ? '#F97316' : '#E7DFCE',
+              border: 'none',
+              padding: 0,
+              cursor: 'pointer',
+              transition: 'all 0.25s ease',
+            }}
+          />
+        ))}
+      </div>
+    </div>
   );
 }
 
 // ─── USP Icons ────────────────────────────────────────────────────────────────
 
-const UserIcon = () => (
-  <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-    <circle cx="14" cy="9" r="5" stroke="#F97316" strokeWidth="2" />
-    <path d="M4 25c0-5.523 4.477-10 10-10s10 4.477 10 10" stroke="#F97316" strokeWidth="2" strokeLinecap="round" />
-  </svg>
-);
+const UserIcon = () => <LayoutGrid color="#F97316" size={28} strokeWidth={2} />;
+const BuildingIcon = () => <Unlock color="#F97316" size={28} strokeWidth={2} />;
+const SparkleIcon = () => <Route color="#F97316" size={28} strokeWidth={2} />;
+const ClockIcon = () => <Building2 color="#F97316" size={28} strokeWidth={2} />;
 
-const BuildingIcon = () => (
-  <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-    <rect x="3" y="5" width="22" height="19" rx="2" stroke="#F97316" strokeWidth="2" />
-    <path d="M10 24V17h8v7" stroke="#F97316" strokeWidth="2" />
-    <rect x="7" y="10" width="4" height="3" rx="0.5" stroke="#F97316" strokeWidth="1.5" />
-    <rect x="17" y="10" width="4" height="3" rx="0.5" stroke="#F97316" strokeWidth="1.5" />
-  </svg>
-);
+// ─── Module Icons — same lucide-react icons the app sidebar uses for these pages
+//     (see the `items` array in OwnerSidebar.tsx), so the marketing site and the
+//     product itself point at the same visual language for each module. ─────────
 
-const SparkleIcon = () => (
-  <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-    <path d="M14 3L16.5 11L24 14L16.5 17L14 25L11.5 17L4 14L11.5 11L14 3Z" stroke="#F97316" strokeWidth="2" strokeLinejoin="round" />
-  </svg>
-);
-
-const ClockIcon = () => (
-  <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-    <circle cx="14" cy="14" r="10" stroke="#F97316" strokeWidth="2" />
-    <path d="M14 8V14L17.5 16.5" stroke="#F97316" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);
-
-// ─── Module Icons ─────────────────────────────────────────────────────────────
-
-const RecruitmentIcon = () => (
-  <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" stroke="#F97316" strokeWidth="2" strokeLinecap="round" />
-    <circle cx="9" cy="7" r="4" stroke="#F97316" strokeWidth="2" />
-    <path d="M23 21v-2a4 4 0 0 0-3-3.87" stroke="#F97316" strokeWidth="2" strokeLinecap="round" />
-    <path d="M16 3.13a4 4 0 0 1 0 7.75" stroke="#F97316" strokeWidth="2" strokeLinecap="round" />
-  </svg>
-);
-
-const AttendanceIcon = () => (
-  <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-    <rect x="3" y="4" width="18" height="18" rx="2" stroke="#F97316" strokeWidth="2" />
-    <path d="M16 2v4M8 2v4M3 10h18" stroke="#F97316" strokeWidth="2" strokeLinecap="round" />
-    <path d="M9 16l2 2 4-4" stroke="#F97316" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);
-
-const AIIcon = () => (
-  <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-    <path d="M12 2L13.8 8.2L20 10L13.8 11.8L12 18L10.2 11.8L4 10L10.2 8.2L12 2Z" stroke="#F97316" strokeWidth="2" strokeLinejoin="round" />
-    <path d="M19 15l1 3 3 1-3 1-1 3-1-3-3-1 3-1 1-3z" stroke="#F97316" strokeWidth="1.5" strokeLinejoin="round" />
-  </svg>
-);
-
-const TeamIcon = () => (
-  <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-    <circle cx="12" cy="8" r="3" stroke="#F97316" strokeWidth="2" />
-    <circle cx="5" cy="10" r="2.5" stroke="#F97316" strokeWidth="1.75" />
-    <circle cx="19" cy="10" r="2.5" stroke="#F97316" strokeWidth="1.75" />
-    <path d="M2 20c0-3 1.8-5 5-5" stroke="#F97316" strokeWidth="1.75" strokeLinecap="round" />
-    <path d="M22 20c0-3-1.8-5-5-5" stroke="#F97316" strokeWidth="1.75" strokeLinecap="round" />
-    <path d="M6 20c0-3.314 2.686-6 6-6s6 2.686 6 6" stroke="#F97316" strokeWidth="2" strokeLinecap="round" />
-  </svg>
-);
-
-const BellIcon = () => (
-  <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-    <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" stroke="#F97316" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M13.73 21a2 2 0 0 1-3.46 0" stroke="#F97316" strokeWidth="2" strokeLinecap="round" />
-  </svg>
-);
+const RecruitmentIcon = () => <UserPlus color="#F97316" size={20} strokeWidth={2} />;
+const AttendanceIcon = () => <ClipboardList color="#F97316" size={20} strokeWidth={2} />;
+const ShiftIcon = () => <CalendarDays color="#F97316" size={20} strokeWidth={2} />;
+const TaskListIcon = () => <CheckSquare color="#F97316" size={20} strokeWidth={2} />;
 
 // ─── Industry Icons ───────────────────────────────────────────────────────────
 
@@ -253,6 +661,23 @@ const EventIcon = () => (
   </svg>
 );
 
+const HospitalityIcon = () => (
+  <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+    <path d="M4 24c0-5.523 4.477-10 10-10s10 4.477 10 10" stroke="#F97316" strokeWidth="2" strokeLinecap="round" />
+    <path d="M4 24h20" stroke="#F97316" strokeWidth="2" strokeLinecap="round" />
+    <path d="M14 14V8" stroke="#F97316" strokeWidth="2" strokeLinecap="round" />
+    <circle cx="14" cy="6" r="2" stroke="#F97316" strokeWidth="2" />
+  </svg>
+);
+
+const CleaningIcon = () => (
+  <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+    <path d="M13 4l11 11a4 4 0 0 1 0 5.66l-.34.34a4 4 0 0 1-5.66 0L7 10" stroke="#F97316" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M9 12l-5 5a3 3 0 0 0 0 4.24l1.76 1.76A3 3 0 0 0 10 23l5-5" stroke="#F97316" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M4 28h24" stroke="#F97316" strokeWidth="2" strokeLinecap="round" />
+  </svg>
+);
+
 
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -261,13 +686,9 @@ import { useMarketingCopy } from './useMarketingCopy';
 
 export default function HomePage() {
   const copy = useMarketingCopy('home');
-  const dashboardImageUrl = copy('hero.dashboard_image', '');
   const demoVideoUrl = copy('video.demo', '/demo.mp4');
-  const videoTitle = copy('video.title', 'See Tasking in Action');
-  const videoSubtitle = copy('video.subtitle', 'Watch how Tasking simplifies your entire casual workforce workflow in minutes.');
 
   // Hero headline staggered animation
-  const [h0, setH0] = useState(false);
   const [h1, setH1] = useState(false);
   const [h2, setH2] = useState(false);
   const [h3, setH3] = useState(false);
@@ -285,11 +706,10 @@ export default function HomePage() {
   }, []);
 
   useEffect(() => {
-    const t0 = setTimeout(() => setH0(true), 80);
-    const t1 = setTimeout(() => setH1(true), 260);
-    const t2 = setTimeout(() => setH2(true), 440);
-    const t3 = setTimeout(() => setH3(true), 600);
-    return () => [t0, t1, t2, t3].forEach(clearTimeout);
+    const t1 = setTimeout(() => setH1(true), 80);
+    const t2 = setTimeout(() => setH2(true), 260);
+    const t3 = setTimeout(() => setH3(true), 440);
+    return () => [t1, t2, t3].forEach(clearTimeout);
   }, []);
 
   const heroAnim = (visible: boolean, delay = 0): React.CSSProperties => ({
@@ -301,471 +721,174 @@ export default function HomePage() {
   return (
     <>
       {/* ========== HERO SECTION ========== */}
-      {copy.visible('hero') && <section id="hero" className="page-section" style={{ background: '#1C1C1E', padding: '80px 0 120px' }}>
-        <div
-          className="hero-flex section-inner"
+      {copy.visible('hero') && <section
+        id="hero"
+        className="page-section"
+        style={{
+          background: '#1C1917',
+          minHeight: 'calc(100vh - 68px)',
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'flex-start',
+          padding: '140px 0 260px',
+          position: 'relative',
+          overflow: 'hidden',
+        }}
+      >
+        {/* Curved fade into the next section, shaped to match the reference (flat-ish center, dropping at the edges) */}
+        <svg
+          viewBox="0 0 1440 260"
+          preserveAspectRatio="none"
+          style={{ position: 'absolute', bottom: 0, left: 0, width: '100%', height: '260px', pointerEvents: 'none' }}
+        >
+          <defs>
+            <filter id="heroCurveBlur" x="-20%" y="-20%" width="140%" height="140%">
+              <feGaussianBlur stdDeviation="18" />
+            </filter>
+          </defs>
+          {/* The path runs well past the left/right viewBox edges: a Gaussian blur samples outward,
+              so a path that stops exactly at x=0 / x=1440 fades to translucent there and lets the
+              dark background bleed through at the corners. The overhang gives it material to sample. */}
+          <path
+            d="M-300,170 L0,170 C 260,110 480,60 720,60 C 960,60 1180,110 1440,170 L1740,170 L1740,340 L-300,340 Z"
+            fill="#FFFBF5"
+            filter="url(#heroCurveBlur)"
+          />
+        </svg>
+        {/* Solid strip guarantees a true seamless join at the very bottom edge, since the blurred
+            SVG path above can leave a faint translucent seam right where it gets clipped */}
+        <div style={{ position: 'absolute', bottom: 0, left: 0, width: '100%', height: '40px', background: '#FFFBF5', pointerEvents: 'none' }} />
+
+        {/* Scroll hint — points to the next section, sits in the cream area under the curve */}
+        <button
+          onClick={() => {
+            // Land just below the fixed navbar (68px) instead of using scrollIntoView(), which
+            // would tuck the heading right under it.
+            const heading = document.querySelector('#products h2');
+            if (!heading) return;
+            const targetY = window.scrollY + heading.getBoundingClientRect().top - 68;
+            window.scrollTo({ top: targetY, behavior: 'smooth' });
+          }}
+          aria-label="Scroll to next section"
+          className="hero-scroll-hint"
           style={{
-            maxWidth: '1280px',
-            margin: '0 auto',
-            padding: '0 24px',
+            position: 'absolute',
+            bottom: '115px',
+            left: '50%',
+            width: '44px',
+            height: '44px',
+            borderRadius: '50%',
+            background: '#F97316',
+            border: 'none',
+            cursor: 'pointer',
             display: 'flex',
             alignItems: 'center',
-            gap: '56px',
+            justifyContent: 'center',
+            boxShadow: '0 4px 18px rgba(249,115,22,0.45)',
+            zIndex: 1,
           }}
         >
-          {/* Left content */}
-          <div className="hero-left" style={{ flex: '1', minWidth: 0 }}>
-            {/* Badge */}
-            <div style={heroAnim(h0)}>
-              <span
-                style={{
-                  display: 'inline-block',
-                  background: 'rgba(249,115,22,0.18)',
-                  color: '#FB923C',
-                  padding: '5px 14px',
-                  borderRadius: '100px',
-                  fontSize: '0.8125rem',
-                  fontWeight: 600,
-                  fontFamily: 'var(--font-body)',
-                  marginBottom: '28px',
-                }}
-              >
-                Built for SMEs
-              </span>
-            </div>
-
-            {/* Headline line 1 */}
-            <div style={{ overflow: 'hidden' }}>
-              <h1
-                className="hero-heading"
-                style={{
-                  ...heroAnim(h1),
-                  fontFamily: 'var(--font-heading)',
-                  fontWeight: 600,
-                  fontSize: '3.5rem',
-                  lineHeight: 1.12,
-                  color: '#FFFFFF',
-                  marginBottom: '4px',
-                }}
-              >
-                Hire. Schedule. Track.
-              </h1>
-            </div>
-
-            {/* Headline line 2 */}
-            <div style={{ overflow: 'hidden', marginBottom: '22px' }}>
-              <h1
-                className="hero-heading"
-                style={{
-                  ...heroAnim(h2),
-                  fontFamily: 'var(--font-heading)',
-                  fontWeight: 600,
-                  fontSize: '3.5rem',
-                  lineHeight: 1.12,
-                  color: '#F97316',
-                }}
-              >
-                All in One Place.
-              </h1>
-            </div>
-
-            {/* Subheadline */}
-            <p
-              style={{
-                ...heroAnim(h3),
-                fontFamily: 'var(--font-body)',
-                fontSize: '1.125rem',
-                color: 'rgba(255,255,255,0.65)',
-                lineHeight: 1.75,
-                maxWidth: '500px',
-              }}
-            >
-              Tasking is the all-in-one casual workforce management platform
-              that helps SMEs hire, schedule, and track their teams — without
-              the complexity.
-            </p>
-          </div>
-
-          {/* Right side – dashboard image or built-in mockup */}
-          <div
-            className="hero-mockup"
-            style={{
-              flex: '1.1',
-              minWidth: 0,
-              borderRadius: '16px',
-              overflow: 'hidden',
-              boxShadow: '0 0 80px rgba(249,115,22,0.22), 0 32px 80px rgba(0,0,0,0.55)',
-              border: '1px solid #333',
-              background: '#111',
-              padding: dashboardImageUrl ? 0 : 3,
-            }}
-          >
-          {dashboardImageUrl ? (
-            <img
-              src={dashboardImageUrl}
-              alt="Dashboard preview"
-              style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', borderRadius: 14 }}
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path
+              d="M8 3v10M3 8l5 5 5-5"
+              stroke="white"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
             />
-          ) : (<>
-            {/* Inner rounded container */}
-            <div style={{ background: '#1A1A1A', borderRadius: 14, overflow: 'hidden' }}>
+          </svg>
+        </button>
 
-              {/* Browser chrome */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px', background: '#1A1A1A', borderBottom: '1px solid #2A2A2A' }}>
-                <div style={{ width: 10, height: 10, borderRadius: '50%', background: '#FF5F57' }} />
-                <div style={{ width: 10, height: 10, borderRadius: '50%', background: '#FFBD2E' }} />
-                <div style={{ width: 10, height: 10, borderRadius: '50%', background: '#28CA41' }} />
-                <div style={{ flex: 1, background: '#2C2C2C', borderRadius: 5, padding: '3px 10px', textAlign: 'center', color: '#555', fontSize: 9 }}>tasking.app/dashboard</div>
-              </div>
-
-              {/* Dashboard body */}
-              <div style={{ display: 'flex', height: 400 }}>
-
-                {/* Sidebar */}
-                <div style={{ width: 40, background: '#111', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '12px 0', gap: 14, borderRight: '1px solid #222', flexShrink: 0 }}>
-                  <div style={{ width: 22, height: 22, background: '#F97316', borderRadius: 5, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><rect x="1" y="1" width="6" height="6" rx="1.5" fill="white"/><rect x="9" y="1" width="6" height="6" rx="1.5" fill="white"/><rect x="1" y="9" width="6" height="6" rx="1.5" fill="white"/><rect x="9" y="9" width="6" height="6" rx="1.5" fill="white"/></svg>
-                  </div>
-                  {[
-                    <svg key="cal" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#444" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>,
-                    <svg key="task" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#F97316" strokeWidth="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>,
-                    <svg key="chart" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#444" strokeWidth="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>,
-                    <svg key="users" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#444" strokeWidth="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>,
-                    <svg key="msg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#444" strokeWidth="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>,
-                    <svg key="rec" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#444" strokeWidth="2"><path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>,
-                    <svg key="brief" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#444" strokeWidth="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v2"/></svg>,
-                  ].map((icon, i) => <div key={i}>{icon}</div>)}
-                </div>
-
-                {/* Main */}
-                <div style={{ flex: 1, background: '#F7F6F2', display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
-
-                  {/* Top bar */}
-                  <div style={{ background: '#fff', padding: '10px 14px', borderBottom: '1px solid #EEECE6', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
-                    <div>
-                      <div style={{ fontSize: 7, color: '#F97316', fontWeight: 700, letterSpacing: '0.8px', marginBottom: 2 }}>SATURDAY, JUNE 13, 2026</div>
-                      <div style={{ fontSize: 12, fontWeight: 800, color: '#111' }}>Today&apos;s Overview for Sunrise Café</div>
-                      <div style={{ fontSize: 7, color: '#22C55E', marginTop: 1, display: 'flex', alignItems: 'center', gap: 3 }}>
-                        <span style={{ display: 'inline-block', width: 5, height: 5, borderRadius: '50%', background: '#22C55E' }} />
-                        Updated just now
-                      </div>
-                    </div>
-                    <div style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
-                      <div style={{ fontSize: 8, color: '#333', background: '#F0EEE8', borderRadius: 20, padding: '3px 8px', display: 'flex', alignItems: 'center', gap: 3, border: '1px solid #E0DDD6' }}>
-                        <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="#F97316" strokeWidth="2.5"><path d="M2 20h20M5 20V10l7-7 7 7v10"/></svg>
-                        Sarah Wong
-                      </div>
-                      <div style={{ fontSize: 8, color: '#fff', background: '#22C55E', borderRadius: 20, padding: '3px 8px', fontWeight: 600 }}>✓ Pro Plan</div>
-                    </div>
-                  </div>
-
-                  {/* Stats */}
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6,1fr)', gap: 4, padding: '7px 10px', background: '#fff', borderBottom: '1px solid #EEECE6', flexShrink: 0 }}>
-                    {[
-                      { label: 'STAFF ON SHIFT', val: '8', valCol: '#111' },
-                      { label: 'CASUAL WORKERS', val: '5', valCol: '#111' },
-                      { label: 'TOTAL TASKS', val: '12', valCol: '#111' },
-                      { label: 'IN PROGRESS', val: '4', valCol: '#A855F7' },
-                      { label: 'IN REVIEW', val: '2', valCol: '#F59E0B' },
-                      { label: 'COMPLETE', val: '6', valCol: '#22C55E' },
-                    ].map(s => (
-                      <div key={s.label} style={{ background: '#F9F8F4', borderRadius: 7, padding: '7px 8px', border: '1px solid #E8E6DE' }}>
-                        <div style={{ fontSize: 6, color: '#999', marginBottom: 4, fontWeight: 600, letterSpacing: '0.3px' }}>{s.label}</div>
-                        <div style={{ fontSize: 15, fontWeight: 800, color: s.valCol, lineHeight: 1 }}>{s.val}</div>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Schedule */}
-                  <div style={{ padding: '7px 10px', background: '#fff', borderBottom: '1px solid #EEECE6', flexShrink: 0 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#F97316" strokeWidth="2.5"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-                        <span style={{ fontSize: 9, fontWeight: 700, color: '#111' }}>Schedule</span>
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-                        <div style={{ fontSize: 7, color: '#fff', background: '#F97316', borderRadius: 4, padding: '2px 6px', fontWeight: 600 }}>Today</div>
-                        <div style={{ fontSize: 7, color: '#888', background: '#F0EEE8', borderRadius: 4, padding: '2px 6px', border: '1px solid #E0DDD6' }}>06/13/2026</div>
-                      </div>
-                    </div>
-                    <div style={{ borderRadius: 6, overflow: 'hidden', border: '1px solid #E0DDD6' }}>
-                      {/* Hour axis */}
-                      <div style={{ background: '#111', display: 'flex', alignItems: 'center', padding: '4px 8px' }}>
-                        <div style={{ width: 88, flexShrink: 0 }} />
-                        <div style={{ flex: 1, display: 'flex', justifyContent: 'space-between', padding: '0 4px' }}>
-                          {['7am','9am','11am','1pm','3pm','5pm','7pm'].map(h => (
-                            <span key={h} style={{ fontSize: 6, color: '#555' }}>{h}</span>
-                          ))}
-                        </div>
-                      </div>
-                      {[
-                        { name: 'Sarah Manager', icon: 'manager', left: '20%', width: '48%', color: '#F97316', label: '9am – 5pm' },
-                        { name: 'James Employee', icon: 'employee', left: '20%', width: '48%', color: '#F97316', label: '9am – 5pm' },
-                        { name: 'Mia (CW)', icon: 'casual', left: '26%', width: '28%', color: '#A855F7', label: '10am – 2pm' },
-                      ].map((row, i) => (
-                        <div key={row.name} style={{ display: 'flex', alignItems: 'center', padding: '4px 8px', borderBottom: i < 2 ? '1px solid #F0EEE8' : 'none', background: '#fff' }}>
-                          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke={row.icon === 'manager' ? '#F97316' : '#888'} strokeWidth="2.5" style={{ marginRight: 3, flexShrink: 0 }}><circle cx="12" cy="8" r="4"/><path d="M4 20a8 8 0 0116 0"/></svg>
-                          <div style={{ width: 80, fontSize: 7, fontWeight: 600, color: '#111', flexShrink: 0 }}>{row.name}</div>
-                          <div style={{ flex: 1, position: 'relative', height: 13, background: '#F7F6F2', borderRadius: 4 }}>
-                            <div style={{ position: 'absolute', left: row.left, width: row.width, height: 13, background: row.color, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                              <span style={{ fontSize: 6, color: '#fff', fontWeight: 700 }}>{row.label}</span>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                    {/* Dept tags */}
-                    <div style={{ display: 'flex', gap: 3, marginTop: 5, alignItems: 'center' }}>
-                      <span style={{ fontSize: 6, color: '#999', fontWeight: 600, letterSpacing: '0.3px', lineHeight: '16px' }}>DEPTS</span>
-                      {[
-                        { label: '● Front of House 3', bg: '#FFF0E5', color: '#C2410C', border: '#FED7AA' },
-                        { label: '● Kitchen 3', bg: '#F0FDF4', color: '#15803D', border: '#BBF7D0' },
-                        { label: '● Delivery 2', bg: '#EFF6FF', color: '#1D4ED8', border: '#BFDBFE' },
-                      ].map(d => (
-                        <span key={d.label} style={{ fontSize: 6, background: d.bg, color: d.color, borderRadius: 4, padding: '1px 6px', border: `1px solid ${d.border}`, fontWeight: 600 }}>{d.label}</span>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Bottom 4 panels */}
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 5, padding: '7px 10px', flex: 1, minHeight: 0 }}>
-
-                    {/* Focus */}
-                    <div style={{ background: '#fff', borderRadius: 7, border: '1px solid #E8E6DE', padding: 8 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 3, marginBottom: 6 }}>
-                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#F97316" strokeWidth="2.5"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8"/></svg>
-                        <span style={{ fontSize: 8, fontWeight: 700, color: '#111' }}>Focus</span>
-                      </div>
-                      <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 5 }}>
-                        <div style={{ width: 40, height: 40, borderRadius: '50%', border: '3px solid #F0EEE8', borderTopColor: '#F97316', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column' }}>
-                          <div style={{ fontSize: 11, fontWeight: 800, color: '#111', lineHeight: 1 }}>12</div>
-                          <div style={{ fontSize: 5, color: '#999', marginTop: 1 }}>tasks</div>
-                        </div>
-                      </div>
-                      {[['Assigned','#999','4'],['In Progress','#A855F7','4'],['Review','#F97316','2'],['Complete','#22C55E','6']].map(([l,c,v]) => (
-                        <div key={l} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
-                          <span style={{ fontSize: 6, color: c as string }}>● {l}</span>
-                          <span style={{ fontSize: 6, fontWeight: 700, color: '#111' }}>{v}</span>
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Team */}
-                    <div style={{ background: '#fff', borderRadius: 7, border: '1px solid #E8E6DE', padding: 8 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 3, marginBottom: 5 }}>
-                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#F97316" strokeWidth="2.5"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
-                        <span style={{ fontSize: 8, fontWeight: 700, color: '#111' }}>Team</span>
-                      </div>
-                      <div style={{ fontSize: 6, fontWeight: 700, color: '#F97316', marginBottom: 4, paddingBottom: 3, borderBottom: '1px solid #F0EEE8', letterSpacing: '0.3px' }}>● FRONT OF HOUSE</div>
-                      {[['Sarah M.','#F97316'],['James E.','#888'],['Mia C.','#888']].map(([name, col]) => (
-                        <div key={name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 3 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-                            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke={col as string} strokeWidth="2.5"><circle cx="12" cy="8" r="4"/><path d="M4 20a8 8 0 0116 0"/></svg>
-                            <span style={{ fontSize: 7, color: '#111', fontWeight: 500 }}>{name}</span>
-                          </div>
-                          <div style={{ width: 10, height: 10, borderRadius: 2, border: '1px solid #DDD' }} />
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Live Feed */}
-                    <div style={{ background: '#fff', borderRadius: 7, border: '1px solid #E8E6DE', padding: 8 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#F97316" strokeWidth="2.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-                          <span style={{ fontSize: 8, fontWeight: 700, color: '#111' }}>Live Feed</span>
-                        </div>
-                        <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: '#22C55E' }} />
-                      </div>
-                      {[
-                        { msg: 'Mia clocked in', sub: '10:02 AM · Front of House', bg: '#F0FDF4', border: '#22C55E', col: '#15803D' },
-                        { msg: 'Task updated', sub: '9:45 AM · James E.', bg: '#FFF7ED', border: '#F97316', col: '#C2410C' },
-                        { msg: 'New applicant', sub: '9:30 AM · Weekend Barista', bg: '#EFF6FF', border: '#3B82F6', col: '#1D4ED8' },
-                      ].map(f => (
-                        <div key={f.msg} style={{ background: f.bg, borderRadius: 5, padding: '4px 5px', borderLeft: `2px solid ${f.border}`, marginBottom: 3 }}>
-                          <div style={{ fontSize: 6, color: f.col, fontWeight: 700 }}>{f.msg}</div>
-                          <div style={{ fontSize: 5, color: '#999', marginTop: 1 }}>{f.sub}</div>
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Tasks */}
-                    <div style={{ background: '#fff', borderRadius: 7, border: '1px solid #E8E6DE', padding: 8 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 3, marginBottom: 5 }}>
-                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#F97316" strokeWidth="2.5"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
-                        <span style={{ fontSize: 8, fontWeight: 700, color: '#111' }}>Tasks</span>
-                      </div>
-                      {[
-                        { title: 'Open Cash Register', who: 'James E. · 9:00 AM', badge: 'High', badgeBg: '#FEF3C7', badgeCol: '#92400E', bg: '#FFF7ED', border: '#FED7AA' },
-                        { title: 'Prep Station Setup', who: 'Mia C. · 10:00 AM', badge: 'Done', badgeBg: '#DCFCE7', badgeCol: '#166534', bg: '#F0FDF4', border: '#BBF7D0' },
-                        { title: 'Stock Check', who: 'Sarah M. · 2:00 PM', badge: 'Assigned', badgeBg: '#F1F5F9', badgeCol: '#475569', bg: '#F9F8F4', border: '#E8E6DE' },
-                      ].map(t => (
-                        <div key={t.title} style={{ background: t.bg, borderRadius: 5, padding: '4px 6px', border: `1px solid ${t.border}`, marginBottom: 3 }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <span style={{ fontSize: 6, fontWeight: 700, color: '#111' }}>{t.title}</span>
-                            <span style={{ fontSize: 5, background: t.badgeBg, color: t.badgeCol, borderRadius: 3, padding: '1px 4px', fontWeight: 700 }}>{t.badge}</span>
-                          </div>
-                          <div style={{ fontSize: 5, color: '#999', marginTop: 1 }}>{t.who}</div>
-                        </div>
-                      ))}
-                    </div>
-
-                  </div>
-                </div>
-              </div>
-            </div>
-          </>)}
-          </div>
-        </div>
-      </section>}
-
-      {/* ========== HOW IT WORKS SECTION ========== */}
-      {copy.visible('how-it-works') && <section id="how-it-works" className="page-section" style={{ background: '#F97316', padding: '80px 0' }}>
         <div
           className="section-inner"
           style={{
-            maxWidth: '1280px',
+            maxWidth: '1000px',
             margin: '0 auto',
             padding: '0 24px',
             textAlign: 'center',
           }}
         >
-          <AnimatedSection>
-            <h2 style={{ ...heading2, color: '#FFFFFF' }}>{videoTitle}</h2>
-            <p style={{ ...sectionSubtitle, color: 'rgba(255,255,255,0.8)' }}>
-              {videoSubtitle}
-            </p>
-          </AnimatedSection>
-
-          {/* Video player — file must be placed at /public/demo.mp4 */}
-          <AnimatedSection delay={150}>
-            <div
+          {/* Headline line 1 */}
+          <div style={{ overflow: 'hidden' }}>
+            <h1
+              className="hero-heading"
               style={{
-                maxWidth: '840px',
-                margin: '44px auto 0',
-                borderRadius: '14px',
-                overflow: 'hidden',
-                boxShadow: '0 4px 40px rgba(0,0,0,0.1)',
-                background: '#1C1917',
+                ...heroAnim(h1),
+                fontFamily: 'var(--font-heading)',
+                fontWeight: 600,
+                fontSize: '5rem',
+                lineHeight: 1.08,
+                color: '#FFFFFF',
+                marginBottom: '4px',
               }}
             >
-              <video
-                width="100%"
-                controls
-                autoPlay
-                muted
-                loop
-                playsInline
-                style={{ display: 'block' }}
-              >
-                <source src={demoVideoUrl} type="video/mp4" />
-                Your browser does not support the video tag.
-              </video>
-            </div>
-          </AnimatedSection>
+              {copy('hero.headline.line1', 'Hire. Schedule. Allocate.')}
+            </h1>
+          </div>
+
+          {/* Headline line 2 */}
+          <div style={{ overflow: 'hidden' }}>
+            <h1
+              className="hero-heading"
+              style={{
+                ...heroAnim(h2),
+                fontFamily: 'var(--font-heading)',
+                fontWeight: 600,
+                fontSize: '5rem',
+                lineHeight: 1.08,
+                color: '#F97316',
+              }}
+            >
+              {copy('hero.headline.line2', 'All in One Place.')}
+            </h1>
+          </div>
         </div>
-      </section>}
 
-      {/* ========== UNIQUE SELLING POINT (USP) SECTION ========== */}
-      {copy.visible('why') && <section id="why-tasking" className="page-section" style={{ background: '#FFFBF5', padding: '80px 0' }}>
-        <div
-          className="section-inner"
-          style={{
-            maxWidth: '1280px',
-            margin: '0 auto',
-            padding: '0 24px',
-          }}
-        >
-          <AnimatedSection style={{ textAlign: 'center', marginBottom: '52px' }}>
-            <h2 style={heading2}>Why SMEs Choose Tasking</h2>
-          </AnimatedSection>
-
-          {/* 2×2 USP grid */}
+        {/* Hero video — file must be placed at /public/demo.mp4 (30s marketing video) */}
+        <AnimatedSection delay={250} style={{ maxWidth: '900px', margin: '36px auto 0', padding: '0 24px', width: '100%' }}>
           <div
-            className="grid-usp"
             style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(2, 1fr)',
-              gap: '24px',
+              borderRadius: '16px',
+              overflow: 'hidden',
+              boxShadow: '0 0 60px rgba(249,115,22,0.25), 0 24px 60px rgba(0,0,0,0.45)',
+              border: '1px solid rgba(255,255,255,0.15)',
+              background: '#111',
             }}
           >
-            {[
-              {
-                Icon: UserIcon,
-                title: 'Simple Enough for Anyone',
-                desc: 'Designed for SME owners who need results without a learning curve. No technical knowledge needed — just set up and go. Replace your spreadsheets, messaging apps, and manual logs with one integrated platform.',
-              },
-              {
-                Icon: BuildingIcon,
-                title: 'Full Control, Department by Department',
-                desc: 'Managers handle their own recruitment and scheduling while owners keep full visibility across all departments. The right level of control for everyone in your company.',
-              },
-              {
-                Icon: SparkleIcon,
-                title: 'Enterprise AI — Free for Everyone',
-                desc: 'AI-powered job description generation, candidate recommendations, and anomaly detection are included in the free plan. No paywalls. Professional-grade automation from day one.',
-              },
-              {
-                Icon: ClockIcon,
-                title: 'Built for Casual Workforce Realities',
-                desc: 'Photo-based clock-in verification, digital attendance records, and automated workflows are built specifically for businesses that rely on flexible, casual workers.',
-              },
-            ].map(({ Icon, title, desc }, i) => (
-              <AnimatedSection key={title} delay={i * 80}>
-                <div
-                  className="card-lift"
-                  style={{
-                    background: '#FFFFFF',
-                    borderRadius: '16px',
-                    padding: '36px',
-                    border: '1px solid #F0E8D8',
-                    height: '100%',
-                  }}
-                >
-                  <div
-                    style={{
-                      width: '52px',
-                      height: '52px',
-                      background: '#FEF3C7',
-                      borderRadius: '12px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      marginBottom: '20px',
-                    }}
-                  >
-                    <Icon />
-                  </div>
-                  <h3
-                    style={{
-                      fontFamily: 'var(--font-heading)',
-                      fontWeight: 600,
-                      fontSize: '1.1875rem',
-                      color: '#1C1917',
-                      marginBottom: '12px',
-                    }}
-                  >
-                    {title}
-                  </h3>
-                  <p
-                    style={{
-                      fontFamily: 'var(--font-body)',
-                      fontSize: '0.9375rem',
-                      color: '#78716C',
-                      lineHeight: 1.7,
-                    }}
-                  >
-                    {desc}
-                  </p>
-                </div>
-              </AnimatedSection>
-            ))}
+            <video
+              width="100%"
+              height={440}
+              autoPlay
+              muted
+              loop
+              playsInline
+              style={{ display: 'block', width: '100%', height: '440px', objectFit: 'cover' }}
+            >
+              <source src={demoVideoUrl} type="video/mp4" />
+              Your browser does not support the video tag.
+            </video>
           </div>
+        </AnimatedSection>
+
+        {/* Subheadline */}
+        <div style={{ maxWidth: '720px', margin: '44px auto 0', padding: '0 24px', textAlign: 'center' }}>
+          <p
+            style={{
+              ...heroAnim(h3),
+              fontFamily: 'var(--font-body)',
+              fontSize: '1.125rem',
+              color: 'rgba(255,255,255,0.65)',
+              lineHeight: 1.75,
+              margin: 0,
+            }}
+          >
+            {copy('hero.subheadline', 'Tasking is the all-in-one workforce management platform that helps SMEs hire, schedule, and manage their teams without the complexity.')}
+          </p>
         </div>
       </section>}
 
       {/* ========== PRODUCTS PREVIEW SECTION ========== */}
-      {copy.visible('products') && <section id="products" className="page-section" style={{ background: '#FFFFFF', padding: '80px 0' }}>
+      {copy.visible('products') && <section id="products" className="page-section" style={{ background: '#FFFBF5', padding: '80px 0' }}>
         <div
           className="section-inner"
           style={{
@@ -774,75 +897,112 @@ export default function HomePage() {
             padding: '0 24px',
           }}
         >
-          <AnimatedSection style={{ textAlign: 'center', marginBottom: '52px' }}>
-            <h2 style={heading2}>{copy('products.title', 'Everything You Need, In One Platform')}</h2>
-            <p style={sectionSubtitle}>
-              {copy('products.subtitle', 'Tasking covers every aspect of casual workforce management across 5 core modules.')}
-            </p>
+          <AnimatedSection style={{ textAlign: 'center', marginBottom: '40px' }}>
+            <h2 style={{ ...heading2, fontSize: '2.75rem', maxWidth: '760px', margin: '0 auto' }}>
+              {copy('products.title', 'Everything You Need, In One Platform')}
+            </h2>
           </AnimatedSection>
 
-          {/* 5 module cards */}
+          <TabbedAccordionSection
+            modules={[
+              {
+                Icon: ShiftIcon,
+                label: 'Shift Management',
+                href: '/products/shift-management',
+                features: [
+                  { title: copy('products.module.shift.feature1.title', 'AI Schedule Suggestions'), desc: copy('products.module.shift.feature1.desc', 'Build smarter schedules with AI based on your workforce needs.'), demo: <AiScheduleDemo /> },
+                  { title: copy('products.module.shift.feature2.title', 'Recurring Shifts'), desc: copy('products.module.shift.feature2.desc', 'Set shifts to repeat automatically and save time.'), demo: <RecurringShiftDemo /> },
+                  { title: copy('products.module.shift.feature3.title', 'Split Shifts'), desc: copy('products.module.shift.feature3.desc', 'Create flexible split shifts for different working periods.'), demo: <SplitShiftDemo /> },
+                ],
+              },
+              {
+                Icon: TaskListIcon,
+                label: 'Task Management',
+                href: '/products/task-management',
+                features: [
+                  { title: copy('products.module.task.feature1.title', 'AI Task Assignment'), desc: copy('products.module.task.feature1.desc', 'Get AI suggestions for assigning tasks to the right people.'), demo: <AiTaskAssignDemo /> },
+                  { title: copy('products.module.task.feature2.title', 'Subtasks'), desc: copy('products.module.task.feature2.desc', 'Break complex work into smaller, manageable tasks.'), demo: <SubtasksDemo /> },
+                  { title: copy('products.module.task.feature3.title', 'Workload Rebalancing'), desc: copy('products.module.task.feature3.desc', 'Redistribute tasks when workloads become uneven.'), demo: <WorkloadRebalanceDemo /> },
+                ],
+              },
+              {
+                Icon: RecruitmentIcon,
+                label: 'Recruitment',
+                href: '/products/recruitment',
+                features: [
+                  { title: copy('products.module.recruitment.feature1.title', 'AI Job Description'), desc: copy('products.module.recruitment.feature1.desc', 'Create clear job postings faster with AI.'), demo: <AiJobDescriptionDemo /> },
+                  { title: copy('products.module.recruitment.feature2.title', 'AI Candidate Recommendations'), desc: copy('products.module.recruitment.feature2.desc', 'Find the most suitable candidates with AI-powered suggestions.'), demo: <AiCandidateRecommendationsDemo /> },
+                  { title: copy('products.module.recruitment.feature3.title', 'Job Publishing'), desc: copy('products.module.recruitment.feature3.desc', 'Publish job openings and start hiring with ease.'), demo: <JobPublishingDemo /> },
+                ],
+              },
+              {
+                Icon: AttendanceIcon,
+                label: 'Attendance',
+                href: '/products/attendance',
+                features: [
+                  { title: copy('products.module.attendance.feature1.title', 'AI Day-Off Suggestions'), desc: copy('products.module.attendance.feature1.desc', 'Get smarter suggestions for managing employee days off.'), demo: <AiDayOffDemo /> },
+                  { title: copy('products.module.attendance.feature2.title', 'Shift Swap & Day-Off Requests'), desc: copy('products.module.attendance.feature2.desc', 'Handle schedule changes and requests in one place.'), demo: <ShiftSwapDemo /> },
+                  { title: copy('products.module.attendance.feature3.title', 'Clock In & Clock Out'), desc: copy('products.module.attendance.feature3.desc', 'Track the full attendance cycle from start to finish.'), demo: <ClockInOutDemo /> },
+                ],
+              },
+            ]}
+          />
+        </div>
+      </section>}
+
+      {/* ========== UNIQUE SELLING POINT (USP) SECTION ========== */}
+      {copy.visible('why') && <section id="why-tasking" className="page-section" style={{ background: '#FFFFFF', padding: '80px 0' }}>
+        <div
+          className="section-inner"
+          style={{
+            maxWidth: '1280px',
+            margin: '0 auto',
+            padding: '0 24px',
+          }}
+        >
           <div
-            className="grid-products"
             style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(5, 1fr)',
-              gap: '16px',
-              marginBottom: '48px',
-              alignItems: 'stretch',
+              position: 'sticky',
+              top: '68px',
+              background: '#FFFFFF',
+              zIndex: 2,
+              paddingTop: '48px',
+              paddingBottom: '24px',
             }}
           >
-            {[
-              { Icon: RecruitmentIcon, title: 'Recruitment', desc: copy('products.card.recruitment.desc', 'Post jobs, shortlist candidates, and send invitations — powered by AI.'), href: '/products/recruitment' },
-              { Icon: AttendanceIcon, title: 'Attendance', desc: copy('products.card.attendance.desc', 'Photo-verified clock-in, AI auto-approval, and anomaly detection.'), href: '/products/attendance' },
-              { Icon: AIIcon, title: 'AI Features', desc: copy('products.card.ai.desc', 'Intelligent automation built into every step of your workflow.'), href: '/products/ai-features' },
-              { Icon: TeamIcon, title: 'Team Management', desc: copy('products.card.team.desc', 'Manage roles, departments, and permissions with ease.'), href: '/products/team-management' },
-              { Icon: BellIcon, title: 'Smart Notifications', desc: copy('products.card.notifications.desc', 'Automated alerts that keep your team informed and on time.'), href: '/products/smart-notifications' },
-            ].map(({ Icon, title, desc, href }, i) => (
-              <AnimatedSection key={href} delay={i * 70} style={{ height: '100%' }}>
-                <Link
-                  href={href}
-                  className="card-lift"
-                  style={{
-                    background: '#FFFBF5',
-                    borderRadius: '14px',
-                    padding: '28px 22px',
-                    border: '1px solid #F0E8D8',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    height: '100%',
-                  }}
-                >
-                  <div
-                    style={{
-                      width: '44px',
-                      height: '44px',
-                      background: '#FEF3C7',
-                      borderRadius: '10px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      marginBottom: '16px',
-                    }}
-                  >
-                    <Icon />
-                  </div>
-                  <h3 style={{ fontFamily: 'var(--font-heading)', fontWeight: 600, fontSize: '1rem', color: '#1C1917', marginBottom: '8px' }}>
-                    {title}
-                  </h3>
-                  <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.875rem', color: '#78716C', lineHeight: 1.65 }}>
-                    {desc}
-                  </p>
-                </Link>
-              </AnimatedSection>
-            ))}
+            <AnimatedSection style={{ textAlign: 'center' }}>
+              <h2 style={heading2}>{copy('why.title', 'Why SMEs Choose Tasking')}</h2>
+            </AnimatedSection>
           </div>
 
-          <AnimatedSection style={{ textAlign: 'center' }}>
-            <Link href="/products" className="btn-press" style={btnPrimary}>
-              Explore All Features
-            </Link>
-          </AnimatedSection>
+          <StickyScrollSection
+            items={[
+              {
+                Icon: UserIcon,
+                title: copy('why.card.simple.title', 'One Platform for Everything'),
+                desc: copy('why.card.simple.desc', 'Tasking brings workforce management into one connected platform. Manage your everyday operations in one place instead of switching between multiple tools.'),
+                image: copy('why.card.simple.image', '/USP1.png'),
+              },
+              {
+                Icon: BuildingIcon,
+                title: copy('why.card.control.title', 'Free to Run Your Business,\nNot Just to Try It'),
+                desc: copy('why.card.control.desc', 'The Free Plan supports complete day to day workflows without essential features locked behind a paywall. Paid features simply give you more automation, efficiency, and convenience.'),
+                image: copy('why.card.control.image', '/USP2.png'),
+              },
+              {
+                Icon: SparkleIcon,
+                title: copy('why.card.ai.title', 'From Hiring to the Last Shift'),
+                desc: copy('why.card.ai.desc', 'Tasking manages the complete casual worker journey, from recruitment to the end of their engagement. Every stage stays connected in one continuous workflow.'),
+                image: copy('why.card.ai.image', '/USP3.png'),
+              },
+              {
+                Icon: ClockIcon,
+                title: copy('why.card.casual.title', 'Built Around How SMEs Work'),
+                desc: copy('why.card.casual.desc', 'Tasking is designed around the practical needs of SMEs, without unnecessary enterprise complexity. Simple workflows make it easy to manage operations without a dedicated HR or operations team.'),
+                image: copy('why.card.casual.image', '/USP4.png'),
+              },
+            ]}
+          />
         </div>
       </section>}
 
@@ -851,68 +1011,23 @@ export default function HomePage() {
         <div className="section-inner" style={{ maxWidth: '1280px', margin: '0 auto', padding: '0 24px' }}>
           <AnimatedSection style={{ textAlign: 'center', marginBottom: '52px' }}>
             <h2 style={heading2}>{copy('industries.title', 'Built for the Industries That Run on Casual Workers')}</h2>
-            <p style={sectionSubtitle}>
-              {copy('industries.subtitle', 'From retail floors to event venues, Tasking adapts to the way your industry works.')}
-            </p>
           </AnimatedSection>
 
-          {/* 4 industry cards */}
-          <div
-            className="grid-industries"
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(4, 1fr)',
-              gap: '20px',
-              marginBottom: '48px',
-            }}
-          >
-            {[
-              { Icon: ShoppingBagIcon, name: copy('industries.card.retail', 'Retail') },
-              { Icon: UtensilsIcon, name: copy('industries.card.food', 'Food & Beverage') },
-              { Icon: TruckIcon, name: copy('industries.card.logistics', 'Logistics') },
-              { Icon: EventIcon, name: copy('industries.card.events', 'Event Management') },
-            ].map(({ Icon, name }, i) => (
-              <AnimatedSection key={name} delay={i * 80}>
-                <div
-                  style={{
-                    background: '#FFFFFF',
-                    borderRadius: '16px',
-                    padding: '36px 24px',
-                    border: '1px solid #F0E8D8',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    gap: '16px',
-                  }}
-                >
-                  <div
-                    style={{
-                      width: '60px',
-                      height: '60px',
-                      background: '#FEF3C7',
-                      borderRadius: '14px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                  >
-                    <Icon />
-                  </div>
-                  <span style={{ fontFamily: 'var(--font-heading)', fontWeight: 600, fontSize: '1.0625rem', color: '#1C1917' }}>
-                    {name}
-                  </span>
-                </div>
-              </AnimatedSection>
-            ))}
-          </div>
-
-          <AnimatedSection style={{ textAlign: 'center' }}>
-            <Link href="/industries" className="btn-press" style={btnOutline}>
-              Explore All Industries
-            </Link>
-          </AnimatedSection>
+          <IndustryCarousel
+            items={[
+              { Icon: ShoppingBagIcon, name: copy('industries.card.retail', 'Retail'), desc: copy('industries.card.retail.desc', 'Manage flexible staff across busy stores and changing shifts.') },
+              { Icon: UtensilsIcon, name: copy('industries.card.food', 'Food & Beverage'), desc: copy('industries.card.food.desc', 'Coordinate casual teams across shifts, peak hours, and daily operations.') },
+              { Icon: EventIcon, name: copy('industries.card.events', 'Events'), desc: copy('industries.card.events.desc', 'Organise temporary teams for events with changing staffing needs.') },
+              { Icon: TruckIcon, name: copy('industries.card.logistics', 'Logistics'), desc: copy('industries.card.logistics.desc', 'Manage flexible workers across schedules, tasks, and operational demands.') },
+              { Icon: HospitalityIcon, name: copy('industries.card.hospitality', 'Hospitality'), desc: copy('industries.card.hospitality.desc', 'Keep staff scheduling, attendance, and daily workforce operations organised.') },
+              { Icon: CleaningIcon, name: copy('industries.card.cleaning', 'Cleaning & Facilities'), desc: copy('industries.card.cleaning.desc', 'Coordinate distributed teams across locations, shifts, and recurring tasks.') },
+            ]}
+          />
         </div>
       </section>}
+
+      {/* ========== REVIEWS SECTION ========== */}
+      <ReviewsSection />
 
       {/* ========== FINAL CTA BANNER SECTION ========== */}
       {copy.visible('cta') && <section id="get-started" className="page-section" style={{ background: '#F97316', padding: '80px 24px' }}>
@@ -928,7 +1043,7 @@ export default function HomePage() {
                 lineHeight: 1.2,
               }}
             >
-              Ready to simplify your workforce?
+              {copy('cta.headline', 'Ready to Simplify Your Workforce?')}
             </h2>
             <p
               style={{
@@ -939,8 +1054,7 @@ export default function HomePage() {
                 marginBottom: '36px',
               }}
             >
-              Join SMEs already using Tasking to hire smarter, schedule faster,
-              and track with confidence.
+              {copy('cta.subheadline', 'Get started with a complete workforce management platform, free from day one.')}
             </p>
 
             <Link
@@ -972,9 +1086,6 @@ export default function HomePage() {
           </div>
         </AnimatedSection>
       </section>}
-
-      {/* ── Scroll to top ── */}
-      <ScrollToTop />
     </>
   );
 }

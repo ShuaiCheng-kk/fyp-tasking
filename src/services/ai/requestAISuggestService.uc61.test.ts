@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
+vi.mock('@/lib/supabaseAdmin', () => ({
+  getSupabaseAdmin: () => ({}),
+}))
+
 vi.mock('@/lib/supabase', () => ({
   supabase: {},
   createClient: () => ({}),
@@ -20,6 +24,7 @@ vi.mock('@/repositories/owner/ownerTeamRepository', () => ({
 import { requestAISuggestService } from './requestAISuggestService'
 import { attendanceRepository } from '@/repositories/owner/attendanceRepository'
 import { ownerTeamRepository } from '@/repositories/owner/ownerTeamRepository'
+import type { FixedOffDayRequestView } from '@/types/Attendance'
 
 // Department dept-1 roster: 1 Manager (mgr-1), 2 Employees (emp-1, emp-2). MIN_MANAGERS_PER_DAY = 1,
 // MIN_EMPLOYEES_PER_DAY = 1, so at most one of the two Employees can safely be off on any given day.
@@ -31,11 +36,12 @@ function seedRoster() {
   ] as never)
 }
 
-function pendingRow(overrides: Partial<{ id: string; user_id: string; requester_name: string; requester_role: string; requested_date: string; created_at: string; status: string }>) {
+function pendingRow(overrides: Partial<FixedOffDayRequestView>): FixedOffDayRequestView {
   return {
     id: 'row-1', user_id: 'emp-1', requester_name: 'Emp One', requester_role: 'Employee',
     department_id: 'dept-1', requested_week: '2026-08-10', requested_date: '2026-08-11',
     status: 'pending', created_at: '2026-08-01T00:00:00.000Z',
+    company_id: 'comp-1', source: 'submitted', reviewed_by: null, reviewed_at: null, reviewer_name: null,
     ...overrides,
   }
 }

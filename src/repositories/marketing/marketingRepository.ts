@@ -1,7 +1,9 @@
 // LAYER: Repository
 // RULE: Supabase queries only. No business logic. No HTTP handling.
 
-import { supabase } from '@/lib/supabase'
+import { getSupabaseAdmin } from '@/lib/supabaseAdmin'
+
+const supabase = getSupabaseAdmin()
 import { MarketingContentBlock, MarketingPage } from '@/types/MarketingPage'
 
 type MarketingPageRow = Omit<MarketingPage, 'blocks'>

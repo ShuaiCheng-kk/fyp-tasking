@@ -1,7 +1,9 @@
 // LAYER: Repository
 // RULE: Supabase queries only. No business logic.
 
-import { supabase } from '@/lib/supabase'
+import { getSupabaseAdmin } from '@/lib/supabaseAdmin'
+
+const supabase = getSupabaseAdmin()
 import { ShiftTemplate, ShiftTemplateInput } from '@/types/ShiftTemplate'
 
 export const shiftTemplateRepository = {

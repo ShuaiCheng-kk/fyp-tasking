@@ -3,17 +3,24 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { invitationService } from '@/services/invitation/invitationService'
+import { getServerSessionUser } from '@/lib/serverAuth'
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
-    const { email, role, company_id, department_id, invited_by } = body
+    const { email, role, company_id, department_id } = body
 
-    if (!email || !role || !company_id || !invited_by) {
+    if (!email || !role || !company_id) {
       return NextResponse.json(
         { success: false, message: 'Missing required fields' },
         { status: 400 },
       )
+    }
+
+    const session = await getServerSessionUser()
+    if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+    if (session.user.company_id !== company_id) {
+      return NextResponse.json({ success: false, message: 'You can only invite to your own company' }, { status: 403 })
     }
 
     await invitationService.sendInvite({
@@ -21,7 +28,7 @@ export async function POST(req: NextRequest) {
       role,
       company_id,
       department_id: department_id || null,
-      invited_by,
+      invited_by: session.user.id,
     })
 
     return NextResponse.json({ success: true, message: 'Invite sent' })

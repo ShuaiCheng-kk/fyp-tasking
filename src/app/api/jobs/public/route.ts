@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabase } from '@/lib/supabase'
+import { getSupabaseAdmin } from '@/lib/supabaseAdmin'
+
+const supabase = getSupabaseAdmin()
 import { recruitmentService } from '@/services/owner/recruitmentService'
 import { workerApplicationRepository } from '@/repositories/guest/workerApplicationRepository'
 

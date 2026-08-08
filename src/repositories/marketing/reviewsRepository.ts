@@ -1,4 +1,6 @@
-import { supabase } from '@/lib/supabase'
+import { getSupabaseAdmin } from '@/lib/supabaseAdmin'
+
+const supabase = getSupabaseAdmin()
 import { CreateReviewInput, Review, ReviewSummary } from '@/types/Review'
 
 const REVIEW_COLUMNS = 'id, name, email, rating, review, approved, featured, created_at'
@@ -68,5 +70,14 @@ export const reviewsRepository = {
 
     if (error) throw new Error(error.message)
     return data as Review
+  },
+
+  async deleteReview(review_id: string): Promise<void> {
+    const { error } = await supabase
+      .from('reviews')
+      .delete()
+      .eq('id', review_id)
+
+    if (error) throw new Error(error.message)
   },
 }
