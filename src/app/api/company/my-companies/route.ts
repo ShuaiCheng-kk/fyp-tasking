@@ -19,7 +19,6 @@ export async function GET(req: NextRequest) {
 
   try {
     const companies = await companyService.getCompaniesByOwner(owner_id)
-    console.log('[my-companies] returning companies:', JSON.stringify(companies, null, 2))
     return NextResponse.json({ success: true, companies })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to fetch companies'

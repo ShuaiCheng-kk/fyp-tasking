@@ -291,7 +291,6 @@ export const schedulingRuleService = {
 
     const raw = completion.choices[0]?.message?.content ?? '{}'
     const finishReason = completion.choices[0]?.finish_reason
-    console.log('[AI Schedule] finish_reason:', finishReason, 'raw length:', raw.length, 'maxTokens:', maxTokens, 'slotCount:', slotCount)
     let parsed: { schedule?: AiScheduleBlock[]; notice?: string }
     try {
       parsed = JSON.parse(raw)

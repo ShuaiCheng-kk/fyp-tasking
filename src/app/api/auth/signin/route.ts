@@ -5,6 +5,7 @@ import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
 import { authService, classifySignInError } from '@/services/auth/authService'
+import { loginLockoutService } from '@/services/auth/loginLockoutService'
 
 export async function POST(req: NextRequest) {
   let body: unknown
@@ -14,13 +15,26 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, message: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { email_address, password } = body as Record<string, unknown>
+  const { email_address: rawEmail, password } = body as Record<string, unknown>
 
-  if (!email_address || typeof email_address !== 'string') {
+  if (!rawEmail || typeof rawEmail !== 'string') {
     return NextResponse.json({ success: false, message: 'email_address is required' }, { status: 400 })
   }
   if (!password || typeof password !== 'string') {
     return NextResponse.json({ success: false, message: 'password is required' }, { status: 400 })
+  }
+
+  const email_address = rawEmail.trim().toLowerCase()
+
+  // BUG-069: lock an account out after too many failed attempts in a rolling window — checked
+  // before ever touching Supabase Auth so a locked-out account can't be brute-forced further.
+  const lock = await loginLockoutService.checkLocked(email_address)
+  if (lock.locked) {
+    const minutes = Math.ceil((lock.retryAfterSeconds ?? 0) / 60)
+    return NextResponse.json(
+      { success: false, message: `Too many failed sign-in attempts. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.` },
+      { status: 429 },
+    )
   }
 
   try {
@@ -35,7 +49,6 @@ export async function POST(req: NextRequest) {
             return cookieStore.getAll()
           },
           setAll(cookiesToSet) {
-            console.log('[signin route] setting cookies:', cookiesToSet.map(c => ({ name: c.name, httpOnly: c.options?.httpOnly, maxAge: c.options?.maxAge })))
             cookiesToSet.forEach(({ name, value, options }) => {
               cookieStore.set(name, value, options)
             })
@@ -50,9 +63,11 @@ export async function POST(req: NextRequest) {
     })
 
     if (authError || !authData.user) {
+      await loginLockoutService.recordFailure(email_address)
       throw new Error(classifySignInError(authError?.message))
     }
 
+    await loginLockoutService.clear(email_address)
     const user = await authService.getUserProfile(authData.user.id)
 
     return NextResponse.json(

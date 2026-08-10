@@ -1489,13 +1489,11 @@ export default function TeamView({ sidebar, basePath, permissions, hidePlanBadge
     const uid = userIdRef.current
     if (!cid || !uid) return
     try {
-      const res = await fetch('/api/activity-log', {
+      await fetch('/api/activity-log', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ company_id: cid, actor_id: uid, action, target_id, target_name, detail }),
       })
-      const json = await res.json()
-      console.log('[logActivity] POST result:', json, { cid, uid, action, target_id, target_name, detail })
       fetchActivityLogs(cid)
     } catch (e) { console.error('[logActivity] failed:', e) }
   }, [fetchActivityLogs])
