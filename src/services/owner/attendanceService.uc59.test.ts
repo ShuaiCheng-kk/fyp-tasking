@@ -13,6 +13,7 @@ vi.mock('@/repositories/owner/attendanceRepository', () => ({
   attendanceRepository: {
     getFixedOffDayRequestsByIds: vi.fn(),
     decideFixedOffDayRequestGroupAtomic: vi.fn(),
+    getUsersByIds: vi.fn(),
   },
 }))
 
@@ -33,6 +34,11 @@ function weeklyRows() {
   ]
 }
 
+const users: Record<string, { id: string; role: string; company_id: string }> = {
+  'owner-1': { id: 'owner-1', role: 'Owner', company_id: 'comp-1' },
+  'partner-1': { id: 'partner-1', role: 'Partner', company_id: 'comp-1' },
+}
+
 describe('UC59 Modify Day Off Request', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -40,6 +46,7 @@ describe('UC59 Modify Day Off Request', () => {
     vi.mocked(attendanceRepository.getFixedOffDayRequestsByIds).mockResolvedValue(weeklyRows() as never)
     vi.mocked(attendanceRepository.decideFixedOffDayRequestGroupAtomic).mockImplementation(async (input) =>
       input.ids.map((id, i) => ({ id, status: input.statuses[i], requested_date: input.requested_dates[i] })) as never)
+    vi.mocked(attendanceRepository.getUsersByIds).mockImplementation(async (ids) => ids.map(id => users[id]).filter(Boolean) as never)
   })
 
   it('UC59-M-UT-O: Owner replaces a pending weekly submission with a different set of dates', async () => {

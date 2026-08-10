@@ -3,6 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { candidateRecommendationService } from '@/services/owner/candidateRecommendationService'
+import { recruitmentRepository } from '@/repositories/owner/recruitmentRepository'
 import { getServerSessionUser } from '@/lib/serverAuth'
 
 export async function GET(req: NextRequest) {
@@ -13,6 +14,12 @@ export async function GET(req: NextRequest) {
   }
   const session = await getServerSessionUser()
   if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+
+  const job = await recruitmentRepository.getJobPostingById(job_id)
+  if (!job) return NextResponse.json({ success: false, message: 'Job posting not found' }, { status: 404 })
+  if (job.company_id !== session.user.company_id) {
+    return NextResponse.json({ success: false, message: 'You can only view candidates for your own company\'s jobs' }, { status: 403 })
+  }
 
   const refresh = searchParams.get('refresh') === 'true'
 

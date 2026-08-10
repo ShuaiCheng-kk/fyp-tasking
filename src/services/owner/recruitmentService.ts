@@ -26,8 +26,11 @@ function awaitingConfirmationCount(rows: { status: string; invitation_status: st
 async function assertCanManageApplicants(job_id: string, actor_id: string): Promise<JobPosting> {
   const job = await recruitmentRepository.getJobPostingById(job_id)
   if (!job) throw new Error('Job posting not found')
-  const role = await recruitmentRepository.getUserRole(actor_id)
-  if (role === 'Manager' && job.created_by !== actor_id) {
+  const actor = await recruitmentRepository.getUserRoleAndCompany(actor_id)
+  if (!actor || actor.company_id !== job.company_id) {
+    throw new Error('You can only manage your own company\'s job postings')
+  }
+  if (actor.role === 'Manager' && job.created_by !== actor_id) {
     throw new Error('Only the recruitment owner can manage applicants for this job')
   }
   return job
@@ -35,10 +38,13 @@ async function assertCanManageApplicants(job_id: string, actor_id: string): Prom
 
 // UC41/UC42: a Manager's Pending Approval submission can only be decided (approved or rejected)
 // by Owner or Partner — a Manager, even the one who submitted it, is never a valid decider.
-async function assertCanDecidePosting(actor_id: string): Promise<void> {
-  const role = await recruitmentRepository.getUserRole(actor_id)
-  if (role !== 'Owner' && role !== 'Partner') {
+async function assertCanDecidePosting(job: JobPosting, actor_id: string): Promise<void> {
+  const actor = await recruitmentRepository.getUserRoleAndCompany(actor_id)
+  if (!actor || (actor.role !== 'Owner' && actor.role !== 'Partner')) {
     throw new Error('Only Owner or Partner can approve or reject a job posting')
+  }
+  if (actor.company_id !== job.company_id) {
+    throw new Error('You can only decide your own company\'s job postings')
   }
 }
 
@@ -247,8 +253,9 @@ export const recruitmentService = {
     }))
   },
 
-  async publishDraft(id: string): Promise<JobPosting> {
+  async publishDraft(id: string, actor_id?: string): Promise<JobPosting> {
     if (!id) throw new Error('job_id is required')
+    if (actor_id) await assertCanManageApplicants(id, actor_id)
     const posting = await assertPublishable(id)
     // UC41: a Manager's draft must go to Owner/Partner approval (submitForReview), never straight
     // to 'open' — the Manager UI only offers "Submit for Review", but that's a client-side
@@ -260,16 +267,18 @@ export const recruitmentService = {
     return recruitmentRepository.updateJobPosting(id, { status: 'open' })
   },
 
-  async submitForReview(id: string): Promise<JobPosting> {
+  async submitForReview(id: string, actor_id?: string): Promise<JobPosting> {
     if (!id) throw new Error('job_id is required')
+    if (actor_id) await assertCanManageApplicants(id, actor_id)
     await assertPublishable(id)
     // Resubmitting (e.g. after fixing a rejected posting) clears the old rejection record — a
     // fresh submission must not still show the previous reviewer's reason while it's pending again.
     return recruitmentRepository.updateJobPosting(id, { status: 'pending_approval', rejection_reason: null, rejected_by: null })
   },
 
-  async deleteDraft(id: string): Promise<void> {
+  async deleteDraft(id: string, actor_id?: string): Promise<void> {
     if (!id) throw new Error('job_id is required')
+    if (actor_id) await assertCanManageApplicants(id, actor_id)
     await recruitmentRepository.deleteJobPosting(id)
   },
 
@@ -327,8 +336,9 @@ export const recruitmentService = {
     })
   },
 
-  async unarchiveJobPosting(id: string): Promise<JobPosting> {
+  async unarchiveJobPosting(id: string, actor_id?: string): Promise<JobPosting> {
     if (!id) throw new Error('job_id is required')
+    if (actor_id) await assertCanManageApplicants(id, actor_id)
     const posting = await recruitmentRepository.getJobPostingById(id)
     if (!posting) throw new Error('Job posting not found')
     return recruitmentRepository.updateJobPosting(id, {
@@ -376,8 +386,7 @@ export const recruitmentService = {
 
   async duplicateJobPosting(id: string, created_by: string): Promise<JobPosting> {
     if (!id || !created_by) throw new Error('job_id and created_by are required')
-    const original = await recruitmentRepository.getJobPostingById(id)
-    if (!original) throw new Error('Job posting not found')
+    const original = await assertCanManageApplicants(id, created_by)
     // Duplicating a draft yields another draft; anything else republishes as a fresh open
     // posting — unless the duplicating user is a Manager, in which case it's UC41's approval
     // flow again (see createJobPosting's comment), not a direct publish.
@@ -487,7 +496,9 @@ export const recruitmentService = {
   async approveJobPosting(id: string, approved_by: string): Promise<JobPosting> {
     if (!id) throw new Error('job_id is required')
     if (!approved_by) throw new Error('approved_by is required')
-    await assertCanDecidePosting(approved_by)
+    const job = await recruitmentRepository.getJobPostingById(id)
+    if (!job) throw new Error('Job posting not found')
+    await assertCanDecidePosting(job, approved_by)
     return recruitmentRepository.approveJobPosting(id)
   },
 
@@ -496,7 +507,9 @@ export const recruitmentService = {
     if (!id) throw new Error('job_id is required')
     if (!rejection_reason?.trim()) throw new Error('rejection_reason is required')
     if (!rejected_by) throw new Error('rejected_by is required')
-    await assertCanDecidePosting(rejected_by)
+    const job = await recruitmentRepository.getJobPostingById(id)
+    if (!job) throw new Error('Job posting not found')
+    await assertCanDecidePosting(job, rejected_by)
     return recruitmentRepository.rejectJobPosting(id, rejection_reason.trim(), rejected_by)
   },
 

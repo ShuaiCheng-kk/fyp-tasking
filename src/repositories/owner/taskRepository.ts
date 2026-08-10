@@ -59,14 +59,25 @@ export const taskRepository = {
     if (insertError) throw new Error(insertError.message)
   },
 
+  // A single .in() with every id inlined into the URL breaks once a company has enough tasks
+  // (the request line gets too long for the DB gateway and comes back as a bare "Bad Request",
+  // found via Performance NFR testing — the Kanban board loads every one of a viewer's non-
+  // archived tasks through this path, so this is a real ceiling, not just a test-data artifact).
+  // Chunking keeps each request's id list bounded regardless of company size.
   async getAssignmentsByTaskIds(task_ids: string[]): Promise<TaskAssignment[]> {
     if (task_ids.length === 0) return []
-    const { data, error } = await supabase
-      .from('task_assignments')
-      .select('*')
-      .in('task_id', task_ids)
-    if (error) throw new Error(error.message)
-    return (data ?? []) as TaskAssignment[]
+    const CHUNK_SIZE = 150
+    const results: TaskAssignment[] = []
+    for (let i = 0; i < task_ids.length; i += CHUNK_SIZE) {
+      const chunk = task_ids.slice(i, i + CHUNK_SIZE)
+      const { data, error } = await supabase
+        .from('task_assignments')
+        .select('*')
+        .in('task_id', chunk)
+      if (error) throw new Error(error.message)
+      results.push(...(data ?? []) as TaskAssignment[])
+    }
+    return results
   },
 
   // department_ids is a security-scoping filter (e.g. a Manager's own departments), distinct from

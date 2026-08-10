@@ -30,10 +30,14 @@ export async function POST(req: NextRequest) {
     }
     const session = await getServerSessionUser()
     if (!session) return NextResponse.json({ success: false, error: 'Not authenticated' }, { status: 401 })
+    if (session.user.company_id !== company_id) {
+      return NextResponse.json({ success: false, error: 'You can only send messages within your own company' }, { status: 403 })
+    }
     const message = await ownerInboxService.sendMessage(session.user.id, to_user_id, company_id, content)
     return NextResponse.json({ success: true, message })
   } catch (error: any) {
-    const status = error.message === 'Managers can only message the Owner, Partner, or members of their own department' ? 403 : 400
+    const status = error.message === 'Managers can only message the Owner, Partner, or members of their own department'
+      || error.message === 'You can only message members of your own company' ? 403 : 400
     return NextResponse.json({ success: false, error: error.message }, { status })
   }
 }

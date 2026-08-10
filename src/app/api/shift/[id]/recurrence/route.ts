@@ -43,10 +43,11 @@ export async function POST(
       custom_interval_days: typeof custom_interval_days === 'number' ? custom_interval_days : undefined,
       created_by: session.user.id,
       assigned_user_id: typeof assigned_user_id === 'string' && assigned_user_id ? assigned_user_id : null,
-    })
+    }, session.user.company_id ?? undefined)
     return NextResponse.json({ success: true, shifts }, { status: 201 })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to create recurring shifts'
-    return NextResponse.json({ success: false, message }, { status: 400 })
+    const status = message.includes('own company') ? 403 : 400
+    return NextResponse.json({ success: false, message }, { status })
   }
 }

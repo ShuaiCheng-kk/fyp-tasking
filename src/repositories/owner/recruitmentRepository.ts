@@ -527,6 +527,16 @@ export const recruitmentRepository = {
     return (data as { role: string } | null)?.role ?? null
   },
 
+  async getUserRoleAndCompany(id: string): Promise<{ role: string; company_id: string | null } | null> {
+    const { data, error } = await supabase
+      .from('users')
+      .select('role, company_id')
+      .eq('id', id)
+      .maybeSingle()
+    if (error) throw new Error(error.message)
+    return data as { role: string; company_id: string | null } | null
+  },
+
   async getClosedPostingsByDateRange(company_id: string, date_from: string, date_to: string): Promise<JobPosting[]> {
     const { data, error } = await supabase
       .from('job_postings')

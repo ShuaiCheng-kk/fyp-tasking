@@ -2182,7 +2182,7 @@ export default function AdminDashboardPage() {
   const dirtyBlocks = selectedPage?.blocks.filter(block => (drafts[block.id] ?? '') !== block.value) ?? []
   return (
   <>
-    <main style={{ minHeight: '100vh', background: '#F1F5F9', color: TEXT, fontFamily: 'Inter, system-ui, sans-serif' }}>
+    <main style={{ height: '100vh', overflow: 'hidden', display: 'flex', flexDirection: 'column', background: '#F1F5F9', color: TEXT, fontFamily: 'Inter, system-ui, sans-serif' }}>
       <input
         ref={imageInputRef}
         type="file"
@@ -2219,9 +2219,9 @@ export default function AdminDashboardPage() {
         }
       `}</style>
 
-      <section style={{ marginLeft: 64, background: 'transparent' }}>
+      <section style={{ marginLeft: 64, background: 'transparent', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         {/* Page header — matches Owner's Communication/Reviews pages exactly */}
-        <div style={{ padding: '20px 28px 16px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 }}>
+        <div style={{ padding: '20px 28px 16px', flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 }}>
           <div>
             <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
               Marketing Page Editor
@@ -2239,7 +2239,7 @@ export default function AdminDashboardPage() {
           </div>
         </div>
 
-        <div style={{ padding: '0 28px 44px' }}>
+        <div style={{ padding: '0 28px 44px', flex: 1, minHeight: 0, overflowY: 'auto' }}>
         {error ? (
           <div style={{ marginBottom: 14, background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', borderRadius: 10, padding: '12px 14px', fontSize: 13, fontWeight: 700 }}>
             {error}

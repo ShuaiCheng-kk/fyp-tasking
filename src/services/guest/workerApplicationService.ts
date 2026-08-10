@@ -191,10 +191,16 @@ export const workerApplicationService = {
       throw new Error('This offer is no longer available')
     }
 
-    await workerApplicationRepository.promoteGuestToWorker(context.user_id)
-    if (job.department_id) {
-      await workerApplicationRepository.addCasualWorkerToDepartment(context.user_id, job.department_id, job.company_id)
-    }
+    // Independent writes to different tables (no FK relationship between them) - run in parallel
+    // instead of one after the other, found to matter via Performance NFR testing: this whole
+    // accept flow is already 6-7 sequential DB round trips, and this pair was the one place two
+    // of them didn't actually depend on each other's result.
+    await Promise.all([
+      workerApplicationRepository.promoteGuestToWorker(context.user_id),
+      job.department_id
+        ? workerApplicationRepository.addCasualWorkerToDepartment(context.user_id, job.department_id, job.company_id)
+        : Promise.resolve(),
+    ])
 
     // UC49 gates Clock In/Out off a real shifts row — the moment the Casual Worker accepts,
     // create that shift (published immediately, since both sides already agreed to the work)

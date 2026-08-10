@@ -10,6 +10,7 @@ import {
 import UserAdminSidebar from '@/components/UserAdminSidebar'
 import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
 import { useAuthGuard } from '@/hooks/useAuthGuard'
+import { useIsCompactViewport } from '@/hooks/useIsCompactViewport'
 import { UAReportStats } from '@/types/UserAdmin'
 
 const SIDEBAR_WIDTH = 64
@@ -231,6 +232,7 @@ function DonutChart({ segments, size = 140, strokeWidth = 20 }: {
 export default function UserAdminReports() {
   const router = useRouter()
   useAuthGuard()
+  const isPhone = useIsCompactViewport(640)
   const [tab, setTab] = useState<ReportTab>('company')
   const [stats, setStats] = useState<UAReportStats | null>(null)
   const [loading, setLoading] = useState(true)
@@ -335,12 +337,12 @@ export default function UserAdminReports() {
   ]
 
   return (
-    <div style={{ display: 'flex', minHeight: '100vh', background: T.bg, fontFamily: 'Inter, system-ui, sans-serif' }}>
+    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: T.bg, fontFamily: 'Inter, system-ui, sans-serif' }}>
       <UserAdminSidebar />
-      <div style={{ marginLeft: SIDEBAR_WIDTH, flex: 1, minWidth: 0, background: 'transparent' }}>
+      <div style={{ marginLeft: SIDEBAR_WIDTH, flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', background: 'transparent' }}>
 
         {/* Header */}
-        <div style={{ padding: '24px 32px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ padding: '24px 32px 16px', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <h1 style={{ fontWeight: 800, fontSize: '1.75rem', color: '#F1F5F9', margin: 0, letterSpacing: '-0.025em' }}>Report</h1>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             {userId && <OwnerUserBadge userId={userId} companyId="" />}
@@ -348,7 +350,7 @@ export default function UserAdminReports() {
         </div>
 
         {/* Tabs */}
-        <div style={{ padding: '0 32px' }}>
+        <div style={{ padding: '0 32px', flexShrink: 0 }}>
           <div style={{ background: '#FFFFFF', borderRadius: 10, boxShadow: '0 2px 8px rgba(15,23,42,0.2)', padding: 3, display: 'inline-flex' }}>
             {TABS.map(t => (
               <button key={t.key} onClick={() => setTab(t.key)} style={{
@@ -363,7 +365,7 @@ export default function UserAdminReports() {
         </div>
 
         {/* Toolbar */}
-        <div style={{ padding: '20px 32px 12px', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <div style={{ padding: '20px 32px 12px', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <input type="date" value={dateFrom} max={dateTo} onChange={e => setDateFrom(e.target.value)}
             style={{ padding: '8px 12px', borderRadius: 8, border: `1px solid ${T.border}`, background: T.surface, color: T.text1, fontSize: '0.82rem', fontWeight: 600 }} />
           <span style={{ color: T.text3, fontSize: '0.82rem' }}>to</span>
@@ -391,7 +393,7 @@ export default function UserAdminReports() {
         </div>
 
         {/* Content */}
-        <div style={{ padding: '0 32px 32px' }}>
+        <div style={{ padding: '0 32px 32px', flex: 1, minHeight: 0, overflowY: 'auto' }}>
           {loading && !stats ? (
             <div style={{ textAlign: 'center', padding: 80, color: T.text3, fontSize: '0.9rem' }}>Loading report data…</div>
           ) : !stats ? (
@@ -401,12 +403,12 @@ export default function UserAdminReports() {
               {/* ── Company Analytics tab ── */}
               {tab === 'company' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: isPhone ? '1fr' : 'repeat(3, 1fr)', gap: 14 }}>
                     <StatCard label="New Companies (Range)" value={stats.newCompaniesInRange} sub={`${dateFrom} to ${dateTo}`} icon={<CalendarDays size={18} />} color={T.violet} colorBg={T.violetBg} />
                     <StatCard label="Avg Users / Company" value={stats.avgUsersPerCompany} icon={<Users size={18} />} color={T.blue} colorBg={T.blueBg} />
                     <StatCard label="Pending Invitations" value={stats.pendingInvitationCount} icon={<Mail size={18} />} color={T.amber} colorBg={T.amberBg} />
                   </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: isPhone ? '1fr' : 'repeat(3, 1fr)', gap: 14 }}>
                     <SectionCard title="Company Health" icon={<Building2 size={14} />}>
                       <DonutChart segments={[
                         { label: 'Active',    value: stats.activeCompanies,    color: T.success },
@@ -430,7 +432,7 @@ export default function UserAdminReports() {
                       ]} size={110} strokeWidth={16} />
                     </SectionCard>
                   </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: isPhone ? '1fr' : 'repeat(3, 1fr)', gap: 14 }}>
                     <SectionCard title="Companies by Size" icon={<Building2 size={14} />}>
                       {sizeEntries.length > 0
                         ? <>
@@ -487,12 +489,12 @@ export default function UserAdminReports() {
               {/* ── User Analytics tab ── */}
               {tab === 'user' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: isPhone ? '1fr' : 'repeat(3, 1fr)', gap: 14 }}>
                     <StatCard label="New Users (Range)" value={stats.newUsersInRange} sub={`${dateFrom} to ${dateTo}`} icon={<CalendarDays size={18} />} color={T.violet} colorBg={T.violetBg} />
                     <StatCard label="Avg Users / Company" value={stats.avgUsersPerCompany} icon={<Users size={18} />} color={T.blue} colorBg={T.blueBg} />
                     <StatCard label="Unassigned Users" value={stats.usersWithoutCompany} sub="No company yet" icon={<Mail size={18} />} color={T.amber} colorBg={T.amberBg} />
                   </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: isPhone ? '1fr' : 'repeat(3, 1fr)', gap: 14 }}>
                     <SectionCard title="User Health" icon={<Users size={14} />}>
                       <DonutChart segments={[
                         { label: 'Active',    value: stats.activeUsers,    color: T.success },

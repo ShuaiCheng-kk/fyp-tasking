@@ -96,8 +96,8 @@ export default function CasualDashboardPage() {
   // The timeline column is only 300px wide, so side-by-side still fits comfortably at the
   // reference 1192px laptop viewport — stack only below ~980px.
   const isCompact = useIsCompactViewport(980)
-  // True phone width (isPhone implies isCompact, 640 < 980) — the page itself scrolls like a
-  // normal mobile page instead of being locked to one viewport with internal block scrolling.
+  // True phone width (isPhone implies isCompact, 640 < 980) — single-column stacking; the section
+  // below still scrolls internally within the layout's fixed-height phone shell.
   const isPhone = useIsCompactViewport(640)
 
   const [authId, setAuthId] = useState('')
@@ -916,7 +916,7 @@ export default function CasualDashboardPage() {
     <>
       <style>{pageKeyframes}</style>
 
-      <main style={isPhone ? { ...pageStyle, height: 'auto', overflow: 'visible', padding: '12px 12px 12px' } : pageStyle}>
+      <main style={isPhone ? { ...pageStyle, height: '100%', padding: '12px 12px 12px' } : pageStyle}>
         <div style={{ marginBottom: 20, flexShrink: 0 }}>
           <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
             Dashboard
@@ -945,12 +945,9 @@ export default function CasualDashboardPage() {
         ) : upcomingJobs.length === 0 ? (
           <p style={{ margin: 0, color: '#6B7280', fontSize: '0.95rem' }}>No active job right now.</p>
         ) : isCompact ? (
-          // Narrow viewport: single column, timeline on top, detail below — internally-scrolling
-          // on tablet (page itself is locked to the viewport); on phone the whole page scrolls
-          // instead, so this just stacks and grows with its content.
-          <div style={isPhone
-            ? { display: 'flex', flexDirection: 'column', gap: 16, animation: 'blockSlideUp 0.38s ease both' }
-            : { flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 16, animation: 'blockSlideUp 0.38s ease both' }}>
+          // Narrow viewport: single column, timeline on top, detail below — scrolls internally
+          // within the page's fixed-height shell, same as the two-column desktop layout below.
+          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 16, animation: 'blockSlideUp 0.38s ease both' }}>
             <div style={{ maxWidth: timelineCollapsed ? '100%' : 720 }}>{timelinePanel}</div>
             {detailColumn}
           </div>

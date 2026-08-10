@@ -19,6 +19,8 @@ vi.mock('@/services/email/emailService', () => ({
 vi.mock('@/repositories/owner/recruitmentRepository', () => ({
   recruitmentRepository: {
     getUserRole: vi.fn(),
+    getUserRoleAndCompany: vi.fn(),
+    getJobPostingById: vi.fn(),
     approveJobPosting: vi.fn(),
   },
 }))
@@ -29,6 +31,13 @@ import { recruitmentRepository } from '@/repositories/owner/recruitmentRepositor
 describe('UC41 Approve Job Posting', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue({ company_id: 'comp-1' } as never)
+    // assertCanDecidePosting now checks company scope via getUserRoleAndCompany — derive it
+    // from whatever each test sets on getUserRole so existing per-test role setup still applies.
+    vi.mocked(recruitmentRepository.getUserRoleAndCompany).mockImplementation(async (id) => {
+      const role = await recruitmentRepository.getUserRole(id)
+      return role ? { role, company_id: 'comp-1' } : null
+    })
   })
 
   it('UC41-M-UT-O: Owner approves a Manager\'s pending job posting', async () => {

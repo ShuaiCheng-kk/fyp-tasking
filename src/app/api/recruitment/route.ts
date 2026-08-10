@@ -28,10 +28,18 @@ export async function GET(req: NextRequest) {
   try {
     if (resource === 'applicants') {
       if (!job_id) return NextResponse.json({ success: false, message: 'job_id is required' }, { status: 400 })
+      const job = await recruitmentService.getJobPostingById(job_id)
+      if (!job) return NextResponse.json({ success: false, message: 'Job posting not found' }, { status: 404 })
+      if (job.company_id !== session.user.company_id) {
+        return NextResponse.json({ success: false, message: 'You can only view your own company\'s data' }, { status: 403 })
+      }
       const applicants = await recruitmentService.getApplicants(job_id, session.user.id)
       return NextResponse.json({ success: true, applicants })
     }
     if (resource === 'job_posting') {
+      // No company-scope check: also used by a Casual Worker viewing a job they're assigned to
+      // and a Guest viewing a job before applying (ApplyJobModal) — same posting data /api/guest/
+      // jobs/[jobId] already exposes with zero auth, so this isn't a new leak, just requires login.
       if (!job_id) return NextResponse.json({ success: false, message: 'job_id is required' }, { status: 400 })
       const posting = await recruitmentService.getJobPostingById(job_id)
       if (!posting) return NextResponse.json({ success: false, message: 'Job posting not found' }, { status: 404 })
@@ -230,17 +238,17 @@ export async function PATCH(req: NextRequest) {
     }
 
     if (action === 'publish_draft') {
-      const posting = await recruitmentService.publishDraft(String(data.job_id ?? ''))
+      const posting = await recruitmentService.publishDraft(String(data.job_id ?? ''), session.user.id)
       return NextResponse.json({ success: true, posting })
     }
 
     if (action === 'submit_for_review') {
-      const posting = await recruitmentService.submitForReview(String(data.job_id ?? ''))
+      const posting = await recruitmentService.submitForReview(String(data.job_id ?? ''), session.user.id)
       return NextResponse.json({ success: true, posting })
     }
 
     if (action === 'delete_draft') {
-      await recruitmentService.deleteDraft(String(data.job_id ?? ''))
+      await recruitmentService.deleteDraft(String(data.job_id ?? ''), session.user.id)
       return NextResponse.json({ success: true })
     }
 
@@ -250,7 +258,7 @@ export async function PATCH(req: NextRequest) {
     }
 
     if (action === 'unarchive_posting') {
-      const posting = await recruitmentService.unarchiveJobPosting(String(data.job_id ?? ''))
+      const posting = await recruitmentService.unarchiveJobPosting(String(data.job_id ?? ''), session.user.id)
       return NextResponse.json({ success: true, posting })
     }
 
@@ -278,6 +286,7 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ success: false, message: 'Unknown action' }, { status: 400 })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to update recruitment data'
-    return NextResponse.json({ success: false, message }, { status: 400 })
+    const status = message.includes('own company') ? 403 : 400
+    return NextResponse.json({ success: false, message }, { status })
   }
 }

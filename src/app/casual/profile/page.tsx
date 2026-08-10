@@ -119,7 +119,7 @@ function PaymentInformationCard({
 }
 
 export default function CasualProfilePage() {
-  // Single column on phone; the page itself scrolls instead of this section internally scrolling.
+  // Single column on phone; the section below still scrolls internally, same as desktop.
   const isPhone = useIsCompactViewport(640)
   // One fetch for the whole profile (personal info + skills + certificates + resume) instead of
   // each card below running its own identical `/api/guest/profile` fetch — same fix as Guest's
@@ -183,7 +183,7 @@ export default function CasualProfilePage() {
     <>
       <style>{pageKeyframes}</style>
 
-      <main style={isPhone ? { ...pageStyle, height: 'auto', overflow: 'visible', padding: '12px 12px 12px' } : pageStyle}>
+      <main style={isPhone ? { ...pageStyle, height: '100%', padding: '12px 12px 12px' } : pageStyle}>
         <div style={{ marginBottom: 20, flexShrink: 0 }}>
           <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
             My Profile
@@ -205,7 +205,7 @@ export default function CasualProfilePage() {
             already-empty shell the instant the page mounts and settling long before the API
             round-trips actually return anything to show. */}
         <section key={(profile && paymentLoaded) ? 'ready' : 'loading'} style={isPhone
-          ? { maxWidth: 1080, margin: '0 auto', width: '100%', display: 'grid', gridTemplateColumns: '1fr', gap: 16, alignItems: 'start', animation: 'blockSlideUp 0.38s ease both' }
+          ? { maxWidth: 1080, margin: '0 auto', width: '100%', flex: '1 1 auto', minHeight: 0, overflowY: 'auto', display: 'grid', gridTemplateColumns: '1fr', gap: 16, alignItems: 'start', animation: 'blockSlideUp 0.38s ease both' }
           : { maxWidth: 1080, margin: '0 auto', width: '100%', flex: '1 1 auto', minHeight: 0, overflowY: 'auto', display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 16, alignItems: 'start', animation: 'blockSlideUp 0.38s ease both' }}>
           {profile && paymentLoaded ? (
             <>

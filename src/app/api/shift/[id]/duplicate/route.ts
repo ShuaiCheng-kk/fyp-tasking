@@ -41,10 +41,11 @@ export async function POST(
       created_by: session.user.id,
       assigned_user_id: typeof assigned_user_id === 'string' && assigned_user_id ? assigned_user_id : null,
       template_id: typeof template_id === 'string' && template_id ? template_id : null,
-    })
+    }, session.user.company_id ?? undefined)
     return NextResponse.json({ success: true, shift: result.shift, warning: result.warning }, { status: 201 })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to duplicate shift'
-    return NextResponse.json({ success: false, message }, { status: 400 })
+    const status = message.includes('own company') ? 403 : 400
+    return NextResponse.json({ success: false, message }, { status })
   }
 }

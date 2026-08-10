@@ -429,6 +429,7 @@ export const taskService = {
   async updateTaskStatus(
     id: string,
     status: Task['status'],
+    actingUserId?: string | null,
   ): Promise<Task> {
     if (!VALID_STATUSES.includes(status)) {
       throw new Error(`status must be one of: ${VALID_STATUSES.join(', ')}`)
@@ -437,6 +438,12 @@ export const taskService = {
     // out are approveTask (→ Complete) or rejectTask (→ In Progress with a reason). The drag
     // path can therefore never move a Review card, and can never reach Complete on its own.
     const existing = await taskRepository.getTaskById(id)
+    // Unlike edit/delete/duplicate this is deliberately not assigner-only (the assignee drags
+    // their own card), but it must still stay inside the caller's own company.
+    const actingUser = actingUserId ? await taskRepository.getUserById(actingUserId) : null
+    if (!actingUser || actingUser.company_id !== existing.company_id) {
+      throw new Error('You can only update tasks in your own company')
+    }
     if (existing.status === 'Review') {
       throw new Error('Tasks in Review can only be approved or rejected by the user who assigned them')
     }
@@ -714,8 +721,11 @@ export const taskService = {
       ?? { type: 'balanced', message: 'Workload is currently balanced across assigned users.' }
   },
 
-  async getTaskReassignmentSuggestion(id: string): Promise<TaskReassignmentSuggestion> {
+  async getTaskReassignmentSuggestion(id: string, company_id?: string): Promise<TaskReassignmentSuggestion> {
     const task = await taskRepository.getTaskById(id)
+    if (company_id && task.company_id !== company_id) {
+      throw new Error('Task does not belong to this company')
+    }
     const activeTasks = (await taskRepository.getTasksByCompany(task.company_id)).filter(row => row.status !== 'Complete' && row.assigned_user_id)
     const counts = new Map<string, number>()
     for (const row of activeTasks) counts.set(row.assigned_user_id!, (counts.get(row.assigned_user_id!) ?? 0) + 1)

@@ -199,14 +199,18 @@ export const shiftRepository = {
     publication_status: 'draft' | 'published'
     department_id?: string
   }): Promise<Shift[]> {
-    let query = supabase
-      .from('shifts')
-      .update({ publication_status: input.publication_status })
-      .eq('company_id', input.company_id)
-      .gte('shift_date', input.date_from)
-      .lte('shift_date', input.date_to)
-    if (input.department_id) query = query.eq('department_id', input.department_id)
-    const { data, error } = await query.select()
+    // Uses the publish_schedule_range() DB function (see migrations) instead of a plain
+    // UPDATE ... WHERE, because a bulk range update has no guaranteed row-lock order and
+    // concurrent overlapping publish/unpublish calls deadlock (Postgres 40P01). The function
+    // locks matching rows in a consistent order (ORDER BY id FOR UPDATE) so concurrent callers
+    // block/wait on each other instead of deadlocking.
+    const { data, error } = await supabase.rpc('publish_schedule_range', {
+      p_company_id: input.company_id,
+      p_date_from: input.date_from,
+      p_date_to: input.date_to,
+      p_department_id: input.department_id ?? null,
+      p_publication_status: input.publication_status,
+    })
     if (error) throw new Error(error.message)
     return (data ?? []) as Shift[]
   },

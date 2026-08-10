@@ -60,7 +60,7 @@ export default function PartnerLayout({
       // Use the Supabase session as the authoritative source.
       // createBrowserClient reads from cookies (set by the SSR signin route).
       const { data: { session } } = await supabase.auth.getSession()
-      const userId = session?.user?.id ?? localStorage.getItem('tasking_user_id')
+      const userId = session?.user?.id
 
       if (!userId) {
         router.replace('/')

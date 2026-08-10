@@ -124,9 +124,13 @@ export const shiftService = {
       supervisor_employee_id?: string | null
     },
     performed_by?: string,
+    company_id?: string,
   ): Promise<ShiftMutationResult> {
     const existing = await shiftRepository.getShiftById(id)
     if (!existing) throw new Error('Shift not found')
+    if (company_id && existing.company_id !== company_id) {
+      throw new Error('You can only manage your own company\'s shifts')
+    }
     const effectiveShift = { ...existing, ...fields }
     // BUG-021: overnight shifts are valid — see createShift's comment above.
     if (effectiveShift.start_time === effectiveShift.end_time) {
@@ -309,6 +313,8 @@ export const shiftService = {
             // Bulk Edit has no supervisor field — omit supervisor_employee_id so editShift
             // preserves whatever the assignment already has instead of clearing it.
             : { assigned_user_id: item.assigned_user_id, assigned_by: performed_by },
+          undefined,
+          company_id,
         )
         updated.push(result.shift)
         previousShifts.push(existing)
@@ -368,7 +374,7 @@ export const shiftService = {
     return { shifts }
   },
 
-  async duplicateShift(id: string, input: DuplicateShiftInput): Promise<ShiftMutationResult> {
+  async duplicateShift(id: string, input: DuplicateShiftInput, company_id?: string): Promise<ShiftMutationResult> {
     if (!id) throw new Error('Shift id is required')
     if (!input.shift_date || !input.start_time || !input.end_time || !input.created_by) {
       throw new Error('shift_date, start_time, end_time, and created_by are required')
@@ -380,6 +386,9 @@ export const shiftService = {
 
     const original = await shiftRepository.getShiftById(id)
     if (!original) throw new Error('Shift not found')
+    if (company_id && original.company_id !== company_id) {
+      throw new Error('You can only manage your own company\'s shifts')
+    }
     const originalAssignments = await shiftRepository.getAssignmentsByShiftIds([id])
     const assignedUserId = input.assigned_user_id ?? originalAssignments[0]?.user_id ?? null
     const warning = assignedUserId
@@ -415,7 +424,7 @@ export const shiftService = {
     return { shift, warning }
   },
 
-  async createRecurringShifts(id: string, input: RecurringShiftInput): Promise<Shift[]> {
+  async createRecurringShifts(id: string, input: RecurringShiftInput, company_id?: string): Promise<Shift[]> {
     if (!id) throw new Error('Shift id is required')
     if (!input.created_by || !input.recurrence_end_date) {
       throw new Error('created_by and recurrence_end_date are required')
@@ -426,6 +435,9 @@ export const shiftService = {
 
     const original = await shiftRepository.getShiftById(id)
     if (!original) throw new Error('Shift not found')
+    if (company_id && original.company_id !== company_id) {
+      throw new Error('You can only manage your own company\'s shifts')
+    }
     if (original.source_shift_id !== null) {
       throw new Error('Only the original shift in a recurring series can have its recurrence edited')
     }
@@ -495,7 +507,7 @@ export const shiftService = {
     return created
   },
 
-  async createRecurringSplitShifts(split_group_id: string, input: RecurringSplitShiftInput): Promise<Shift[]> {
+  async createRecurringSplitShifts(split_group_id: string, input: RecurringSplitShiftInput, company_id?: string): Promise<Shift[]> {
     if (!split_group_id) throw new Error('split_group_id is required')
     if (!input.created_by || !input.recurrence_end_date) {
       throw new Error('created_by and recurrence_end_date are required')
@@ -506,6 +518,9 @@ export const shiftService = {
 
     const originals = await shiftRepository.getShiftsBySplitGroupId(split_group_id)
     if (originals.length !== 2) throw new Error('Split shift pair not found')
+    if (company_id && originals.some(o => o.company_id !== company_id)) {
+      throw new Error('You can only manage your own company\'s shifts')
+    }
     const [first, second] = originals
     if (input.recurrence_end_date <= first.shift_date) {
       throw new Error('recurrence_end_date must be after the shift date')
@@ -566,9 +581,12 @@ export const shiftService = {
     return created
   },
 
-  async deleteShift(id: string, performed_by?: string): Promise<{ skipped_shifts: Shift[] }> {
+  async deleteShift(id: string, performed_by?: string, company_id?: string): Promise<{ skipped_shifts: Shift[] }> {
     const shift = await shiftRepository.getShiftById(id)
     if (!shift) throw new Error('Shift not found')
+    if (company_id && shift.company_id !== company_id) {
+      throw new Error('You can only manage your own company\'s shifts')
+    }
 
     const isRecurrenceOriginal = shift.recurrence_group_id && shift.source_shift_id === null
     const siblings = isRecurrenceOriginal

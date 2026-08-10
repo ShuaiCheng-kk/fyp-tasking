@@ -22,6 +22,7 @@ vi.mock('@/repositories/owner/recruitmentRepository', () => ({
   recruitmentRepository: {
     getApplicantById: vi.fn(),
     getUserRole: vi.fn(),
+    getUserRoleAndCompany: vi.fn(),
     getJobPostingById: vi.fn(),
     updateApplicantStatus: vi.fn(),
     cancelSentInvitationByApplicant: vi.fn(),
@@ -44,9 +45,15 @@ const pendingApplicant = {
 describe('UC45 Reject Applicant', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue({ id: 'job-1', created_by: 'mgr-1', title: 'Weekend Cashier', company_name: 'Test Co' } as never)
+    vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue({ id: 'job-1', company_id: 'comp-1', created_by: 'mgr-1', title: 'Weekend Cashier', company_name: 'Test Co' } as never)
     vi.mocked(recruitmentRepository.cancelSentInvitationByApplicant).mockResolvedValue(undefined as never)
     vi.mocked(emailService.sendApplicationRejectedEmail).mockResolvedValue(undefined as never)
+    // assertCanManageApplicants now checks company scope via getUserRoleAndCompany — derive it
+    // from whatever each test sets on getUserRole so existing per-test role setup still applies.
+    vi.mocked(recruitmentRepository.getUserRoleAndCompany).mockImplementation(async (id) => {
+      const role = await recruitmentRepository.getUserRole(id)
+      return role ? { role, company_id: 'comp-1' } : null
+    })
   })
 
   it('UC45-M-UT-O: Owner rejects a pending applicant', async () => {

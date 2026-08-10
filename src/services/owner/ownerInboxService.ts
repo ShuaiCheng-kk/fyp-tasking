@@ -90,6 +90,13 @@ export const ownerInboxService = {
         senderRole = (sender as any).role ?? undefined
       }
     } catch {}
+    // Messaging never crosses a company boundary, regardless of sender role — checked here (not
+    // just the route's companyId === session company check) because that alone doesn't verify the
+    // RECIPIENT is actually in that company too.
+    const recipient = await ownerInboxRepository.findUserById(toUserId)
+    if (!recipient || (recipient as any).company_id !== companyId) {
+      throw new Error('You can only message members of your own company')
+    }
     // Managers may only message the Owner, Partner, or Managers/Employees in their own department.
     if (senderRole === 'Manager') {
       const contacts = await managerInboxRepository.getManagerContacts(fromUserId)
