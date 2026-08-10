@@ -5,10 +5,11 @@
  * up to 50 employees") - completely separate from scripts/seed.js's demo dataset, so it never
  * touches the fixed expected-data counts the manual test plan (docs/testing/) depends on.
  *
- * Builds: 1 Owner, 4 departments, 50 Employees, ~150 shifts (3 per employee across a 2-week
- * window), ~150 tasks (3 per employee), 1 Casual Worker with an immediately-clockable shift
- * (mirrors seed.js's own clock-in fixture, for the same clock-in perf measurement), and a
- * handful of job postings so Recruitment has real volume too.
+ * Builds: 1 Owner, 4 departments, 2 Managers (one per the first two departments - some module perf
+ * scripts assign work to a Manager and need at least 2 to exist), 50 Employees, ~150 shifts (3 per
+ * employee across a 2-week window), ~150 tasks (3 per employee), 1 Casual Worker with an
+ * immediately-clockable shift (mirrors seed.js's own clock-in fixture, for the same clock-in perf
+ * measurement), and a handful of job postings so Recruitment has real volume too.
  *
  * Usage:
  *   node scripts/seed-scale-test.js          # create the fixture
@@ -62,24 +63,36 @@ async function deleteFixture() {
   const companyId = owner.company_id
   console.log(`Deleting scale-test company ${companyId} and everything in it...`)
 
-  const { data: users } = await supabase.from('users').select('id, supabase_auth_id').eq('company_id', companyId)
-  const userIds = (users ?? []).map(u => u.id)
+  const { data: companyUsers } = await supabase.from('users').select('id, supabase_auth_id').eq('company_id', companyId)
+  // The Casual Worker is created with company_id: null (it's only linked via shift_assignment, like
+  // every Casual Worker), so it never matches the company_id filter above - fetch it separately or
+  // it's left behind as an orphaned auth account on every teardown.
+  const { data: casualUser } = await supabase.from('users').select('id, supabase_auth_id').eq('email_address', 'scale-casual1@test.com').maybeSingle()
+  const users = [...(companyUsers ?? []), ...(casualUser ? [casualUser] : [])]
+  const userIds = users.map(u => u.id)
 
   await supabase.from('task_assignments').delete().in('user_id', userIds)
   await supabase.from('tasks').delete().eq('company_id', companyId)
   await supabase.from('attendance_records').delete().in('user_id', userIds)
   const { data: shifts } = await supabase.from('shifts').select('id').eq('company_id', companyId)
   const shiftIds = (shifts ?? []).map(s => s.id)
-  if (shiftIds.length) await supabase.from('shift_assignments').delete().in('shift_id', shiftIds)
+  // Chunked: a company that's been through repeated perf-test runs can accumulate hundreds of
+  // throwaway shifts, and a single .in() with that many ids triggers a Bad Request from PostgREST -
+  // which this function didn't check for, so the delete silently no-op'd and every table after it
+  // failed on FK constraints while the function still logged "Deleted." at the end.
+  for (let i = 0; i < shiftIds.length; i += 100) {
+    await supabase.from('shift_assignments').delete().in('shift_id', shiftIds.slice(i, i + 100))
+  }
   await supabase.from('shifts').delete().eq('company_id', companyId)
   await supabase.from('job_postings').delete().eq('company_id', companyId)
   await supabase.from('employee_departments').delete().eq('company_id', companyId)
   await supabase.from('casualworker_departments').delete().eq('company_id', companyId)
+  await supabase.from('manager_departments').delete().eq('company_id', companyId)
   await supabase.from('departments').delete().eq('company_id', companyId)
-  await supabase.from('users').delete().eq('company_id', companyId)
+  await supabase.from('users').delete().in('id', userIds)
   await supabase.from('companies').delete().eq('id', companyId)
 
-  for (const u of users ?? []) {
+  for (const u of users) {
     if (u.supabase_auth_id) await supabase.auth.admin.deleteUser(u.supabase_auth_id).catch(() => {})
   }
   console.log('Deleted.')
@@ -91,7 +104,19 @@ async function buildFixture() {
   const { data: ownerAuth, error: ownerAuthErr } = await supabase.auth.admin.createUser({
     email: OWNER_EMAIL, password: PASSWORD, email_confirm: true,
   })
-  if (ownerAuthErr) { console.error('owner auth create failed:', ownerAuthErr.message); process.exit(1) }
+  if (ownerAuthErr) {
+    // The overwhelmingly common cause is a fixture that is already there - say so, rather than
+    // leaving the raw "already been registered" message for the reader to decode.
+    if (/already been registered/i.test(ownerAuthErr.message)) {
+      console.error(`A scale-test fixture already exists (${OWNER_EMAIL} is registered).`)
+      console.error('Tear it down first, then create it again:')
+      console.error('  node scripts/seed-scale-test.js --delete')
+      console.error('  node scripts/seed-scale-test.js')
+      process.exit(1)
+    }
+    console.error('owner auth create failed:', ownerAuthErr.message)
+    process.exit(1)
+  }
 
   const { data: ownerUser, error: ownerUserErr } = await supabase.from('users').insert({
     supabase_auth_id: ownerAuth.user.id, full_name: 'Scale Test Owner', email_address: OWNER_EMAIL,
@@ -100,7 +125,12 @@ async function buildFixture() {
   if (ownerUserErr) { console.error('owner user insert failed:', ownerUserErr.message); process.exit(1) }
 
   const { data: company, error: companyErr } = await supabase.from('companies').insert({
+    // description non-null: perf-test-module3.js snapshots the profile before UC33 (Edit Company
+    // Profile) testing and restores these exact values after - a null description gets rejected by
+    // update-profile's own required-field validation, so the restore step fails without this.
     name: 'Scale-Test-Co', owner_id: ownerUser.id, plan: 'Paid', size: '51-200',
+    description: 'Scalability NFR test fixture company.', location: 'Singapore',
+    address: '1 Test Street', postal_code: '123456', industry: 'Technology',
   }).select().single()
   if (companyErr) { console.error('company insert failed:', companyErr.message); process.exit(1) }
   await supabase.from('users').update({ company_id: company.id }).eq('id', ownerUser.id)
@@ -112,6 +142,23 @@ async function buildFixture() {
     deptRows.push(data)
   }
   console.log(`${deptRows.length} departments created`)
+
+  console.log('Creating 2 Manager accounts (module scripts that assign work to a Manager need at least 2)...')
+  const managers = []
+  for (let i = 0; i < 2; i++) {
+    const email = `scale-mgr-${i + 1}@test.com`
+    const { data: auth, error: authErr } = await supabase.auth.admin.createUser({ email, password: PASSWORD, email_confirm: true })
+    if (authErr) { console.error(`manager auth create failed for ${email}:`, authErr.message); process.exit(1) }
+    const dept = deptRows[i]
+    const { data: user, error: userErr } = await supabase.from('users').insert({
+      supabase_auth_id: auth.user.id, full_name: `Scale Manager ${i + 1}`, email_address: email,
+      phone_number: '+65 9500 ' + String(2000 + i), date_of_birth: '1988-01-01', profile_photo_url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=scalemgr' + i, role: 'Manager', company_id: company.id,
+    }).select().single()
+    if (userErr) { console.error(`manager user insert failed for ${email}:`, userErr.message); process.exit(1) }
+    await supabase.from('manager_departments').insert({ manager_id: user.id, department_id: dept.id, company_id: company.id })
+    managers.push({ user, dept })
+  }
+  console.log(`${managers.length} managers created\n`)
 
   console.log(`Creating ${EMPLOYEE_COUNT} employee accounts (this takes a while, one auth call each)...`)
   const employees = []
