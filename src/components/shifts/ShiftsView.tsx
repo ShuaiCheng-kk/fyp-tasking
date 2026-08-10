@@ -2239,33 +2239,6 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
     if (companyId) void fetchFutureRows(companyId)
   }
 
-  const openBatchDrawerForSelection = () => {
-    if (!canManageShifts) return
-    if (timelineIsPast) return
-    if (selectedTimelineRows.length === 0) return
-    const firstRow = selectedTimelineRows[0]
-    const dept = departments.find(d => d.id === firstRow.department_id)
-    if (!dept) return
-    setBatchDepartment(dept)
-    setBatchSingleMember(null)
-    setBatchFromSelection(true)
-    setSelectedMemberIds(selectedTimelineUserIds)
-    setSelectedDates([])
-    setBatchCells({})
-    setBulkError('')
-    setBulkResult('')
-    setBulkFailures([])
-    setBulkWarning('')
-    setSelectedTemplateId('')
-    setExpandedBatchCells(new Set())
-    setBatchSplitEnabled(false)
-    setBatchSplitBlock1End('14:00')
-    setBatchSplitBlock2Start('15:00')
-    const base = addDays(new Date(), 1)
-    setCalMonth(`${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2, '0')}`)
-    if (companyId) void fetchFutureRows(companyId)
-  }
-
   const closeBatchDrawer = () => {
     setBatchDepartment(null)
     setBatchSingleMember(null)

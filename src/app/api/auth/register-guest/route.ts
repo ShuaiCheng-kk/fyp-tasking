@@ -74,6 +74,12 @@ export async function POST(req: NextRequest) {
         { status: 400 },
       )
     }
+    if (msg.includes('rate limit')) {
+      return NextResponse.json(
+        { success: false, message: 'Too many registration attempts right now. Please try again in a minute.' },
+        { status: 429 },
+      )
+    }
     return NextResponse.json({ success: false, message: 'Something went wrong. Please try again.' }, { status: 500 })
   }
 }

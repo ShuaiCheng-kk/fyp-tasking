@@ -205,7 +205,8 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ success: false, message: 'Unsupported attendance action' }, { status: 400 })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to update attendance'
-    return NextResponse.json({ success: false, message }, { status: 400 })
+    const status = message.includes('own company') || message.includes('Only Owner or Partner') ? 403 : 400
+    return NextResponse.json({ success: false, message }, { status })
   }
 }
 

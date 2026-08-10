@@ -6,11 +6,9 @@ import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 
 export async function GET(req: NextRequest) {
-  console.log('Auth callback triggered')
 
   const { searchParams } = new URL(req.url)
   const code = searchParams.get('code')
-  console.log('Code received:', !!code)
 
   if (!code) {
     return NextResponse.redirect(new URL('/signin', req.url))
@@ -36,8 +34,6 @@ export async function GET(req: NextRequest) {
   )
 
   const { data: sessionData, error } = await supabase.auth.exchangeCodeForSession(code)
-  console.log('Session exchanged:', !!sessionData?.session)
-  console.log('User ID:', sessionData?.user?.id)
 
   if (error) {
     console.error('Session exchange error:', error)

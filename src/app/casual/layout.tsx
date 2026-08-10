@@ -108,8 +108,14 @@ export default function CasualLayout({ children }: { children: React.ReactNode }
           </button>
         </div>
       )}
+      {/* Phone: locked to exactly 100vh (boxSizing:border-box folds the 44px top-bar / 64px
+          bottom-tab-bar clearance into that same box) so the fixed bars never push the document
+          taller than one viewport - the old `minHeight` version let this box grow by their combined
+          108px instead of reserving space inside a fixed budget, causing real page-level scroll.
+          Each casual page's own <main> fills this box via height:'100%' on phone instead of a flat
+          100vh of its own, so the 108px clearance number only needs to live here. */}
       <main style={isPhone
-        ? { marginLeft: 0, minHeight: '100vh', paddingTop: 44, paddingBottom: 64 }
+        ? { marginLeft: 0, height: '100vh', overflow: 'hidden', boxSizing: 'border-box', paddingTop: 44, paddingBottom: 64 }
         : { marginLeft: 64, minHeight: '100vh' }}
       >
         {children}

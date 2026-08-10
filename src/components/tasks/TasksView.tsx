@@ -1453,6 +1453,10 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
   const [workloadSuggestions, setWorkloadSuggestions] = useState<TaskWorkloadSuggestion[]>([])
   const [workloadApplyLoadingId, setWorkloadApplyLoadingId] = useState('')
   const [workloadApplyError, setWorkloadApplyError] = useState('')
+  // "Reassign All": how many of the listed suggestions have been applied so far, or -1 when idle.
+  // Each suggestion is its own department, so applying them all is just the single-apply action
+  // run down the list — the count only exists to show progress on a queue that can take a moment.
+  const [workloadApplyAllProgress, setWorkloadApplyAllProgress] = useState(-1)
   const [profileMember, setProfileMember] = useState<Member | null>(null)
   const [workloadInsightOpen, setWorkloadInsightOpen] = useState(false)
   // Clicking the delay count sorts every delayed task to the top of its Kanban column and
@@ -2592,6 +2596,46 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
     } finally {
       setWorkloadApplyLoadingId('')
     }
+  }
+
+  // Applies every listed suggestion in one go. Sequential rather than parallel: each reassignment
+  // shifts the workload scores the next suggestion was computed against, and a queue of PATCHes
+  // fired at once would also race the single shared error slot. The board/insight refetch is
+  // deliberately left until the whole queue drains — refetching per item would re-render the list
+  // out from under the loop.
+  const handleApplyAllWorkloadSuggestions = async () => {
+    const applicable = workloadSuggestions.filter(s => s.suggested_task_id && s.recommended_user_id)
+    if (applicable.length === 0) return
+
+    setWorkloadApplyAllProgress(0); setWorkloadApplyError('')
+    let applied = 0
+    let failure = ''
+    for (const suggestion of applicable) {
+      try {
+        const res = await fetch('/api/task', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'apply_workload_suggestion',
+            id: suggestion.suggested_task_id,
+            assigned_user_id: suggestion.recommended_user_id,
+            assigned_by: internalUserId || undefined,
+          }),
+        })
+        const data = await res.json()
+        if (!data.success) throw new Error(data.message)
+        applied++
+        setWorkloadApplyAllProgress(applied)
+      } catch (err) {
+        // Keep going: one department failing shouldn't strand the rest of the queue.
+        failure = err instanceof Error ? err.message : 'Failed to reassign task'
+      }
+    }
+
+    await Promise.all([fetchKanban(companyId, true), refreshAllTaskInsights()])
+    setWorkloadApplyAllProgress(-1)
+    if (failure) setWorkloadApplyError(`${applied} of ${applicable.length} reassigned. ${failure}`)
+    else showTaskToast(`${applied} task${applied === 1 ? '' : 's'} reassigned.`)
   }
 
   const handleUnarchiveTask = async (taskId: string) => {
@@ -5857,12 +5901,28 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                   Workload Suggestion
                 </h2>
               </div>
-              <button onClick={() => setWorkloadInsightOpen(false)} style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8 }}
-                onMouseEnter={e => { e.currentTarget.style.background = '#F3F4F6' }}
-                onMouseLeave={e => { e.currentTarget.style.background = '#F9FAFB' }}
-              >
-                <X size={16} />
-              </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                {workloadSuggestions.filter(s => s.suggested_task_id && s.recommended_user_id).length > 1 && (
+                  <button
+                    type="button"
+                    onClick={handleApplyAllWorkloadSuggestions}
+                    disabled={!!workloadApplyLoadingId || workloadApplyAllProgress >= 0}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 32, padding: '0 12px', borderRadius: 8, border: '1px solid #FED7AA', background: '#FFF7ED', color: '#EA580C', fontSize: 12, fontWeight: 800, fontFamily: "'Inter', system-ui, -apple-system, sans-serif", cursor: (workloadApplyLoadingId || workloadApplyAllProgress >= 0) ? 'default' : 'pointer', opacity: workloadApplyLoadingId ? 0.55 : 1, transition: 'box-shadow 0.18s ease, background 0.18s ease' }}
+                    onMouseEnter={e => { if (!workloadApplyLoadingId && workloadApplyAllProgress < 0) { e.currentTarget.style.background = '#FFEDD5'; e.currentTarget.style.boxShadow = '0 3px 10px rgba(234,88,12,0.16)' } }}
+                    onMouseLeave={e => { e.currentTarget.style.background = '#FFF7ED'; e.currentTarget.style.boxShadow = 'none' }}
+                  >
+                    {workloadApplyAllProgress >= 0
+                      ? <><Spinner size={12} /> {workloadApplyAllProgress}/{workloadSuggestions.filter(s => s.suggested_task_id && s.recommended_user_id).length}</>
+                      : <><ArrowRightLeft size={13} /> Reassign All</>}
+                  </button>
+                )}
+                <button onClick={() => setWorkloadInsightOpen(false)} style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8 }}
+                  onMouseEnter={e => { e.currentTarget.style.background = '#F3F4F6' }}
+                  onMouseLeave={e => { e.currentTarget.style.background = '#F9FAFB' }}
+                >
+                  <X size={16} />
+                </button>
+              </div>
             </div>
 
             <div style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 10, overflowY: 'auto' }}>
@@ -5901,7 +5961,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                           title="Reassign task"
                           aria-label={`Reassign task to ${recommendedName}`}
                           onClick={() => handleApplyWorkloadSuggestion(suggestion)}
-                          disabled={!!workloadApplyLoadingId || !suggestion.suggested_task_id || !suggestion.recommended_user_id}
+                          disabled={!!workloadApplyLoadingId || workloadApplyAllProgress >= 0 || !suggestion.suggested_task_id || !suggestion.recommended_user_id}
                           style={{ width: 36, height: 36, border: '1px solid #FED7AA', borderRadius: 8, background: loading ? '#FFEDD5' : '#FFF7ED', color: '#EA580C', cursor: workloadApplyLoadingId ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0, opacity: (!suggestion.suggested_task_id || !suggestion.recommended_user_id) ? 0.55 : 1, transition: 'opacity 0.18s ease, box-shadow 0.18s ease, background 0.18s ease' }}
                         >
                           {loading ? <Spinner size={13} /> : <ArrowRightLeft size={15} />}

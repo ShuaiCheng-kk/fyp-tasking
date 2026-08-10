@@ -91,7 +91,7 @@ export async function GET(req: NextRequest) {
       })
     }
     if (suggestion === 'reassignment' && task_id) {
-      const reassignmentSuggestion = await taskService.getTaskReassignmentSuggestion(task_id)
+      const reassignmentSuggestion = await taskService.getTaskReassignmentSuggestion(task_id, company_id)
       return NextResponse.json({ success: true, suggestion: reassignmentSuggestion })
     }
     if (suggestion === 'delay') {
@@ -330,11 +330,13 @@ export async function PATCH(req: NextRequest) {
       const task = await taskService.updateTaskStatus(
         b.id,
         b.status as 'Assigned' | 'In Progress' | 'Review' | 'Complete',
+        session.user.id,
       )
       return NextResponse.json({ success: true, task })
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to update task status'
-      return NextResponse.json({ success: false, message }, { status: 400 })
+      const status = message.includes('own company') ? 403 : 400
+      return NextResponse.json({ success: false, message }, { status })
     }
   }
 

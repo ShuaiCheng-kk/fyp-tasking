@@ -8,6 +8,7 @@ import UserAdminSidebar from '@/components/UserAdminSidebar'
 import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
 import { UACompany, UACompanyDetail, UACompanyMember, UAUser } from '@/types/UserAdmin'
 import { useAuthGuard } from '@/hooks/useAuthGuard'
+import { useIsCompactViewport } from '@/hooks/useIsCompactViewport'
 
 const SIDEBAR_WIDTH = 64
 
@@ -167,6 +168,7 @@ function CalendarRangePicker({ from, to, onChange }: {
 export default function UserAdminDashboard() {
   const router = useRouter()
   useAuthGuard()
+  const isPhone = useIsCompactViewport(640)
   const [tab, setTab] = useState<Tab>('companies')
   const [userId, setUserId] = useState<string | null>(null)
 
@@ -517,12 +519,12 @@ export default function UserAdminDashboard() {
     ) : null
 
   return (
-    <div style={{ display: 'flex', minHeight: '100vh', background: T.bg, fontFamily: 'Inter, system-ui, sans-serif' }}>
+    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: T.bg, fontFamily: 'Inter, system-ui, sans-serif' }}>
       <UserAdminSidebar />
 
-      <div style={{ marginLeft: SIDEBAR_WIDTH, flex: 1, display: 'flex', flexDirection: 'column', minHeight: '100vh', background: 'transparent' }}>
+      <div style={{ marginLeft: SIDEBAR_WIDTH, flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', background: 'transparent' }}>
 
-        <div style={{ padding: '28px 32px', flex: 1 }}>
+        <div style={{ padding: '28px 32px 0', flexShrink: 0 }}>
           {/* Page heading */}
           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 24 }}>
             <div>
@@ -559,7 +561,9 @@ export default function UserAdminDashboard() {
               </button>
             ))}
           </div>
+        </div>
 
+        <div style={{ padding: '0 32px 28px', flex: 1, minHeight: 0, overflowY: 'auto' }}>
           {/* ── Companies tab ─────────────────────────────────────────────── */}
           {tab === 'companies' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -570,7 +574,7 @@ export default function UserAdminDashboard() {
                 {compSearch && <button onClick={() => setCompSearch('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: T.text3, padding: 0, display: 'flex' }}><X size={14} /></button>}
               </div>
 
-              <div style={{ display: 'flex', gap: 18, alignItems: 'flex-start' }}>
+              <div style={{ display: 'flex', flexDirection: isPhone ? 'column' : 'row', gap: 18, alignItems: isPhone ? 'stretch' : 'flex-start' }}>
                 {/* Table */}
                 <div style={{ flex: 1, minWidth: 0, background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, boxShadow: '0 1px 3px rgba(0,0,0,0.04)', overflow: 'hidden' }}>
                   <div style={{ padding: '14px 20px', borderBottom: `1px solid ${T.border}`, display: 'flex', alignItems: 'center', background: '#FAFBFC' }}>
@@ -634,7 +638,7 @@ export default function UserAdminDashboard() {
                 </div>
 
                 {/* Filter panel */}
-                <div style={{ width: 210, flexShrink: 0, background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, padding: '14px 14px 10px', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
+                <div style={{ width: isPhone ? '100%' : 210, flexShrink: 0, background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, padding: '14px 14px 10px', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
                     <span style={{ fontWeight: 700, fontSize: '0.7rem', color: T.text3, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Filters</span>
                     {hasCompFilters && <button onClick={clearCompFilters} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: T.accent, fontWeight: 600 }}>Clear all</button>}
@@ -685,7 +689,7 @@ export default function UserAdminDashboard() {
                 {userSearch && <button onClick={() => setUserSearch('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: T.text3, padding: 0, display: 'flex' }}><X size={14} /></button>}
               </div>
 
-              <div style={{ display: 'flex', gap: 18, alignItems: 'flex-start' }}>
+              <div style={{ display: 'flex', flexDirection: isPhone ? 'column' : 'row', gap: 18, alignItems: isPhone ? 'stretch' : 'flex-start' }}>
                 {/* Table */}
                 <div style={{ flex: 1, minWidth: 0, background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, boxShadow: '0 1px 3px rgba(0,0,0,0.04)', overflow: 'hidden' }}>
                   <div style={{ padding: '14px 20px', borderBottom: `1px solid ${T.border}`, display: 'flex', alignItems: 'center', background: '#FAFBFC' }}>
@@ -759,7 +763,7 @@ export default function UserAdminDashboard() {
                 </div>
 
                 {/* Filter panel */}
-                <div style={{ width: 210, flexShrink: 0, background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, padding: '14px 14px 10px', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
+                <div style={{ width: isPhone ? '100%' : 210, flexShrink: 0, background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, padding: '14px 14px 10px', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
                     <span style={{ fontWeight: 700, fontSize: '0.7rem', color: T.text3, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Filters</span>
                     {hasUserFilters && <button onClick={clearUserFilters} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: T.accent, fontWeight: 600 }}>Clear all</button>}

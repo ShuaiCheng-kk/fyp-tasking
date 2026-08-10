@@ -119,10 +119,13 @@ interface PeriodData {
   casual: Omit<CompanyReport['casual'], 'pool'>
 }
 
-async function buildPeriodData(filters: ReportFilters, now: Date): Promise<PeriodData> {
-  const [departments, managers, shifts, tasks, postings, deadlineTasks, workerCancellations] = await Promise.all([
-    reportRepository.getDepartments(filters.company_id),
-    reportRepository.getDepartmentManagers(filters.company_id),
+async function buildPeriodData(
+  filters: ReportFilters,
+  now: Date,
+  departments: Awaited<ReturnType<typeof reportRepository.getDepartments>>,
+  managers: Awaited<ReturnType<typeof reportRepository.getDepartmentManagers>>,
+): Promise<PeriodData> {
+  const [shifts, tasks, postings, deadlineTasks, workerCancellations] = await Promise.all([
     reportRepository.getShifts(filters),
     reportRepository.getTasksInRange(filters),
     reportRepository.getJobPostingsCreatedInRange(filters),
@@ -662,9 +665,19 @@ export const reportService = {
     const period: ReportPeriod = { date_from: filters.date_from, date_to: filters.date_to }
     const prev = previousPeriod(period)
 
+    // Departments and their managers don't depend on the date range at all, so fetching them
+    // separately inside each of the two buildPeriodData calls (current period, previous period)
+    // ran the identical company-wide query twice for no reason - found via Performance NFR
+    // testing (20 concurrent Report page loads were queuing on the DB connection pool). Fetched
+    // once here and passed into both instead.
+    const [departments, managers] = await Promise.all([
+      reportRepository.getDepartments(filters.company_id),
+      reportRepository.getDepartmentManagers(filters.company_id),
+    ])
+
     const [current, previous, pool] = await Promise.all([
-      buildPeriodData(filters, now),
-      buildPeriodData({ ...filters, date_from: prev.date_from, date_to: prev.date_to }, now),
+      buildPeriodData(filters, now, departments, managers),
+      buildPeriodData({ ...filters, date_from: prev.date_from, date_to: prev.date_to }, now, departments, managers),
       recruitmentRepository.getVerifiedPoolWorkers(filters.company_id),
     ])
 

@@ -56,3 +56,7 @@ next-env.d.ts
 /blob-report/
 /playwright/.cache/
 /tests/.auth/
+
+# NFR script output (regenerated on every run)
+/.compat-screenshots/
+/scalability-results/

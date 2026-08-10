@@ -228,40 +228,28 @@ export const companyService = {
       }
     }
 
-    console.log(`[deleteCompany] Step 1: fetching non-Owner members for company ${company_id}`)
     const nonOwnerMembers = await companyRepository.findNonOwnerMembersByCompanyId(company_id)
-    console.log(`[deleteCompany] Step 1: found ${nonOwnerMembers.length} non-Owner members`)
 
     const membersForFullDeletion = nonOwnerMembers
 
-    console.log(`[deleteCompany] Step 3: deleting announcements for company ${company_id}`)
     await companyRepository.deleteAnnouncementsByCompanyId(company_id)
 
-    console.log(`[deleteCompany] Step 3: deleting messages for company ${company_id}`)
     await companyRepository.deleteMessagesByCompanyId(company_id)
 
-    console.log(`[deleteCompany] Step 3: deleting manager_departments for company ${company_id}`)
     await companyRepository.deleteManagerDepartmentsByCompanyId(company_id)
 
-    console.log(`[deleteCompany] Step 3: deleting invitation_code for company ${company_id}`)
     await companyRepository.deleteInvitationCodeByCompanyId(company_id)
 
-    console.log(`[deleteCompany] Step 3: deleting departments for company ${company_id}`)
     await companyRepository.deleteDepartmentsByCompanyId(company_id)
 
-    console.log(`[deleteCompany] Step 4: fully deleting ${membersForFullDeletion.length} members`)
     for (const member of membersForFullDeletion) {
-      console.log(`[deleteCompany] Step 4: deleting user ${member.user_id}`)
       await authRepository.deleteById(member.user_id)
       if (member.supabase_auth_id) {
-        console.log(`[deleteCompany] Step 4: deleting auth user ${member.supabase_auth_id}`)
         await getSupabaseAdmin().auth.admin.deleteUser(member.supabase_auth_id)
       }
     }
 
-    console.log(`[deleteCompany] Step 5: deleting company ${company_id}`)
     await companyRepository.deleteById(company_id)
-    console.log(`[deleteCompany] Step 5: company ${company_id} deleted successfully`)
   },
 
   async createAdditionalCompany(data: {

@@ -15,6 +15,9 @@ export async function GET(req: NextRequest) {
 
   const session = await getServerSessionUser()
   if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+  if (session.user.company_id !== company_id) {
+    return NextResponse.json({ success: false, message: 'You can only view your own company' }, { status: 403 })
+  }
 
   try {
     const { data, error } = await supabase

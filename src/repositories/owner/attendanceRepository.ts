@@ -108,14 +108,14 @@ export const attendanceRepository = {
     return data as AttendanceRecord
   },
 
-  async getUsersByIds(ids: string[]): Promise<Array<{ id: string; full_name: string; role: string; profile_photo_url: string | null }>> {
+  async getUsersByIds(ids: string[]): Promise<Array<{ id: string; full_name: string; role: string; profile_photo_url: string | null; company_id: string | null }>> {
     if (ids.length === 0) return []
     const { data, error } = await supabase
       .from('users')
-      .select('id, full_name, role, profile_photo_url')
+      .select('id, full_name, role, profile_photo_url, company_id')
       .in('id', ids)
     if (error) throw new Error(error.message)
-    return (data ?? []) as Array<{ id: string; full_name: string; role: string; profile_photo_url: string | null }>
+    return (data ?? []) as Array<{ id: string; full_name: string; role: string; profile_photo_url: string | null; company_id: string | null }>
   },
 
   // Per-company ban status (casualworker_departments.inactive_at/inactive_reason is the

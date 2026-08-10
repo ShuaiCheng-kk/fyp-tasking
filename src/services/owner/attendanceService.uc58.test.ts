@@ -13,6 +13,7 @@ vi.mock('@/repositories/owner/attendanceRepository', () => ({
   attendanceRepository: {
     getFixedOffDayRequestById: vi.fn(),
     updateFixedOffDayRequest: vi.fn(),
+    getUsersByIds: vi.fn(),
   },
 }))
 
@@ -33,11 +34,17 @@ function pendingRequest() {
   }
 }
 
+const users: Record<string, { id: string; role: string; company_id: string }> = {
+  'owner-1': { id: 'owner-1', role: 'Owner', company_id: 'comp-1' },
+  'partner-1': { id: 'partner-1', role: 'Partner', company_id: 'comp-1' },
+}
+
 describe('UC58 Approve Day Off Request', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(offDaySettingsRepository.getDeadline).mockResolvedValue(null)
     vi.mocked(attendanceRepository.updateFixedOffDayRequest).mockImplementation(async (id, fields) => ({ id, ...fields } as never))
+    vi.mocked(attendanceRepository.getUsersByIds).mockImplementation(async (ids) => ids.map(id => users[id]).filter(Boolean) as never)
   })
 
   it('UC58-M-UT-O: Owner approves a pending day off request as submitted', async () => {

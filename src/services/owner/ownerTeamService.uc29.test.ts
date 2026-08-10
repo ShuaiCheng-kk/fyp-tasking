@@ -35,6 +35,7 @@ vi.mock('@/repositories/owner/ownerTeamRepository', () => ({
 }))
 
 import { ownerTeamService } from './ownerTeamService'
+import { emailService } from '@/services/email/emailService'
 import { ownerTeamRepository } from '@/repositories/owner/ownerTeamRepository'
 
 const company = { id: 'comp-1', owner_id: 'owner-1', name: 'Test Company' }
@@ -63,7 +64,11 @@ describe('UC29 Remove Team Member', () => {
 
     const result = await ownerTeamService.removeMember('comp-1', 'mgr-1', 'owner-1')
 
-    expect(result).toEqual({ success: true, accountDeleted: true })
+    expect(result).toEqual({
+      success: true,
+      accountDeleted: true,
+      removalNotice: { to: 'mgr1@test.com', fullName: 'Manager One', companyName: 'Test Company' },
+    })
     expect(ownerTeamRepository.cleanupUserOperationalReferences).toHaveBeenCalledWith('mgr-1', 'mgr-2', 'Manager One', 'mgr-2')
     expect(ownerTeamRepository.deleteUserById).toHaveBeenCalledWith('mgr-1')
     expect(deleteUserMock).toHaveBeenCalledWith('auth-mgr-1')
@@ -81,7 +86,7 @@ describe('UC29 Remove Team Member', () => {
 
     const result = await ownerTeamService.removeMember('comp-1', 'emp-1', 'owner-1')
 
-    expect(result).toEqual({ success: true, accountDeleted: true })
+    expect(result).toMatchObject({ success: true, accountDeleted: true })
     expect(ownerTeamRepository.cleanupUserOperationalReferences).toHaveBeenCalledWith('emp-1', 'emp-2', 'Employee One', 'emp-2')
     expect(ownerTeamRepository.deleteUserById).toHaveBeenCalledWith('emp-1')
   })
@@ -97,8 +102,32 @@ describe('UC29 Remove Team Member', () => {
 
     const result = await ownerTeamService.removeMember('comp-1', 'partner-1', 'owner-1')
 
-    expect(result).toEqual({ success: true, accountDeleted: true })
+    expect(result).toMatchObject({ success: true, accountDeleted: true })
     expect(ownerTeamRepository.cleanupUserOperationalReferences).toHaveBeenCalledWith('partner-1', 'partner-2', 'Partner One', 'partner-2')
+  })
+
+  // The removal used to await the "you've been removed" email before returning, so a slow email
+  // provider stalled a removal whose database work was already finished (14.6s measured against the
+  // 50-employee scalability fixture). The email is now the route's job, scheduled after it responds.
+  it('UC29-BR-UT-O-2: removeMember returns the notice for the caller to send instead of sending it inline', async () => {
+    vi.mocked(ownerTeamRepository.findUserByAuthIdOrInternalId).mockResolvedValue({ id: 'owner-1', company_id: 'comp-1' } as never)
+    vi.mocked(ownerTeamRepository.findUserById).mockResolvedValue({
+      id: 'emp-9', company_id: 'comp-1', role: 'Employee', full_name: 'Employee Nine', supabase_auth_id: 'auth-emp-9', email_address: 'emp9@test.com',
+    } as never)
+    vi.mocked(ownerTeamRepository.findEmployeeDepartments).mockResolvedValue([] as never)
+
+    const result = await ownerTeamService.removeMember('comp-1', 'emp-9', 'owner-1')
+
+    expect(result.removalNotice).toEqual({
+      to: 'emp9@test.com', fullName: 'Employee Nine', companyName: 'Test Company',
+    })
+    expect(emailService.sendRemovedFromCompanyEmail).not.toHaveBeenCalled()
+
+    // ...and the separate method the route schedules does send it.
+    await ownerTeamService.sendRemovalNotice(result.removalNotice)
+    expect(emailService.sendRemovedFromCompanyEmail).toHaveBeenCalledWith({
+      to: 'emp9@test.com', fullName: 'Employee Nine', companyName: 'Test Company',
+    })
   })
 
   it('UC29-BR-UT-O-1: Owner removes the only Partner, whose work reassigns to the Owner instead of being blocked', async () => {
@@ -110,7 +139,7 @@ describe('UC29 Remove Team Member', () => {
 
     const result = await ownerTeamService.removeMember('comp-1', 'partner-3', 'owner-1')
 
-    expect(result).toEqual({ success: true, accountDeleted: true })
+    expect(result).toMatchObject({ success: true, accountDeleted: true })
     expect(ownerTeamRepository.cleanupUserOperationalReferences).toHaveBeenCalledWith('partner-3', 'owner-1', 'Partner Three', 'owner-1')
   })
 

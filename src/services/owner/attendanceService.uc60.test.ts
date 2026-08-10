@@ -28,12 +28,12 @@ import { attendanceService } from './attendanceService'
 import { attendanceRepository } from '@/repositories/owner/attendanceRepository'
 import { ownerTeamRepository } from '@/repositories/owner/ownerTeamRepository'
 
-const users: Record<string, { id: string; role: string }> = {
-  'owner-1': { id: 'owner-1', role: 'Owner' },
-  'partner-1': { id: 'partner-1', role: 'Partner' },
-  'mgr-1': { id: 'mgr-1', role: 'Manager' },
-  'mgr-2': { id: 'mgr-2', role: 'Manager' },
-  'emp-1': { id: 'emp-1', role: 'Employee' },
+const users: Record<string, { id: string; role: string; company_id: string }> = {
+  'owner-1': { id: 'owner-1', role: 'Owner', company_id: 'comp-1' },
+  'partner-1': { id: 'partner-1', role: 'Partner', company_id: 'comp-1' },
+  'mgr-1': { id: 'mgr-1', role: 'Manager', company_id: 'comp-1' },
+  'mgr-2': { id: 'mgr-2', role: 'Manager', company_id: 'comp-1' },
+  'emp-1': { id: 'emp-1', role: 'Employee', company_id: 'comp-1' },
 }
 
 function baseRecord() {

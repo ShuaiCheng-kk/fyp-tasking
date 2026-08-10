@@ -116,7 +116,7 @@ export default function AdminReviewsPage() {
   }, [filter, pendingCount])
 
   return (
-    <main style={{ display: 'flex', minHeight: '100vh', background: '#F1F5F9' }}>
+    <main style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: '#F1F5F9' }}>
       <style>{`
         @keyframes adminFadeSlideUp {
           from { opacity: 0; transform: translateY(12px); }

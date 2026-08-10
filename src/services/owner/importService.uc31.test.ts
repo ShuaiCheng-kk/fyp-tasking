@@ -17,7 +17,7 @@ vi.mock('@/repositories/owner/importRepository', () => ({
 
 vi.mock('@/services/invitation/invitationService', () => ({
   invitationService: {
-    sendInvite: vi.fn(),
+    createInvite: vi.fn(),
   },
 }))
 
@@ -34,7 +34,7 @@ describe('UC31 Invite Members by CSV', () => {
   })
 
   it('UC31-M-UT-O: Owner bulk-invites a valid CSV of members', async () => {
-    vi.mocked(invitationService.sendInvite).mockResolvedValue(undefined as never)
+    vi.mocked(invitationService.createInvite).mockResolvedValue({ to: 'x@test.com', role: 'Employee', companyName: 'C', inviteLink: 'l', inviterName: 'I' } as never)
 
     const result = await importService.importMembers({
       company_id: 'comp-1',
@@ -47,12 +47,12 @@ describe('UC31 Invite Members by CSV', () => {
 
     expect(result.invited).toEqual(['newpartner@test.com', 'newmanager@test.com'])
     expect(result.failed).toEqual([])
-    expect(invitationService.sendInvite).toHaveBeenCalledTimes(2)
-    expect(invitationService.sendInvite).toHaveBeenCalledWith(expect.objectContaining({ email: 'newmanager@test.com', department_id: 'dept-1' }))
+    expect(invitationService.createInvite).toHaveBeenCalledTimes(2)
+    expect(invitationService.createInvite).toHaveBeenCalledWith(expect.objectContaining({ email: 'newmanager@test.com', department_id: 'dept-1' }))
   })
 
   it('UC31-M-UT-P: Partner bulk-invites a valid CSV of members', async () => {
-    vi.mocked(invitationService.sendInvite).mockResolvedValue(undefined as never)
+    vi.mocked(invitationService.createInvite).mockResolvedValue({ to: 'x@test.com', role: 'Employee', companyName: 'C', inviteLink: 'l', inviterName: 'I' } as never)
 
     const result = await importService.importMembers({
       company_id: 'comp-1',
@@ -67,7 +67,7 @@ describe('UC31 Invite Members by CSV', () => {
   })
 
   it('UC31-A1-UT-O: Owner uploads a CSV with some invalid rows, which are skipped while valid rows still get invited', async () => {
-    vi.mocked(invitationService.sendInvite).mockResolvedValue(undefined as never)
+    vi.mocked(invitationService.createInvite).mockResolvedValue({ to: 'x@test.com', role: 'Employee', companyName: 'C', inviteLink: 'l', inviterName: 'I' } as never)
 
     const result = await importService.importMembers({
       company_id: 'comp-1',
@@ -86,11 +86,11 @@ describe('UC31 Invite Members by CSV', () => {
       { email: 'wrongrole@test.com', message: 'Unsupported role: CEO' },
       { email: 'nodept@test.com', message: 'Department not found' },
     ])
-    expect(invitationService.sendInvite).toHaveBeenCalledTimes(1)
+    expect(invitationService.createInvite).toHaveBeenCalledTimes(1)
   })
 
   it('UC31-A1-UT-P: Partner uploads a CSV with some invalid rows, which are skipped while valid rows still get invited', async () => {
-    vi.mocked(invitationService.sendInvite).mockResolvedValue(undefined as never)
+    vi.mocked(invitationService.createInvite).mockResolvedValue({ to: 'x@test.com', role: 'Employee', companyName: 'C', inviteLink: 'l', inviterName: 'I' } as never)
 
     const result = await importService.importMembers({
       company_id: 'comp-1',
@@ -105,6 +105,6 @@ describe('UC31 Invite Members by CSV', () => {
     expect(result.failed).toEqual([
       { email: 'bad-email-2', message: 'Invalid email address' },
     ])
-    expect(invitationService.sendInvite).toHaveBeenCalledTimes(1)
+    expect(invitationService.createInvite).toHaveBeenCalledTimes(1)
   })
 })

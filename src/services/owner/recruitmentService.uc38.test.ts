@@ -19,6 +19,7 @@ vi.mock('@/services/email/emailService', () => ({
 vi.mock('@/repositories/owner/recruitmentRepository', () => ({
   recruitmentRepository: {
     getJobPostingById: vi.fn(),
+    getUserRoleAndCompany: vi.fn(),
     createJobPosting: vi.fn(),
   },
 }))
@@ -36,6 +37,7 @@ const draftPosting = {
   responsibilities: 'Handle checkout',
   skills: 'Basic maths',
   salary_amount: 12,
+  created_by: 'mgr-1',
 }
 
 describe('UC38 Duplicate Draft Job', () => {
@@ -45,6 +47,7 @@ describe('UC38 Duplicate Draft Job', () => {
 
   it('UC38-M-UT-O: Owner duplicates a draft job posting', async () => {
     vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue(draftPosting as never)
+    vi.mocked(recruitmentRepository.getUserRoleAndCompany).mockResolvedValue({ role: 'Owner', company_id: 'comp-1' } as never)
     const duplicated = { ...draftPosting, id: 'job-2', title: 'Weekend Cashier (copy)', created_by: 'owner-1' }
     vi.mocked(recruitmentRepository.createJobPosting).mockResolvedValue(duplicated as never)
 
@@ -58,6 +61,7 @@ describe('UC38 Duplicate Draft Job', () => {
 
   it('UC38-M-UT-P: Partner duplicates a draft job posting', async () => {
     vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue(draftPosting as never)
+    vi.mocked(recruitmentRepository.getUserRoleAndCompany).mockResolvedValue({ role: 'Partner', company_id: 'comp-1' } as never)
     const duplicated = { ...draftPosting, id: 'job-3', title: 'Weekend Cashier (copy)', created_by: 'partner-1' }
     vi.mocked(recruitmentRepository.createJobPosting).mockResolvedValue(duplicated as never)
 
@@ -71,6 +75,7 @@ describe('UC38 Duplicate Draft Job', () => {
 
   it('UC38-M-UT-M: Manager duplicates a draft job posting', async () => {
     vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue(draftPosting as never)
+    vi.mocked(recruitmentRepository.getUserRoleAndCompany).mockResolvedValue({ role: 'Manager', company_id: 'comp-1' } as never)
     const duplicated = { ...draftPosting, id: 'job-4', title: 'Weekend Cashier (copy)', created_by: 'mgr-1' }
     vi.mocked(recruitmentRepository.createJobPosting).mockResolvedValue(duplicated as never)
 

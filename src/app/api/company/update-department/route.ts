@@ -39,6 +39,7 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ success: true }, { status: 200 })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to update department'
-    return NextResponse.json({ success: false, message }, { status: 400 })
+    const status = message.includes('own company') ? 403 : 400
+    return NextResponse.json({ success: false, message }, { status })
   }
 }

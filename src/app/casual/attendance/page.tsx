@@ -331,7 +331,7 @@ export default function CasualAttendancePage() {
   const pageEntries = filteredHistory.slice((safePage - 1) * pageSize, safePage * pageSize)
 
   return (
-    <main style={isPhone ? { ...pageStyle, height: 'auto', overflow: 'visible', padding: '12px 12px 12px' } : pageStyle}>
+    <main style={isPhone ? { ...pageStyle, height: '100%', padding: '12px 12px 12px' } : pageStyle}>
       <style>{pageKeyframes}</style>
       <div style={{ marginBottom: 16, flexShrink: 0 }}>
         <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
@@ -341,7 +341,7 @@ export default function CasualAttendancePage() {
 
       {loading ? (
         <div style={isPhone
-          ? { display: 'flex', flexDirection: 'column', gap: 12 }
+          ? { flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 12 }
           : { flex: 1, minHeight: 0, display: 'flex', gap: 16 }}
         >
           <style>{DASHBOARD_SKELETON_KEYFRAMES}</style>
@@ -359,16 +359,13 @@ export default function CasualAttendancePage() {
       ) : history.length === 0 ? (
         <p style={{ margin: 0, color: '#6B7280', fontSize: '0.95rem' }}>No attendance records yet.</p>
       ) : (
-        <div style={isPhone
-          ? { display: 'flex', gap: 16 }
-          : { flex: 1, minHeight: 0, display: 'flex', gap: 16 }}
-        >
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: 16 }}>
           {/* ===== Left rail — month earnings + paginated record list. On phone this is the
               whole screen (list view) or hidden entirely (detail view) instead of a fixed side
               column. ===== */}
           {(!isPhone || phoneView === 'list') && (
           <div style={isPhone
-            ? { width: '100%', display: 'flex', flexDirection: 'column', gap: 12 }
+            ? { width: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 12 }
             : { width: 390, flexShrink: 0, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 12 }}
           >
             <TitledBlock
@@ -391,9 +388,7 @@ export default function CasualAttendancePage() {
             <TitledBlock
               icon={<History size={15} color="#F97316" />}
               title="Records"
-              containerStyle={isPhone
-                ? { display: 'flex', flexDirection: 'column', maxHeight: 'calc(100vh - 320px)', animation: 'attendanceFadeSlideUp 0.35s ease both', animationDelay: '0.05s' }
-                : { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', animation: 'attendanceFadeSlideUp 0.35s ease both', animationDelay: '0.05s' }}
+              containerStyle={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', animation: 'attendanceFadeSlideUp 0.35s ease both', animationDelay: '0.05s' }}
               bodyStyle={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 10 }}
             >
               <div ref={listRef} style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -488,7 +483,7 @@ export default function CasualAttendancePage() {
               than a permanent side column. ===== */}
           {(!isPhone || phoneView === 'detail') && (
           <div style={isPhone
-            ? { width: '100%', display: 'flex', flexDirection: 'column' }
+            ? { width: '100%', minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column' }
             : { flex: 1, minWidth: 0, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}
           >
             {isPhone && (

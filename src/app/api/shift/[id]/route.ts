@@ -68,11 +68,12 @@ export async function PATCH(
     : undefined
 
   try {
-    const result = await shiftService.editShift(id, fields, assignment, performedBy)
+    const result = await shiftService.editShift(id, fields, assignment, performedBy, session.user.company_id ?? undefined)
     return NextResponse.json({ success: true, shift: result.shift, warning: result.warning })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to update shift'
-    return NextResponse.json({ success: false, message }, { status: 400 })
+    const status = message.includes('own company') ? 403 : 400
+    return NextResponse.json({ success: false, message }, { status })
   }
 }
 
@@ -85,10 +86,11 @@ export async function DELETE(
   const session = await getServerSessionUser()
   if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
   try {
-    const result = await shiftService.deleteShift(id, session.user.id)
+    const result = await shiftService.deleteShift(id, session.user.id, session.user.company_id ?? undefined)
     return NextResponse.json({ success: true, skipped_shifts: result.skipped_shifts })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to delete shift'
-    return NextResponse.json({ success: false, message }, { status: 400 })
+    const status = message.includes('own company') ? 403 : 400
+    return NextResponse.json({ success: false, message }, { status })
   }
 }

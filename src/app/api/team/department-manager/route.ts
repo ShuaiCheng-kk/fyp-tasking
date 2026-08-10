@@ -48,11 +48,12 @@ export async function DELETE(req: NextRequest) {
   if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
 
   try {
-    await ownerTeamService.removeManagerFromDepartment(manager_id, department_id)
+    await ownerTeamService.removeManagerFromDepartment(manager_id, department_id, session.user.company_id ?? undefined)
     return NextResponse.json({ success: true })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to remove manager from department'
-    return NextResponse.json({ success: false, message }, { status: 400 })
+    const status = message.includes('own company') ? 403 : 400
+    return NextResponse.json({ success: false, message }, { status })
   }
 }
 

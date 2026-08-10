@@ -37,14 +37,14 @@ import { ownerTeamRepository } from '@/repositories/owner/ownerTeamRepository'
 
 vi.setSystemTime(new Date('2026-08-05T00:00:00.000Z')) // 08:00 SGT, 5 August 2026
 
-const users: Record<string, { id: string; full_name: string; role: string; profile_photo_url: null }> = {
-  'owner-1': { id: 'owner-1', full_name: 'Owner', role: 'Owner', profile_photo_url: null },
-  'partner-1': { id: 'partner-1', full_name: 'Partner', role: 'Partner', profile_photo_url: null },
-  'mgr-1': { id: 'mgr-1', full_name: 'Requester Mgr', role: 'Manager', profile_photo_url: null },
-  'mgr-2': { id: 'mgr-2', full_name: 'Counterpart Mgr', role: 'Manager', profile_photo_url: null },
-  'mgr-3': { id: 'mgr-3', full_name: 'Dept Manager', role: 'Manager', profile_photo_url: null },
-  'emp-1': { id: 'emp-1', full_name: 'Requester Emp', role: 'Employee', profile_photo_url: null },
-  'emp-2': { id: 'emp-2', full_name: 'Counterpart Emp', role: 'Employee', profile_photo_url: null },
+const users: Record<string, { id: string; full_name: string; role: string; profile_photo_url: null; company_id: string }> = {
+  'owner-1': { id: 'owner-1', full_name: 'Owner', role: 'Owner', profile_photo_url: null, company_id: 'comp-1' },
+  'partner-1': { id: 'partner-1', full_name: 'Partner', role: 'Partner', profile_photo_url: null, company_id: 'comp-1' },
+  'mgr-1': { id: 'mgr-1', full_name: 'Requester Mgr', role: 'Manager', profile_photo_url: null, company_id: 'comp-1' },
+  'mgr-2': { id: 'mgr-2', full_name: 'Counterpart Mgr', role: 'Manager', profile_photo_url: null, company_id: 'comp-1' },
+  'mgr-3': { id: 'mgr-3', full_name: 'Dept Manager', role: 'Manager', profile_photo_url: null, company_id: 'comp-1' },
+  'emp-1': { id: 'emp-1', full_name: 'Requester Emp', role: 'Employee', profile_photo_url: null, company_id: 'comp-1' },
+  'emp-2': { id: 'emp-2', full_name: 'Counterpart Emp', role: 'Employee', profile_photo_url: null, company_id: 'comp-1' },
 }
 
 const assignments: Record<string, { id: string; user_id: string; shift_id: string; shifts: { id: string; shift_date: string; department_id: string } }> = {
