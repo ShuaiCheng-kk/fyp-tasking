@@ -2,7 +2,7 @@
 // RULE: Business logic only. No HTTP handling. No direct DB access.
 
 import { importRepository } from '@/repositories/owner/importRepository'
-import { invitationService } from '@/services/invitation/invitationService'
+import { invitationService, InviteDelivery } from '@/services/invitation/invitationService'
 import {
   DepartmentImportResult,
   MemberImportResult,
@@ -50,10 +50,11 @@ export const importService = {
   }): Promise<MemberImportResult> {
     const departments = await importRepository.getDepartmentsByCompany(data.company_id)
     const departmentsByName = new Map(departments.map(department => [department.name.trim().toLowerCase(), department.id]))
-    const invited: string[] = []
-    const failed: Array<{ email: string; message: string }> = []
-
-    for (const member of data.members) {
+    // One invite per row, each ending in its own email-provider round trip, and the rows are
+    // independent - so they go out together rather than one after another. Sequentially, an N-row
+    // CSV cost N round trips stacked end to end (a 2-row import measured 11.3s when the provider
+    // was slow); in parallel it costs one. Results are still reported per row, in CSV order.
+    const outcomes = await Promise.all(data.members.map(async member => {
       const email = member.email.trim().toLowerCase()
       try {
         if (!email || !email.includes('@')) throw new Error('Invalid email address')
@@ -63,19 +64,34 @@ export const importService = {
           : member.department_id || (member.department_name ? departmentsByName.get(member.department_name.trim().toLowerCase()) ?? null : null)
         if (role !== 'Partner' && !departmentId) throw new Error('Department not found')
 
-        await invitationService.sendInvite({
+        const delivery = await invitationService.createInvite({
           email,
           role,
           company_id: data.company_id,
           department_id: departmentId,
           invited_by: data.invited_by,
         })
-        invited.push(email)
+        return { ok: true as const, email, delivery }
       } catch (err) {
-        failed.push({ email: email || member.email, message: err instanceof Error ? err.message : 'Failed to invite member' })
+        return {
+          ok: false as const,
+          email: email || member.email,
+          message: err instanceof Error ? err.message : 'Failed to invite member',
+        }
       }
+    }))
+
+    const invited: string[] = []
+    const failed: Array<{ email: string; message: string }> = []
+    const pendingDeliveries: InviteDelivery[] = []
+    for (const outcome of outcomes) {
+      if (outcome.ok) { invited.push(outcome.email); pendingDeliveries.push(outcome.delivery) }
+      else failed.push({ email: outcome.email, message: outcome.message })
     }
 
-    return { invited, failed }
+    // Every invitation row is committed at this point. The emails are handed back for the route to
+    // send after it responds: which rows were accepted or rejected is decided entirely by validation
+    // above, so making the caller wait for the email provider adds nothing it can act on.
+    return { invited, failed, pendingDeliveries }
   },
 }

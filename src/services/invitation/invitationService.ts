@@ -21,6 +21,15 @@ function generateRandomCode(role: string): string {
   return Math.floor(10000 + Math.random() * 90000).toString()
 }
 
+// The invitation email, prepared but not yet sent - see createInvite / deliverInvite.
+export interface InviteDelivery {
+  to: string
+  role: string
+  companyName: string
+  inviteLink: string
+  inviterName: string
+}
+
 const ROLE_MAP: Record<string, InvitationCode['role']> = {
   'owner': 'Owner',
   'partner': 'Partner',
@@ -65,13 +74,18 @@ export const invitationService = {
     })
   },
 
-  async sendInvite(data: {
+  // Everything sendInvite does EXCEPT the email: validation, the invitation row, and the link. The
+  // email is returned as a payload rather than sent, so a caller inviting a whole CSV of people can
+  // commit every invitation first and respond, then deliver the emails afterwards - a single slow
+  // send from the email provider (11.9s measured) otherwise holds up the whole import response even
+  // though every invitation row was already written.
+  async createInvite(data: {
     email: string
     role: string
     company_id: string
     department_id: string | null
     invited_by: string
-  }): Promise<void> {
+  }): Promise<InviteDelivery> {
     const normalizedRole = ROLE_MAP[data.role] ?? (data.role as InvitationCode['role'])
     const inviter = await authRepository.findByAuthIdOrInternalId(data.invited_by)
     if (!inviter) throw new Error('User not found')
@@ -103,13 +117,33 @@ export const invitationService = {
 
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://fyp-tasking.vercel.app'
     const inviteLink = `${appUrl}/get-started?code=${invitation.code}`
-    await emailService.sendInviteEmail({
+    return {
       to: data.email,
       role: data.role,
       companyName,
       inviteLink,
       inviterName: inviter.full_name,
-    })
+    }
+  },
+
+  // Best-effort: the invitation row is already committed, so a failed send never invalidates it.
+  async deliverInvite(delivery: InviteDelivery): Promise<void> {
+    try {
+      await emailService.sendInviteEmail(delivery)
+    } catch { /* best-effort notification only */ }
+  },
+
+  // Create + deliver in one step, for callers inviting a single person where waiting out one email
+  // is acceptable and reporting a delivery failure inline is useful.
+  async sendInvite(data: {
+    email: string
+    role: string
+    company_id: string
+    department_id: string | null
+    invited_by: string
+  }): Promise<void> {
+    const delivery = await invitationService.createInvite(data)
+    await emailService.sendInviteEmail(delivery)
   },
 
   async redeemCode(data: {

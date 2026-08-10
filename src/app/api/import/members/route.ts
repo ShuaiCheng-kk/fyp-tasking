@@ -1,8 +1,9 @@
 // LAYER: Controller
 // RULE: Only handles request/response. No business logic. No DB access.
 
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, after } from 'next/server'
 import { importService } from '@/services/owner/importService'
+import { invitationService } from '@/services/invitation/invitationService'
 import { userService } from '@/services/auth/userService'
 import { MemberImportRow } from '@/types/Import'
 import { getServerSessionUser } from '@/lib/serverAuth'
@@ -35,11 +36,17 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const result = await importService.importMembers({
+    const { pendingDeliveries, ...result } = await importService.importMembers({
       company_id: b.company_id,
       invited_by: session.user.id,
       members: b.members as MemberImportRow[],
     })
+    // Invitation rows are committed and the accepted/rejected split is already decided; the emails
+    // go out after the response so one slow send cannot stall the import. after() keeps them inside
+    // the request's lifetime, unlike a floating promise a serverless host may kill.
+    if (pendingDeliveries.length > 0) {
+      after(() => Promise.all(pendingDeliveries.map(d => invitationService.deliverInvite(d))))
+    }
     return NextResponse.json({ success: true, result })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to import members'

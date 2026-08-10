@@ -5,6 +5,12 @@ import { User } from '@/types/auth.types'
 
 const ROLE_ORDER: Record<string, number> = { Owner: 0, Partner: 1, Manager: 2, Employee: 3, 'Casual Worker': 4, 'Guest User': 5 }
 
+export interface RemovalNotice {
+  to: string
+  fullName: string
+  companyName: string
+}
+
 export const ownerTeamService = {
 
   async getTeamByCompany(company_id: string): Promise<User[]> {
@@ -20,13 +26,13 @@ export const ownerTeamService = {
     return ownerTeamRepository.findManagersByCompany(company_id)
   },
 
+  // removalNotice is the "you've been removed" email the caller should send AFTER responding, not
+  // something this method sends itself - see the comment at the end of the method.
   async removeMember(
     company_id: string,
     user_id_to_remove: string,
     requesting_user_id: string,
-  ): Promise<{ success: true; accountDeleted: boolean }> {
-    console.log('[removeMember] START — company_id:', company_id, 'user_id_to_remove:', user_id_to_remove, 'requesting_user_id:', requesting_user_id)
-
+  ): Promise<{ success: true; accountDeleted: boolean; removalNotice: RemovalNotice }> {
     const company = await ownerTeamRepository.findCompanyById(company_id)
     if (!company) throw new Error('Company not found')
 
@@ -117,19 +123,29 @@ export const ownerTeamService = {
       if (error) throw new Error(`Failed to delete auth user: ${error.message}`)
     }
 
-    // UC30: notify the removed member by email — their account is already gone by this point, so
-    // this is the only way they find out they're locked out. Best-effort: the removal itself has
-    // already fully succeeded, so a flaky email provider must never surface as a failed removal.
-    try {
-      const { emailService } = await import('@/services/email/emailService')
-      await emailService.sendRemovedFromCompanyEmail({
+    // UC30: the removed member still needs the "you've been removed" email — their account is gone
+    // by this point, so it's the only way they find out. It is deliberately NOT sent here: the
+    // removal has already fully succeeded above, the email's outcome is discarded either way, and
+    // awaiting it made the caller wait out the email provider's latency (a measured 14.6s spike on
+    // a removal whose database work had finished seconds earlier). Returned instead, for the route
+    // to send after it has already responded - see sendRemovalNotice.
+    return {
+      success: true,
+      accountDeleted: true,
+      removalNotice: {
         to: target.email_address,
         fullName: target.full_name,
         companyName: company.name,
-      })
-    } catch { /* best-effort notification only */ }
+      },
+    }
+  },
 
-    return { success: true, accountDeleted: true }
+  // Best-effort, fire-and-forget: never surfaces to the caller, never fails the removal.
+  async sendRemovalNotice(notice: RemovalNotice): Promise<void> {
+    try {
+      const { emailService } = await import('@/services/email/emailService')
+      await emailService.sendRemovedFromCompanyEmail(notice)
+    } catch { /* best-effort notification only */ }
   },
 
   async getManagerDepartments(manager_id: string, company_id: string): Promise<{ department_id: string; department_name: string }[]> {
@@ -169,9 +185,12 @@ export const ownerTeamService = {
     await ownerTeamRepository.assignManagerDepartment(manager_id, company_id, department_id)
   },
 
-  async removeManagerFromDepartment(manager_id: string, department_id: string): Promise<void> {
+  async removeManagerFromDepartment(manager_id: string, department_id: string, company_id?: string): Promise<void> {
     const manager = await ownerTeamRepository.findUserById(manager_id)
     if (!manager) throw new Error('Manager not found')
+    if (company_id && manager.company_id !== company_id) {
+      throw new Error('You can only manage your own company\'s departments')
+    }
     await ownerTeamRepository.removeManagerDepartment(manager_id, department_id)
   },
 

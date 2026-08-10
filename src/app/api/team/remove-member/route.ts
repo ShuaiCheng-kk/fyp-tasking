@@ -1,7 +1,7 @@
 // LAYER: Controller
 // RULE: Only handles request/response. No business logic. No DB access.
 
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, after } from 'next/server'
 import { ownerTeamService as teamService } from '@/services/owner/ownerTeamService'
 import { getServerSessionUser } from '@/lib/serverAuth'
 
@@ -29,7 +29,12 @@ export async function DELETE(req: NextRequest) {
   }
 
   try {
-    const result = await teamService.removeMember(company_id, user_id_to_remove, session.user.id)
+    const { removalNotice, ...result } = await teamService.removeMember(company_id, user_id_to_remove, session.user.id)
+    // The removal is already committed; the notification email is best-effort and its result is
+    // discarded, so it runs after the response is sent rather than holding the caller for the email
+    // provider's round trip. after() keeps it inside the request's lifetime, unlike a floating
+    // promise, which a serverless host can kill once the response is returned.
+    after(() => teamService.sendRemovalNotice(removalNotice))
     return NextResponse.json(result, { status: 200 })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to remove member'

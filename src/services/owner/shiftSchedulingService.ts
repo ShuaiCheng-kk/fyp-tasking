@@ -18,6 +18,18 @@ export const shiftSchedulingService = {
 
     return openAIService.generateStructuredJson<ShiftSchedulingDraft>({
       schemaName: 'shift_scheduling_draft',
+      // Bounds this feature to the app's own 10s AI-generation bar rather than the shared
+      // OPENAI_TIMEOUT_MS default (60s in dev), which exists for slower features like resume parsing
+      // and would let one pathological provider draw (a 30s outlier was measured) run far past it.
+      // Measured provider latency for this prompt is 3.0-5.3s direct (n=12), and the full route adds
+      // its own overhead on top (server-side session revalidation, dev-mode compilation), with
+      // 20-way concurrency queueing further against the provider's rate limit. 12s sits clear above
+      // that whole spread so ordinary calls succeed on the first attempt: a timeout set inside the
+      // spread makes normal calls retry, which is what pushes them past the bar rather than saving
+      // them. budgetMs bounds a genuine provider stall (a 30s outlier was measured) to 25s total
+      // instead of the 60s shared default, with the retry limited to the time left in the budget.
+      timeoutMs: 12000,
+      budgetMs: 25000,
       instructions: [
         'You are a workforce shift scheduling assistant for SMEs.',
         'Given a work coverage description and a date range, generate a practical list of 3 to 8 shift slots that cover the described needs.',

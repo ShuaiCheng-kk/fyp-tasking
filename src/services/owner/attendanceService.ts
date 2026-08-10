@@ -202,11 +202,15 @@ async function assertCanModifyClockTimes(
 ): Promise<void> {
   const [actor] = await attendanceRepository.getUsersByIds([actor_id])
   if (!actor) throw new Error('Reviewer not found')
-  if (actor.role === 'Owner' || actor.role === 'Partner') return
-  if (actor.role !== 'Manager') throw new Error('Not authorized to modify attendance records')
 
   const context = await attendanceRepository.getAttendanceRecordContext(existing.id)
   if (!context) throw new Error('Attendance record not found')
+  if (actor.company_id !== context.company_id) {
+    throw new Error('You can only modify your own company\'s attendance records')
+  }
+
+  if (actor.role === 'Owner' || actor.role === 'Partner') return
+  if (actor.role !== 'Manager') throw new Error('Not authorized to modify attendance records')
 
   const recordWasModified = getModifiedFields(existing).length > 0
   const idsToFetch = [context.assignee_user_id]
@@ -230,6 +234,19 @@ async function assertCanModifyClockTimes(
     if (reviewer?.role === 'Owner' || reviewer?.role === 'Partner') {
       throw new Error('This record was last modified by Owner/Partner and can no longer be modified by a Manager')
     }
+  }
+}
+
+// UC54/55: Fixed Day Off is always decided by Owner/Partner (never Manager, regardless of whether
+// the requester is an Employee or a Manager) — see CLAUDE.md's approval-split rule.
+async function assertCanDecideFixedOffDay(company_id: string, reviewer_id: string): Promise<void> {
+  const [reviewer] = await attendanceRepository.getUsersByIds([reviewer_id])
+  if (!reviewer) throw new Error('Reviewer not found')
+  if (reviewer.role !== 'Owner' && reviewer.role !== 'Partner') {
+    throw new Error('Only Owner or Partner can decide a Fixed Day Off request')
+  }
+  if (reviewer.company_id !== company_id) {
+    throw new Error('You can only decide your own company\'s requests')
   }
 }
 
@@ -395,7 +412,7 @@ async function resolveDepartmentIdsByUser(
 // random (staffing-safe) off-days for any Manager/Employee who submitted nothing for the upcoming
 // week, once that week's submission deadline has passed. Idempotent per (company, week).
 async function runAutoAssignmentSweepForUpcomingWeek(company_id: string): Promise<void> {
-  const todayKey = new Date().toISOString().slice(0, 10)
+  const todayKey = sgtTodayKey()
   const thisWeekStart = computeWeekStart(todayKey)
   const upcomingWeekStart = addDays(thisWeekStart, 7)
 
@@ -866,6 +883,8 @@ export const attendanceService = {
       }
     } else if (reviewer.role !== 'Owner' && reviewer.role !== 'Partner') {
       throw new Error("Only Owner or Partner can decide a Manager's shift swap request")
+    } else if (reviewer.company_id !== request.company_id) {
+      throw new Error('You can only decide your own company\'s shift swap requests')
     }
 
     if (input.decision === 'approved') {
@@ -910,6 +929,7 @@ export const attendanceService = {
     if (!['approved', 'modified'].includes(input.decision)) throw new Error('Invalid request decision')
     const existing = await attendanceRepository.getFixedOffDayRequestById(input.id)
     if (!existing) throw new Error('Weekly day off request not found')
+    await assertCanDecideFixedOffDay(existing.company_id, input.reviewer_id)
     if (existing.source === 'auto_assigned' && existing.status === 'approved') {
       throw new Error('This day off was auto-assigned and is already approved — nothing to decide')
     }
@@ -942,6 +962,10 @@ export const attendanceService = {
     const rows = input.ids.map(id => rowsById.get(id) ?? null)
     const missing = rows.some(r => !r)
     if (missing) throw new Error('Weekly day off request not found')
+    if (rows.some(r => r!.company_id !== rows[0]!.company_id)) {
+      throw new Error('All requests in a batch decision must belong to the same company')
+    }
+    await assertCanDecideFixedOffDay(rows[0]!.company_id, input.reviewer_id)
     const autoApproved = rows.some(r => r!.source === 'auto_assigned' && r!.status === 'approved')
     if (autoApproved) {
       throw new Error('This day off was auto-assigned and is already approved — nothing to decide')
@@ -1106,7 +1130,7 @@ export const attendanceService = {
     if (!requester || requester.company_id !== input.company_id) throw new Error('Requester not found')
     const requesterId = requester.id
 
-    const todayKey = new Date().toISOString().slice(0, 10)
+    const todayKey = sgtTodayKey()
     for (const date of input.dates) {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error(`Invalid date: ${date}`)
       if (date <= todayKey) throw new Error(`${date} is not in the future`)
@@ -1179,7 +1203,7 @@ export const attendanceService = {
     if (!requester || requester.company_id !== input.company_id) throw new Error('Requester not found')
     const requesterId = requester.id
 
-    const todayKey = new Date().toISOString().slice(0, 10)
+    const todayKey = sgtTodayKey()
     for (const date of input.dates) {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error(`Invalid date: ${date}`)
       if (date <= todayKey) throw new Error(`${date} is not in the future`)
@@ -1229,7 +1253,7 @@ export const attendanceService = {
 
   async getUpcomingApprovedOffDates(user_id: string): Promise<string[]> {
     const requests = await attendanceRepository.getFixedOffDayRequestsByUser(user_id)
-    const todayKey = new Date().toISOString().slice(0, 10)
+    const todayKey = sgtTodayKey()
     return requests
       .filter(r => r.status === 'approved' && r.requested_date >= todayKey)
       .map(r => r.requested_date)
