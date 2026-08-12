@@ -158,6 +158,11 @@ type RecurringShiftForm = {
 
 type BulkEditRow = {
   id: string
+  // One shift can carry several assignments (Managers and Employees share a shift), so `id` alone
+  // repeats across rows. React needs a genuinely unique key or it reuses the wrong <tr> whenever
+  // the list changes — which made the filters look like they did nothing. Falls back to the shift
+  // id for an unassigned "Open Shift" row, which can only ever appear once.
+  row_key: string
   shift_date: string
   original_shift_date: string
   start_time: string
@@ -2762,6 +2767,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
         for (const shift of row.shifts) {
           nextRows.push({
             id: shift.id,
+            row_key: shift.assignment_id ?? shift.id,
             shift_date: shift.shift_date,
             original_shift_date: shift.shift_date,
             start_time: shift.start_time,
@@ -2800,8 +2806,10 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
     return true
   }), [bulkEditAllRows, bulkEditDepartmentIds, bulkEditUserIds])
 
-  const updateBulkEditRow = (id: string, fields: Partial<BulkEditRow>) => {
-    setBulkEditAllRows(prev => prev.map(row => row.id === id ? { ...row, ...fields } : row))
+  // Keyed by row_key, not id: a shift shared by two people is two rows with the same shift id,
+  // so matching on id would edit both of them at once.
+  const updateBulkEditRow = (rowKey: string, fields: Partial<BulkEditRow>) => {
+    setBulkEditAllRows(prev => prev.map(row => row.row_key === rowKey ? { ...row, ...fields } : row))
   }
 
   const submitBulkEdit = async () => {
@@ -6407,6 +6415,9 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                   </colgroup>
                   <tbody>
                     {bulkEditRows.map(row => {
+                      // Keyed by shift id, not row_key: both the server's failure list and the
+                      // delete request address the shift itself, so every row sharing that shift
+                      // should surface the same error / spinner.
                       const rowError = bulkEditRowErrors[row.id]
                       const rowMembers = members.filter(m => m.department_id === row.department_id)
                       const assignedUserOptions = rowMembers.map(m => ({ value: m.id, label: m.full_name }))
@@ -6419,11 +6430,11 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                       const isPast = row.shift_date < todayStr
                       const isDeleting = bulkEditDeletingId === row.id
                       return (
-                        <tr key={row.id} style={{ background: rowError ? '#FEF2F2' : 'transparent', opacity: isPast ? 0.6 : 1 }}>
+                        <tr key={row.row_key} style={{ background: rowError ? '#FEF2F2' : 'transparent', opacity: isPast ? 0.6 : 1 }}>
                           <td style={{ padding: '6px 8px', borderBottom: `1px solid ${PANEL_BORDER}`, width: 150 }}>
                             <DatePickerField
                               value={row.shift_date}
-                              onChange={v => updateBulkEditRow(row.id, { shift_date: v })}
+                              onChange={v => updateBulkEditRow(row.row_key, { shift_date: v })}
                               disabled={isPast}
                               min={row.original_shift_date}
                               clearable={false}
@@ -6431,16 +6442,16 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                             />
                           </td>
                           <td style={{ padding: '6px 8px', borderBottom: `1px solid ${PANEL_BORDER}` }}>
-                            <TimePicker disabled={isPast} value={row.start_time} onChange={v => updateBulkEditRow(row.id, { start_time: v, end_time: bumpEndTime(v, row.end_time) })} />
+                            <TimePicker disabled={isPast} value={row.start_time} onChange={v => updateBulkEditRow(row.row_key, { start_time: v, end_time: bumpEndTime(v, row.end_time) })} />
                           </td>
                           <td style={{ padding: '6px 8px', borderBottom: `1px solid ${PANEL_BORDER}` }}>
-                            <TimePicker disabled={isPast} value={row.end_time} onChange={v => updateBulkEditRow(row.id, { end_time: v })} minTime={row.start_time} />
+                            <TimePicker disabled={isPast} value={row.end_time} onChange={v => updateBulkEditRow(row.row_key, { end_time: v })} minTime={row.start_time} />
                           </td>
                           <td style={{ padding: '6px 8px', borderBottom: `1px solid ${PANEL_BORDER}` }}>
                             <DropdownField
                               value={row.department_id}
                               options={departments.map(dept => ({ value: dept.id, label: dept.name }))}
-                              onChange={v => updateBulkEditRow(row.id, { department_id: v, assigned_user_id: '', assigned_user_name: '' })}
+                              onChange={v => updateBulkEditRow(row.row_key, { department_id: v, assigned_user_id: '', assigned_user_name: '' })}
                               disabled={isPast}
                             />
                           </td>
@@ -6448,7 +6459,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                             <DropdownField
                               value={row.assigned_user_id}
                               options={assignedUserOptions}
-                              onChange={v => updateBulkEditRow(row.id, { assigned_user_id: v, assigned_user_name: rowMembers.find(m => m.id === v)?.full_name ?? '' })}
+                              onChange={v => updateBulkEditRow(row.row_key, { assigned_user_id: v, assigned_user_name: rowMembers.find(m => m.id === v)?.full_name ?? '' })}
                               placeholder={isPast ? 'Unassigned' : 'Open — needs staffing'}
                               disabled={isPast}
                             />
