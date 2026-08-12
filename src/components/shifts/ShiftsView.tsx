@@ -158,6 +158,11 @@ type RecurringShiftForm = {
 
 type BulkEditRow = {
   id: string
+  // One shift can carry several assignments (Managers and Employees share a shift), so `id` alone
+  // repeats across rows. React needs a genuinely unique key or it reuses the wrong <tr> whenever
+  // the list changes — which made the filters look like they did nothing. Falls back to the shift
+  // id for an unassigned "Open Shift" row, which can only ever appear once.
+  row_key: string
   shift_date: string
   original_shift_date: string
   start_time: string
@@ -953,7 +958,10 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
   const [bulkEditDateTo, setBulkEditDateTo] = useState('')
   const [bulkEditDepartmentIds, setBulkEditDepartmentIds] = useState<string[]>([])
   const [bulkEditUserIds, setBulkEditUserIds] = useState<string[]>([])
-  const [bulkEditRows, setBulkEditRows] = useState<BulkEditRow[]>([])
+  // Everything the date range returned. The department/user filters are applied to this
+  // client-side (see bulkEditRows below) rather than while building it, so changing a filter
+  // is instant and can't be raced by an in-flight request for the previous filter.
+  const [bulkEditAllRows, setBulkEditAllRows] = useState<BulkEditRow[]>([])
   const [bulkEditLoading, setBulkEditLoading] = useState(false)
   const [bulkEditSaving, setBulkEditSaving] = useState(false)
   const [bulkEditDeletingId, setBulkEditDeletingId] = useState<string | null>(null)
@@ -2731,7 +2739,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
     setBulkEditDateTo(formatDateKey(addDays(new Date(), 7)))
     setBulkEditDepartmentIds([])
     setBulkEditUserIds([])
-    setBulkEditRows([])
+    setBulkEditAllRows([])
     setBulkEditError('')
     setBulkEditRowErrors({})
     setBulkEditModalOpen(true)
@@ -2756,11 +2764,10 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
       const rows: TimelineRow[] = data.rows ?? []
       const nextRows: BulkEditRow[] = []
       for (const row of rows) {
-        if (bulkEditDepartmentIds.length > 0 && !bulkEditDepartmentIds.includes(row.department_id)) continue
-        if (bulkEditUserIds.length > 0 && (!row.user_id || !bulkEditUserIds.includes(row.user_id))) continue
         for (const shift of row.shifts) {
           nextRows.push({
             id: shift.id,
+            row_key: shift.assignment_id ?? shift.id,
             shift_date: shift.shift_date,
             original_shift_date: shift.shift_date,
             start_time: shift.start_time,
@@ -2776,7 +2783,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
         }
       }
       nextRows.sort((a, b) => a.shift_date.localeCompare(b.shift_date) || a.start_time.localeCompare(b.start_time))
-      setBulkEditRows(nextRows)
+      setBulkEditAllRows(nextRows)
       setBulkEditRowErrors({})
     } catch (err) {
       setBulkEditError(err instanceof Error ? err.message : 'Failed to load shifts')
@@ -2785,17 +2792,30 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
     }
   }
 
+  // Only the date range hits the network — the two filters are applied below, in memory.
   useEffect(() => {
     if (!bulkEditModalOpen) return
     void loadBulkEditRows()
-  }, [bulkEditModalOpen, bulkEditDateFrom, bulkEditDateTo, bulkEditDepartmentIds, bulkEditUserIds])
+  }, [bulkEditModalOpen, bulkEditDateFrom, bulkEditDateTo])
 
-  const updateBulkEditRow = (id: string, fields: Partial<BulkEditRow>) => {
-    setBulkEditRows(prev => prev.map(row => row.id === id ? { ...row, ...fields } : row))
+  // Filter on the shift's own department and assignee, which is exactly what each row displays,
+  // so a filtered table can never show a row that contradicts the filter.
+  const bulkEditRows = useMemo(() => bulkEditAllRows.filter(row => {
+    if (bulkEditDepartmentIds.length > 0 && !bulkEditDepartmentIds.includes(row.department_id)) return false
+    if (bulkEditUserIds.length > 0 && !bulkEditUserIds.includes(row.assigned_user_id)) return false
+    return true
+  }), [bulkEditAllRows, bulkEditDepartmentIds, bulkEditUserIds])
+
+  // Keyed by row_key, not id: a shift shared by two people is two rows with the same shift id,
+  // so matching on id would edit both of them at once.
+  const updateBulkEditRow = (rowKey: string, fields: Partial<BulkEditRow>) => {
+    setBulkEditAllRows(prev => prev.map(row => row.row_key === rowKey ? { ...row, ...fields } : row))
   }
 
   const submitBulkEdit = async () => {
-    const editableRows = bulkEditRows.filter(row => row.shift_date >= todayStr)
+    // Save every edit made this session, not just the rows the current filter happens to show —
+    // narrowing the filter after editing must not silently discard those edits.
+    const editableRows = bulkEditAllRows.filter(row => row.shift_date >= todayStr)
     if (!companyId || !internalUserId || editableRows.length === 0) return
     // Only resubmit rows the user actually touched — with a wide date range the table can hold
     // 100+ rows, and every item is a real sequential edit on the server, so sending the whole table
@@ -6365,7 +6385,11 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                 <div style={{ border: `1.5px dashed ${PANEL_BORDER}`, borderRadius: 12, padding: '32px 18px', textAlign: 'center' }}>
                   <div style={{ marginBottom: 6, display: 'flex', justifyContent: 'center' }}><Table2 size={20} color="#CBD5E1" /></div>
                   <p style={{ margin: 0, color: '#94A3B8', fontSize: 13, fontWeight: 600 }}>
-                    {bulkEditLoading ? 'Loading shifts…' : 'No shifts found for this date range.'}
+                    {bulkEditLoading
+                      ? 'Loading shifts…'
+                      : bulkEditAllRows.length === 0
+                        ? 'No shifts found for this date range.'
+                        : 'No shifts match these filters.'}
                   </p>
                 </div>
               ) : (
@@ -6391,6 +6415,9 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                   </colgroup>
                   <tbody>
                     {bulkEditRows.map(row => {
+                      // Keyed by shift id, not row_key: both the server's failure list and the
+                      // delete request address the shift itself, so every row sharing that shift
+                      // should surface the same error / spinner.
                       const rowError = bulkEditRowErrors[row.id]
                       const rowMembers = members.filter(m => m.department_id === row.department_id)
                       const assignedUserOptions = rowMembers.map(m => ({ value: m.id, label: m.full_name }))
@@ -6403,11 +6430,11 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                       const isPast = row.shift_date < todayStr
                       const isDeleting = bulkEditDeletingId === row.id
                       return (
-                        <tr key={row.id} style={{ background: rowError ? '#FEF2F2' : 'transparent', opacity: isPast ? 0.6 : 1 }}>
+                        <tr key={row.row_key} style={{ background: rowError ? '#FEF2F2' : 'transparent', opacity: isPast ? 0.6 : 1 }}>
                           <td style={{ padding: '6px 8px', borderBottom: `1px solid ${PANEL_BORDER}`, width: 150 }}>
                             <DatePickerField
                               value={row.shift_date}
-                              onChange={v => updateBulkEditRow(row.id, { shift_date: v })}
+                              onChange={v => updateBulkEditRow(row.row_key, { shift_date: v })}
                               disabled={isPast}
                               min={row.original_shift_date}
                               clearable={false}
@@ -6415,16 +6442,16 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                             />
                           </td>
                           <td style={{ padding: '6px 8px', borderBottom: `1px solid ${PANEL_BORDER}` }}>
-                            <TimePicker disabled={isPast} value={row.start_time} onChange={v => updateBulkEditRow(row.id, { start_time: v, end_time: bumpEndTime(v, row.end_time) })} />
+                            <TimePicker disabled={isPast} value={row.start_time} onChange={v => updateBulkEditRow(row.row_key, { start_time: v, end_time: bumpEndTime(v, row.end_time) })} />
                           </td>
                           <td style={{ padding: '6px 8px', borderBottom: `1px solid ${PANEL_BORDER}` }}>
-                            <TimePicker disabled={isPast} value={row.end_time} onChange={v => updateBulkEditRow(row.id, { end_time: v })} minTime={row.start_time} />
+                            <TimePicker disabled={isPast} value={row.end_time} onChange={v => updateBulkEditRow(row.row_key, { end_time: v })} minTime={row.start_time} />
                           </td>
                           <td style={{ padding: '6px 8px', borderBottom: `1px solid ${PANEL_BORDER}` }}>
                             <DropdownField
                               value={row.department_id}
                               options={departments.map(dept => ({ value: dept.id, label: dept.name }))}
-                              onChange={v => updateBulkEditRow(row.id, { department_id: v, assigned_user_id: '', assigned_user_name: '' })}
+                              onChange={v => updateBulkEditRow(row.row_key, { department_id: v, assigned_user_id: '', assigned_user_name: '' })}
                               disabled={isPast}
                             />
                           </td>
@@ -6432,7 +6459,7 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                             <DropdownField
                               value={row.assigned_user_id}
                               options={assignedUserOptions}
-                              onChange={v => updateBulkEditRow(row.id, { assigned_user_id: v, assigned_user_name: rowMembers.find(m => m.id === v)?.full_name ?? '' })}
+                              onChange={v => updateBulkEditRow(row.row_key, { assigned_user_id: v, assigned_user_name: rowMembers.find(m => m.id === v)?.full_name ?? '' })}
                               placeholder={isPast ? 'Unassigned' : 'Open — needs staffing'}
                               disabled={isPast}
                             />
@@ -6470,7 +6497,9 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
 
             <div style={{ padding: '14px 24px 20px', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10, borderTop: '1px solid #F3F4F6', flexShrink: 0 }}>
               {(() => {
-                const hasEditableRows = bulkEditRows.some(row => row.shift_date >= todayStr)
+                // Matches what submitBulkEdit actually saves (all loaded rows, not just the
+                // filtered ones), so edits can't be stranded behind a filter that hides them.
+                const hasEditableRows = bulkEditAllRows.some(row => row.shift_date >= todayStr)
                 const saveDisabled = bulkEditSaving || !hasEditableRows
                 return (
                   <button type="button" onClick={submitBulkEdit} disabled={saveDisabled} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: saveDisabled ? '#FDA060' : '#F97316', color: '#FFFFFF', height: 36, padding: '0 18px', fontSize: 13, fontWeight: 700, cursor: saveDisabled ? 'not-allowed' : 'pointer', opacity: saveDisabled ? 0.65 : 1 }}>
