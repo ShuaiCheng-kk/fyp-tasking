@@ -7,6 +7,10 @@ import { taskService } from '@/services/owner/taskService'
 import { employeeDashboardService } from '@/services/employee/employeeDashboardService'
 import { getServerSessionUser } from '@/lib/serverAuth'
 
+// See api/ai/candidates/route.ts — Vercel's default function timeout is shorter than
+// OPENAI_TIMEOUT_MS, and a timed-out function returns HTML that breaks res.json().
+export const maxDuration = 60
+
 export async function POST(req: NextRequest) {
   let body: unknown
   try {

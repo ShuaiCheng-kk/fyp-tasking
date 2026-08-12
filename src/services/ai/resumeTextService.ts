@@ -1,8 +1,13 @@
 // LAYER: Service
 // RULE: Business logic only — turns an uploaded resume file into plain text for the AI matcher.
 
-import { PDFParse } from 'pdf-parse'
-import mammoth from 'mammoth'
+// pdf-parse and mammoth are loaded lazily inside extractResumeText, not imported at the
+// top. As top-level imports they initialise whenever anything in this module's import
+// chain is loaded — including /api/ai/candidates — and if that initialisation fails in
+// Vercel's serverless bundle the whole route module dies before its handler runs, so the
+// client gets Next's 500 HTML page instead of JSON ("Unexpected token '<'"). Importing
+// them on demand keeps a parser problem contained to the one call that needs a parser,
+// which is what the "Never throws" contract below actually promises.
 
 // Enough for the AI to judge fit without blowing up the prompt on long CVs.
 const MAX_TEXT_LENGTH = 4000
@@ -22,6 +27,7 @@ export const resumeTextService = {
       const path = new URL(resumeUrl).pathname.toLowerCase()
       let text = ''
       if (path.endsWith('.pdf')) {
+        const { PDFParse } = await import('pdf-parse')
         const parser = new PDFParse({ data: buffer })
         try {
           const parsed = await parser.getText()
@@ -30,6 +36,7 @@ export const resumeTextService = {
           await parser.destroy()
         }
       } else if (path.endsWith('.docx')) {
+        const mammoth = (await import('mammoth')).default
         const parsed = await mammoth.extractRawText({ buffer })
         text = parsed.value ?? ''
       } else {

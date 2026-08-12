@@ -6,6 +6,11 @@ import { candidateRecommendationService } from '@/services/owner/candidateRecomm
 import { recruitmentRepository } from '@/repositories/owner/recruitmentRepository'
 import { getServerSessionUser } from '@/lib/serverAuth'
 
+// OpenAI calls here run well past Vercel's default function timeout (10s on Hobby),
+// and a timed-out function returns an HTML error page, which the client's res.json()
+// then chokes on with "Unexpected token '<'". OPENAI_TIMEOUT_MS is 60s, so match it.
+export const maxDuration = 60
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const job_id = searchParams.get('job_id')

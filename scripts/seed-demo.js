@@ -37,6 +37,11 @@ const { createClient } = require('@supabase/supabase-js')
 const { spawnSync } = require('child_process')
 const path = require('path')
 
+// Node does not read .env.local on its own — without this the service-role key is
+// undefined and the script exits at the guard below (BUG-006 removed the hardcoded
+// fallback but left no loader). Same line every other script under scripts/ uses.
+require('dotenv').config({ path: '.env.local' })
+
 // ─── 配置 ──────────────────────────────────────────────────────────────────────
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL

@@ -5,6 +5,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { anomalyDetectionService } from '@/services/owner/anomalyDetectionService'
 import { getServerSessionUser } from '@/lib/serverAuth'
 
+// See api/ai/candidates/route.ts — Vercel's default function timeout is shorter than
+// OPENAI_TIMEOUT_MS, and a timed-out function returns HTML that breaks res.json().
+export const maxDuration = 60
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const company_id = searchParams.get('company_id')

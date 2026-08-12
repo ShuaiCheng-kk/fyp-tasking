@@ -5,6 +5,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { shiftSchedulingService } from '@/services/owner/shiftSchedulingService'
 import { getServerSessionUser } from '@/lib/serverAuth'
 
+// See api/ai/candidates/route.ts — Vercel's default function timeout is shorter than
+// OPENAI_TIMEOUT_MS, and a timed-out function returns HTML that breaks res.json().
+export const maxDuration = 60
+
 export async function POST(req: NextRequest) {
   const session = await getServerSessionUser()
   if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
