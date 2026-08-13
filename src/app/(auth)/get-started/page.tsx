@@ -25,11 +25,21 @@ import GuestOnboardingProfile from '@/components/guest/GuestOnboardingProfile';
 const fH = 'var(--font-heading)';
 const fB = 'var(--font-body)';
 
+// Storage calls that never settle would leave the picker stuck on "Uploading…" with no way out,
+// since the spinner only clears when this resolves. Fail loudly instead so the user can retry.
+const PHOTO_UPLOAD_TIMEOUT_MS = 30_000;
+
 async function uploadProfilePhoto(file: File): Promise<string | null> {
   const supabase = createClient();
   const prepared = await prepareAvatarForUpload(file);
   const filename = `${Date.now()}_${Math.random().toString(36).slice(2)}.${prepared.extension}`;
-  const { data, error } = await supabase.storage.from('avatars').upload(filename, prepared.blob, { contentType: prepared.contentType });
+  const upload = supabase.storage.from('avatars').upload(filename, prepared.blob, { contentType: prepared.contentType });
+  const { data, error } = await Promise.race([
+    upload,
+    new Promise<{ data: null; error: Error }>(resolve =>
+      setTimeout(() => resolve({ data: null, error: new Error('Upload timed out') }), PHOTO_UPLOAD_TIMEOUT_MS),
+    ),
+  ]);
   if (error || !data) {
     console.error('Profile photo upload failed:', error);
     return null;
