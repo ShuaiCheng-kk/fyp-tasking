@@ -1027,8 +1027,10 @@ async function main() {
   // window — demo needs Clock Out to be genuinely time-gated (is_open_ended:false below) rather
   // than bypassed, but nobody's waiting 8 real hours to show that off. 2 minutes is long enough to
   // demo Clock In → (wait) → Clock Out without either step being instant.
-  const managerClockStart = new Date(Date.now())
-  const managerClockEnd = new Date(managerClockStart.getTime() + 2 * 60000)
+  // Start well before "now" so the shift is already underway, and end 10 minutes out so Clock In
+  // stays open long enough to actually demo. A 2-minute window closed before anyone could click it.
+  const managerClockStart = new Date(Date.now() - 45 * 60000)
+  const managerClockEnd = new Date(Date.now() + 10 * 60000)
   const managerClockDate = dateKeySGT(managerClockStart)
   const managerClockStartTime = toHM(managerClockStart)
   const managerClockEndTime = toHM(managerClockEnd)
@@ -1234,8 +1236,9 @@ async function main() {
   // to a real fixed shift (is_open_ended:false, same reasoning as manager1's shift above) — start
   // is "now" and the window is just 2 minutes, so Clock Out's real end-time gate is demo-sized
   // (Clock In immediately, Clock Out unlocks ~2 minutes later) instead of bypassed or an 8h wait.
-  const employee1ShiftStart = new Date(Date.now())
-  const employee1ShiftEnd = new Date(employee1ShiftStart.getTime() + 2 * 60000)
+  // See managerClockStart — 10-minute tail so Clock In doesn't expire before it can be demoed.
+  const employee1ShiftStart = new Date(Date.now() - 45 * 60000)
+  const employee1ShiftEnd = new Date(Date.now() + 10 * 60000)
   const employee1ShiftDate = dateKeySGT(employee1ShiftStart)
   const employee1LiveShift = await createShift({
     company_id: company.id, department_id: opsDept.id, shift_date: employee1ShiftDate,
@@ -1244,7 +1247,7 @@ async function main() {
   })
   if (employee1LiveShift) {
     await assignShift(employee1LiveShift.id, employee1UserId, ownerUser.id)
-    console.log(`  ✓ Ben Seah（employee1）今天 ${toHM(employee1ShiftStart)}–${toHM(employee1ShiftEnd)} UTC 排班，未打卡 —— 登录 employee1@test.com 立刻可 Clock In → Break In/Out，Clock Out 要等到排班结束（2分钟后）才会解锁`)
+    console.log(`  ✓ Ben Seah（employee1）今天 ${toHM(employee1ShiftStart)}–${toHM(employee1ShiftEnd)} UTC 排班，未打卡 —— 登录 employee1@test.com 立刻可 Clock In → Break In/Out，Clock Out 要等到排班结束（10分钟后）才会解锁`)
   }
 
   const ownerDashboardAttendanceDefs = [
@@ -1328,7 +1331,7 @@ async function main() {
       await clockRecord(assignments.find(a => a.email === row.email)?.assignment, row.userId, { ...row.options, endStr: endTime })
     }
   }
-  console.log(`  ✓ manager1@test.com 今天 ${managerClockDate} ${managerClockStartTime}-${managerClockEndTime} UTC 排班，未打卡 —— 立刻可 Clock In，Clock Out 要等到排班结束（2分钟后）才会解锁`)
+  console.log(`  ✓ manager1@test.com 今天 ${managerClockDate} ${managerClockStartTime}-${managerClockEndTime} UTC 排班，未打卡 —— 立刻可 Clock In，Clock Out 要等到排班结束（10分钟后）才会解锁`)
 
   if (userIdMap['casual1@test.com']) {
     const casualPreStartStart = new Date(Date.now() + 30 * 60 * 1000)
@@ -2713,27 +2716,36 @@ async function main() {
   // the second collides with the first (flagged) AND — because the department has 2 people, not
   // 1 — there IS a real alternative day, so the AI can actually suggest one. Sequential awaits
   // (not Promise.all) so created_at ordering between the two is guaranteed.
+  // Deliberately Marketing, NOT Operations: the submit button is disabled for anyone holding ANY
+  // off_day_requests row, so seeding this pair onto Ben Seah / Grace Lim left Operations unable to
+  // submit a request live. Marketing has the same 2-Employee shape, so safe/flagged still works.
+  // The weekly auto-rotation above may already hold this exact (user_id, requested_date), which the
+  // table's unique constraint rejects — clear both first so the pair below always lands.
+  await supabase.from('off_day_requests').delete()
+    .in('user_id', [userIdMap['employee2@test.com'].internalId, userIdMap['employee6@test.com'].internalId])
+    .eq('requested_date', weekStartNext)
+
   const { error: offSafeErr } = await supabase.from('off_day_requests').insert({
-    user_id: userIdMap['employee1@test.com'].internalId,
+    user_id: userIdMap['employee2@test.com'].internalId,
     company_id: company.id,
     requested_date: weekStartNext,
     requested_week: weekStartNext,
     source: 'submitted',
     status: 'pending',
   })
-  if (offSafeErr) console.warn(`  ⚠ 创建 pending Off Day 失败 (employee1): ${offSafeErr.message}`)
-  else console.log(`  ✓ Off Day（待审批）：Ben Seah → ${weekStartNext}（Operations 现有 2 个 Employee，先提交的这条 AI Process 应判定 safe）`)
+  if (offSafeErr) console.warn(`  ⚠ 创建 pending Off Day 失败 (employee2): ${offSafeErr.message}`)
+  else console.log(`  ✓ Off Day（待审批）：Chloe Yeo → ${weekStartNext}（Marketing 现有 2 个 Employee，先提交的这条 AI Process 应判定 safe）`)
 
   const { error: offFlaggedErr } = await supabase.from('off_day_requests').insert({
-    user_id: userIdMap['employee5@test.com'].internalId,
+    user_id: userIdMap['employee6@test.com'].internalId,
     company_id: company.id,
     requested_date: weekStartNext,
     requested_week: weekStartNext,
     source: 'submitted',
     status: 'pending',
   })
-  if (offFlaggedErr) console.warn(`  ⚠ 创建 pending Off Day 失败 (employee5): ${offFlaggedErr.message}`)
-  else console.log(`  ✓ Off Day（待审批）：Grace Lim → ${weekStartNext}（跟 Ben Seah 撞同一天且后提交，AI Process 应判定 flagged 并给出真实的替代日建议）`)
+  if (offFlaggedErr) console.warn(`  ⚠ 创建 pending Off Day 失败 (employee6): ${offFlaggedErr.message}`)
+  else console.log(`  ✓ Off Day（待审批）：Hannah Lee → ${weekStartNext}（跟 Chloe Yeo 撞同一天且后提交，AI Process 应判定 flagged 并给出真实的替代日建议）`)
 
   const { error: offMgrErr } = await supabase.from('off_day_requests').insert({
     user_id: userIdMap['manager3@test.com'].internalId,
@@ -2763,19 +2775,9 @@ async function main() {
   if (offConflictErr) console.warn(`  ⚠ 创建 pending Off Day 失败 (employee4): ${offConflictErr.message}`)
   else console.log(`  ✓ Off Day（待审批）：Elaine Chua → ${dateKey(NEXT_WED)}（当天她已经有排好的班次——AI Process 不检查排班冲突，只检查部门人数，这条仅供手动测试"批准了跟已排班撞期的休假会怎样"）`)
 
-  // Marketing 之前在 Off Day 待审批队列里一条都没有；Customer Support 除了 Elaine 那条特意做冲突
-  // 测试的以外也没有"正常"的一条——都补上，让 Requests 队列覆盖到全部 4 个部门。
-  const { error: offMktErr } = await supabase.from('off_day_requests').insert({
-    user_id: userIdMap['employee6@test.com'].internalId,
-    company_id: company.id,
-    requested_date: dateKey(addDays(NEXT_MON, 2)),
-    requested_week: weekStartNext,
-    source: 'submitted',
-    status: 'pending',
-  })
-  if (offMktErr) console.warn(`  ⚠ 创建 pending Off Day 失败 (employee6): ${offMktErr.message}`)
-  else console.log(`  ✓ Off Day（待审批）：Hannah Lee → ${dateKey(addDays(NEXT_MON, 2))}（Marketing，之前待审批队列里没有 Marketing 的申请）`)
-
+  // Marketing's queue entry is now covered by the safe/flagged pair above (Chloe Yeo + Hannah Lee),
+  // so only the Customer Support "normal" request is left to add here — Customer Support otherwise
+  // has nothing but Elaine's deliberate scheduling-conflict row.
   const { error: offCsErr } = await supabase.from('off_day_requests').insert({
     user_id: userIdMap['employee8@test.com'].internalId,
     company_id: company.id,
@@ -2987,8 +2989,9 @@ async function main() {
   // 主管（Ben Seah / employee1@test.com）批准放行。shift_date 用 UTC 日历日，跟打卡窗口判定用的
   // 时区口径保持一致。
   console.log('\nStep 18: 创建 Casual Worker 当前可打卡的工作...')
-  const cwOpenStart = new Date(Date.now())
-  const cwOpenEnd = new Date(cwOpenStart.getTime() + 2 * 60000)
+  // See managerClockStart — 10-minute tail so Clock In doesn't expire before it can be demoed.
+  const cwOpenStart = new Date(Date.now() - 45 * 60000)
+  const cwOpenEnd = new Date(Date.now() + 10 * 60000)
   // UTC calendar date — matches both the Clock In gate (casualAttendanceService.clockIn) and the
   // Casual Dashboard's "which jobs show up" query (casualDashboardService.findCurrentAssignment,
   // fixed to use the same UTC day instead of local — see that file for why the two need to agree).
@@ -3037,7 +3040,7 @@ async function main() {
     })
     if (cwOpenShift) {
       await assignShift(cwOpenShift.id, userIdMap['casual1@test.com'].internalId, ownerUser.id, userIdMap['employee1@test.com'].internalId)
-      console.log(`  ✓ Marcus Lee 的开放班次（Shift）：${cwOpenJob.title}（今天 ${toHM(cwOpenStart)}–${toHM(cwOpenEnd)} UTC，登录 casual1@test.com 立刻可 Clock In → Break In → Break Out，Clock Out 要等到排班结束（2分钟后）才会解锁，不需要主管放行）`)
+      console.log(`  ✓ Marcus Lee 的开放班次（Shift）：${cwOpenJob.title}（今天 ${toHM(cwOpenStart)}–${toHM(cwOpenEnd)} UTC，登录 casual1@test.com 立刻可 Clock In → Break In → Break Out，Clock Out 要等到排班结束（10分钟后）才会解锁，不需要主管放行）`)
 
       // Ben Seah（主管，employee1）给 Marcus 分派的 Task——挂在这个当前班次的 shift_id 上，
       // CasualTaskBoard 是按 shift_id 过滤 + 前端再按 assigned_user_id 过滤当前用户的任务，
