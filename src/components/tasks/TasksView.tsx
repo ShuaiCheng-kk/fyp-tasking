@@ -2603,38 +2603,53 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
   // fired at once would also race the single shared error slot. The board/insight refetch is
   // deliberately left until the whole queue drains — refetching per item would re-render the list
   // out from under the loop.
+  // Rebalancing only ever proposes one task per department per pass — moving it can leave that
+  // person still overloaded, which produces a fresh suggestion the moment the list is recomputed.
+  // Applying a single pass therefore left the modal repopulated and the user clicking again, so
+  // this keeps going until the queue is genuinely empty. MAX_ROUNDS caps a pathological dataset
+  // where suggestions regenerate indefinitely.
+  const MAX_REBALANCE_ROUNDS = 5
+
   const handleApplyAllWorkloadSuggestions = async () => {
-    const applicable = workloadSuggestions.filter(s => s.suggested_task_id && s.recommended_user_id)
-    if (applicable.length === 0) return
+    let batch = workloadSuggestions.filter(s => s.suggested_task_id && s.recommended_user_id)
+    if (batch.length === 0) return
 
     setWorkloadApplyAllProgress(0); setWorkloadApplyError('')
     let applied = 0
     let failure = ''
-    for (const suggestion of applicable) {
-      try {
-        const res = await fetch('/api/task', {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'apply_workload_suggestion',
-            id: suggestion.suggested_task_id,
-            assigned_user_id: suggestion.recommended_user_id,
-            assigned_by: internalUserId || undefined,
-          }),
-        })
-        const data = await res.json()
-        if (!data.success) throw new Error(data.message)
-        applied++
-        setWorkloadApplyAllProgress(applied)
-      } catch (err) {
-        // Keep going: one department failing shouldn't strand the rest of the queue.
-        failure = err instanceof Error ? err.message : 'Failed to reassign task'
+
+    for (let round = 0; round < MAX_REBALANCE_ROUNDS && batch.length > 0; round++) {
+      for (const suggestion of batch) {
+        try {
+          const res = await fetch('/api/task', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'apply_workload_suggestion',
+              id: suggestion.suggested_task_id,
+              assigned_user_id: suggestion.recommended_user_id,
+              assigned_by: internalUserId || undefined,
+            }),
+          })
+          const data = await res.json()
+          if (!data.success) throw new Error(data.message)
+          applied++
+          setWorkloadApplyAllProgress(applied)
+        } catch (err) {
+          // Keep going: one department failing shouldn't strand the rest of the queue.
+          failure = err instanceof Error ? err.message : 'Failed to reassign task'
+        }
       }
+      // Stop rather than loop on top of a half-applied state.
+      if (failure) break
+      try {
+        batch = (await fetchWorkloadSuggestions()).filter(s => s.suggested_task_id && s.recommended_user_id)
+      } catch { break }
     }
 
     await Promise.all([fetchKanban(companyId, true), refreshAllTaskInsights()])
     setWorkloadApplyAllProgress(-1)
-    if (failure) setWorkloadApplyError(`${applied} of ${applicable.length} reassigned. ${failure}`)
+    if (failure) setWorkloadApplyError(`${applied} reassigned. ${failure}`)
     else showTaskToast(`${applied} task${applied === 1 ? '' : 's'} reassigned.`)
   }
 
@@ -2700,26 +2715,33 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
 
   // Workload Suggestion still needs a network round trip — it's a real computation over the
   // company's task distribution, not a pure function of data already on this page.
+  // Returns the suggestions without touching state, so "Reassign All" can re-read them between
+  // rounds — the state copy is captured in its closure and would stay stale for the whole loop.
+  const fetchWorkloadSuggestions = useCallback(async (): Promise<TaskWorkloadSuggestion[]> => {
+    if (!companyId || !internalUserId) return []
+    // Same peer scope as fetchKanban — Owner and Partner are peers over the same Manager
+    // tier, so the rebalancing pool must include tasks either of them assigned, not just the
+    // current viewer's own. Otherwise a Partner who rarely assigns tasks personally would see
+    // (and be able to reassign) almost nothing.
+    const userParam = scopeToManagerDepartments
+      ? `&manager_scope_id=${encodeURIComponent(internalUserId)}`
+      : `&assigned_by=${encodeURIComponent(members.filter(m => m.role === 'Owner' || m.role === 'Partner').map(m => m.id).join(',') || internalUserId)}`
+    const res = await fetch(`/api/task?company_id=${companyId}&suggestion=workload${userParam}`)
+    const data = await res.json()
+    if (!data.success) throw new Error(data.message)
+    return (data.suggestions ?? []).filter((item: TaskWorkloadSuggestion) => item.type === 'rebalance')
+  }, [companyId, internalUserId, members, scopeToManagerDepartments])
+
   const refreshWorkloadSuggestion = useCallback(async () => {
     if (!companyId || !internalUserId) return
     setInsightLoading('workload'); setInsightError('')
     try {
-      // Same peer scope as fetchKanban — Owner and Partner are peers over the same Manager
-      // tier, so the rebalancing pool must include tasks either of them assigned, not just the
-      // current viewer's own. Otherwise a Partner who rarely assigns tasks personally would see
-      // (and be able to reassign) almost nothing.
-      const userParam = scopeToManagerDepartments
-        ? `&manager_scope_id=${encodeURIComponent(internalUserId)}`
-        : `&assigned_by=${encodeURIComponent(members.filter(m => m.role === 'Owner' || m.role === 'Partner').map(m => m.id).join(',') || internalUserId)}`
-      const res = await fetch(`/api/task?company_id=${companyId}&suggestion=workload${userParam}`)
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message)
-      const suggestions = (data.suggestions ?? []).filter((item: TaskWorkloadSuggestion) => item.type === 'rebalance')
+      const suggestions = await fetchWorkloadSuggestions()
       setWorkloadSuggestions(suggestions)
       if (suggestions.length === 0) setWorkloadInsightOpen(false)
     } catch (err) { setInsightError(err instanceof Error ? err.message : 'Failed to refresh task insight') }
     finally { setInsightLoading('') }
-  }, [companyId, internalUserId, members, scopeToManagerDepartments])
+  }, [companyId, internalUserId, fetchWorkloadSuggestions])
 
   // Task Delay Alert never needs a network call to refresh — delayAlerts is derived straight from
   // kanban + the current time (see the useMemo above), so "refresh" here just re-anchors the tick.
@@ -5911,8 +5933,10 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                     onMouseEnter={e => { if (!workloadApplyLoadingId && workloadApplyAllProgress < 0) { e.currentTarget.style.background = '#FFEDD5'; e.currentTarget.style.boxShadow = '0 3px 10px rgba(234,88,12,0.16)' } }}
                     onMouseLeave={e => { e.currentTarget.style.background = '#FFF7ED'; e.currentTarget.style.boxShadow = 'none' }}
                   >
+                    {/* Count only — the total isn't known up front now that later rounds can add
+                        suggestions, and a denominator from the first batch would read "6/4". */}
                     {workloadApplyAllProgress >= 0
-                      ? <><Spinner size={12} /> {workloadApplyAllProgress}/{workloadSuggestions.filter(s => s.suggested_task_id && s.recommended_user_id).length}</>
+                      ? <><Spinner size={12} /> {workloadApplyAllProgress}</>
                       : <><ArrowRightLeft size={13} /> Reassign All</>}
                   </button>
                 )}
