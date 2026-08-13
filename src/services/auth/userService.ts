@@ -24,15 +24,22 @@ function buildCwMeta(rows: any[] | null): Map<string, CwMeta> {
 
 function mapTeamMemberRow(row: any, cwMeta: Map<string, CwMeta>): TeamMemberRow {
   const meta = cwMeta.get(row.id)
+  // A Casual Worker's skills and resume live in casual_worker_profiles, not on users. The Team
+  // page reads member.skills directly, so without flattening the joined row here the CW detail
+  // modal showed "—" for everyone even though the data was there all along.
+  const cwProfile = Array.isArray(row.casual_worker_profiles) ? row.casual_worker_profiles[0] : row.casual_worker_profiles
   return {
     ...row,
     department_id: row.manager_departments?.[0]?.department_id ?? row.employee_departments?.[0]?.department_id ?? row.casualworker_departments?.[0]?.department_id ?? null,
+    skills: row.skills ?? cwProfile?.skills ?? null,
+    resume_url: row.resume_url ?? cwProfile?.resume_url ?? null,
     casual_worker_verified_at: meta?.verified_at ?? null,
     casual_worker_inactive_at: meta?.inactive_at ?? null,
     casual_worker_inactive_reason: meta?.inactive_reason ?? null,
     manager_departments: undefined,
     employee_departments: undefined,
     casualworker_departments: undefined,
+    casual_worker_profiles: undefined,
   } as TeamMemberRow
 }
 
@@ -56,7 +63,7 @@ export const userService = {
     const supabase = getSupabaseAdmin()
     const { data: user, error } = await supabase
       .from('users')
-      .select('*, manager_departments!manager_departments_manager_id_fkey(department_id), employee_departments(department_id), casualworker_departments(department_id)')
+      .select('*, manager_departments!manager_departments_manager_id_fkey(department_id), employee_departments(department_id), casualworker_departments(department_id), casual_worker_profiles(skills, resume_url)')
       .or(`id.eq.${id},supabase_auth_id.eq.${id}`)
       .single()
     if (error || !user) throw new Error('User not found')
@@ -81,7 +88,7 @@ export const userService = {
     // this company) are exposed so the Team page can filter/flag without re-querying.
     const { data, error } = await supabase
       .from('users')
-      .select('*, manager_departments!manager_departments_manager_id_fkey(department_id), employee_departments(department_id), casualworker_departments(department_id)')
+      .select('*, manager_departments!manager_departments_manager_id_fkey(department_id), employee_departments(department_id), casualworker_departments(department_id), casual_worker_profiles(skills, resume_url)')
       .eq('company_id', company_id)
     if (error) throw new Error(error.message)
 
@@ -98,7 +105,7 @@ export const userService = {
     if (missingCwIds.length > 0) {
       const { data: cwData, error: cwErr } = await supabase
         .from('users')
-        .select('*, casualworker_departments(department_id)')
+        .select('*, casualworker_departments(department_id), casual_worker_profiles(skills, resume_url)')
         .in('id', missingCwIds)
       if (cwErr) throw new Error(cwErr.message)
       cwUsers = cwData ?? []
@@ -143,7 +150,7 @@ export const userService = {
 
     const { data, error } = await supabase
       .from('users')
-      .select('*, employee_departments(department_id), manager_departments!manager_departments_manager_id_fkey(department_id), casualworker_departments(department_id)')
+      .select('*, employee_departments(department_id), manager_departments!manager_departments_manager_id_fkey(department_id), casualworker_departments(department_id), casual_worker_profiles(skills, resume_url)')
       .in('id', allIds)
     if (error) throw new Error(error.message)
     const members = (data || []).map((row: any) => mapTeamMemberRow(row, cwMeta))
