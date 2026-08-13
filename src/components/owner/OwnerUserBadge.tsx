@@ -6,7 +6,7 @@ import { createBrowserClient } from '@supabase/ssr'
 import { Crown, X, Check, Pencil, Camera, Eye, EyeOff, KeyRound } from 'lucide-react'
 import DatePickerField from '@/components/DatePickerField'
 import Toast from '@/components/Toast'
-import { isValidImageFile } from '@/lib/imageValidation'
+import { isValidImageFile, prepareAvatarForUpload } from '@/lib/imageValidation'
 
 const keyframes = `
   @keyframes oubOverlayIn  { from { opacity: 0 } to { opacity: 1 } }
@@ -165,11 +165,11 @@ export default function OwnerUserBadge({ userId, companyId }: { userId: string; 
         process.env.NEXT_PUBLIC_SUPABASE_URL!,
         process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
       )
-      const ext = file.name.split('.').pop() ?? 'jpg'
-      const filename = `${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`
+      const prepared = await prepareAvatarForUpload(file)
+      const filename = `${Date.now()}_${Math.random().toString(36).slice(2)}.${prepared.extension}`
       const { data, error: uploadError } = await supabase.storage
         .from('avatars')
-        .upload(filename, file, { contentType: file.type })
+        .upload(filename, prepared.blob, { contentType: prepared.contentType })
       if (uploadError || !data) throw new Error('Photo upload failed')
       const { data: { publicUrl } } = supabase.storage.from('avatars').getPublicUrl(data.path)
       setPhotoUrl(publicUrl)

@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabaseBrowser';
 import { createBrowserClient } from '@supabase/ssr';
-import { isValidImageFile } from '@/lib/imageValidation';
+import { isValidImageFile, prepareAvatarForUpload } from '@/lib/imageValidation';
 import { Building2, UserPlus, Eye, EyeOff, ChevronLeft, ChevronDown, Check, X } from 'lucide-react';
 import {
   step1,
@@ -27,9 +27,9 @@ const fB = 'var(--font-body)';
 
 async function uploadProfilePhoto(file: File): Promise<string | null> {
   const supabase = createClient();
-  const ext = file.name.split('.').pop() ?? 'jpg';
-  const filename = `${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
-  const { data, error } = await supabase.storage.from('avatars').upload(filename, file, { contentType: file.type });
+  const prepared = await prepareAvatarForUpload(file);
+  const filename = `${Date.now()}_${Math.random().toString(36).slice(2)}.${prepared.extension}`;
+  const { data, error } = await supabase.storage.from('avatars').upload(filename, prepared.blob, { contentType: prepared.contentType });
   if (error || !data) {
     console.error('Profile photo upload failed:', error);
     return null;
