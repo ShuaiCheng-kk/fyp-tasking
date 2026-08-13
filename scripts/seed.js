@@ -1185,14 +1185,20 @@ async function main() {
     end_time: managerClockEndTime,
     created_by: ownerUser.id,
     publication_status: 'published',
-    // 2026-08-07: back to a real fixed shift (is_open_ended:false) — canClockOut (AttendanceView.tsx)
-    // only unlocks Clock Out once the shift's own end_time actually arrives, and the demo should show
-    // that gating for real rather than bypass it. The 2-minute window above (not 8h) is what makes
-    // that wait demo-sized: Clock In works immediately, Clock Out unlocks ~2 minutes later.
-    is_open_ended: false,
+    // Open-ended so Clock Out never waits: canClockOut() returns true immediately for these, while
+    // a fixed shift blocks it until end_time actually arrives. The Manager attendance demo runs
+    // Clock In, submits a swap and a day off, switches accounts to accept the swap, then comes back
+    // for Break In / Break Out / Clock Out — that whole run has to fit in a few minutes, and a
+    // time-gated Clock Out would strand it waiting.
+    is_open_ended: true,
   })
+  // Wendy Ho shares Operations with David Lim and is the counterpart for his shift-swap demo.
+  // Every Employee/Manager page locks to read-only once its owner has clocked out of their most
+  // recent shift, and it only clears on their next Clock In (see useEmployeeClockedOut) — the
+  // seeded past shifts leave her in exactly that state, so without a live shift of her own she
+  // cannot accept the swap request at all.
   const todayAssignments = []
-  for (const email of ['manager1@test.com']) {
+  for (const email of ['manager1@test.com', 'manager5@test.com']) {
     const assignment = await assignShift(todayInternalShift?.id, userIdMap[email].internalId, ownerUser.id)
     if (assignment) todayAssignments.push({ email, assignment })
   }
@@ -1331,7 +1337,9 @@ async function main() {
       await clockRecord(assignments.find(a => a.email === row.email)?.assignment, row.userId, { ...row.options, endStr: endTime })
     }
   }
-  console.log(`  ✓ manager1@test.com 今天 ${managerClockDate} ${managerClockStartTime}-${managerClockEndTime} UTC 排班，未打卡 —— 立刻可 Clock In，Clock Out 要等到排班结束（10分钟后）才会解锁`)
+  console.log(`  ✓ manager1@test.com + manager5@test.com 今天 ${managerClockDate} ${managerClockStartTime}-${managerClockEndTime} UTC 同一条开放式班次，均未打卡`)
+  console.log(`      开放式（is_open_ended）=> Clock In 立刻可点，Break In/Out 之后 Clock Out 也立刻可点，全程不用等`)
+  console.log(`      manager5（Wendy Ho）是 David Lim 换班演示的对方 —— 她必须先 Clock In，页面才从「已下班」的只读状态解锁，否则接受不了换班请求`)
 
   if (userIdMap['casual1@test.com']) {
     const casualPreStartStart = new Date(Date.now() + 30 * 60 * 1000)
