@@ -58,13 +58,33 @@ export default function ResetPasswordPage() {
       setLinkError(errorDescription.replace(/\+/g, ' '));
       return;
     }
+    let settled = false;
+    const accept = (userId: string) => {
+      if (settled) return;
+      settled = true;
+      setRecoveryUserId(userId);
+      setSessionReady(true);
+    };
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === 'PASSWORD_RECOVERY' && session?.user) {
-        setRecoveryUserId(session.user.id);
-        setSessionReady(true);
-      }
+      if (event === 'PASSWORD_RECOVERY' && session?.user) accept(session.user.id);
     });
-    return () => subscription.unsubscribe();
+
+    // The Supabase client consumes the recovery token from the URL during its own initialisation,
+    // which routinely finishes before this effect subscribes. PASSWORD_RECOVERY then fires with no
+    // listener attached, and since the client also strips the hash there is nothing left to parse —
+    // the page sat on "Verifying reset link…" forever. Read the session it already established.
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) accept(session.user.id);
+    });
+
+    // Neither path yielded a session and Supabase surfaced no error_description to show, so the
+    // link is unusable — say so instead of spinning indefinitely.
+    const timer = setTimeout(() => {
+      if (!settled) setLinkError('This reset link could not be verified. Request a new one from the sign-in page.');
+    }, 6000);
+
+    return () => { settled = true; clearTimeout(timer); subscription.unsubscribe(); };
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
