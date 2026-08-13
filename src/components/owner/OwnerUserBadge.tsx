@@ -83,6 +83,12 @@ export default function OwnerUserBadge({ userId, companyId }: { userId: string; 
   const [profile, setProfile] = useState<ProfileData | null>(null)
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState(false)
+  // "Save Changes" renders in the exact spot "Edit Profile" occupied, so the click that opens edit
+  // mode leaves the cursor sitting on the submit button. A stray second click — or an Enter press
+  // right after — submitted instantly, which reads as "the dialog saved and closed by itself
+  // without me touching anything". Ignore submits for a moment after entering edit mode.
+  const [editJustOpened, setEditJustOpened] = useState(false)
+  const editGuardTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
   const [dob, setDob] = useState('')
@@ -107,6 +113,8 @@ export default function OwnerUserBadge({ userId, companyId }: { userId: string; 
   const isMarketingAdmin = profile?.role === 'Marketing Admin'
 
   useEffect(() => () => { if (successToastTimerRef.current) clearTimeout(successToastTimerRef.current) }, [])
+
+  useEffect(() => () => { if (editGuardTimerRef.current) clearTimeout(editGuardTimerRef.current) }, [])
 
   useEffect(() => { setMounted(true) }, [])
 
@@ -172,8 +180,22 @@ export default function OwnerUserBadge({ userId, companyId }: { userId: string; 
     }
   }
 
+  const enterEditMode = () => {
+    setName(profile?.full_name ?? '')
+    setPhone(profile?.phone_number ?? '')
+    setDob(profile?.date_of_birth ?? '')
+    setPhotoUrl(profile?.profile_photo_url ?? null)
+    setError('')
+    setEditing(true)
+    setEditJustOpened(true)
+    if (editGuardTimerRef.current) clearTimeout(editGuardTimerRef.current)
+    editGuardTimerRef.current = setTimeout(() => setEditJustOpened(false), 400)
+  }
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault()
+    // Covers the Enter key too, not just a second click on the button.
+    if (editJustOpened) return
     if (!name.trim()) { setError('Full name is required'); return }
     if (!isMarketingAdmin) {
       if (!phone) { setError('Phone number is required'); return }
@@ -379,7 +401,7 @@ export default function OwnerUserBadge({ userId, companyId }: { userId: string; 
                   <button type="button" onClick={() => { setEditing(false); setError(''); setPhotoUrl(profile?.profile_photo_url ?? null) }} style={{ padding: '7px 16px', border: '1px solid #E5E7EB', borderRadius: 8, background: '#FFFFFF', fontWeight: 600, fontSize: '0.8125rem', color: '#374151', cursor: 'pointer' }}>
                     Cancel
                   </button>
-                  <button type="submit" disabled={saving} style={{ padding: '7px 18px', border: 'none', borderRadius: 8, background: saving ? '#FDA060' : 'linear-gradient(135deg, #F97316, #EA580C)', fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: saving ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: saving ? 0.65 : 1 }}>
+                  <button type="submit" disabled={saving || editJustOpened} style={{ padding: '7px 18px', border: 'none', borderRadius: 8, background: saving ? '#FDA060' : 'linear-gradient(135deg, #F97316, #EA580C)', fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: saving ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: saving ? 0.65 : 1 }}>
                     {saving ? <Spinner size={13} /> : <Check size={13} />} Save Changes
                   </button>
                 </>
@@ -390,7 +412,7 @@ export default function OwnerUserBadge({ userId, companyId }: { userId: string; 
                       <KeyRound size={13} /> Change Password
                     </button>
                   )}
-                  <button type="button" onClick={() => { setName(profile?.full_name ?? ''); setPhone(profile?.phone_number ?? ''); setDob(profile?.date_of_birth ?? ''); setPhotoUrl(profile?.profile_photo_url ?? null); setError(''); setEditing(true) }} style={{ padding: '7px 16px', border: 'none', borderRadius: 8, background: 'linear-gradient(135deg, #F97316, #EA580C)', fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <button type="button" onClick={enterEditMode} style={{ padding: '7px 16px', border: 'none', borderRadius: 8, background: 'linear-gradient(135deg, #F97316, #EA580C)', fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
                     <Pencil size={13} /> Edit Profile
                   </button>
                 </>
