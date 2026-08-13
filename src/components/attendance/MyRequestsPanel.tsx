@@ -478,6 +478,27 @@ export default function MyRequestsPanel({
     })
   }, [activeSubmissionWeekStart])
 
+  // The server rejects an off-day request for any date the requester is already rostered on
+  // (BUG-044), but the picker had no idea which those were — every day looked selectable, and the
+  // conflict only surfaced as an error after submitting. Load the requester's own shifts for the
+  // week being offered so those days can be disabled up front.
+  const [rosteredDatesThisWeek, setRosteredDatesThisWeek] = useState<Set<string>>(new Set())
+  useEffect(() => {
+    if (requestModalStep !== 'offday' || !companyId || !internalUserId) return
+    const week = getUpcomingWeekDates()
+    if (week.length === 0) return
+    let cancelled = false
+    fetch(`/api/shift?company_id=${companyId}&date_from=${week[0]}&date_to=${week[week.length - 1]}`)
+      .then(r => r.json())
+      .then(data => {
+        if (cancelled || !data.success) return
+        const mine = (data.rows ?? []).find((row: { user_id: string | null }) => row.user_id === internalUserId)
+        setRosteredDatesThisWeek(new Set(((mine?.shifts ?? []) as { shift_date: string }[]).map(s => s.shift_date)))
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [requestModalStep, companyId, internalUserId, getUpcomingWeekDates])
+
   const getWeekDatesFromStart = useCallback((weekStart: string): string[] => {
     const monday = new Date(`${weekStart}T00:00:00`)
     return Array.from({ length: 7 }, (_, index) => {
@@ -1487,6 +1508,10 @@ export default function MyRequestsPanel({
                     {getUpcomingWeekDates().map(date => {
                       const isSelected = selectedFixedOffDates.includes(date)
                       const atLimit = !isSelected && selectedFixedOffDates.length >= fixedOffQuota
+                      // The server refuses a day the requester is already rostered on, so surface
+                      // that here rather than letting them pick it and fail on submit.
+                      const isRostered = rosteredDatesThisWeek.has(date)
+                      const isDisabled = atLimit || isRostered
                       const d = new Date(`${date}T00:00:00`)
                       return (
                         <div key={date} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5 }}>
@@ -1494,19 +1519,21 @@ export default function MyRequestsPanel({
                           <button
                             type="button"
                             onClick={() => toggleFixedOffDate(date)}
-                            disabled={atLimit}
+                            disabled={isDisabled}
+                            title={isRostered ? "You're scheduled to work this day" : undefined}
                             style={{
                               width: 48, height: 48, borderRadius: '50%', padding: 0,
                               border: isSelected ? '1.5px solid #16A34A' : `1px solid ${PANEL_BORDER}`,
-                              background: isSelected ? '#DCFCE7' : '#FFFFFF',
-                              color: isSelected ? '#166534' : '#111827',
-                              opacity: atLimit ? 0.45 : 1, cursor: atLimit ? 'not-allowed' : 'pointer',
+                              background: isSelected ? '#DCFCE7' : isRostered ? '#F3F4F6' : '#FFFFFF',
+                              color: isSelected ? '#166534' : isRostered ? '#9CA3AF' : '#111827',
+                              opacity: isDisabled ? 0.45 : 1, cursor: isDisabled ? 'not-allowed' : 'pointer',
                               display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 1, fontWeight: 800, lineHeight: 1.1,
                             }}
                           >
                             <span style={{ fontSize: 14 }}>{String(d.getDate()).padStart(2, '0')}</span>
                             <span style={{ fontSize: 9 }}>{d.toLocaleDateString('en-AU', { month: 'short' })}</span>
                           </button>
+                          <span style={{ fontSize: 9, fontWeight: 700, color: '#9CA3AF', minHeight: 11 }}>{isRostered ? 'Rostered' : ''}</span>
                         </div>
                       )
                     })}
