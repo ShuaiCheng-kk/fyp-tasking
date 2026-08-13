@@ -60,3 +60,7 @@ next-env.d.ts
 # NFR script output (regenerated on every run)
 /.compat-screenshots/
 /scalability-results/
+
+# Video production assets — decks, recordings, edits. Kept local; recordings in
+# particular would bloat the repo.
+/video/
