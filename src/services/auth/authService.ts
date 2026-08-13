@@ -225,6 +225,17 @@ export const authService = {
     return !!data.user.email_confirmed_at
   },
 
+  // Same sessionless situation as isVerifiedAuthUser, but for the billing steps that run straight
+  // after the company is created and still before any sign-in: prove the caller owns a verified
+  // account AND that the account belongs to the company being billed. Returns the user so callers
+  // can use the internal id they'd otherwise have taken from the session.
+  async findVerifiedUserOfCompany(auth_id: string, company_id: string): Promise<User | null> {
+    if (!(await authService.isVerifiedAuthUser(auth_id))) return null
+    const user = await authRepository.findByAuthIdOrInternalId(auth_id)
+    if (!user || user.company_id !== company_id) return null
+    return user
+  },
+
   async completeCompanySetup(data: {
     user_id: string
     full_name: string
