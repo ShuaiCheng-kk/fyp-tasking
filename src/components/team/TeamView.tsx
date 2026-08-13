@@ -1226,7 +1226,6 @@ export default function TeamView({ sidebar, basePath, permissions, hidePlanBadge
   const [memberImportRows, setMemberImportRows] = useState<MemberImportPreview[]>([])
   const [memberImportLoading, setMemberImportLoading] = useState(false)
   const [memberImportError, setMemberImportError] = useState('')
-  const [memberImportResult, setMemberImportResult] = useState('')
   const [inviteTab, setInviteTab] = useState<'manual' | 'import'>('manual')
   const [teamViewTab, setTeamViewTab] = useState<'all' | 'org'>('all')
   const [allBlockOrder, setAllBlockOrder] = useState<AllBlockId[]>(DEFAULT_ALL_BLOCK_ORDER)
@@ -1525,7 +1524,6 @@ export default function TeamView({ sidebar, basePath, permissions, hidePlanBadge
     setInviteSuccessToast('')
     setMemberImportRows([])
     setMemberImportError('')
-    setMemberImportResult('')
     setInviteTab('manual')
   }, [])
 
@@ -1597,7 +1595,6 @@ export default function TeamView({ sidebar, basePath, permissions, hidePlanBadge
 
   const handleMemberImportFile = async (file: File | null) => {
     setMemberImportError('')
-    setMemberImportResult('')
     if (!file) return
     const text = await file.text()
     const rows = parseMemberImportCsv(text)
@@ -1609,7 +1606,6 @@ export default function TeamView({ sidebar, basePath, permissions, hidePlanBadge
     if (!companyId || !internalUserId || memberImportRows.length === 0) return
     setMemberImportLoading(true)
     setMemberImportError('')
-    setMemberImportResult('')
     try {
       const res = await fetch('/api/import/members', {
         method: 'POST',
@@ -1618,10 +1614,17 @@ export default function TeamView({ sidebar, basePath, permissions, hidePlanBadge
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'Failed to import members')
-      const invited = data.result?.invited?.length ?? 0
+      const invitedEmails: string[] = data.result?.invited ?? []
+      const invited = invitedEmails.length
       const failed = data.result?.failed?.length ?? 0
-      setMemberImportResult(`${invited} invitation(s) sent. ${failed} failed.`)
       showCWDetailSuccess(`${invited} invitation(s) sent.${failed ? ` ${failed} failed.` : ''}`)
+      // Single invites log an entry each (see the invite_member call above); the CSV path never
+      // did, so bulk-inviting a whole team left no trace in the Activity Log at all. Log the rows
+      // that actually went out, matching the role/department the row asked for.
+      for (const email of invitedEmails) {
+        const row = memberImportRows.find(r => r.email === email)
+        await logActivity('invite_member', email, row?.department_name || row?.role || undefined)
+      }
       await fetchTeamMembers(companyId)
     } catch (err) {
       setMemberImportError(err instanceof Error ? err.message : 'Failed to import members')
@@ -4442,11 +4445,6 @@ export default function TeamView({ sidebar, basePath, permissions, hidePlanBadge
                     {memberImportError}
                   </div>
                 )}
-                {memberImportResult && (
-                  <div style={{ margin: '0 24px 8px', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 8, padding: '10px 14px', fontSize: '0.875rem', color: '#166534' }}>
-                    {memberImportResult}
-                  </div>
-                )}
               </>
             ) : (
               <>
@@ -4514,7 +4512,6 @@ export default function TeamView({ sidebar, basePath, permissions, hidePlanBadge
               </div>
             )}
             {memberImportError && <p style={{ margin: '12px 0 0', color: '#DC2626', fontSize: '0.84rem', fontWeight: 700 }}>{memberImportError}</p>}
-            {memberImportResult && <p style={{ margin: '12px 0 0', color: '#059669', fontSize: '0.84rem', fontWeight: 700 }}>{memberImportResult}</p>}
             <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
               <button onClick={() => setMemberImportOpen(false)} style={{ flex: 1, padding: '10px 14px', borderRadius: 8, border: '1px solid #E5E7EB', background: '#FFFFFF', color: '#374151', fontWeight: 700, fontSize: '0.875rem', cursor: 'pointer' }}>
                 Cancel
