@@ -2429,7 +2429,15 @@ async function main() {
   const restDayRotationExceptions = new Set([
     `employee1@test.com|${dateKey(NEXT_MON)}`,
     `employee5@test.com|${dateKey(NEXT_MON)}`,
-    `manager1@test.com|${dateKey(addDays(NEXT_MON, 2))}`, // Wed of the currently open submission week
+  ])
+
+  // manager1 (David Lim) submits a Fixed Day Off live, and the quota is 2 days — so he needs two
+  // days in the open week that are free of BOTH a shift and an off_day_requests row. An auto rest
+  // day writes such a row, which disables the whole Off Day option; a rotation exception writes a
+  // shift instead, and the server refuses to grant a day off on a day he is rostered. Either way
+  // he ends up with nothing selectable. These two dates are left genuinely empty instead.
+  const emptyDayExceptions = new Set([
+    `manager1@test.com|${dateKey(addDays(NEXT_MON, 5))}`, // Sat of the currently open submission week
     `manager1@test.com|${dateKey(addDays(NEXT_MON, 6))}`, // Sun of the currently open submission week
   ])
   let futureRosterCount = 0
@@ -2457,6 +2465,8 @@ async function main() {
           // the rotation, then the weekly rest-day rotation, then the regular roster shift.
           const key = `${email}|${dateKey(dayDate)}`
           if (futureShiftSkipSet.has(key)) continue
+          // No shift and no off-day row — the day stays selectable in the Off Day picker.
+          if (emptyDayExceptions.has(key)) continue
           if (isRestDay(roleIndexes[j], dayDate) && !restDayRotationExceptions.has(key)) {
             await seedRestDayOffRequest(email, dayDate)
             continue
