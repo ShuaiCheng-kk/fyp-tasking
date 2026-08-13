@@ -3,14 +3,30 @@
 // renamed to .jpg) — the bogus file got uploaded and stored as if it were a real image, then
 // failed to render everywhere the avatar is shown. Decoding the file as an image is the only check
 // a renamed extension can't fake.
-export function isValidImageFile(file: File): Promise<boolean> {
-  return new Promise((resolve) => {
-    const url = URL.createObjectURL(file)
+// A decode that neither loads nor errors would hang forever, and every caller awaits these before
+// clearing its "Uploading…" state — so each one is bounded.
+const DECODE_TIMEOUT_MS = 15_000
+
+function decodeImage(url: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
     const img = new Image()
-    img.onload = () => { URL.revokeObjectURL(url); resolve(true) }
-    img.onerror = () => { URL.revokeObjectURL(url); resolve(false) }
+    const timer = setTimeout(() => reject(new Error('image decode timed out')), DECODE_TIMEOUT_MS)
+    img.onload = () => { clearTimeout(timer); resolve(img) }
+    img.onerror = () => { clearTimeout(timer); reject(new Error('image decode failed')) }
     img.src = url
   })
+}
+
+export async function isValidImageFile(file: File): Promise<boolean> {
+  const url = URL.createObjectURL(file)
+  try {
+    await decodeImage(url)
+    return true
+  } catch {
+    return false
+  } finally {
+    URL.revokeObjectURL(url)
+  }
 }
 
 // Avatars render between 26px and 64px, but people pick phone photos and screenshots that are
@@ -38,12 +54,7 @@ export async function prepareAvatarForUpload(file: File): Promise<PreparedImage>
 
   const url = URL.createObjectURL(file)
   try {
-    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const el = new Image()
-      el.onload = () => resolve(el)
-      el.onerror = () => reject(new Error('decode failed'))
-      el.src = url
-    })
+    const img = await decodeImage(url)
 
     const longestEdge = Math.max(img.width, img.height)
     const scale = Math.min(1, MAX_AVATAR_EDGE / longestEdge)
@@ -56,9 +67,10 @@ export async function prepareAvatarForUpload(file: File): Promise<PreparedImage>
     if (!ctx) return original
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
 
-    const blob = await new Promise<Blob | null>(resolve =>
-      canvas.toBlob(resolve, 'image/jpeg', AVATAR_JPEG_QUALITY),
-    )
+    const blob = await Promise.race([
+      new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/jpeg', AVATAR_JPEG_QUALITY)),
+      new Promise<null>(resolve => setTimeout(() => resolve(null), DECODE_TIMEOUT_MS)),
+    ])
     if (!blob || blob.size >= file.size) return original
     return { blob, contentType: 'image/jpeg', extension: 'jpg' }
   } catch {
