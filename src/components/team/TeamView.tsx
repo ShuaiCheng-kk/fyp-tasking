@@ -2173,6 +2173,10 @@ export default function TeamView({ sidebar, basePath, permissions, hidePlanBadge
         const data = await res.json()
         if (!data.success) throw new Error(data.message || 'Failed to import departments')
         const created = data.result?.created?.length ?? 0
+        // Close on success, same as the single-department branch below — this one left the modal
+        // open over its own success toast, with the imported rows still listed as if pending.
+        setDepartmentModal(null)
+        setDepartmentImportRows([])
         if (departmentSuccessTimerRef.current) clearTimeout(departmentSuccessTimerRef.current)
         setDepartmentSuccessToast(`${created} department(s) imported successfully.`)
         departmentSuccessTimerRef.current = setTimeout(() => setDepartmentSuccessToast(''), 3000)
