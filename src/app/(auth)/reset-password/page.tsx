@@ -78,14 +78,24 @@ export default function ResetPasswordPage() {
     // listener attached, and since the client also strips the hash there is nothing left to parse —
     // the page sat on "Verifying reset link…" forever. Read the session it already established.
     void (async () => {
+      // Supabase sends recovery links in the implicit flow: the tokens land in the URL hash as
+      // #access_token=…&refresh_token=…&type=recovery. But supabaseBrowser builds its client with
+      // @supabase/ssr's createBrowserClient, which defaults to flowType 'pkce' and therefore only
+      // ever looks for ?code= — it ignored the hash entirely. No session was created, so
+      // PASSWORD_RECOVERY never fired, getSession() stayed null, and the page could only reach its
+      // timeout. Establish the session from those tokens explicitly.
+      const accessToken = params.get('access_token');
+      const refreshToken = params.get('refresh_token');
+      if (accessToken && refreshToken) {
+        const { data, error } = await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
+        if (error) { setLinkError(error.message); return; }
+        if (data.session?.user) { accept(data.session.user.id); return; }
+      }
+
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.user) { accept(session.user.id); return; }
 
-      // supabaseBrowser uses @supabase/ssr's createBrowserClient, which defaults to the PKCE flow —
-      // so the recovery link arrives as ?code=… and is NOT a session until it is exchanged. Nothing
-      // here ever did that exchange, so PASSWORD_RECOVERY never fired, getSession stayed null, and
-      // the page could only ever end up on the timeout branch. That was the real cause behind both
-      // "Verifying reset link…" forever and the bogus "link has expired".
+      // Kept for the PKCE variant, in case the project is ever switched to it.
       if (!pkceCode || settled) return;
       const { data, error } = await supabase.auth.exchangeCodeForSession(pkceCode);
       if (error) { setLinkError(error.message); return; }
