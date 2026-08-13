@@ -1531,10 +1531,17 @@ export default function GetStartedPage() {
     if (params.get('verify') === '1') {
       const companyId = sessionStorage.getItem('owner_company_id');
       if (companyId) {
+        // user_id is required for the sessionless path: the owner hasn't signed in yet at this
+        // point, so the endpoint has no session to authorise against. The Stripe webhook flips the
+        // plan authoritatively regardless — this call is only the client-side fallback.
         fetch('/api/company/update-plan', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ company_id: companyId, plan: 'Paid' }),
+          body: JSON.stringify({
+            company_id: companyId,
+            plan: 'Paid',
+            user_id: sessionStorage.getItem('owner_user_id') || undefined,
+          }),
         }).catch(() => {});
       }
       ['owner_user_id', 'owner_full_name', 'owner_email', 'owner_password', 'owner_phone', 'owner_date_of_birth', 'owner_company_id',

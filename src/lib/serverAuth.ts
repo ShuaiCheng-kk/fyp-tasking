@@ -13,8 +13,12 @@ export interface ServerSessionUser {
   user: User
 }
 
-// Returns null when there is no valid session — callers decide the 401/403 response.
-export async function getServerSessionUser(): Promise<ServerSessionUser | null> {
+// Verifies only the Supabase auth session and returns that auth user's id, WITHOUT requiring a
+// matching row in `users`. Registration needs this: the `users` row is created by the final
+// complete-company-setup call, so during the wizard a perfectly valid session still has no profile
+// yet — and getServerSessionUser() below would report the caller as unauthenticated.
+// Endpoints that operate on an existing member should use getServerSessionUser() instead.
+export async function getServerAuthId(): Promise<string | null> {
   const cookieStore = await cookies()
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -35,9 +39,16 @@ export async function getServerSessionUser(): Promise<ServerSessionUser | null> 
   // than trusting the cookie's payload alone.
   const { data: { user }, error } = await supabase.auth.getUser()
   if (error || !user) return null
+  return user.id
+}
 
-  const profile = await authRepository.findByAuthId(user.id)
+// Returns null when there is no valid session — callers decide the 401/403 response.
+export async function getServerSessionUser(): Promise<ServerSessionUser | null> {
+  const authId = await getServerAuthId()
+  if (!authId) return null
+
+  const profile = await authRepository.findByAuthId(authId)
   if (!profile) return null
 
-  return { auth_id: user.id, user: profile }
+  return { auth_id: authId, user: profile }
 }

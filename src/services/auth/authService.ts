@@ -214,6 +214,28 @@ export const authService = {
     return !!(user?.email_confirmed_at)
   },
 
+  // Identity check for the one place that has no session to check: owner registration never signs
+  // the user in, so complete-company-setup can only prove who the caller is by confirming the
+  // supplied auth id belongs to a real account whose email has been confirmed. The id is an
+  // unguessable UUID and confirmation proves control of that inbox.
+  async isVerifiedAuthUser(auth_id: string): Promise<boolean> {
+    const admin = getAdminClient()
+    const { data, error } = await admin.auth.admin.getUserById(auth_id)
+    if (error || !data?.user) return false
+    return !!data.user.email_confirmed_at
+  },
+
+  // Same sessionless situation as isVerifiedAuthUser, but for the billing steps that run straight
+  // after the company is created and still before any sign-in: prove the caller owns a verified
+  // account AND that the account belongs to the company being billed. Returns the user so callers
+  // can use the internal id they'd otherwise have taken from the session.
+  async findVerifiedUserOfCompany(auth_id: string, company_id: string): Promise<User | null> {
+    if (!(await authService.isVerifiedAuthUser(auth_id))) return null
+    const user = await authRepository.findByAuthIdOrInternalId(auth_id)
+    if (!user || user.company_id !== company_id) return null
+    return user
+  },
+
   async completeCompanySetup(data: {
     user_id: string
     full_name: string

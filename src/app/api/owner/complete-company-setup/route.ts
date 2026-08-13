@@ -3,7 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { authService } from '@/services/auth/authService'
-import { getServerSessionUser } from '@/lib/serverAuth'
+import { getServerAuthId } from '@/lib/serverAuth'
 
 export async function POST(req: NextRequest) {
   let body: unknown
@@ -24,10 +24,19 @@ export async function POST(req: NextRequest) {
   if (!user_id || typeof user_id !== 'string') {
     return NextResponse.json({ success: false, message: 'user_id is required' }, { status: 400 })
   }
-  const session = await getServerSessionUser()
-  if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
-  if (user_id !== session.user.id && user_id !== session.auth_id) {
-    return NextResponse.json({ success: false, message: 'You can only complete your own setup' }, { status: 403 })
+  // Owner registration deliberately never signs the user in — signUp doesn't return a session
+  // while email confirmation is on, and the wizard never calls signInWithPassword. This endpoint
+  // is also what CREATES the `users` row, so getServerSessionUser() had nothing to find either.
+  // Requiring a session here rejected every legitimate signup with "Not authenticated".
+  // So: honour a session when one exists (the invited/guest paths do sign in), and otherwise fall
+  // back to proving the supplied auth id is a real, email-confirmed account.
+  const authId = await getServerAuthId()
+  if (authId) {
+    if (user_id !== authId) {
+      return NextResponse.json({ success: false, message: 'You can only complete your own setup' }, { status: 403 })
+    }
+  } else if (!(await authService.isVerifiedAuthUser(user_id))) {
+    return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
   }
   if (!company_name || typeof company_name !== 'string') {
     return NextResponse.json({ success: false, message: 'company_name is required' }, { status: 400 })

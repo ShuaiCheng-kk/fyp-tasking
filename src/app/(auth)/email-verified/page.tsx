@@ -9,6 +9,8 @@ const fB = 'var(--font-body, system-ui, sans-serif)';
 export default function EmailVerifiedPage() {
   const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading');
   const [continueHref, setContinueHref] = useState('/get-started?verified=true');
+  // Whether the registration in progress is actually reachable from THIS tab.
+  const [canContinueHere, setCanContinueHere] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -23,6 +25,16 @@ export default function EmailVerifiedPage() {
     if (jobId) continueParams.set('job_id', jobId);
     if (email) continueParams.set('guest_email', email);
     setContinueHref(`/get-started?${continueParams.toString()}`);
+
+    // Owner registration keeps its half-finished wizard in sessionStorage, which is per-tab. Email
+    // links normally open in a NEW tab, where none of that exists — so sending the user to
+    // /get-started there silently restarted the whole wizard and lost everything they had typed.
+    // Only offer to continue here when the progress is genuinely in this tab. Guest registration
+    // stores its state in localStorage, which does survive a new tab, so it always can.
+    const isGuestFlow = !!jobId || !!email;
+    let hasOwnerProgress = false;
+    try { hasOwnerProgress = !!sessionStorage.getItem('owner_user_id'); } catch { hasOwnerProgress = false; }
+    setCanContinueHere(isGuestFlow || hasOwnerProgress);
   }, []);
 
   if (status === 'loading') {
@@ -107,25 +119,45 @@ export default function EmailVerifiedPage() {
             <h1 style={{ fontFamily: fH, fontWeight: 700, fontSize: '1.875rem', color: '#1C1917', marginBottom: '12px' }}>
               Email verified!
             </h1>
-            <p style={{ fontFamily: fB, fontSize: '1rem', color: '#78716C', lineHeight: 1.65, marginBottom: '36px' }}>
-              Your email has been confirmed. Continue to finish setting up your company and choose a plan.
-            </p>
-            <Link
-              href={continueHref}
-              style={{
-                display: 'inline-block',
-                background: '#F97316',
-                color: '#FFFFFF',
-                fontFamily: fB,
-                fontWeight: 700,
-                fontSize: '1rem',
-                padding: '14px 36px',
-                borderRadius: '10px',
-                textDecoration: 'none',
-              }}
-            >
-              Continue Registration
-            </Link>
+            {canContinueHere ? (
+              <>
+                <p style={{ fontFamily: fB, fontSize: '1rem', color: '#78716C', lineHeight: 1.65, marginBottom: '36px' }}>
+                  Your email has been confirmed. Continue to finish setting up your company and choose a plan.
+                </p>
+                <Link
+                  href={continueHref}
+                  style={{
+                    display: 'inline-block',
+                    background: '#F97316',
+                    color: '#FFFFFF',
+                    fontFamily: fB,
+                    fontWeight: 700,
+                    fontSize: '1rem',
+                    padding: '14px 36px',
+                    borderRadius: '10px',
+                    textDecoration: 'none',
+                  }}
+                >
+                  Continue Registration
+                </Link>
+              </>
+            ) : (
+              <>
+                <p style={{ fontFamily: fB, fontSize: '1rem', color: '#78716C', lineHeight: 1.65, marginBottom: '12px' }}>
+                  Your email has been confirmed.
+                </p>
+                <p style={{ fontFamily: fB, fontSize: '1rem', color: '#78716C', lineHeight: 1.65, marginBottom: '32px' }}>
+                  Go back to the tab where you started signing up and continue from there. Everything
+                  you already filled in is still waiting.
+                </p>
+                <p style={{ fontFamily: fB, fontSize: '0.875rem', color: '#A8A29E', lineHeight: 1.6, margin: 0 }}>
+                  Closed that tab?{' '}
+                  <Link href="/get-started" style={{ color: '#F97316', fontWeight: 600, textDecoration: 'underline' }}>
+                    Start registration again
+                  </Link>
+                </p>
+              </>
+            )}
           </>
         )}
       </div>
