@@ -1917,6 +1917,27 @@ async function main() {
       expires_at: applicationDeadline,
     },
     {
+      // Second pending posting, from a different Manager and department, so the Owner's approval
+      // queue holds two — one to approve and one to reject in the same sitting.
+      key: 'pending_approval_2',
+      company_id: company.id,
+      department_id: depts[2].id, // Engineering
+      created_by: userIdMap['manager3@test.com'].internalId, // Aaron Wong
+      title: 'Server Room Cabling Assistant',
+      responsibilities: 'Help run and label network cabling during the server room refresh, under supervision of the on-duty engineer.',
+      skills: 'Comfortable working in confined spaces, careful with labelling, able to follow a wiring diagram.',
+      status: 'pending_approval',
+      job_type: 'oneoff',
+      urgency: 'normal',
+      estimated_hours: '6',
+      job_start_time: '10:00',
+      openings: 1,
+      experience_required: 'Preferred',
+      minimum_age: 18,
+      salary_amount: 18,
+      expires_at: applicationDeadline,
+    },
+    {
       key: 'draft',
       company_id: company.id,
       department_id: depts[2].id, // Engineering
@@ -4075,7 +4096,9 @@ async function main() {
   console.log('    Open             Weekend Event Crew（Operations，oneoff，3 个 pending 申请人：Wei Jie/Priyanka/Kai Xuan，可测 UC44/45/48）')
   console.log('    Open             Warehouse Stock Count（Engineering，shift 型/周末循环班，Amirah Yusof 已获 Offer 待 Accept/Decline，Wei Jie Lim 被 Rejected）')
   console.log('    Open             Retail Promo Day（Marketing，oneoff/urgent/uniform，Ryan Teo 已 Confirmed，Priyanka Das 被 Rejected，Wei Jie Lim 已获 Offer 待 Accept/Decline）')
-  console.log('    Pending Approval Flyer Distribution（Marketing，Manager Rachel Koh 提交，可直接测 UC42）')
+  console.log('    Pending Approval ×2（Owner 队列里一条批准、一条拒绝，同一次演示就能覆盖 UC41+UC42）：')
+  console.log('      · Flyer Distribution（Marketing，Manager Rachel Koh 提交）')
+  console.log('      · Server Room Cabling Assistant（Engineering，Manager Aaron Wong 提交）')
   console.log('    Draft            IT Support（Engineering，可测 UC39/UC40）')
   console.log('    Rejected         Live Chat Support（Customer Support，Manager Fiona Chen 提交，可测 Edit & Resubmit）')
   console.log('  Guest Applications 页（guest1-5@test.com 登录）四种状态齐全：')
