@@ -214,6 +214,17 @@ export const authService = {
     return !!(user?.email_confirmed_at)
   },
 
+  // Identity check for the one place that has no session to check: owner registration never signs
+  // the user in, so complete-company-setup can only prove who the caller is by confirming the
+  // supplied auth id belongs to a real account whose email has been confirmed. The id is an
+  // unguessable UUID and confirmation proves control of that inbox.
+  async isVerifiedAuthUser(auth_id: string): Promise<boolean> {
+    const admin = getAdminClient()
+    const { data, error } = await admin.auth.admin.getUserById(auth_id)
+    if (error || !data?.user) return false
+    return !!data.user.email_confirmed_at
+  },
+
   async completeCompanySetup(data: {
     user_id: string
     full_name: string
