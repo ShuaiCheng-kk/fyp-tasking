@@ -53,11 +53,14 @@ export default function ResetPasswordPage() {
   useEffect(() => {
     const hash = typeof window !== 'undefined' ? window.location.hash.replace(/^#/, '') : '';
     const params = new URLSearchParams(hash);
-    const errorDescription = params.get('error_description');
+    const search = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams();
+    // PKCE puts the failure in the query string, the implicit flow puts it in the hash.
+    const errorDescription = params.get('error_description') ?? search.get('error_description');
     if (errorDescription) {
       setLinkError(errorDescription.replace(/\+/g, ' '));
       return;
     }
+    const pkceCode = search.get('code');
     let settled = false;
     const accept = (userId: string) => {
       if (settled) return;
@@ -74,15 +77,28 @@ export default function ResetPasswordPage() {
     // which routinely finishes before this effect subscribes. PASSWORD_RECOVERY then fires with no
     // listener attached, and since the client also strips the hash there is nothing left to parse —
     // the page sat on "Verifying reset link…" forever. Read the session it already established.
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) accept(session.user.id);
-    });
+    void (async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user) { accept(session.user.id); return; }
 
-    // Neither path yielded a session and Supabase surfaced no error_description to show, so the
-    // link is unusable — say so instead of spinning indefinitely.
+      // supabaseBrowser uses @supabase/ssr's createBrowserClient, which defaults to the PKCE flow —
+      // so the recovery link arrives as ?code=… and is NOT a session until it is exchanged. Nothing
+      // here ever did that exchange, so PASSWORD_RECOVERY never fired, getSession stayed null, and
+      // the page could only ever end up on the timeout branch. That was the real cause behind both
+      // "Verifying reset link…" forever and the bogus "link has expired".
+      if (!pkceCode || settled) return;
+      const { data, error } = await supabase.auth.exchangeCodeForSession(pkceCode);
+      if (error) { setLinkError(error.message); return; }
+      if (data.session?.user) accept(data.session.user.id);
+    })();
+
+    // Neither path yielded a session and Supabase surfaced no error_description, so something is
+    // wrong — but do NOT call the link expired, because a slow network reaching this branch means
+    // a perfectly good link. Wait long enough that a slow verification isn't mistaken for a dead
+    // one, then describe what actually happened.
     const timer = setTimeout(() => {
-      if (!settled) setLinkError('This reset link could not be verified. Request a new one from the sign-in page.');
-    }, 6000);
+      if (!settled) setLinkError('Could not verify this reset link in time. Check your connection and open the link again, or request a new one.');
+    }, 20000);
 
     return () => { settled = true; clearTimeout(timer); subscription.unsubscribe(); };
   }, []);
@@ -197,7 +213,11 @@ export default function ResetPasswordPage() {
               lineHeight: 1.5,
               marginBottom: '20px',
             }}>
-              This reset link is invalid or has expired. Request a new one from the sign-in page.
+              {/* Show the actual reason. This used to be a hardcoded "invalid or has expired"
+                  regardless of what linkError held, so a slow verification and a genuinely dead
+                  link were indistinguishable — and a working link that merely took a while to
+                  verify was reported to the user as expired. */}
+              {linkError}
             </div>
             <a href="/forgot-password" style={{ fontFamily: fB, fontWeight: 600, fontSize: '0.9375rem', color: '#F97316', textDecoration: 'none' }}>
               Request a new reset link
