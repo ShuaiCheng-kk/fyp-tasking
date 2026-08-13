@@ -1229,13 +1229,14 @@ async function main() {
   // "now"-relative one below instead, so his own Dashboard's Clock In/Break In/Break Out/Clock Out
   // row is genuinely clickable the moment the seed finishes, not a fixed business-hours window
   // that may already be over (or not started) whenever this actually runs.
-  const managerAssignment5 = await assignShift(dashboardAttendanceManagerShift?.id, userIdMap['manager5@test.com'].internalId, ownerUser.id)
-  if (managerAssignment5) dashboardAttendanceAssignments.push({ email: 'manager5@test.com', assignment: managerAssignment5 })
+  //
+  // manager5 (Wendy Ho) is off this one for the same reason. She's David Lim's shift-swap
+  // counterpart, so she already carries the live open-ended shift above — giving her this
+  // business-hours one too put TWO clock rows on her Dashboard (one finished at 5:30 PM, one
+  // still to start), which reads like a bug on camera. Her Operations manager slot stays as an
+  // unassigned Open Shift on the timeline instead.
   const employeeAssignment5 = await assignShift(dashboardAttendanceEmployeeShift?.id, userIdMap['employee5@test.com'].internalId, ownerUser.id)
   if (employeeAssignment5) dashboardAttendanceAssignments.push({ email: 'employee5@test.com', assignment: employeeAssignment5 })
-  if (hasShiftEndedSGT(todayKey, opsShiftTimes.manager[1])) {
-    await clockRecord(dashboardAttendanceAssignments.find(a => a.email === 'manager5@test.com')?.assignment, manager5UserId, { dateStr: todayKey, endStr: opsShiftTimes.manager[1], breakStart: '12:15', breakEnd: '12:45' })
-  }
 
   // employee1's own "click through it yourself" shift (UC49, same idea as Marcus Lee's Step 18
   // CW demo) — no attendance_records row at all, so Clock In is live right away. 2026-08-07: back
