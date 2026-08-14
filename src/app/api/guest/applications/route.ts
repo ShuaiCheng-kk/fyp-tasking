@@ -31,7 +31,10 @@ export async function POST(req: NextRequest) {
   try {
     const application = await workerApplicationService.submitApplication({
       job_id: jobId,
-      user_id: userId,
+      // userId only proves it's this session's own request (accepted in either the auth id or
+      // internal id form the client happened to send) — the service needs the canonical internal
+      // users.id, which the session already resolved.
+      user_id: session.user.id,
       meets_experience_requirement: body.meets_experience_requirement === true,
       additional_note: typeof body.additional_note === 'string' ? body.additional_note : null,
     })
@@ -73,12 +76,14 @@ export async function GET(req: NextRequest) {
     if (resource === 'eligibility') {
       const jobId = searchParams.get('job_id')
       if (!jobId) return NextResponse.json({ success: false, message: 'job_id is required' }, { status: 400 })
-      const result = await workerApplicationService.checkEligibility(jobId, userId)
+      // Same normalization as POST above — userId here may be the auth id form (that's what the
+      // job-board's ApplyJobModal sends), but the service needs the canonical internal users.id.
+      const result = await workerApplicationService.checkEligibility(jobId, session.user.id)
       return NextResponse.json({ success: true, ...result })
     }
 
     const applications =
-      await workerApplicationService.getApplicationsByUser(userId)
+      await workerApplicationService.getApplicationsByUser(session.user.id)
 
     return NextResponse.json({
       success: true,
