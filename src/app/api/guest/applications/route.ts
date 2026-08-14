@@ -56,6 +56,7 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url)
     const userId = searchParams.get('user_id')
+    const resource = searchParams.get('resource')
 
     if (!userId) {
       return NextResponse.json(
@@ -67,6 +68,13 @@ export async function GET(req: NextRequest) {
     if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
     if (userId !== session.user.id && userId !== session.auth_id) {
       return NextResponse.json({ success: false, message: 'You can only view your own applications' }, { status: 403 })
+    }
+
+    if (resource === 'eligibility') {
+      const jobId = searchParams.get('job_id')
+      if (!jobId) return NextResponse.json({ success: false, message: 'job_id is required' }, { status: 400 })
+      const result = await workerApplicationService.checkEligibility(jobId, userId)
+      return NextResponse.json({ success: true, ...result })
     }
 
     const applications =
