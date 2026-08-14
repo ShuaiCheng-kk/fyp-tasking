@@ -9,9 +9,15 @@
  * Casual Worker role: all untouched.
  *
  * What it moves:
- *   · the shift created when the worker accepted their offer  -> today, starting a moment ago
- *   · the supervising employee's own shift for that day        -> today, open-ended
- *   · the job posting's own date fields                        -> today, so detail views agree
+ *   · EVERY worker's shift on the EARLIEST upcoming offer-generated date -> today, starting a
+ *     moment ago. Event Setup & Breakdown alone confirms 5 people (the hero plus 4 fillers), not
+ *     just the hero — a job posting with openings > 1 always can, so this was never a "move one
+ *     shift" problem even though it started as one.
+ *   · the supervising employee's own shift for that day            -> today, open-ended
+ *   · each distinct job posting behind that day's shifts           -> today, so detail views agree
+ *
+ * Only that one earliest date moves. Anything confirmed for a LATER date (Room Cleaning's 16th)
+ * is untouched — that is a separate, not-yet-scripted fast-forward of its own.
  *
  * Run it after the guest has accepted the offer. Running it earlier finds no shift to move.
  */
@@ -41,41 +47,49 @@ const END = toHM(new Date(Date.now() + 8 * 60 * 60000))
 async function main() {
   console.log('\n═══ Fast forward to the job\'s day ═══\n')
 
-  // ── The casual worker's shift ──────────────────────────────────────────────
-  // Created by workerApplicationService the moment the offer was accepted, and tagged with the
-  // posting it came from. That tag is how we find it without guessing.
-  const { data: cwShifts, error: shiftErr } = await supabase
+  // ── Every casual worker's shift on the earliest upcoming date ────────────────
+  // Created by workerApplicationService the moment each offer was accepted, and tagged with the
+  // posting it came from. That tag is how we find them without guessing — but a posting can (and
+  // here does) confirm more than one person, so this has to move all of them, not just [0].
+  const { data: allCwShifts, error: shiftErr } = await supabase
     .from('shifts')
-    .select('id, shift_date, start_time, end_time, source_job_posting_id, department_id')
+    .select('id, shift_date, start_time, end_time, source_job_posting_id, department_id, shift_assignments(users!shift_assignments_user_id_fkey(full_name))')
     .not('source_job_posting_id', 'is', null)
     .gte('shift_date', TODAY_KEY)
     .order('shift_date', { ascending: true })
   if (shiftErr) throw new Error(shiftErr.message)
 
-  if (!cwShifts || cwShifts.length === 0) {
+  if (!allCwShifts || allCwShifts.length === 0) {
     console.error('No upcoming casual-worker shift found.')
     console.error('This runs AFTER the guest accepts their offer, and that acceptance is what creates the shift.\n')
     process.exit(1)
   }
 
-  const shift = cwShifts[0]
-  console.log(`Casual worker shift: ${shift.shift_date} ${shift.start_time}-${shift.end_time}`)
+  const earliestDate = allCwShifts[0].shift_date
+  const cwShifts = allCwShifts.filter(s => s.shift_date === earliestDate)
+  const departmentId = cwShifts[0].department_id
+  console.log(`${cwShifts.length} worker(s) confirmed for ${earliestDate}:`)
 
-  const { error: upErr } = await supabase
-    .from('shifts')
-    .update({ shift_date: TODAY_KEY, start_time: START, end_time: END, is_open_ended: true })
-    .eq('id', shift.id)
-  if (upErr) throw new Error(upErr.message)
-  console.log(`  → moved to ${TODAY_KEY} ${START}, open-ended\n`)
+  for (const shift of cwShifts) {
+    const names = (shift.shift_assignments ?? []).map(a => a.users?.full_name).filter(Boolean).join(', ')
+    const { error: upErr } = await supabase
+      .from('shifts')
+      .update({ shift_date: TODAY_KEY, start_time: START, end_time: END, is_open_ended: true })
+      .eq('id', shift.id)
+    if (upErr) throw new Error(upErr.message)
+    console.log(`  ✓ ${names || shift.id}: ${shift.shift_date} ${shift.start_time} -> ${TODAY_KEY} ${START}, open-ended`)
+  }
+  console.log()
 
-  // ── The job posting's own dates ────────────────────────────────────────────
-  // Detail views read these, so leaving them on the old date makes the posting contradict the
-  // shift it produced.
-  if (shift.source_job_posting_id) {
+  // ── Every distinct job posting behind those shifts ───────────────────────────
+  // Detail views read these dates, so leaving them on the old one makes the posting contradict
+  // the shifts it produced. Usually one posting for the whole group, but not assumed.
+  const jobIds = [...new Set(cwShifts.map(s => s.source_job_posting_id).filter(Boolean))]
+  for (const jobId of jobIds) {
     const { data: job } = await supabase
       .from('job_postings')
       .select('id, title, job_date, job_start_time')
-      .eq('id', shift.source_job_posting_id)
+      .eq('id', jobId)
       .single()
     if (job) {
       await supabase
@@ -95,7 +109,7 @@ async function main() {
     .from('shifts')
     .select('id, shift_date, start_time, end_time')
     .is('source_job_posting_id', null)
-    .eq('department_id', shift.department_id)
+    .eq('department_id', departmentId)
     .gt('shift_date', TODAY_KEY)
     .order('shift_date', { ascending: true })
     .limit(1)
