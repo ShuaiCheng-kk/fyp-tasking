@@ -248,10 +248,15 @@ async function main() {
   console.log('  ✓ guest profile + certificate\n')
 
   // ── Shifts ─────────────────────────────────────────────────────────────────
-  // Two jobs of work here. Today's shifts exist purely so Manager/Employee pages are never in the
-  // "clocked out, read-only" state. The 15th/16th shifts exist so the Supervisor dropdown has
-  // somebody in it when the Manager posts, because a casual worker is never on site unsupervised, so the
-  // posting form refuses to publish without one.
+  // David's own shift today is cosmetic only — the read-only "clocked out" lock (see
+  // useEmployeeClockedOut) is driven purely by the latest attendance_records row, not by whether
+  // a shift exists today, so it stays unlocked either way with zero attendance history.
+  //
+  // Ben deliberately gets NO shift today. /api/shifts/department-employees (which drives the Post
+  // Job wizard's "Available Shift" dropdown) returns every date any Employee in the department has
+  // a shift on, department-wide, with no separate "is this for supervision" flag — so any shift of
+  // Ben's shows up as a postable date. Give him one today and the 14th shows up next to the 15th
+  // and 16th, when the demo only ever wants those two.
   console.log('Step 5: shifts...')
 
   const liveStart = new Date(Date.now() - 45 * 60000)
@@ -263,12 +268,10 @@ async function main() {
     publication_status: 'published',
     is_open_ended: true,
   }).select().single()
-  for (const email of ['manager1@test.com', 'employee1@test.com']) {
-    await supabase.from('shift_assignments').insert({
-      shift_id: todayShift.id, user_id: ids[email].internalId, assigned_by: ids['owner@test.com'].internalId,
-    })
-  }
-  console.log(`  ✓ today ${TODAY_KEY}: David Lim + Ben Seah, open-ended, unclocked`)
+  await supabase.from('shift_assignments').insert({
+    shift_id: todayShift.id, user_id: ids['manager1@test.com'].internalId, assigned_by: ids['owner@test.com'].internalId,
+  })
+  console.log(`  ✓ today ${TODAY_KEY}: David Lim, open-ended, unclocked`)
 
   for (const [dayKey, label] of [[DAY1_KEY, 'One-Off day'], [DAY2_KEY, 'Shift-jobs day']]) {
     const { data: sup } = await supabase.from('shifts').insert({
