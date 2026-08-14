@@ -91,12 +91,13 @@ const HERO_EMAIL = 'guest1@test.com'          // 现场申请岗位的人
 const HIRING_JOB_TITLE = 'Event Crew — Grand Opening'   // AI Assessment 演示用
 const CONFLICT_JOB_TITLE = 'Sunday Banquet Service Crew' // 冲突拦截演示用
 
-// 通过招聘岗位**已经录用并确认**的人 —— 演示开始时他们已经在岗打卡。
-// Hero 现场补上最后一个位置，AI Assign 的候选人就是这 3 个 + Hero = 4 个。
-const CREW_EMAILS = ['casual3@test.com', 'casual4@test.com', 'casual5@test.com']
+// 通过招聘岗位**已经录用并确认**的 4 个人 —— 演示开始时他们已经在岗打卡。
+// 岗位要 5 个人，这 4 个已确认，Owner 打开时就是「还差最后一个」，Hero 现场补位。
+// 补完 AI Assign 的候选人就是 5 个（4 班组 + Hero）。
+const CREW_EMAILS = ['casual3@test.com', 'casual4@test.com', 'casual5@test.com', 'casual6@test.com']
 // Worker Pool 里预先就有的人（跟班组**故意错开**：班组这次干完下班才会进池，
 // 这样「做完一次工就进人才库」这个收尾动作在演示里是真的发生，不是早就发生过）。
-const POOL_EMAILS = ['casual6@test.com', 'casual7@test.com', 'casual8@test.com']
+const POOL_EMAILS = ['casual7@test.com', 'casual8@test.com', 'casual2@test.com']
 // 招聘岗位上还在等的申请人 —— Hero 现场再申请一个，AI Assessment 一共排 6 个。
 const APPLICANT_EMAILS = ['guest2@test.com', 'guest3@test.com', 'guest4@test.com', 'guest5@test.com', 'casual7@test.com']
 
@@ -742,6 +743,87 @@ async function seedWorkerPool(companyId, ownerId, opsDeptId, benId) {
   ok(`Worker Pool 共 ${pooled} 人，结尾「Invite from Pool」直接有人可邀`)
 }
 
+// ─── D9: Employee 页面的 Workload Suggestion + Task Delay Alert ────────────────
+
+// D8 那套是 Manager 层的（Owner 页面看的）。演示不打算展示 Manager，所以这里单独再造一份
+// **Casual Worker 层**的，让 Ben 自己的 Tasks 页就能刷出这两个提示。
+//
+// 两个提示的触发条件完全不同，别混：
+//   Workload Suggestion（getWorkloadRebalancingSuggestions，candidateRole='Casual Worker'）
+//     候选人 = getSupervisedCasualWorkersByEmployee(Ben, 今天)，也就是班组
+//     要求：最重的人分数 > 最轻的人 x2，且最重的人至少 2 条活跃主任务，
+//           且被搬的任务不能是 Review / 带驳回理由的，且接手人当天要有排班
+//   Task Delay Alert（getTaskDelayAlerts）
+//     只看**还停在 Assigned 没人动**的任务，且 (now - created_at) / (due_at - created_at)
+//     超过阈值（默认 50%）。所以要把 created_at 往前挪，不是把 due_at 设成过去。
+async function seedEmployeeSideInsights(companyId, benId, opsDeptId, crew) {
+  console.log('\nD9: Employee 页面的 Workload Suggestion + Task Delay Alert...')
+
+  if (crew.length < 2) { warn('班组不足 2 人，这两个提示都出不来，跳过'); return }
+
+  const overloaded = crew[0]
+  const lightest = crew[1]
+
+  // ── Task Delay Alert：2 条「派下去了但一直没人开始」的任务 ──
+  // created_at 4 小时前、due_at 2 小时后 → 已用掉 67% 的时间，超过 50% 阈值。
+  // 停在 Assigned 是关键：一旦被拖到 In Progress 就不再算延迟了。
+  const stalled = [
+    { title: 'Check function room AV setup', hoursAgo: 4, dueInHours: 2 },
+    { title: 'Count linen stock for tonight', hoursAgo: 5, dueInHours: 1 },
+  ]
+  for (const s of stalled) {
+    await createTask({
+      company_id: companyId, department_id: opsDeptId,
+      title: s.title,
+      description: 'Assigned ahead of the shift and still not picked up — this is what the delay alert flags.',
+      assigned_user_id: overloaded.id, assigned_by: benId,
+      status: 'Assigned', priority: 'High',
+      created_at: new Date(Date.now() - s.hoursAgo * 3600000).toISOString(),
+      due_at: new Date(Date.now() + s.dueInHours * 3600000).toISOString(),
+      task_date: TODAY_KEY,
+    })
+  }
+  ok(`${stalled.length} 条任务停在 Assigned 且已用掉 >50% 时间 → Ben 的 Task Delay Alert 有内容`)
+
+  // ── Workload Suggestion：把活压在一个人身上 ──
+  // 班组是今天才上工的，手上本来是干净的，所以分数完全由这里决定，不用像 D8 那样先测再补。
+  // Urgent(4) x 截止 6 小时内(3) = 12 分/条。压 4 条 = 48 分，其他人 0 分，稳过 2 倍线。
+  const piled = [
+    'Reset banquet hall seating plan',
+    'Restock service station supplies',
+    'Wipe down and polish glassware',
+    'Stage welcome signage at entrance',
+  ]
+  for (const title of piled) {
+    await createTask({
+      company_id: companyId, department_id: opsDeptId,
+      title,
+      description: 'Seeded so one worker is visibly overloaded and the rebalance suggestion has something to move.',
+      assigned_user_id: overloaded.id, assigned_by: benId,
+      status: 'Assigned', priority: 'Urgent',
+      due_at: new Date(Date.now() + 6 * 3600000).toISOString(),
+      // task_date 落在今天：接手人当天必须有排班才搬得动，班组今天都在岗，一定搬得动。
+      task_date: TODAY_KEY,
+    })
+  }
+
+  // 给第二个人一条轻活，画面上不至于「一个人满、其他人全空」那么假。
+  await createTask({
+    company_id: companyId, department_id: opsDeptId,
+    title: 'Brief the floor team on tonight’s run sheet',
+    description: 'A light one, so the board does not read as one person holding literally everything.',
+    assigned_user_id: lightest.id, assigned_by: benId,
+    status: 'Assigned', priority: 'Low',
+    due_at: new Date(Date.now() + 5 * 24 * 3600000).toISOString(),
+    task_date: TODAY_KEY,
+  })
+
+  const overloadedScore = (stalled.length + piled.length) * 12
+  ok(`${overloaded.full_name} 手上 ${stalled.length + piled.length} 条活（约 ${overloadedScore} 分），`
+    + `${lightest.full_name} 1 条，其余 0 条 → Workload Suggestion 必出`)
+  ok('注意：延迟提示只认「还停在 Assigned」的任务，演示时别提前把它们拖走')
+}
+
 // ─── D8: 工作量失衡 + 超时任务 ─────────────────────────────────────────────────
 
 // taskService.taskWorkloadWeight 的复刻：优先级权重 x 截止紧迫度。
@@ -911,6 +993,7 @@ async function main() {
   const { crew } = await seedHiringJob(company.id, owner.id, opsDept.id, employee1.id)
   await seedConflictJob(company.id, owner.id, opsDept.id)
   await seedWorkerPool(company.id, owner.id, opsDept.id, employee1.id)
+  await seedEmployeeSideInsights(company.id, employee1.id, opsDept.id, crew)
   await seedWorkloadImbalance(company.id, owner.id, depts)
 
   const activeWeek = activeSubmissionWeekStart(TODAY, 0, '17:00')
@@ -935,19 +1018,23 @@ async function main() {
   console.log('    Employee  employee1@test.com  Ben Seah       已打卡未下班，班组的主管')
   console.log(`    Guest     ${HERO_EMAIL}     Wei Jie Lim    干净，可现场申请`)
   console.log('')
-  console.log('  完整链路（对应 PPT 六步，全程不用跑脚本）：')
-  console.log('    1 Recruit    Owner 现场发一个岗位，给评委看发布长什么样')
-  console.log(`    2 Assess     Manager 在「${HIRING_JOB_TITLE}」跑 AI Assessment`)
-  console.log(`                 已有 ${crew.length} 人在岗 + 5 个待处理 + Hero 现场申请 = 6 人排名`)
-  console.log('    3 Start work Hero 接受 offer → 变 Casual Worker → **当场就能 Clock In**')
-  console.log(`    4 Assign     Employee 跑 AI Assign，候选人 = 班组 ${crew.length} 人 + Hero（多人分派 + 子任务）`)
-  console.log('                 分屏：Casual Worker 拖卡片 / Employee 打回重做 / 再通过')
-  console.log('    5 End work   Employee 放行下班 → 工人 Clock Out')
-  console.log('    6 Pool       那一刻工人进入 Worker Pool → Owner 发新岗位 → Invite from Pool')
+  console.log('  演示动线（只用 Owner / Guest / Employee 三个角色，不出现 Manager）：')
+  console.log('    ① Owner    用模板现场发「第一个工作」，给评委看发布长什么样')
+  console.log('    ② Guest    Job Board 上看到刚发的那个，但**去申请另一个**：')
+  console.log(`               「${HIRING_JOB_TITLE}」（这个是预置的，已经有人了）`)
+  console.log(`    ③ Owner    打开该岗位：要 5 人、已确认 ${crew.length} 人、还差 1 个`)
+  console.log('               跑 AI Assessment → 6 人排名 → 录用前 3 名')
+  console.log('    ④ Guest    接受 offer → 看到提示 → 重新登录变 Casual Worker')
+  console.log('               填 Payment Info → **当场就能 Clock In** → 给 Ben 发消息')
+  console.log('    ⑤ Employee Ben 打卡 → 回消息 → AI Assign（候选人 = 班组 + Hero）')
+  console.log('               再手动给 Hero 单独派一条')
+  console.log('    ⑥ 分屏     Casual Worker 做任务 → Ben 打回重做 → 再通过')
+  console.log('    ⑦ Employee 同一页就有 Workload Suggestion + Task Delay Alert（D9 已种好）')
+  console.log('    ⑧ Employee 放行下班 → 工人 Clock Out → 那一刻进 Worker Pool')
+  console.log('    ⑨ Owner    发下一个工作 → Invite from Pool')
   console.log('')
   console.log('  额外可选：')
-  console.log(`    · Guest 申请「${CONFLICT_JOB_TITLE}」→ 被跨公司冲突拦下（第 1 步之后插最好）`)
-  console.log('    · Workload Suggestion + Task Delay Alert')
+  console.log(`    · Guest 申请「${CONFLICT_JOB_TITLE}」→ 被跨公司冲突拦下`)
   console.log(`    · Off Day 与 AI Schedule 都排 ${dateKey(activeWeek)} 那一周`)
   console.log('')
   console.log('  已经替你拆掉的雷：')
