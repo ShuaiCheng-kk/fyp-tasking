@@ -2878,9 +2878,14 @@ export default function AttendanceView({ sidebar, basePath, canModifyClockTimes 
                                                 const outTime = rec.record?.modified_clock_out_time ?? rec.record?.clock_out_time
                                                 const clockLabel = (scopeToManagerDepartments || scopeToEmployeeSupervised) ? formatRoundedClockHour : formatClockHour
                                                 const shiftLabel = (scopeToManagerDepartments || scopeToEmployeeSupervised) ? formatRoundedShiftHour : formatShiftHour
-                                                return inTime
-                                                  ? `${clockLabel(inTime)} – ${outTime ? clockLabel(outTime) : shiftLabel(rec.shift.end_time)}`
-                                                  : `${shiftLabel(rec.shift.start_time)} – ${shiftLabel(rec.shift.end_time)}`
+                                                if (!inTime) return `${shiftLabel(rec.shift.start_time)} – ${shiftLabel(rec.shift.end_time)}`
+                                                if (outTime) return `${clockLabel(inTime)} – ${clockLabel(outTime)}`
+                                                // Not clocked out yet — a One-Off Job has no scheduled end at all (clock-out
+                                                // only happens once the supervisor releases it), so falling back to
+                                                // shift.end_time here fabricated a departure time that never happened. Show
+                                                // just the clock-in; a fixed shift still shows its real scheduled end as
+                                                // a hint of when the worker is expected to finish.
+                                                return rec.shift.is_open_ended ? clockLabel(inTime) : `${clockLabel(inTime)} – ${shiftLabel(rec.shift.end_time)}`
                                               })()}
                                             </span>
                                             {/* Mirrors the left-hand status icon's 20x20 slot, so a modified pill

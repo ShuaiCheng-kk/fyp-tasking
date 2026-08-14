@@ -1185,14 +1185,20 @@ async function main() {
     end_time: managerClockEndTime,
     created_by: ownerUser.id,
     publication_status: 'published',
-    // 2026-08-07: back to a real fixed shift (is_open_ended:false) — canClockOut (AttendanceView.tsx)
-    // only unlocks Clock Out once the shift's own end_time actually arrives, and the demo should show
-    // that gating for real rather than bypass it. The 2-minute window above (not 8h) is what makes
-    // that wait demo-sized: Clock In works immediately, Clock Out unlocks ~2 minutes later.
-    is_open_ended: false,
+    // Open-ended so Clock Out never waits: canClockOut() returns true immediately for these, while
+    // a fixed shift blocks it until end_time actually arrives. The Manager attendance demo runs
+    // Clock In, submits a swap and a day off, switches accounts to accept the swap, then comes back
+    // for Break In / Break Out / Clock Out — that whole run has to fit in a few minutes, and a
+    // time-gated Clock Out would strand it waiting.
+    is_open_ended: true,
   })
+  // Wendy Ho shares Operations with David Lim and is the counterpart for his shift-swap demo.
+  // Every Employee/Manager page locks to read-only once its owner has clocked out of their most
+  // recent shift, and it only clears on their next Clock In (see useEmployeeClockedOut) — the
+  // seeded past shifts leave her in exactly that state, so without a live shift of her own she
+  // cannot accept the swap request at all.
   const todayAssignments = []
-  for (const email of ['manager1@test.com']) {
+  for (const email of ['manager1@test.com', 'manager5@test.com']) {
     const assignment = await assignShift(todayInternalShift?.id, userIdMap[email].internalId, ownerUser.id)
     if (assignment) todayAssignments.push({ email, assignment })
   }
@@ -1223,13 +1229,14 @@ async function main() {
   // "now"-relative one below instead, so his own Dashboard's Clock In/Break In/Break Out/Clock Out
   // row is genuinely clickable the moment the seed finishes, not a fixed business-hours window
   // that may already be over (or not started) whenever this actually runs.
-  const managerAssignment5 = await assignShift(dashboardAttendanceManagerShift?.id, userIdMap['manager5@test.com'].internalId, ownerUser.id)
-  if (managerAssignment5) dashboardAttendanceAssignments.push({ email: 'manager5@test.com', assignment: managerAssignment5 })
+  //
+  // manager5 (Wendy Ho) is off this one for the same reason. She's David Lim's shift-swap
+  // counterpart, so she already carries the live open-ended shift above — giving her this
+  // business-hours one too put TWO clock rows on her Dashboard (one finished at 5:30 PM, one
+  // still to start), which reads like a bug on camera. Her Operations manager slot stays as an
+  // unassigned Open Shift on the timeline instead.
   const employeeAssignment5 = await assignShift(dashboardAttendanceEmployeeShift?.id, userIdMap['employee5@test.com'].internalId, ownerUser.id)
   if (employeeAssignment5) dashboardAttendanceAssignments.push({ email: 'employee5@test.com', assignment: employeeAssignment5 })
-  if (hasShiftEndedSGT(todayKey, opsShiftTimes.manager[1])) {
-    await clockRecord(dashboardAttendanceAssignments.find(a => a.email === 'manager5@test.com')?.assignment, manager5UserId, { dateStr: todayKey, endStr: opsShiftTimes.manager[1], breakStart: '12:15', breakEnd: '12:45' })
-  }
 
   // employee1's own "click through it yourself" shift (UC49, same idea as Marcus Lee's Step 18
   // CW demo) — no attendance_records row at all, so Clock In is live right away. 2026-08-07: back
@@ -1331,7 +1338,9 @@ async function main() {
       await clockRecord(assignments.find(a => a.email === row.email)?.assignment, row.userId, { ...row.options, endStr: endTime })
     }
   }
-  console.log(`  ✓ manager1@test.com 今天 ${managerClockDate} ${managerClockStartTime}-${managerClockEndTime} UTC 排班，未打卡 —— 立刻可 Clock In，Clock Out 要等到排班结束（10分钟后）才会解锁`)
+  console.log(`  ✓ manager1@test.com + manager5@test.com 今天 ${managerClockDate} ${managerClockStartTime}-${managerClockEndTime} UTC 同一条开放式班次，均未打卡`)
+  console.log(`      开放式（is_open_ended）=> Clock In 立刻可点，Break In/Out 之后 Clock Out 也立刻可点，全程不用等`)
+  console.log(`      manager5（Wendy Ho）是 David Lim 换班演示的对方 —— 她必须先 Clock In，页面才从「已下班」的只读状态解锁，否则接受不了换班请求`)
 
   if (userIdMap['casual1@test.com']) {
     const casualPreStartStart = new Date(Date.now() + 30 * 60 * 1000)
@@ -1917,6 +1926,27 @@ async function main() {
       expires_at: applicationDeadline,
     },
     {
+      // Second pending posting, from a different Manager and department, so the Owner's approval
+      // queue holds two — one to approve and one to reject in the same sitting.
+      key: 'pending_approval_2',
+      company_id: company.id,
+      department_id: depts[2].id, // Engineering
+      created_by: userIdMap['manager3@test.com'].internalId, // Aaron Wong
+      title: 'Server Room Cabling Assistant',
+      responsibilities: 'Help run and label network cabling during the server room refresh, under supervision of the on-duty engineer.',
+      skills: 'Comfortable working in confined spaces, careful with labelling, able to follow a wiring diagram.',
+      status: 'pending_approval',
+      job_type: 'oneoff',
+      urgency: 'normal',
+      estimated_hours: '6',
+      job_start_time: '10:00',
+      openings: 1,
+      experience_required: 'Preferred',
+      minimum_age: 18,
+      salary_amount: 18,
+      expires_at: applicationDeadline,
+    },
+    {
       key: 'draft',
       company_id: company.id,
       department_id: depts[2].id, // Engineering
@@ -2399,7 +2429,15 @@ async function main() {
   const restDayRotationExceptions = new Set([
     `employee1@test.com|${dateKey(NEXT_MON)}`,
     `employee5@test.com|${dateKey(NEXT_MON)}`,
-    `manager1@test.com|${dateKey(addDays(NEXT_MON, 2))}`, // Wed of the currently open submission week
+  ])
+
+  // manager1 (David Lim) submits a Fixed Day Off live, and the quota is 2 days — so he needs two
+  // days in the open week that are free of BOTH a shift and an off_day_requests row. An auto rest
+  // day writes such a row, which disables the whole Off Day option; a rotation exception writes a
+  // shift instead, and the server refuses to grant a day off on a day he is rostered. Either way
+  // he ends up with nothing selectable. These two dates are left genuinely empty instead.
+  const emptyDayExceptions = new Set([
+    `manager1@test.com|${dateKey(addDays(NEXT_MON, 5))}`, // Sat of the currently open submission week
     `manager1@test.com|${dateKey(addDays(NEXT_MON, 6))}`, // Sun of the currently open submission week
   ])
   let futureRosterCount = 0
@@ -2427,6 +2465,8 @@ async function main() {
           // the rotation, then the weekly rest-day rotation, then the regular roster shift.
           const key = `${email}|${dateKey(dayDate)}`
           if (futureShiftSkipSet.has(key)) continue
+          // No shift and no off-day row — the day stays selectable in the Off Day picker.
+          if (emptyDayExceptions.has(key)) continue
           if (isRestDay(roleIndexes[j], dayDate) && !restDayRotationExceptions.has(key)) {
             await seedRestDayOffRequest(email, dayDate)
             continue
@@ -4075,7 +4115,9 @@ async function main() {
   console.log('    Open             Weekend Event Crew（Operations，oneoff，3 个 pending 申请人：Wei Jie/Priyanka/Kai Xuan，可测 UC44/45/48）')
   console.log('    Open             Warehouse Stock Count（Engineering，shift 型/周末循环班，Amirah Yusof 已获 Offer 待 Accept/Decline，Wei Jie Lim 被 Rejected）')
   console.log('    Open             Retail Promo Day（Marketing，oneoff/urgent/uniform，Ryan Teo 已 Confirmed，Priyanka Das 被 Rejected，Wei Jie Lim 已获 Offer 待 Accept/Decline）')
-  console.log('    Pending Approval Flyer Distribution（Marketing，Manager Rachel Koh 提交，可直接测 UC42）')
+  console.log('    Pending Approval ×2（Owner 队列里一条批准、一条拒绝，同一次演示就能覆盖 UC41+UC42）：')
+  console.log('      · Flyer Distribution（Marketing，Manager Rachel Koh 提交）')
+  console.log('      · Server Room Cabling Assistant（Engineering，Manager Aaron Wong 提交）')
   console.log('    Draft            IT Support（Engineering，可测 UC39/UC40）')
   console.log('    Rejected         Live Chat Support（Customer Support，Manager Fiona Chen 提交，可测 Edit & Resubmit）')
   console.log('  Guest Applications 页（guest1-5@test.com 登录）四种状态齐全：')
@@ -4091,11 +4133,12 @@ async function main() {
   console.log('    Shift Swap：Rachel Koh ↔ Kelvin Ang（对方已同意，Owner/Partner 可直接 Approve/Reject，UC53）')
   console.log('               Ben Seah ↔ Chloe Yeo（Employee 之间，应只在 Manager 队列可见，验证隔离规则）')
   console.log('               David Lim (manager1) ↔ Wendy Ho (manager5)：2 pending/1 approved/1 rejected/1 hidden-awaiting-counterpart（Manager-tier，Owner/Partner 审批，和 employee1 的那一套一一对应，2026-08-02）')
-  console.log('    Off Day 待提交：Wendy Ho 还没有现成 pending/approved 记录，留给她自己测 Submit Fixed Day Off；David Lim 已有 1 条 pending（见下）')
-  console.log('    Off Day 待审批：Ben Seah + Grace Lim 撞同一天（Operations 2 人）—— AI Process 应判 Ben 为 safe、Grace 为 flagged 并给出替代日建议')
+  console.log('    Off Day 待提交（这些人都没有本周记录，可以现场演示 Submit Fixed Day Off）：')
+  console.log('                   David Lim (manager1)、Wendy Ho (manager5)、Ben Seah (employee1)、Grace Lim (employee5)')
+  console.log('    Off Day 待审批：Chloe Yeo + Hannah Lee 撞同一天（Marketing 2 人）—— AI Process 应判 Chloe 为 safe、Hannah 为 flagged 并给出替代日建议')
   console.log('                   Aaron Wong（Manager 自己的申请；Engineering 现有 manager3+manager7 两个 Manager，AI Process 应判 safe）')
-  console.log('                   David Lim（同理，Operations 现有 manager1+manager5 两个 Manager，AI Process 应判 safe——和 employee1 的 pending Off Day 一一对应）')
   console.log('                   Elaine Chua（当天已有排班冲突，仅供手动测试，AI Process 不检查排班）')
+  console.log('                   Sophia Tan（Customer Support，一条不带冲突的正常申请）')
   console.log('  Casual Worker Clock In：casual1@test.com 登录后 Dashboard 有 Same-Day Café Cover Shift（Shift，有 Break In/Out）可直接 Clock In → Break In → Break Out → Clock Out 一路点完（UC49），不需要主管放行')
   console.log('  Templates：Job Template ×2（Standard Event Crew / Weekend Warehouse Shift）+ Shift Template ×2')
   console.log('  Archived Job Posting：Holiday Season Support — Customer Support')

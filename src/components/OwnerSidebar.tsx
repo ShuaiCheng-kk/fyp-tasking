@@ -264,8 +264,21 @@ export default function OwnerSidebar({
             .then(r => r.json())
             .then(data => {
               if (!data.success) return
-              const postings = data.pendingPostings as { status: string }[]
-              setReviewCount(role === 'manager' ? postings.filter(p => p.status === 'rejected').length : postings.length)
+              const postings = data.pendingPostings as { id: string; status: string }[]
+              if (role === 'manager') {
+                // Mirrors RecruitmentView's own seenRejectedJobIds (same localStorage key) — a bare
+                // status==='rejected' count has no way to ever clear on its own, so the dot would
+                // otherwise stay lit forever once a Manager's posting is rejected, even after they
+                // open Recruitment and read the reason.
+                let seen = new Set<string>()
+                try {
+                  const raw = localStorage.getItem(`manager_rejected_jobs_seen_${cid}_${internalId}`)
+                  if (raw) seen = new Set(JSON.parse(raw))
+                } catch {}
+                setReviewCount(postings.filter(p => p.status === 'rejected' && !seen.has(p.id)).length)
+              } else {
+                setReviewCount(postings.length)
+              }
             })
             .catch(() => {})
         }

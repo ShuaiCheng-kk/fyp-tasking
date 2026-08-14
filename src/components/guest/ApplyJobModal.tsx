@@ -2,9 +2,11 @@
 
 // Apply flow (reworked): the application collects only what is specific to THIS job — a
 // relevant-experience answer and an optional note. Skills, certificates, and resume come from
-// the Worker Profile and are snapshotted server-side at submit time. Hard gates (age, job still
-// open, duplicates, schedule conflicts) are enforced by the service; this modal mirrors the age
-// gate up-front so an ineligible worker sees why before typing anything.
+// the Worker Profile and are snapshotted server-side at submit time. Every hard gate (age, job
+// still open, duplicates, schedule conflicts) is enforced by the service at Submit regardless —
+// this modal additionally previews them up front (age computed client-side instantly; the rest
+// via workerApplicationService.checkEligibility) so a blocked worker sees why immediately, rather
+// than filling in a note only to be told no after clicking Submit.
 
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
@@ -13,6 +15,7 @@ import {
   ModalOverlay, ModalBox, ModalHeader,
   modalErrorBoxStyle, modalGhostButtonStyle, modalLabelStyle, modalPrimaryButtonStyle,
 } from '@/components/modal'
+import { useIsCompactViewport } from '@/hooks/useIsCompactViewport'
 
 type Props = {
   jobId: string
@@ -79,6 +82,11 @@ export default function ApplyJobModal({ jobId, onClose, onApplied }: Props) {
 
   const [profile, setProfile] = useState<Profile | null>(null)
   const [job, setJob] = useState<Job | null>(null)
+  // Every hard gate the age check doesn't already cover client-side — mainly the schedule
+  // conflict, but also an expired/closed posting or a duplicate application. Checked read-only
+  // (workerApplicationService.checkEligibility) alongside the profile/job load so a blocked
+  // worker sees why immediately, instead of writing a note and only finding out on Submit.
+  const [eligibility, setEligibility] = useState<{ eligible: boolean; reason: string | null } | null>(null)
   const [meetsRequirement, setMeetsRequirement] = useState(false)
   const [note, setNote] = useState('')
   const [loading, setLoading] = useState(true)
@@ -87,6 +95,9 @@ export default function ApplyJobModal({ jobId, onClose, onApplied }: Props) {
   // Side card with the full job details — toggled by clicking the job title, so the
   // worker can read the posting while filling in the application (the modal stays open).
   const [showJobInfo, setShowJobInfo] = useState(false)
+  // Phone: there's no space beside the modal to dock the job-details card into, so it becomes a
+  // centered full-width sheet over the form instead of a side card.
+  const isPhone = useIsCompactViewport(640)
   const [titleHovered, setTitleHovered] = useState(false)
   // The overlay flex-centers the modal, so its top edge moves with content height — measure it
   // via a marker at the top of the ModalBox so the side card always sits on the same line.
@@ -112,9 +123,10 @@ export default function ApplyJobModal({ jobId, onClose, onApplied }: Props) {
           return
         }
 
-        const [profileRes, jobRes] = await Promise.all([
+        const [profileRes, jobRes, eligibilityRes] = await Promise.all([
           fetch(`/api/guest/profile?user_id=${authId}`),
           fetch(`/api/recruitment?resource=job_posting&job_id=${jobId}`),
+          fetch(`/api/guest/applications?resource=eligibility&user_id=${authId}&job_id=${jobId}`),
         ])
 
         if (profileRes.status === 404) {
@@ -129,12 +141,16 @@ export default function ApplyJobModal({ jobId, onClose, onApplied }: Props) {
 
         const profileData = await profileRes.json()
         const jobData = await jobRes.json()
+        const eligibilityData = await eligibilityRes.json()
 
         if (!profileData.success) throw new Error(profileData.message || 'Failed to load profile')
         if (!jobData.success) throw new Error(jobData.message || 'Failed to load job')
 
         setProfile(profileData.profile)
         setJob(jobData.posting)
+        // A failed eligibility fetch shouldn't itself block applying — fall back to "eligible" and
+        // let the real hard gates at Submit time catch anything this preview missed.
+        setEligibility(eligibilityData.success ? { eligible: eligibilityData.eligible, reason: eligibilityData.reason } : { eligible: true, reason: null })
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load application form')
       } finally {
@@ -147,6 +163,11 @@ export default function ApplyJobModal({ jobId, onClose, onApplied }: Props) {
 
   const age = profile?.date_of_birth ? computeAge(profile.date_of_birth) : null
   const ageIneligible = job?.minimum_age != null && age != null && age < job.minimum_age
+  // Everything else checkEligibility covers (schedule conflict, already applied, posting closed).
+  // Kept separate from ageIneligible rather than merged into one flag, since the age message stays
+  // client-computed and instant — no need to wait on the network for the single most common case.
+  const conflictIneligible = eligibility !== null && !eligibility.eligible
+  const blocked = ageIneligible || conflictIneligible
   // Hard experience gate — mirrors the service-side check: the worker confirms the posting's
   // minimum instead of re-answering how much experience they have.
   const experienceMinimum = job?.experience_required ? HARD_EXPERIENCE_MINIMUMS[job.experience_required] : undefined
@@ -228,6 +249,10 @@ export default function ApplyJobModal({ jobId, onClose, onApplied }: Props) {
               <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', fontSize: '0.875rem', color: '#DC2626' }}>
                 You must be at least {job?.minimum_age} years old to apply for this job.
               </div>
+            ) : conflictIneligible ? (
+              <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', fontSize: '0.875rem', color: '#DC2626' }}>
+                {eligibility?.reason}
+              </div>
             ) : (
               <>
                 {/* Experience requirement — the posting already states its minimum, so instead of
@@ -274,7 +299,7 @@ export default function ApplyJobModal({ jobId, onClose, onApplied }: Props) {
           <button onClick={onClose} disabled={submitting} style={modalGhostButtonStyle}>
             Cancel
           </button>
-          {!loading && !ageIneligible && (
+          {!loading && !blocked && (
             <button
               onClick={handleSubmit}
               disabled={submitting || (!!experienceMinimum && !meetsRequirement)}
@@ -316,9 +341,13 @@ export default function ApplyJobModal({ jobId, onClose, onApplied }: Props) {
         return (
           <div style={{
             // Docked just to the right of the 520px-wide centered modal, top-aligned with it.
-            position: 'fixed', left: 'min(calc(50% + 276px), calc(100vw - 424px))', top: sideCardTop ?? 96,
-            width: 'min(400px, calc(100vw - 48px))', maxHeight: `calc(100vh - ${(sideCardTop ?? 96) + 24}px)`, overflowY: 'auto',
-            background: '#FFFFFF', border: '1px solid #EDE9E3', borderRadius: 20, padding: 28,
+            position: 'fixed',
+            left: isPhone ? 12 : 'min(calc(50% + 276px), calc(100vw - 424px))',
+            top: isPhone ? 16 : (sideCardTop ?? 96),
+            width: isPhone ? 'calc(100vw - 24px)' : 'min(400px, calc(100vw - 48px))',
+            maxHeight: isPhone ? 'calc(100vh - 32px)' : `calc(100vh - ${(sideCardTop ?? 96) + 24}px)`,
+            overflowY: 'auto',
+            background: '#FFFFFF', border: '1px solid #EDE9E3', borderRadius: 20, padding: isPhone ? 18 : 28,
             display: 'flex', flexDirection: 'column', gap: 20, boxShadow: '0 8px 28px rgba(0,0,0,0.12)',
             animation: 'tabFadeIn 0.18s ease-out',
           }}>

@@ -55,6 +55,10 @@ export interface ScoredManager {
   full_name: string
   active_task_count: number
   score: number
+  // One-sentence reason this specific candidate ranked where they did — set on every candidate in
+  // the pool, not just the recommended slice, so a picker showing the full list can explain each
+  // person, not only the AI's top pick(s).
+  reason?: string | null
 }
 
 // Full orchestrated result returned to the client: LLM draft + department resolved + manager ranked.
@@ -66,9 +70,18 @@ export interface AiAssignSuggestion {
   // Polished version of the user's description, or generated from the title if they left it
   // blank — always returned so the review step has something to show alongside the title.
   description: string
+  // Kept for backward compatibility — always candidates[0]?.id, i.e. recommended_ids[0].
   recommended_manager_id: string | null
   reason: string
   candidates: ScoredManager[]
+  // Top pick(s), up to 3, in ranked order — what the Assignee picker pre-selects. Length equals
+  // suggested_headcount, capped by however many real candidates exist.
+  recommended_ids: string[]
+  // How many people the AI thinks this task needs — sub-task count when there are 2+ (one
+  // deliverable per person), otherwise 2 for an Urgent task due soon, else 1. A suggestion the
+  // user can freely override, never a requirement.
+  suggested_headcount: number
+  headcount_reason: string
   sub_tasks: AiAssignStep[]
 }
 

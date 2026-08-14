@@ -70,6 +70,30 @@ export const workerApplicationService = {
     })
   },
 
+  // Same hard gates submitApplication enforces, run read-only so the Apply modal can show a
+  // worker why they can't apply BEFORE they write a note and hit Submit, instead of only finding
+  // out after. Experience is deliberately not gated here (meets_experience_requirement: true) —
+  // the modal already handles that one with its own checkbox and a disabled Submit button, so a
+  // worker who hasn't answered it yet shouldn't be told they're ineligible for it.
+  async checkEligibility(job_id: string, user_id: string): Promise<{ eligible: boolean; reason: string | null }> {
+    if (!job_id || !user_id) return { eligible: true, reason: null }
+
+    const job = await recruitmentRepository.getJobPostingById(job_id)
+    if (!job || job.status !== 'open' || (job.expires_at && new Date(job.expires_at) < new Date())) {
+      return { eligible: false, reason: 'This job is no longer accepting applications' }
+    }
+
+    const existing = await workerApplicationRepository.checkExistingApplication(job_id, user_id)
+    if (existing) return { eligible: false, reason: 'You have already applied for this job.' }
+
+    try {
+      await assertWorkerEligibleForJob({ user_id, job, selfApply: true, meets_experience_requirement: true })
+      return { eligible: true, reason: null }
+    } catch (err) {
+      return { eligible: false, reason: err instanceof Error ? err.message : 'Not eligible for this job' }
+    }
+  },
+
   async getApplicationsByUser(userId: string) {
     if (!userId) throw new Error('User ID is required')
 

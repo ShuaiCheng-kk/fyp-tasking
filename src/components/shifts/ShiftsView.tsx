@@ -3533,9 +3533,15 @@ export default function ShiftsView({ sidebar, basePath, canManageShifts = true, 
                                   >
                                     <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}><ARStatusIcon status={st} /></span>
                                     <span style={{ fontSize: 10.5, fontWeight: 600, color: '#0F172A', whiteSpace: 'nowrap', textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                      {inTime
-                                        ? `${formatClockHour(inTime)} – ${outTime ? formatClockHour(outTime) : formatShiftHour(rec.shift.end_time)}`
-                                        : `${formatShiftHour(rec.shift.start_time)} – ${formatShiftHour(rec.shift.end_time)}`}
+                                      {/* Not clocked out yet — a One-Off Job has no scheduled end at all (clock-out only
+                                          happens once the supervisor releases it), so falling back to shift.end_time here
+                                          fabricated a departure time that never happened. Show just the clock-in; a fixed
+                                          shift still shows its real scheduled end as a hint of when the worker finishes. */}
+                                      {!inTime
+                                        ? `${formatShiftHour(rec.shift.start_time)} – ${formatShiftHour(rec.shift.end_time)}`
+                                        : outTime
+                                          ? `${formatClockHour(inTime)} – ${formatClockHour(outTime)}`
+                                          : rec.shift.is_open_ended ? formatClockHour(inTime) : `${formatClockHour(inTime)} – ${formatShiftHour(rec.shift.end_time)}`}
                                     </span>
                                     <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                       {wasModified && (

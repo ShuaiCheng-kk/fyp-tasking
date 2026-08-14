@@ -56,6 +56,7 @@ export async function POST(req: NextRequest) {
       priority: b.priority,
       want_sub_tasks: b.want_sub_tasks === true,
       task_date: typeof b.task_date === 'string' ? b.task_date : undefined,
+      due_at: typeof b.due_at === 'string' ? b.due_at : undefined,
       department_ids: managerScope?.departmentIds ?? (employeeScope ? [employeeScope.department_id].filter(Boolean) : undefined),
       candidate_role: managerScope ? 'Employee' : employeeScope ? 'Casual Worker' : 'Manager',
       candidate_pool: employeeScope?.candidates,

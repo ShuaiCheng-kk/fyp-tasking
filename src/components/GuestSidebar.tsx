@@ -1,17 +1,24 @@
 'use client'
 
 // Guest User sidebar — same visual system as OwnerSidebar (white, hover-expand, orange active
-// state, logout at the bottom), scoped down to the only two surfaces a Guest User has.
+// state, logout at the bottom), scoped down to the only surfaces a Guest User has.
 
 import { useState } from 'react'
 import { usePathname } from 'next/navigation'
 import Link from 'next/link'
-import { User, ClipboardList, LogOut } from 'lucide-react'
+import { User, ClipboardList, Briefcase, LogOut } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
+import { useIsCompactViewport } from '@/hooks/useIsCompactViewport'
 import { useRealtimeNotifications } from '@/components/realtime/RealtimeNotificationsProvider'
+
+// Phone-width tier — below this, hover has no touch equivalent, so the hover-expand rail is
+// replaced by a fixed bottom tab bar instead (same treatment as CasualSidebar).
+const PHONE_BREAKPOINT = 640
 
 const NAV_ITEMS = [
   { label: 'Applications', Icon: ClipboardList, href: '/guest/applications' },
+  // Public job board on the marketing site — the same page they browse before signing in.
+  { label: 'Job Board',    Icon: Briefcase,     href: '/job-board' },
   { label: 'My Profile',   Icon: User,          href: '/guest/profile' },
 ]
 
@@ -26,6 +33,7 @@ const THEME = {
 export default function GuestSidebar() {
   const pathname = usePathname()
   const [expanded, setExpanded] = useState(false)
+  const isPhone = useIsCompactViewport(PHONE_BREAKPOINT)
   const { counts, ready } = useRealtimeNotifications()
 
   const handleLogout = async () => {
@@ -43,6 +51,46 @@ export default function GuestSidebar() {
     localStorage.removeItem('apply_job_id')
     sessionStorage.removeItem('tasking_session_active')
     window.location.href = '/signout'
+  }
+
+  // Phone — fixed bottom tab bar, same NAV_ITEMS/active logic as the desktop rail, just
+  // icon-over-label per tab and no hover state. Logout lives in guest/layout.tsx's phone header
+  // instead of an extra tab.
+  if (isPhone) {
+    return (
+      <nav
+        style={{
+          position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 20,
+          height: 64, display: 'flex',
+          background: THEME.sidebarBg,
+          borderTop: `1px solid ${THEME.sidebarBorder}`,
+        }}
+      >
+        {NAV_ITEMS.map(({ label, Icon, href }) => {
+          const active = pathname === href
+          const showDot = ready && label === 'Applications' && counts.applications > 0
+          return (
+            <Link
+              key={label}
+              href={href}
+              style={{
+                flex: 1,
+                position: 'relative',
+                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 3,
+                color: active ? THEME.sidebarActiveText : THEME.sidebarText,
+                textDecoration: 'none',
+              }}
+            >
+              <Icon size={20} strokeWidth={active ? 2.4 : 2.1} style={{ flexShrink: 0, color: 'currentColor' }} />
+              {showDot && (
+                <span aria-hidden="true" style={{ position: 'absolute', top: 9, right: 'calc(50% - 18px)', width: 8, height: 8, borderRadius: '50%', background: '#EF4444', border: '1.5px solid #fff' }} />
+              )}
+              <span style={{ fontSize: '0.68rem', fontWeight: active ? 700 : 500 }}>{label}</span>
+            </Link>
+          )
+        })}
+      </nav>
+    )
   }
 
   return (

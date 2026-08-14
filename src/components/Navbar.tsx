@@ -327,13 +327,13 @@ const NavLink = ({
 
 // ─── Mobile menu link (dark text on white) ────────────────────────────────────
 
-const MobileNavLink = ({ label, href, onClick }: { label: string; href: string; onClick: () => void }) => (
+const MobileNavLink = ({ label, href, onClick, indented = false }: { label: string; href: string; onClick: () => void; indented?: boolean }) => (
   <Link
     href={href}
     onClick={onClick}
     style={{
       display: 'block',
-      padding: '12px 20px',
+      padding: indented ? '12px 20px 12px 34px' : '12px 20px',
       color: '#1C1917',
       fontSize: '0.9375rem',
       fontFamily: 'var(--font-body)',
@@ -343,6 +343,24 @@ const MobileNavLink = ({ label, href, onClick }: { label: string; href: string; 
   >
     {label}
   </Link>
+);
+
+// Non-navigating group heading for the mobile menu — the counterpart of a desktop mega-menu
+// trigger, which opens a submenu rather than going anywhere itself.
+const MobileNavGroupLabel = ({ label }: { label: string }) => (
+  <div
+    style={{
+      padding: '14px 20px 8px',
+      color: '#A8A29E',
+      fontSize: '0.75rem',
+      fontFamily: 'var(--font-body)',
+      fontWeight: 700,
+      letterSpacing: '0.06em',
+      textTransform: 'uppercase',
+    }}
+  >
+    {label}
+  </div>
 );
 
 const DASHBOARD_ROUTE_BY_ROLE: Record<string, string> = {
@@ -613,18 +631,23 @@ export default function Navbar({ theme = 'dark' }: { theme?: 'dark' | 'light' })
           background: '#FFFFFF',
           borderTop: '1px solid #F0E8D8',
           overflow: 'hidden',
-          maxHeight: mobileOpen ? '600px' : '0',
+          // Cap only exists to animate the collapse — it must clear the tallest the menu can get
+          // (11 rows + the Features group label + the CTA row), or the last items get cut off.
+          maxHeight: mobileOpen ? '760px' : '0',
           transition: 'max-height 0.35s ease',
         }}
       >
-        <MobileNavLink label="Features" href="/products" onClick={close} />
-        <MobileNavLink label="Shift Management" href="/products/shift-management" onClick={close} />
-        <MobileNavLink label="Task Management" href="/products/task-management" onClick={close} />
-        <MobileNavLink label="Company Management" href="/products/team-management" onClick={close} />
-        <MobileNavLink label="Communication" href="/products/communication" onClick={close} />
-        <MobileNavLink label="Recruitment" href="/products/recruitment" onClick={close} />
-        <MobileNavLink label="Attendance" href="/products/attendance" onClick={close} />
-        <MobileNavLink label="Reports & Insights" href="/products/reports-insights" onClick={close} />
+        {/* "Features" is a mega-menu trigger on desktop (ProductsMegaMenu), never a link — the
+            module pages below ARE that menu. It used to point at /products here, which is an
+            orphaned overview page no other surface links to. */}
+        <MobileNavGroupLabel label="Features" />
+        <MobileNavLink label="Shift Management" href="/products/shift-management" onClick={close} indented />
+        <MobileNavLink label="Task Management" href="/products/task-management" onClick={close} indented />
+        <MobileNavLink label="Company Management" href="/products/team-management" onClick={close} indented />
+        <MobileNavLink label="Communication" href="/products/communication" onClick={close} indented />
+        <MobileNavLink label="Recruitment" href="/products/recruitment" onClick={close} indented />
+        <MobileNavLink label="Attendance" href="/products/attendance" onClick={close} indented />
+        <MobileNavLink label="Reports & Insights" href="/products/reports-insights" onClick={close} indented />
         <MobileNavLink label="Industries" href="/industries" onClick={close} />
         <MobileNavLink label="Pricing" href="/pricing" onClick={close} />
         <MobileNavLink label="Job Board" href="/job-board" onClick={close} />

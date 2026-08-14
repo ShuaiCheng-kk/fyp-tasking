@@ -2,12 +2,19 @@
 
 import { createContext, useContext, useEffect, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
+import { LogOut } from 'lucide-react'
+import { createBrowserClient } from '@supabase/ssr'
 import CasualSidebar from '@/components/CasualSidebar'
 import GuestSidebar from '@/components/GuestSidebar'
+import { useIsCompactViewport } from '@/hooks/useIsCompactViewport'
 import { useReloadOnBfcacheRestore } from '@/hooks/useReloadOnBfcacheRestore'
 import type { WorkerProfile } from '@/types/WorkerProfile'
 
 type WorkerRole = 'Guest User' | 'Casual Worker'
+
+// Below this the sidebar rail becomes a fixed bottom tab bar (see GuestSidebar/CasualSidebar) and
+// Logout moves into a slim top bar, since a hover-expand rail has no touch equivalent.
+const PHONE_BREAKPOINT = 640
 
 const guestAllowedRoutes = [
   '/guest/applications',
@@ -31,11 +38,27 @@ export default function WorkerLayout({
 }) {
   const router = useRouter()
   const pathname = usePathname()
+  const isPhone = useIsCompactViewport(PHONE_BREAKPOINT)
   useReloadOnBfcacheRestore()
 
   const [role, setRole] = useState<WorkerRole | null>(null)
   const [profile, setProfile] = useState<WorkerProfile | null>(null)
   const [loading, setLoading] = useState(true)
+
+  const handleLogout = async () => {
+    const supabase = createBrowserClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    )
+    await supabase.auth.signOut()
+    localStorage.removeItem('tasking_user_id')
+    localStorage.removeItem('tasking_user_role')
+    localStorage.removeItem('tasking_company_id')
+    localStorage.removeItem('tasking_active_session')
+    localStorage.removeItem('apply_job_id')
+    sessionStorage.removeItem('tasking_session_active')
+    window.location.href = '/signout'
+  }
 
   useEffect(() => {
     const loadRole = async () => {
@@ -108,23 +131,35 @@ export default function WorkerLayout({
     return <main style={{ padding: 40 }}>Loading...</main>
   }
 
-  if (role === 'Guest User') {
-    return (
-      <div style={{ height: '100vh', overflow: 'hidden', background: '#F9FAFB' }}>
-        <GuestSidebar />
-
-        <main style={{ marginLeft: 64, height: '100vh', minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-          <WorkerProfileContext.Provider value={profile}>{children}</WorkerProfileContext.Provider>
-        </main>
-      </div>
-    )
-  }
-
   return (
     <div style={{ height: '100vh', overflow: 'hidden', background: '#F9FAFB' }}>
-      <CasualSidebar />
+      {role === 'Guest User' ? <GuestSidebar /> : <CasualSidebar />}
 
-      <main style={{ marginLeft: 64, height: '100vh', minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+      {/* Phone — the sidebar is a bottom tab bar down here, so Logout gets its own slim top bar
+          (same shell as casual/layout.tsx). */}
+      {isPhone && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, zIndex: 20, height: 44,
+          display: 'flex', alignItems: 'center', justifyContent: 'flex-end', padding: '0 14px',
+          background: '#FFFFFF', borderBottom: '1px solid #E5E7EB',
+        }}>
+          <button
+            type="button"
+            onClick={handleLogout}
+            aria-label="Logout"
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, border: 'none', background: 'none', color: '#EF4444', cursor: 'pointer' }}
+          >
+            <LogOut size={18} strokeWidth={2} />
+          </button>
+        </div>
+      )}
+
+      {/* Phone: the 44px top bar and 64px bottom tab bar are folded INTO the same one-viewport box
+          (boxSizing:border-box), so the fixed bars can never push the document past 100vh. */}
+      <main style={isPhone
+        ? { marginLeft: 0, height: '100vh', minHeight: 0, overflow: 'hidden', boxSizing: 'border-box', paddingTop: 44, paddingBottom: 64, display: 'flex', flexDirection: 'column' }
+        : { marginLeft: 64, height: '100vh', minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
+      >
         <WorkerProfileContext.Provider value={profile}>{children}</WorkerProfileContext.Provider>
       </main>
     </div>

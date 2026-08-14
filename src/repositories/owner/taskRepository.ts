@@ -35,12 +35,15 @@ export const taskRepository = {
       .select()
       .single()
     if (error) throw new Error(error.message)
-    // Keeps task_assignments in sync with the primary assignee for every call site (sub-tasks,
-    // duplicates, recurring occurrences) without any of them needing to know task_assignments exists.
-    if (input.assigned_user_id) {
+    // Keeps task_assignments in sync with every assignee for every call site (sub-tasks,
+    // duplicates, recurring occurrences) without any of them needing to know task_assignments
+    // exists. assigned_user_ids is the full set (1+); every other caller only ever sets
+    // assigned_user_id, which this treats as that same set with one entry.
+    const assigneeIds = input.assigned_user_ids?.length ? input.assigned_user_ids : (input.assigned_user_id ? [input.assigned_user_id] : [])
+    if (assigneeIds.length > 0) {
       const { error: assignError } = await supabase
         .from('task_assignments')
-        .insert({ task_id: data.id, user_id: input.assigned_user_id, assigned_by: input.assigned_by ?? null })
+        .insert(assigneeIds.map(user_id => ({ task_id: data.id, user_id, assigned_by: input.assigned_by ?? null })))
       if (assignError) throw new Error(assignError.message)
     }
     return data as Task
@@ -83,8 +86,8 @@ export const taskRepository = {
   // department_ids is a security-scoping filter (e.g. a Manager's own departments), distinct from
   // any single department_id a caller applies afterwards as a UI-level "show just this one" filter.
   // assigned_user_id is the inverse of assigned_by — "tasks assigned TO this person" (Manager Tasks
-  // page's My Tasks tab) rather than "tasks assigned BY this person" — the two are never combined
-  // by any current caller, but nothing here prevents it.
+  // page's My Tasks tab, Employee's own My Tasks board) rather than "tasks assigned BY this
+  // person" — the two are never combined by any current caller, but nothing here prevents it.
   async getTasksByCompany(company_id: string, assigned_by?: string | string[], department_ids?: string[], assigned_user_id?: string): Promise<Task[]> {
     let query = supabase
       .from('tasks')
@@ -102,7 +105,30 @@ export const taskRepository = {
       query = query.in('department_id', department_ids)
     }
     if (assigned_user_id) {
-      query = query.eq('assigned_user_id', assigned_user_id)
+      // A multi-assignee task's OTHER assignees never appear in tasks.assigned_user_id (that
+      // column only ever holds the first/primary one) — matching on it alone silently hid this
+      // person's own "My Tasks" board entries for anything they were the 2nd/3rd assignee on.
+      const { data: memberOf, error: memberErr } = await supabase
+        .from('task_assignments')
+        .select('task_id')
+        .eq('user_id', assigned_user_id)
+      if (memberErr) throw new Error(memberErr.message)
+      const directTaskIds = [...new Set((memberOf ?? []).map(r => r.task_id as string))]
+      if (directTaskIds.length === 0) return []
+      // A sub-task inherits only its PRIMARY assignee, even when its parent has several
+      // co-assignees (assignTaskWithSubTasks/editTask) — so a non-primary co-assignee would
+      // otherwise never see the sub-task at all, breaking both its visibility and the parent's own
+      // sub-task-completion gate (their board has no way to know there's unfinished work left,
+      // since the one sub-task proving it isn't done never shows up for them). Pull in every
+      // sub-task whose PARENT this user is directly assigned to as well.
+      const { data: subTaskRows, error: subErr } = await supabase
+        .from('tasks')
+        .select('id')
+        .in('parent_task_id', directTaskIds)
+      if (subErr) throw new Error(subErr.message)
+      const taskIds = [...new Set([...directTaskIds, ...(subTaskRows ?? []).map(r => r.id as string)])]
+      if (taskIds.length === 0) return []
+      query = query.in('id', taskIds)
     }
     const { data, error } = await query.order('created_at', { ascending: false })
     if (error) throw new Error(error.message)
@@ -211,16 +237,42 @@ export const taskRepository = {
     }
   },
 
-  async getTasksByShiftForCompany(company_id: string, shift_id: string): Promise<Task[]> {
+  // Casual Worker's Task Board is scoped to "today's job", not literally this one shift row: when a
+  // task has several assignees, each of them normally has their OWN shift_assignments row for the
+  // same job occurrence (a separate shift_id per person, even sharing the same date/time/
+  // department) — matching tasks.shift_id against exactly this one shift_id only ever surfaced the
+  // task for whichever assignee happened to share that exact row, leaving every other co-assignee
+  // looking at an empty board. Resolve the shift's own calendar date and match on that instead, plus
+  // real assignee membership (attachAssignedUserIds), not just the single primary column.
+  async getTasksByShiftForCompany(company_id: string, shift_id: string, assigned_user_id?: string): Promise<Task[]> {
+    const { data: shift, error: shiftError } = await supabase
+      .from('shifts')
+      .select('shift_date')
+      .eq('id', shift_id)
+      .single()
+    if (shiftError) throw new Error(shiftError.message)
+
     const { data, error } = await supabase
       .from('tasks')
       .select('*')
       .eq('company_id', company_id)
-      .eq('shift_id', shift_id)
+      .eq('task_date', (shift as { shift_date: string }).shift_date)
       .eq('is_archived', false)
       .order('created_at', { ascending: true })
     if (error) throw new Error(error.message)
-    return this.attachAssignedByNames((data ?? []) as Task[])
+
+    const tasks = await this.attachAssignedByNames(await this.attachAssignedUserIds((data ?? []) as Task[]))
+    if (!assigned_user_id) return tasks
+
+    const directIds = new Set(
+      tasks
+        .filter(t => t.assigned_user_id === assigned_user_id || (t.assigned_user_ids ?? []).includes(assigned_user_id))
+        .map(t => t.id),
+    )
+    // Same reasoning as getTasksByCompany above: a sub-task inherits only its PRIMARY assignee, so
+    // a non-primary co-assignee needs their parent's other sub-tasks pulled in too, or their board
+    // never shows the one unfinished sub-task that's actually blocking Review.
+    return tasks.filter(t => directIds.has(t.id) || (!!t.parent_task_id && directIds.has(t.parent_task_id)))
   },
 
   async getSubTasks(parent_task_id: string): Promise<Task[]> {
@@ -360,6 +412,22 @@ export const taskRepository = {
     return [...new Set((data ?? []).map((row: { user_id: string }) => row.user_id))]
   },
 
+  // Named version of getSupervisedCasualWorkerIds, for the Workload Suggestion candidate pool at
+  // the Employee tier. Mirrors getManagersByDepartment / getEmployeesByDepartment, except the pool
+  // is not a department roster: a Casual Worker belongs to an Employee only for the day they share
+  // a shift, so the supervisor + today pairing above IS the membership.
+  async getSupervisedCasualWorkersByEmployee(employee_id: string, company_id: string, department_id: string): Promise<{ id: string; full_name: string }[]> {
+    const workerIds = await this.getSupervisedCasualWorkerIds(employee_id, company_id, department_id)
+    if (workerIds.length === 0) return []
+    const { data, error } = await supabase
+      .from('users')
+      .select('id, full_name')
+      .eq('company_id', company_id)
+      .in('id', workerIds)
+    if (error) throw new Error(error.message)
+    return (data ?? []) as { id: string; full_name: string }[]
+  },
+
   async getShiftById(id: string): Promise<Shift | null> {
     const { data, error } = await supabase
       .from('shifts')
@@ -398,9 +466,14 @@ export const taskRepository = {
       .select()
       .single()
     if (error) throw new Error(error.message)
-    // Reassigning the primary (e.g. today's single-select "Assign To" edit) keeps task_assignments
-    // in sync automatically, the same way createTask does on insert.
-    if ('assigned_user_id' in input) {
+    // Reassigning keeps task_assignments in sync automatically, the same way createTask does on
+    // insert. assigned_user_ids (the full desired set) takes priority when the caller provides
+    // it — falling back to the single assigned_user_id column would silently collapse an existing
+    // multi-assignee task down to just its primary on any edit that didn't explicitly re-send
+    // every id, which is exactly the bug this once was.
+    if (input.assigned_user_ids !== undefined) {
+      await this.replaceTaskAssignees(id, input.assigned_user_ids.filter(Boolean), assignedBy ?? null)
+    } else if ('assigned_user_id' in input) {
       await this.replaceTaskAssignees(id, input.assigned_user_id ? [input.assigned_user_id] : [], assignedBy ?? null)
     }
     return data as Task
@@ -564,16 +637,23 @@ export const taskRepository = {
     return (data ?? []) as Task[]
   },
 
+  // Workload lookup for AI Assign's ranking. Must read task_assignments, not the single
+  // assigned_user_id column: a candidate who's only a secondary assignee on a multi-assignee task
+  // (assigned_user_id always mirrors just the first id) would otherwise look permanently idle and
+  // keep getting re-recommended over people with a genuinely empty workload.
   async getActiveTasksByAssignees(user_ids: string[]): Promise<{ assigned_user_id: string; priority: string | null; due_at: string | null }[]> {
     if (user_ids.length === 0) return []
     const { data, error } = await supabase
-      .from('tasks')
-      .select('assigned_user_id, priority, due_at')
-      .in('assigned_user_id', user_ids)
-      .eq('is_archived', false)
-      .neq('status', 'Complete')
+      .from('task_assignments')
+      .select('user_id, tasks!inner(priority, due_at, is_archived, status)')
+      .in('user_id', user_ids)
+      .eq('tasks.is_archived', false)
+      .neq('tasks.status', 'Complete')
     if (error) throw new Error(error.message)
-    return (data ?? []) as { assigned_user_id: string; priority: string | null; due_at: string | null }[]
+    return (data ?? []).map((row: { user_id: string; tasks: { priority: string | null; due_at: string | null } | { priority: string | null; due_at: string | null }[] }) => {
+      const task = Array.isArray(row.tasks) ? row.tasks[0] : row.tasks
+      return { assigned_user_id: row.user_id, priority: task?.priority ?? null, due_at: task?.due_at ?? null }
+    })
   },
 
   // Task Delay Alert threshold — one row per company; null means the company never customised it.

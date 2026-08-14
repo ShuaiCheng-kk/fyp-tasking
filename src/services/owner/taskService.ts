@@ -36,17 +36,19 @@ export const taskService = {
     if (!input.company_id || !input.department_id || !input.title?.trim()) {
       throw new Error('company_id, department_id, and title are required')
     }
-    // A task belongs to exactly one assignee. assigned_user_ids is still accepted as a
-    // single-element alias for assigned_user_id, but 2+ ids are rejected here so the rule holds
-    // even for callers that bypass the UI and hit the API directly.
-    const assigneeIds = input.assigned_user_ids?.filter(Boolean) ?? []
-    if (assigneeIds.length > 1) {
-      throw new Error('A task can only be assigned to one person')
+    // A top-level task can go to more than one person (UC19/UC20's AI headcount suggestion) — a
+    // sub-task stays single-assignee, inherited from its parent below, since "who does this one
+    // deliverable" doesn't benefit from a crowd the way the parent's overall body of work might.
+    // assigned_user_id is kept as the first id, the "primary" assignee existing single-assignee
+    // logic elsewhere (assigner permission checks, delay-alert scoring, etc.) still reads.
+    const assigneeIds = [...new Set((input.assigned_user_ids ?? (input.assigned_user_id ? [input.assigned_user_id] : [])).filter(Boolean))]
+    if (assigneeIds.length > 1 && input.parent_task_id) {
+      throw new Error('A sub-task can only be assigned to one person')
     }
-    if (assigneeIds.length === 1) {
-      input = { ...input, assigned_user_id: assigneeIds[0] }
+    if (assigneeIds.length > 0) {
+      input = { ...input, assigned_user_id: assigneeIds[0], assigned_user_ids: assigneeIds }
     }
-    if (!input.assigned_user_id && !input.parent_task_id) {
+    if (assigneeIds.length === 0 && !input.parent_task_id) {
       throw new Error('A task must be assigned to a user')
     }
     await validateTaskAssignment(input)
@@ -107,14 +109,12 @@ export const taskService = {
     if (!id) throw new Error('Task id is required')
     const existing = await assertIsTaskOwner(id, actingUserId)
     assertTaskIsActive(existing, 'edit')
-    // Same single-assignee rule as assignTask — assigned_user_ids is only a one-element alias
-    // for assigned_user_id, and an edit can reassign the task but never unassign it.
+    // Same multi-assignee shape as assignTask — an edit can reassign the task (to one person or
+    // several) but never unassign it entirely. assigned_user_id stays the first id, the primary
+    // existing single-assignee logic elsewhere still reads.
     const assigneeIds = input.assigned_user_ids?.filter(Boolean) ?? null
-    if (assigneeIds && assigneeIds.length > 1) {
-      throw new Error('A task can only be assigned to one person')
-    }
     if (assigneeIds) {
-      input = { ...input, assigned_user_id: assigneeIds[0] ?? null }
+      input = { ...input, assigned_user_id: assigneeIds[0] ?? null, assigned_user_ids: assigneeIds }
     }
     if (existing.parent_task_id === null && input.assigned_user_id === null) {
       throw new Error('A task must be assigned to a user')
@@ -439,9 +439,14 @@ export const taskService = {
     // path can therefore never move a Review card, and can never reach Complete on its own.
     const existing = await taskRepository.getTaskById(id)
     // Unlike edit/delete/duplicate this is deliberately not assigner-only (the assignee drags
-    // their own card), but it must still stay inside the caller's own company.
+    // their own card), but it must still stay inside the caller's own company. A Casual Worker's
+    // own company_id column is always null by design (they work across companies) — the
+    // equivalent boundary for them is "is this actually one of my own assigned tasks", which is
+    // tighter than the plain company match everyone else gets, not looser.
     const actingUser = actingUserId ? await taskRepository.getUserById(actingUserId) : null
-    if (!actingUser || actingUser.company_id !== existing.company_id) {
+    const isCasualAssignee = actingUser?.role === 'Casual Worker'
+      && (existing.assigned_user_id === actingUser.id || (existing.assigned_user_ids ?? []).includes(actingUser.id))
+    if (!actingUser || (actingUser.company_id !== existing.company_id && !isCasualAssignee)) {
       throw new Error('You can only update tasks in your own company')
     }
     if (existing.status === 'Review') {
@@ -449,6 +454,16 @@ export const taskService = {
     }
     if (status === 'Complete') {
       throw new Error('Tasks reach Complete only when the user who assigned them approves the review')
+    }
+    // Review means "ready for the assigner to check" — an unticked sub-task means the checklist
+    // itself says the work isn't actually done yet. The client-side drag boards (CasualTaskBoard,
+    // EmployeeMyTasksBoard, TasksView's My Tasks) already gate this on drop; this is the real
+    // enforcement, since all three share this one endpoint.
+    if (status === 'Review') {
+      const subTasks = await taskRepository.getSubTasks(id)
+      if (subTasks.some(s => !s.is_completed)) {
+        throw new Error('All sub-tasks must be completed before this task can move to Review')
+      }
     }
     return taskRepository.updateTask(id, { status })
   },
@@ -578,9 +593,9 @@ export const taskService = {
     return taskRepository.getTasksByShift(shift_id)
   },
 
-  async getTasksByCompanyShift(company_id: string, shift_id: string): Promise<Task[]> {
+  async getTasksByCompanyShift(company_id: string, shift_id: string, assigned_user_id?: string): Promise<Task[]> {
     if (!company_id || !shift_id) throw new Error('company_id and shift_id are required')
-    return taskRepository.getTasksByShiftForCompany(company_id, shift_id)
+    return taskRepository.getTasksByShiftForCompany(company_id, shift_id, assigned_user_id)
   },
 
   async getTodayActivityFeed(company_id: string): Promise<ActivityFeedEvent[]> {
@@ -620,8 +635,18 @@ export const taskService = {
     department_id?: string,
     assigned_by?: string | string[],
     scopeDepartmentIds?: string[],
-    candidateRole: 'Manager' | 'Employee' = 'Manager',
+    candidateRole: 'Manager' | 'Employee' | 'Casual Worker' = 'Manager',
+    // Required for candidate_role 'Casual Worker' — that pool is defined by who supervises whom
+    // today, not by department membership, so it can't be derived from department_id alone.
+    supervisorEmployeeId?: string,
   ): Promise<TaskWorkloadSuggestion[]> {
+    // The Casual Worker pool is defined by the supervisor + today pairing, so without a supervisor
+    // there is nothing to compare. Carrying on regardless would still produce a suggestion, since
+    // the scoring loop below adds any task's assignee to the pool whether or not they came from
+    // the candidate list, which would let an Employee rebalance across workers they don't
+    // supervise. The one-level-down assignment rule forbids that, so refuse outright.
+    if (candidateRole === 'Casual Worker' && !supervisorEmployeeId) return []
+
     const activeTasks = (await taskRepository.getTasksByCompany(company_id, assigned_by, scopeDepartmentIds))
       .filter(task => task.status !== 'Complete' && task.parent_task_id === null && task.assigned_user_id)
       .filter(task => !department_id || task.department_id === department_id)
@@ -642,9 +667,11 @@ export const taskService = {
     const suggestionsByDept = await Promise.all(departmentIds.map(async (deptId): Promise<TaskWorkloadSuggestion | null> => {
       const scores = new Map<string, number>()
       const taskCounts = new Map<string, number>()
-      const candidates = candidateRole === 'Employee'
-        ? await taskRepository.getEmployeesByDepartment(company_id, deptId)
-        : await taskRepository.getManagersByDepartment(company_id, deptId)
+      const candidates = candidateRole === 'Casual Worker'
+        ? await taskRepository.getSupervisedCasualWorkersByEmployee(supervisorEmployeeId!, company_id, deptId)
+        : candidateRole === 'Employee'
+          ? await taskRepository.getEmployeesByDepartment(company_id, deptId)
+          : await taskRepository.getManagersByDepartment(company_id, deptId)
       for (const candidate of candidates) scores.set(candidate.id, 0)
 
       for (const task of activeTasks) {
@@ -950,7 +977,15 @@ function computeDeadlineFromRule(taskDate: string, rule: TaskDeadlineRule): stri
 async function validateAssignee(creator: User | null, assigneeId: string, input: TaskInput): Promise<void> {
   const assignee = await taskRepository.getUserById(assigneeId)
   if (!assignee) throw new Error('Selected assignee not found')
-  if (assignee.company_id !== input.company_id) throw new Error('Selected assignee does not belong to this company')
+  // A Casual Worker's users.company_id is always null — they can work for more than one company,
+  // so there's no single row to match against (see casualworker_departments, the real record of
+  // which companies they've worked for). Checking it here the same way as every other role would
+  // reject every Casual Worker assignee outright; their real company gate is the candidate pool
+  // itself (getSupervisedCasualWorkerIds only returns someone this Employee actually supervises
+  // TODAY, via a real shift in this company).
+  if (assignee.role !== 'Casual Worker' && assignee.company_id !== input.company_id) {
+    throw new Error('Selected assignee does not belong to this company')
+  }
 
   if (!creator || creator.role === 'Owner' || creator.role === 'Partner') {
     if (assignee.role !== 'Manager') {
@@ -996,8 +1031,13 @@ async function validateAssignee(creator: User | null, assigneeId: string, input:
 async function validateTaskAssignment(input: TaskInput): Promise<void> {
   const creator = input.assigned_by ? await taskRepository.getUserById(input.assigned_by) : null
 
-  if (input.assigned_user_id) {
-    await validateAssignee(creator, input.assigned_user_id, input)
+  // Every candidate is a real assignment, not just the primary — each must independently clear
+  // the same role/department/company gates (a Manager can't slip a second assignee in from
+  // outside their own department just because the first one validated). Almost always one id;
+  // 2+ only ever comes from assignTask's own multi-assignee path.
+  const assigneeIds = input.assigned_user_ids?.length ? input.assigned_user_ids : (input.assigned_user_id ? [input.assigned_user_id] : [])
+  for (const assigneeId of assigneeIds) {
+    await validateAssignee(creator, assigneeId, input)
   }
 
   if (input.shift_id) {

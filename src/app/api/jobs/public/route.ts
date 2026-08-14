@@ -36,10 +36,17 @@ export async function GET(req: NextRequest) {
       ? (data ?? []).filter((row: any) => !blockingCompanyIds.includes(row.company_id))
       : (data ?? [])
 
+    // So the board can hide/replace "Apply Now" for a posting this worker already applied to,
+    // instead of only finding out after opening the apply modal.
+    const appliedJobIds = user_id
+      ? await workerApplicationRepository.getAppliedJobIds(user_id, visible.map((row: any) => row.id))
+      : new Set<string>()
+
     const jobs = visible.map((row: any) => {
       const { departments, companies, ...rest } = row
       return {
         ...rest,
+        already_applied: appliedJobIds.has(row.id),
         department_name: Array.isArray(departments)
           ? (departments[0]?.name ?? null)
           : (departments?.name ?? null),

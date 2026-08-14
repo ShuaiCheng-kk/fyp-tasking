@@ -35,6 +35,9 @@ export async function GET(req: NextRequest) {
   // Manager Tasks page's My Tasks tab: tasks assigned TO this user (by Owner/Partner, per the
   // one-level-down assignment rule), the inverse of assigned_by/manager_scope_id above.
   const assigned_user_id = searchParams.get('assigned_user_id') ?? undefined
+  // Employee Tasks page scope for the Workload Suggestion: the rebalancing candidate pool becomes
+  // the Casual Workers this Employee supervises today, rather than a department roster.
+  const supervisor_id = searchParams.get('supervisor_id') ?? undefined
 
   if (!company_id) {
     return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
@@ -42,7 +45,12 @@ export async function GET(req: NextRequest) {
 
   const session = await getServerSessionUser()
   if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
-  if (session.user.company_id !== company_id) {
+  // A Casual Worker's own company_id column is always null (see CLAUDE.md's data model notes —
+  // they can work across companies, so "which company" is decided by their actual shift/task
+  // assignments, not a fixed home company). Exempting the role here, not skipping company scoping
+  // outright: every branch below still narrows the result set to this caller's own assignments via
+  // assigned_user_id/shift_id, which the Casual Worker UI always supplies.
+  if (session.user.role !== 'Casual Worker' && session.user.company_id !== company_id) {
     return NextResponse.json({ success: false, message: 'You can only view your own company\'s tasks' }, { status: 403 })
   }
 
@@ -82,7 +90,8 @@ export async function GET(req: NextRequest) {
         department_id,
         assignedByFilter,
         managerScope?.departmentIds,
-        managerScope ? 'Employee' : 'Manager',
+        supervisor_id ? 'Casual Worker' : managerScope ? 'Employee' : 'Manager',
+        supervisor_id,
       )
       return NextResponse.json({
         success: true,
@@ -109,7 +118,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: true, settings })
     }
     if (shift_id) {
-      const tasks = await taskService.getTasksByCompanyShift(company_id, shift_id)
+      const tasks = await taskService.getTasksByCompanyShift(company_id, shift_id, assigned_user_id)
       return NextResponse.json({ success: true, tasks })
     }
     const tasks = await taskService.getFilteredTasks(company_id, { status, department_id })

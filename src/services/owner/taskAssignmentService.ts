@@ -12,6 +12,15 @@ export interface ManagerWorkload {
 const PRIORITY_WEIGHT: Record<string, number> = { Urgent: 4, High: 3, Medium: 2, Low: 1 }
 const URGENT_DEADLINE_WINDOW_HOURS = 48
 
+// Plain-language version of the same signal the score is built from, not a generic "lightest
+// workload" line — so a candidate ranked #2 or #3 also gets a real reason, not just #1.
+function describeWorkload(fullName: string, activeTaskCount: number, urgentSoonCount: number): string {
+  if (activeTaskCount === 0) return `${fullName} has no active tasks right now.`
+  const parts = [`${activeTaskCount} active task${activeTaskCount === 1 ? '' : 's'}`]
+  if (urgentSoonCount > 0) parts.push(`${urgentSoonCount} due within ${URGENT_DEADLINE_WINDOW_HOURS} hours`)
+  return `${fullName} currently has ${parts.join(', ')}.`
+}
+
 export const taskAssignmentService = {
   // Pure scoring, no AI: lower score = lighter load = better fit for a new task.
   // Ranks by active task count, weighted by existing priority mix, with a penalty for deadlines due soon.
@@ -31,6 +40,7 @@ export const taskAssignmentService = {
           full_name: m.full_name,
           active_task_count: m.active_tasks.length,
           score,
+          reason: describeWorkload(m.full_name, m.active_tasks.length, urgentSoonCount),
         }
       })
       .sort((a, b) => a.score - b.score)

@@ -170,6 +170,22 @@ export function RealtimeNotificationsProvider({ children }: { children: React.Re
             const waiting = (dashboardData.summary?.waiting_on_you ?? []) as Array<{ id: string; count: number }>
             const taskNotifications = (dashboardData.summary?.task_notifications ?? []) as Array<{ count: number }>
             next.recruitment += waiting.filter(i => i.id === 'job_posting_approval' || i.id === 'applicant_accept').reduce((sum, i) => sum + i.count, 0)
+            // waiting_on_you has no "your submission was rejected" item at all for a Manager
+            // (job_posting_approval is Owner/Partner-only, scoped away above) — so without this,
+            // the sidebar dot would silently stop reflecting a rejection the instant this realtime
+            // path takes over from OwnerSidebar's own fallback fetch, even though that fallback
+            // already tracks it correctly. Same manager_rejected_jobs_seen_ key RecruitmentView
+            // writes to when the Manager actually opens the rejected posting.
+            if (role === 'manager') {
+              const rejectedData = await fetchJson(`/api/recruitment?company_id=${encodeURIComponent(user.companyId)}&resource=pending_approval&manager_scope_id=${encodeURIComponent(user.id)}&include_rejected=true`).catch(() => null)
+              if (rejectedData?.success) {
+                const seenRejected = readStringSet(`manager_rejected_jobs_seen_${user.companyId}_${user.id}`)
+                const unseenRejected = ((rejectedData.pendingPostings ?? []) as Array<{ id: string; status: string }>)
+                  .filter(p => p.status === 'rejected' && !seenRejected.has(p.id)).length
+                next.recruitment += unseenRejected
+                next.dashboard += unseenRejected
+              }
+            }
             next.attendance += waiting.filter(i => i.id === 'off_day_deadline' || i.id === 'shift_swap').reduce((sum, i) => sum + i.count, 0)
             next.tasks += waiting.filter(i => i.id === 'task_review').reduce((sum, i) => sum + i.count, 0)
             if (role !== 'manager') next.tasks += taskNotifications.reduce((sum, i) => sum + i.count, 0)

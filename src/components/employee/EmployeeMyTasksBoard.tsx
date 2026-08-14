@@ -161,7 +161,15 @@ export default function EmployeeMyTasksBoard({ companyId, internalUserId, clocke
     if (!canDragTask(task)) return false
     const currentIdx = COLUMNS.indexOf(task.status)
     const targetIdx = COLUMNS.indexOf(targetStatus)
-    return targetIdx === currentIdx + 1
+    if (targetIdx !== currentIdx + 1) return false
+    // Review means "ready for the assigner to check" — an unticked sub-task means the checklist
+    // itself says the work isn't actually done yet, so the card can't skip ahead of it (same rule
+    // as CasualTaskBoard.tsx).
+    if (targetStatus === 'Review') {
+      const subTasks = tasks.filter(t => t.parent_task_id === task.id)
+      if (subTasks.some(s => !s.is_completed)) return false
+    }
+    return true
   }
 
   const handleDrop = async (task: Task, targetStatus: Task['status']) => {
