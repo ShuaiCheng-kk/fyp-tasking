@@ -8,6 +8,29 @@ import { getServerSessionUser } from '@/lib/serverAuth'
 export async function GET(req: NextRequest) {
   const user_id = req.nextUrl.searchParams.get('user_id')
   const other_user_id = req.nextUrl.searchParams.get('other_user_id')
+  // resource=unread returns per-sender unread counts and marks NOTHING read — it's what lets the
+  // panel badge a thread the worker isn't currently looking at.
+  const resource = req.nextUrl.searchParams.get('resource')
+  const from_ids = req.nextUrl.searchParams.get('from_ids')
+
+  if (resource === 'unread') {
+    if (!user_id || !from_ids) {
+      return NextResponse.json({ success: false, message: 'user_id and from_ids are required' }, { status: 400 })
+    }
+    const session = await getServerSessionUser()
+    if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
+    if (user_id !== session.user.id && user_id !== session.auth_id) {
+      return NextResponse.json({ success: false, message: 'You can only view your own messages' }, { status: 403 })
+    }
+    try {
+      const { counts } = await casualInboxService.getUnreadCounts(user_id, from_ids.split(',').filter(Boolean))
+      return NextResponse.json({ success: true, counts })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to load unread counts'
+      return NextResponse.json({ success: false, message }, { status: 500 })
+    }
+  }
+
   if (!user_id || !other_user_id) {
     return NextResponse.json({ success: false, message: 'user_id and other_user_id are required' }, { status: 400 })
   }
