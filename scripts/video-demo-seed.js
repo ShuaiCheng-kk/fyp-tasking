@@ -12,6 +12,7 @@
  *   · ZERO casual workers: the pool starts empty so the guest appearing in it lands visually
  *   · 3 job templates ready to apply, so posting three jobs is three clicks, not three forms
  *   · Shifts on the 15th/16th so a supervisor can actually be picked when posting
+ *   · One unread chat message, Owner to Manager, that's the reason David is posting these jobs
  *
  * Companion script: video-demo-forward.js jumps the clock to the 15th without destroying
  * anything done on camera.
@@ -311,6 +312,22 @@ async function main() {
     else console.log(`  ✓ ${t.title} (${t.job_type === 'oneoff' ? 'One-Off' : 'Shift'})`)
   }
 
+  // ── Chat message ───────────────────────────────────────────────────────────
+  // Sarah's nudge to David — the reason he's the one posting these jobs, told to him in-app
+  // rather than assumed. Left unread so the Chat tab's badge and the message itself are both live
+  // on camera, not something already dismissed before recording starts.
+  console.log('Step 7: chat message...')
+  const { error: msgErr } = await supabase.from('messages').insert({
+    from_user_id: ids['owner@test.com'].internalId,
+    to_user_id: ids['manager1@test.com'].internalId,
+    company_id: company.id,
+    sender_name: 'Sarah Mitchell',
+    content: "Operations is short-staffed this week. We've got an event on the 15th and need coverage for room cleaning and banquet turnover on the 16th. Can you get some job postings up for casual workers?",
+    is_read: false,
+  })
+  if (msgErr) { console.error(`  ✗ chat message: ${msgErr.message}`); process.exit(1) }
+  console.log('  ✓ Sarah Mitchell -> David Lim, unread\n')
+
   // ── Summary ────────────────────────────────────────────────────────────────
   console.log('\n═══════════════════════════════════════════')
   console.log('  Ready to record (password: 111111)')
@@ -323,6 +340,7 @@ async function main() {
   console.log('  Job postings ........ 0   (Manager creates them on camera)')
   console.log('  Casual workers ...... 0   (the guest becomes the first one, on camera)')
   console.log('  Job templates ....... 3   Event Setup & Breakdown / Room Cleaning / Banquet Turnover')
+  console.log('  Chat ................. 1   unread, Sarah Mitchell -> David Lim')
   console.log('')
   console.log(`  Supervisor available on ${DAY1_KEY} and ${DAY2_KEY}: Ben Seah, 09:00-21:00`)
   console.log('  → post the One-Off for the 15th, both Shift jobs for the 16th')
