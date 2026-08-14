@@ -1,5 +1,5 @@
 /**
- * Demo helper — "fast forward" a freshly posted job so it has a realistic pile of applicants.
+ * Demo helper: "fast forward" a freshly posted job so it has a realistic pile of applicants.
  *
  * A job posted live during the demo has nobody in it, so AI Assessment has nothing to rank.
  * Pause the recording after the Owner approves the posting, run this, then carry on: the
@@ -9,7 +9,7 @@
  *   node scripts/demo-fill-applicants.js --job "Weekend"        # match by title
  *   node scripts/demo-fill-applicants.js --hero guest2@test.com # someone else is the protagonist
  *
- * The hero is deliberately left OUT of the inserted list — they apply through the UI so the
+ * The hero is deliberately left OUT of the inserted list, because they apply through the UI so the
  * audience sees it happen. Their worker profile is rewritten to mirror the job's own requirements
  * first, so when AI Assessment runs they rank at the top and picking them reads as following the
  * recommendation rather than overriding it.
@@ -36,7 +36,7 @@ const JOB_MATCH = arg('--job', null)
 const HERO_EMAIL = arg('--hero', 'guest1@test.com')
 
 // Competent but off-target: each one is plausible enough to be worth reading, and none of them
-// mirror the posting the way the hero's rewritten profile does — so the ranking has somewhere to go.
+// mirror the posting the way the hero's rewritten profile does, so the ranking has somewhere to go.
 const FILLERS = [
   {
     email: 'guest2@test.com',
@@ -99,7 +99,7 @@ async function main() {
   }
 
   // Mirror the posting's own requirements onto the hero's profile. AI Assessment compares the
-  // applicant's skills against the job's, so this is what puts them first — without it the hero
+  // applicant's skills against the job's, so this is what puts them first. Without it the hero
   // carries whatever unrelated skills the seed gave them and can rank below the fillers, which
   // makes accepting them look like ignoring the AI.
   const heroSkills = (job.skills || job.responsibilities || '').trim()
@@ -108,9 +108,9 @@ async function main() {
       .from('casual_worker_profiles')
       .upsert({ user_id: hero.id, skills: heroSkills.slice(0, 500) }, { onConflict: 'user_id' })
     if (profErr) console.warn(`  ⚠ could not update hero profile: ${profErr.message}`)
-    else console.log(`Hero: ${hero.full_name} (${HERO_EMAIL}) — profile matched to this job`)
+    else console.log(`Hero: ${hero.full_name} (${HERO_EMAIL}), profile matched to this job`)
   } else {
-    console.log(`Hero: ${hero.full_name} (${HERO_EMAIL}) — job has no skills text, profile left as is`)
+    console.log(`Hero: ${hero.full_name} (${HERO_EMAIL}), job has no skills text, profile left as is`)
   }
   console.log('      NOT pre-applied. Apply through the UI on camera.\n')
 
@@ -130,8 +130,8 @@ async function main() {
       .select('id, full_name')
       .eq('email_address', filler.email)
       .single()
-    if (!user) { console.log(`  · ${filler.email} — no such account, skipped`); continue }
-    if (alreadyApplied.has(user.id)) { console.log(`  · ${user.full_name} — already applied, skipped`); continue }
+    if (!user) { console.log(`  · ${filler.email}: no such account, skipped`); continue }
+    if (alreadyApplied.has(user.id)) { console.log(`  · ${user.full_name}: already applied, skipped`); continue }
 
     // Keep the live profile and the application snapshot consistent: the Worker Pool and the
     // applicant card would otherwise disagree about the same person.
@@ -150,14 +150,14 @@ async function main() {
     })
     if (insErr) { console.warn(`  ⚠ ${user.full_name}: ${insErr.message}`); continue }
 
-    console.log(`  ✓ ${user.full_name} — ${filler.skills}`)
+    console.log(`  ✓ ${user.full_name}: ${filler.skills}`)
     added++
   }
 
   console.log(`\n${added} applicant(s) added. With the hero applying live, the panel will show ${added + 1}.`)
   console.log('\nNext on camera:')
   console.log(`  1. ${HERO_EMAIL} applies for "${job.title}"`)
-  console.log('  2. Manager opens the applicant panel — now a real shortlist')
+  console.log('  2. Manager opens the applicant panel, now a real shortlist')
   console.log('  3. Run AI Assessment; the hero should rank at the top')
   console.log('  4. Accept the hero\n')
 }

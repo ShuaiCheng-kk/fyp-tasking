@@ -4,7 +4,7 @@
  *   node scripts/video-demo-forward.js
  *
  * The storyline posts a job for tomorrow, so nothing can be clocked into while recording. This
- * pulls that day's work back onto today instead of advancing any clock — nothing is recreated and
+ * pulls that day's work back onto today instead of advancing any clock, so nothing is recreated and
  * nothing done on camera is lost. Job postings, applications, offers, acceptances, the guest's new
  * Casual Worker role: all untouched.
  *
@@ -43,7 +43,7 @@ async function main() {
 
   // ── The casual worker's shift ──────────────────────────────────────────────
   // Created by workerApplicationService the moment the offer was accepted, and tagged with the
-  // posting it came from — that tag is how we find it without guessing.
+  // posting it came from. That tag is how we find it without guessing.
   const { data: cwShifts, error: shiftErr } = await supabase
     .from('shifts')
     .select('id, shift_date, start_time, end_time, source_job_posting_id, department_id')
@@ -54,7 +54,7 @@ async function main() {
 
   if (!cwShifts || cwShifts.length === 0) {
     console.error('No upcoming casual-worker shift found.')
-    console.error('This runs AFTER the guest accepts their offer — that acceptance is what creates the shift.\n')
+    console.error('This runs AFTER the guest accepts their offer, and that acceptance is what creates the shift.\n')
     process.exit(1)
   }
 
@@ -109,7 +109,7 @@ async function main() {
     console.log(`Supervisor shift: ${sup.shift_date} ${sup.start_time}-${sup.end_time}`)
     console.log(`  → moved to ${TODAY_KEY} ${START}, open-ended\n`)
   } else {
-    console.log('No separate supervisor shift to move — the one already on today will do.\n')
+    console.log('No separate supervisor shift to move, the one already on today will do.\n')
   }
 
   // ── What survived ──────────────────────────────────────────────────────────
@@ -124,11 +124,11 @@ async function main() {
   console.log(`  applications ....... ${appCount}`)
   console.log(`  casual workers ..... ${cwCount}`)
   console.log('\nNext on camera:')
-  console.log('  1. Employee — Clock In, then assign the tasks')
-  console.log('  2. Casual Worker — Clock In, work the board')
-  console.log('  3. Employee — review, reject one with a reason, approve the redo')
-  console.log('  4. Employee — release clock-out; Casual Worker clocks out')
-  console.log('  5. Owner — post a job and Invite from Pool\n')
+  console.log('  1. Employee: Clock In, then assign the tasks')
+  console.log('  2. Casual Worker: Clock In, work the board')
+  console.log('  3. Employee: review, reject one with a reason, approve the redo')
+  console.log('  4. Employee: release clock-out; Casual Worker clocks out')
+  console.log('  5. Owner: post a job and Invite from Pool\n')
 }
 
 main().catch(err => { console.error(err.message); process.exit(1) })

@@ -5,11 +5,11 @@
  *
  * The video walks one job from posting to payroll, so the screen has to stay readable: every
  * count on screen should be a number the audience can hold in their head. That means the
- * opposite of seed.js — as little data as possible.
+ * opposite of seed.js: as little data as possible.
  *
  *   · 4 accounts only: Owner, Manager, Employee, Guest User
- *   · ZERO job postings — the Manager creates all of them on camera
- *   · ZERO casual workers — the pool starts empty so the guest appearing in it lands visually
+ *   · ZERO job postings: the Manager creates all of them on camera
+ *   · ZERO casual workers: the pool starts empty so the guest appearing in it lands visually
  *   · 3 job templates ready to apply, so posting three jobs is three clicks, not three forms
  *   · Shifts on the 15th/16th so a supervisor can actually be picked when posting
  *
@@ -102,7 +102,7 @@ const tablesToClear = [
 
 async function main() {
   console.log('\n═══════════════════════════════════════════')
-  console.log('  Video Demo Seed — minimal, 4 roles')
+  console.log('  Video Demo Seed: minimal, 4 roles')
   console.log('═══════════════════════════════════════════\n')
 
   // ── Wipe ───────────────────────────────────────────────────────────────────
@@ -203,7 +203,7 @@ async function main() {
 
   for (const acc of accounts) {
     if (acc.role === 'Owner') continue // created above, so the company could reference them
-    // A Guest User belongs to no company — that's what makes them an outside applicant.
+    // A Guest User belongs to no company, and that's what makes them an outside applicant.
     const isGuest = acc.role === 'Guest User'
     const { data: row, error } = await supabase.from('users').insert({
       supabase_auth_id: ids[acc.email].authId,
@@ -244,7 +244,7 @@ async function main() {
   // ── Shifts ─────────────────────────────────────────────────────────────────
   // Two jobs of work here. Today's shifts exist purely so Manager/Employee pages are never in the
   // "clocked out, read-only" state. The 15th/16th shifts exist so the Supervisor dropdown has
-  // somebody in it when the Manager posts — a casual worker is never on site unsupervised, so the
+  // somebody in it when the Manager posts, because a casual worker is never on site unsupervised, so the
   // posting form refuses to publish without one.
   console.log('Step 5: shifts...')
 
@@ -262,7 +262,7 @@ async function main() {
       shift_id: todayShift.id, user_id: ids[email].internalId, assigned_by: ids['owner@test.com'].internalId,
     })
   }
-  console.log(`  ✓ today ${TODAY_KEY} — David Lim + Ben Seah, open-ended, unclocked`)
+  console.log(`  ✓ today ${TODAY_KEY}: David Lim + Ben Seah, open-ended, unclocked`)
 
   for (const [dayKey, label] of [[DAY1_KEY, 'One-Off day'], [DAY2_KEY, 'Shift-jobs day']]) {
     const { data: sup } = await supabase.from('shifts').insert({
@@ -275,7 +275,7 @@ async function main() {
     await supabase.from('shift_assignments').insert({
       shift_id: sup.id, user_id: ids['employee1@test.com'].internalId, assigned_by: ids['owner@test.com'].internalId,
     })
-    console.log(`  ✓ ${dayKey} — Ben Seah 09:00-21:00 (${label}, selectable as Supervisor)`)
+    console.log(`  ✓ ${dayKey}: Ben Seah 09:00-21:00 (${label}, selectable as Supervisor)`)
   }
   console.log()
 
@@ -312,7 +312,7 @@ async function main() {
   console.log('  guest1@test.com     Wei Jie Lim      Guest User (no company)')
   console.log('')
   console.log('  Job postings ........ 0   (Manager creates them on camera)')
-  console.log('  Casual workers ...... 0   (pool is empty — the guest fills it)')
+  console.log('  Casual workers ...... 0   (pool is empty, the guest fills it)')
   console.log('  Job templates ....... 3   Event One-Off / Cleaning Shift / Barista Shift')
   console.log('')
   console.log(`  Supervisor available on ${DAY1_KEY} and ${DAY2_KEY}: Ben Seah, 09:00-21:00`)
