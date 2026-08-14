@@ -97,11 +97,22 @@ async function pushApplicantThrough(jobTitle, email) {
     .eq('job_id', (await supabase.from('job_postings').select('id').ilike('title', `%${jobTitle}%`).single()).data.id)
     .single()
   if (!applicant) { console.log(`  ⚠ ${user.full_name}: no application on "${jobTitle}" found`); return }
+  if (applicant.status === 'rejected') { console.log(`  ⚠ ${user.full_name}: already rejected, skipped`); return }
+
   if (applicant.status === 'accepted') {
-    const { data: inv } = await supabase.from('job_invitations').select('status').eq('applicant_id', applicant.id).order('sent_at', { ascending: false }).limit(1).single()
+    // Already offered — either by this script on an earlier run, or (the normal recording path)
+    // by the Manager clicking Accept in the AI Assessment panel on camera. Either way, offering
+    // again would create a second invitation row and a duplicate acceptance email, so only the
+    // confirm step is still needed here.
+    const { data: inv } = await supabase.from('job_invitations').select('id, status').eq('applicant_id', applicant.id).order('sent_at', { ascending: false }).limit(1).single()
     if (inv?.status === 'accepted') { console.log(`  · ${user.full_name}: already confirmed, skipped`); return }
+    if (!inv) throw new Error(`${user.full_name} is Accepted but has no invitation row — data is inconsistent`)
+    await respondAsWorker(email, inv.id)
+    console.log(`  ✓ ${user.full_name}: already offered, confirmed now`)
+    return
   }
 
+  // Still pending — nobody has offered them yet, so this script does both steps itself.
   await decideApplicantAsOwner(applicant.id)
   const { data: invitation } = await supabase
     .from('job_invitations')
