@@ -2723,14 +2723,19 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
     // tier, so the rebalancing pool must include tasks either of them assigned, not just the
     // current viewer's own. Otherwise a Partner who rarely assigns tasks personally would see
     // (and be able to reassign) almost nothing.
+    // Employee rebalances between the Casual Workers they supervise today, so the candidate pool
+    // is resolved from supervisor_id server-side rather than from a department roster, and the
+    // task pool is their own assignments only (they have no peer tier — see fetchKanban).
     const userParam = scopeToManagerDepartments
       ? `&manager_scope_id=${encodeURIComponent(internalUserId)}`
-      : `&assigned_by=${encodeURIComponent(members.filter(m => m.role === 'Owner' || m.role === 'Partner').map(m => m.id).join(',') || internalUserId)}`
+      : scopeToEmployeeSupervised
+        ? `&supervisor_id=${encodeURIComponent(internalUserId)}&assigned_by=${encodeURIComponent(internalUserId)}`
+        : `&assigned_by=${encodeURIComponent(members.filter(m => m.role === 'Owner' || m.role === 'Partner').map(m => m.id).join(',') || internalUserId)}`
     const res = await fetch(`/api/task?company_id=${companyId}&suggestion=workload${userParam}`)
     const data = await res.json()
     if (!data.success) throw new Error(data.message)
     return (data.suggestions ?? []).filter((item: TaskWorkloadSuggestion) => item.type === 'rebalance')
-  }, [companyId, internalUserId, members, scopeToManagerDepartments])
+  }, [companyId, internalUserId, members, scopeToManagerDepartments, scopeToEmployeeSupervised])
 
   const refreshWorkloadSuggestion = useCallback(async () => {
     if (!companyId || !internalUserId) return
@@ -4569,16 +4574,19 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                 </>
                 ) : (
                 <>
-                {/* Workload Rebalancing Alert (UC21) / Task Delay Alert (UC22) are O/P/M-only. */}
+                {/* Workload Rebalancing Alert (UC20) / Task Delay Alert both run one tier down from
+                    the viewer, so Employee gets them over the Casual Workers they supervise today,
+                    the same way a Manager gets them over their Employees (extended 2026-08-14).
+                    Casual Workers are the tier that actually executes the work, so an Employee is
+                    the person best placed to act on an overload or a slipping deadline. */}
                 {/* overflow visible so the CardInfo hover tooltips aren't clipped at the section edge */}
-                {!scopeToEmployeeSupervised && (
                 <section className="task-side-section" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, overflow: 'visible', animationDelay: '0.05s' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 18px', borderBottom: notificationCollapsed ? 'none' : '1px solid #F3F4F6' }}>
                     <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                       <Bell size={15} style={{ color: '#F97316' }} />
                     </div>
                     <span style={{ fontWeight: 700, fontSize: '1rem', color: '#0F172A' }}>Notification</span>
-                    {scopeToManagerDepartments && (
+                    {(scopeToManagerDepartments || scopeToEmployeeSupervised) && (
                       <button
                         type="button"
                         onClick={() => setNotificationCollapsed(v => !v)}
@@ -4675,7 +4683,6 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                   </div>
                   )}
                 </section>
-                )}
 
                 {/* Employee doesn't get the Deadline Summary block — keeps the Board focused on
                     just Assign/Edit/Delete/Sub-task (UC12/13/15/19), per the confirmed UC scope. */}

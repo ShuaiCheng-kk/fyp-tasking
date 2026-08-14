@@ -360,6 +360,22 @@ export const taskRepository = {
     return [...new Set((data ?? []).map((row: { user_id: string }) => row.user_id))]
   },
 
+  // Named version of getSupervisedCasualWorkerIds, for the Workload Suggestion candidate pool at
+  // the Employee tier. Mirrors getManagersByDepartment / getEmployeesByDepartment, except the pool
+  // is not a department roster: a Casual Worker belongs to an Employee only for the day they share
+  // a shift, so the supervisor + today pairing above IS the membership.
+  async getSupervisedCasualWorkersByEmployee(employee_id: string, company_id: string, department_id: string): Promise<{ id: string; full_name: string }[]> {
+    const workerIds = await this.getSupervisedCasualWorkerIds(employee_id, company_id, department_id)
+    if (workerIds.length === 0) return []
+    const { data, error } = await supabase
+      .from('users')
+      .select('id, full_name')
+      .eq('company_id', company_id)
+      .in('id', workerIds)
+    if (error) throw new Error(error.message)
+    return (data ?? []) as { id: string; full_name: string }[]
+  },
+
   async getShiftById(id: string): Promise<Shift | null> {
     const { data, error } = await supabase
       .from('shifts')

@@ -620,8 +620,18 @@ export const taskService = {
     department_id?: string,
     assigned_by?: string | string[],
     scopeDepartmentIds?: string[],
-    candidateRole: 'Manager' | 'Employee' = 'Manager',
+    candidateRole: 'Manager' | 'Employee' | 'Casual Worker' = 'Manager',
+    // Required for candidate_role 'Casual Worker' — that pool is defined by who supervises whom
+    // today, not by department membership, so it can't be derived from department_id alone.
+    supervisorEmployeeId?: string,
   ): Promise<TaskWorkloadSuggestion[]> {
+    // The Casual Worker pool is defined by the supervisor + today pairing, so without a supervisor
+    // there is nothing to compare. Carrying on regardless would still produce a suggestion, since
+    // the scoring loop below adds any task's assignee to the pool whether or not they came from
+    // the candidate list, which would let an Employee rebalance across workers they don't
+    // supervise. The one-level-down assignment rule forbids that, so refuse outright.
+    if (candidateRole === 'Casual Worker' && !supervisorEmployeeId) return []
+
     const activeTasks = (await taskRepository.getTasksByCompany(company_id, assigned_by, scopeDepartmentIds))
       .filter(task => task.status !== 'Complete' && task.parent_task_id === null && task.assigned_user_id)
       .filter(task => !department_id || task.department_id === department_id)
@@ -642,9 +652,11 @@ export const taskService = {
     const suggestionsByDept = await Promise.all(departmentIds.map(async (deptId): Promise<TaskWorkloadSuggestion | null> => {
       const scores = new Map<string, number>()
       const taskCounts = new Map<string, number>()
-      const candidates = candidateRole === 'Employee'
-        ? await taskRepository.getEmployeesByDepartment(company_id, deptId)
-        : await taskRepository.getManagersByDepartment(company_id, deptId)
+      const candidates = candidateRole === 'Casual Worker'
+        ? await taskRepository.getSupervisedCasualWorkersByEmployee(supervisorEmployeeId!, company_id, deptId)
+        : candidateRole === 'Employee'
+          ? await taskRepository.getEmployeesByDepartment(company_id, deptId)
+          : await taskRepository.getManagersByDepartment(company_id, deptId)
       for (const candidate of candidates) scores.set(candidate.id, 0)
 
       for (const task of activeTasks) {

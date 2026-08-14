@@ -50,6 +50,58 @@ const accounts = [
   { email: 'guest1@test.com',    full_name: 'Wei Jie Lim',    role: 'Guest User', phone: '+65 8345 6789', dob: '2001-06-03' },
 ]
 
+// Ben Seah's floor team for today. Smart Task Allocation is the point of the project, and every
+// one of its AI features ranks a pool of people, so a pool of one has nothing to show: AI Assign
+// would have a single candidate and Workload Rebalancing would never fire. These six give it
+// somebody to choose between.
+//
+// Their skills are deliberately spread apart rather than interchangeable, so the AI Assign
+// shortlist reads as a real judgement call rather than a coin toss.
+//
+// None of them is in the verified Worker Pool: that is earned by clocking OUT of a finished shift
+// (markCasualWorkerDepartmentVerified), and they are all still mid-shift. So the pool stays empty
+// on camera until the guest completes their own shift, which is exactly the moment Invite from
+// Pool is supposed to become useful.
+const casualWorkers = [
+  { email: 'cw1@test.com', full_name: 'Priya Raman',   phone: '+65 8401 1122', dob: '1998-03-14', skills: 'Event floor setup, guest reception, run-sheet handling, works well under pressure.' },
+  { email: 'cw2@test.com', full_name: 'Marcus Tan',    phone: '+65 8402 2233', dob: '1999-11-02', skills: 'Barista basics, espresso and milk steaming, cash handling, busy counter service.' },
+  { email: 'cw3@test.com', full_name: 'Aisha Rahman',  phone: '+65 8403 3344', dob: '2000-05-27', skills: 'Deep cleaning, chemical handling, waste management, restocking consumables.' },
+  { email: 'cw4@test.com', full_name: 'Kelvin Ong',    phone: '+65 8404 4455', dob: '1997-08-19', skills: 'Stock control, inventory counts, heavy lifting, loading bay operations.' },
+  { email: 'cw5@test.com', full_name: 'Nurul Huda',    phone: '+65 8405 5566', dob: '2001-01-09', skills: 'Customer service, order taking, food hygiene, table service.' },
+  { email: 'cw6@test.com', full_name: 'Jason Teo',     phone: '+65 8406 6677', dob: '1996-12-30', skills: 'General floor support, furniture setup and pack-down, AV cable runs, tidy worker.' },
+]
+
+// Today's task board for that team, all assigned by Ben. The numbers here are not decorative:
+// they are chosen so both AI panels have something real to say the moment the page opens.
+//
+// Workload score = priority weight (Urgent 4, High 3, Medium 2, Low 1) x deadline urgency
+// (overdue 4x, within 24h 3x, within 3 days 2x, otherwise 1x). Rebalancing only fires when the
+// heaviest person scores more than double the lightest AND holds at least 2 active main tasks.
+//
+//   Priya   16 + 16 + 9 = 41   <- overloaded, 3 active tasks
+//   Nurul                  9
+//   Aisha                  6
+//   Marcus                 1
+//   Kelvin                 1
+//   Jason                  0   <- recommended, the only genuinely free pair of hands
+//
+// Moving one 16-point task from Priya to Jason narrows the spread from 41 to 24, which is the
+// biggest single improvement available, so that is the suggestion that appears.
+//
+// Task Delay Alert is separate: it flags a task still sitting in Assigned once more than 50% of
+// its created-to-deadline window has passed. Priya's two overdue tasks qualify (she is too busy
+// to have started them, which is the whole point); her third is In Progress, so it does not.
+const HOUR_MS = 60 * 60 * 1000
+const teamTasks = [
+  { worker: 'cw1@test.com', title: 'Set up the function room for the 7pm booking', priority: 'Urgent', status: 'Assigned',    createdHoursAgo: 5, dueHoursFromNow: -1 },
+  { worker: 'cw1@test.com', title: 'Chase the missing linen order',                 priority: 'Urgent', status: 'Assigned',    createdHoursAgo: 4, dueHoursFromNow: -1 },
+  { worker: 'cw1@test.com', title: 'Brief the evening crew on the run sheet',       priority: 'High',   status: 'In Progress', createdHoursAgo: 2, dueHoursFromNow: 6 },
+  { worker: 'cw5@test.com', title: 'Cover the counter during the lunch peak',       priority: 'High',   status: 'In Progress', createdHoursAgo: 3, dueHoursFromNow: 8 },
+  { worker: 'cw3@test.com', title: 'Reset the back-of-house after service',         priority: 'Medium', status: 'Assigned',    createdHoursAgo: 1, dueHoursFromNow: 10 },
+  { worker: 'cw2@test.com', title: 'Restock the coffee bar for tomorrow',           priority: 'Low',    status: 'Assigned',    createdHoursAgo: 1, dueHoursFromNow: 30 * 24 },
+  { worker: 'cw4@test.com', title: 'Count the dry goods shelf',                     priority: 'Low',    status: 'Assigned',    createdHoursAgo: 1, dueHoursFromNow: 30 * 24 },
+]
+
 // Everything that stays the same every time this role is hired lives on the template; the day,
 // the supervisor, the start time and the headcount are filled in per posting.
 const templates = [
@@ -135,7 +187,7 @@ async function main() {
   const existing = new Map((authList?.users ?? []).map(u => [u.email, u.id]))
   const ids = {}
 
-  for (const acc of accounts) {
+  for (const acc of [...accounts, ...casualWorkers]) {
     let authId = existing.get(acc.email)
     if (authId) {
       await supabase.auth.admin.updateUserById(authId, { password: PASSWORD, email_confirm: true })
@@ -155,6 +207,7 @@ async function main() {
   for (const u of (authList?.users ?? [])) {
     if (!u.email) continue
     if (accounts.some(a => a.email === u.email)) continue
+    if (casualWorkers.some(a => a.email === u.email)) continue
     if (u.email.endsWith('@tasking.com')) continue // platform admins
     await supabase.auth.admin.deleteUser(u.id)
   }
@@ -241,6 +294,32 @@ async function main() {
   })
   console.log('  ✓ guest profile + certificate\n')
 
+  // ── Ben's casual worker team ───────────────────────────────────────────────
+  console.log('Step 4b: casual workers under Ben Seah...')
+  for (const cw of casualWorkers) {
+    const { data: row, error } = await supabase.from('users').insert({
+      supabase_auth_id: ids[cw.email].authId,
+      full_name: cw.full_name,
+      email_address: cw.email,
+      phone_number: cw.phone,
+      date_of_birth: cw.dob,
+      profile_photo_url: DEMO_PHOTO_URL,
+      role: 'Casual Worker',
+      company_id: company.id,
+    }).select().single()
+    if (error) { console.error(`  ✗ ${cw.email}: ${error.message}`); process.exit(1) }
+    ids[cw.email] = { ...ids[cw.email], internalId: row.id }
+
+    // verified_at deliberately left null, so the Worker Pool stays empty until somebody actually
+    // finishes a shift on camera.
+    await supabase.from('casualworker_departments').insert({
+      casual_worker_id: row.id, department_id: dept.id, company_id: company.id,
+    })
+    await supabase.from('casual_worker_profiles').insert({ user_id: row.id, skills: cw.skills })
+    console.log(`  ✓ ${cw.full_name}`)
+  }
+  console.log()
+
   // ── Shifts ─────────────────────────────────────────────────────────────────
   // Two jobs of work here. Today's shifts exist purely so Manager/Employee pages are never in the
   // "clocked out, read-only" state. The 15th/16th shifts exist so the Supervisor dropdown has
@@ -263,6 +342,38 @@ async function main() {
     })
   }
   console.log(`  ✓ today ${TODAY_KEY}: David Lim + Ben Seah, open-ended, unclocked`)
+
+  // The team's own shift. supervisor_employee_id is what actually makes them "Ben's workers":
+  // supervision is recorded per shift assignment, per day, not as standing department membership,
+  // so this is also what puts them in his AI Assign and Workload Rebalancing candidate pool.
+  const { data: cwShift, error: cwShiftErr } = await supabase.from('shifts').insert({
+    company_id: company.id, department_id: dept.id, shift_date: TODAY_KEY,
+    start_time: toHM(new Date(Date.now() - 5 * 60 * 60000)),
+    end_time: toHM(new Date(Date.now() + 5 * 60 * 60000)),
+    created_by: ids['employee1@test.com'].internalId,
+    publication_status: 'published',
+    is_open_ended: false,
+  }).select().single()
+  if (cwShiftErr) { console.error(`  ✗ casual worker shift: ${cwShiftErr.message}`); process.exit(1) }
+
+  for (const cw of casualWorkers) {
+    const { data: assignment, error: asgErr } = await supabase.from('shift_assignments').insert({
+      shift_id: cwShift.id,
+      user_id: ids[cw.email].internalId,
+      assigned_by: ids['employee1@test.com'].internalId,
+      supervisor_employee_id: ids['employee1@test.com'].internalId,
+    }).select().single()
+    if (asgErr) { console.error(`  ✗ ${cw.full_name} assignment: ${asgErr.message}`); process.exit(1) }
+    // Clocked in but never out. Clocking out is what would promote them into the verified Worker
+    // Pool, and it is also what locks a page read-only, so mid-shift is the state we want.
+    const { error: attErr } = await supabase.from('attendance_records').insert({
+      shift_assignment_id: assignment.id,
+      user_id: ids[cw.email].internalId,
+      clock_in_time: new Date(Date.now() - 5 * 60 * 60000).toISOString(),
+    })
+    if (attErr) { console.error(`  ✗ ${cw.full_name} clock-in: ${attErr.message}`); process.exit(1) }
+  }
+  console.log(`  ✓ today ${TODAY_KEY}: ${casualWorkers.length} casual workers under Ben, clocked in`)
 
   for (const [dayKey, label] of [[DAY1_KEY, 'One-Off day'], [DAY2_KEY, 'Shift-jobs day']]) {
     const { data: sup } = await supabase.from('shifts').insert({
@@ -302,6 +413,33 @@ async function main() {
     else console.log(`  ✓ ${t.title} (${t.job_type === 'oneoff' ? 'One-Off' : 'Shift'})`)
   }
 
+  // ── Today's task board ─────────────────────────────────────────────────────
+  console.log('\nStep 7: today\'s task board...')
+  for (const t of teamTasks) {
+    const { error } = await supabase.from('tasks').insert({
+      company_id: company.id,
+      department_id: dept.id,
+      shift_id: cwShift.id,
+      title: t.title,
+      priority: t.priority,
+      status: t.status,
+      task_date: TODAY_KEY,
+      assigned_user_id: ids[t.worker].internalId,
+      assigned_by: ids['employee1@test.com'].internalId,
+      // Both timestamps are explicit because Task Delay Alert measures elapsed time as a
+      // percentage of the created-to-deadline window. Letting created_at default to now() would
+      // make every task 0% elapsed and the alert would never fire.
+      created_at: new Date(Date.now() - t.createdHoursAgo * HOUR_MS).toISOString(),
+      due_at: new Date(Date.now() + t.dueHoursFromNow * HOUR_MS).toISOString(),
+    })
+    if (error) { console.error(`  ✗ ${t.title}: ${error.message}`); process.exit(1) }
+  }
+  const byWorker = new Map()
+  for (const t of teamTasks) byWorker.set(t.worker, (byWorker.get(t.worker) ?? 0) + 1)
+  for (const cw of casualWorkers) {
+    console.log(`  ✓ ${cw.full_name.padEnd(14)} ${byWorker.get(cw.email) ?? 0} task(s)`)
+  }
+
   // ── Summary ────────────────────────────────────────────────────────────────
   console.log('\n═══════════════════════════════════════════')
   console.log('  Ready to record (password: 111111)')
@@ -312,8 +450,14 @@ async function main() {
   console.log('  guest1@test.com     Wei Jie Lim      Guest User (no company)')
   console.log('')
   console.log('  Job postings ........ 0   (Manager creates them on camera)')
-  console.log('  Casual workers ...... 0   (pool is empty, the guest fills it)')
+  console.log(`  Casual workers ...... ${casualWorkers.length}   under Ben today, all clocked in`)
+  console.log('  Verified pool ....... 0   (earned by clocking out, so the guest fills it)')
   console.log('  Job templates ....... 3   Event One-Off / Cleaning Shift / Barista Shift')
+  console.log('')
+  console.log('  On Ben\'s Tasks page, without touching anything:')
+  console.log('    Workload Suggestion  1   move a task from Priya Raman to Jason Teo')
+  console.log('    Task Delay Alert     2   Priya\'s two overdue, un-started tasks')
+  console.log('    AI Assign               ranks all 6 workers by live workload')
   console.log('')
   console.log(`  Supervisor available on ${DAY1_KEY} and ${DAY2_KEY}: Ben Seah, 09:00-21:00`)
   console.log('  → post the One-Off for the 15th, both Shift jobs for the 16th')

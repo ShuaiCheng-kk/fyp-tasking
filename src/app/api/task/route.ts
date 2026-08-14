@@ -35,6 +35,9 @@ export async function GET(req: NextRequest) {
   // Manager Tasks page's My Tasks tab: tasks assigned TO this user (by Owner/Partner, per the
   // one-level-down assignment rule), the inverse of assigned_by/manager_scope_id above.
   const assigned_user_id = searchParams.get('assigned_user_id') ?? undefined
+  // Employee Tasks page scope for the Workload Suggestion: the rebalancing candidate pool becomes
+  // the Casual Workers this Employee supervises today, rather than a department roster.
+  const supervisor_id = searchParams.get('supervisor_id') ?? undefined
 
   if (!company_id) {
     return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
@@ -82,7 +85,8 @@ export async function GET(req: NextRequest) {
         department_id,
         assignedByFilter,
         managerScope?.departmentIds,
-        managerScope ? 'Employee' : 'Manager',
+        supervisor_id ? 'Casual Worker' : managerScope ? 'Employee' : 'Manager',
+        supervisor_id,
       )
       return NextResponse.json({
         success: true,

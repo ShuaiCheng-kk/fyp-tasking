@@ -14,6 +14,7 @@ vi.mock('@/repositories/owner/taskRepository', () => ({
     getTasksByCompany: vi.fn(),
     getManagersByDepartment: vi.fn(),
     getEmployeesByDepartment: vi.fn(),
+    getSupervisedCasualWorkersByEmployee: vi.fn(),
     hasShiftOnDate: vi.fn(),
   },
 }))
@@ -114,5 +115,45 @@ describe('UC20 Rebalance Task Workload', () => {
     expect(suggestion.suggested_task_title).toBe('Investigate server outage')
     expect(suggestion.score_gap_before).toBe(31)
     expect(suggestion.score_gap_after).toBe(1)
+  })
+
+  it('UC20-E-UT-M: Employee sees a rebalancing suggestion for an overloaded Casual Worker they supervise', async () => {
+    const tasks = [
+      { ...baseTask, id: 'task-c1', title: 'Restock the front display', priority: 'Urgent', due_at: overdue(), assigned_user_id: 'cw-a' },
+      { ...baseTask, id: 'task-c2', title: 'Clear the loading bay', priority: 'Urgent', due_at: overdue(), assigned_user_id: 'cw-a' },
+      { ...baseTask, id: 'task-c3', title: 'Wipe down the back tables', priority: 'Low', due_at: plentyOfTime(), assigned_user_id: 'cw-b' },
+    ]
+    vi.mocked(taskRepository.getTasksByCompany).mockResolvedValue(tasks as never)
+    vi.mocked(taskRepository.getSupervisedCasualWorkersByEmployee).mockResolvedValue([
+      { id: 'cw-a', full_name: 'Casual Worker A' },
+      { id: 'cw-b', full_name: 'Casual Worker B' },
+    ])
+
+    const [suggestion] = await taskService.getWorkloadRebalancingSuggestions('comp-1', 'dept-1', undefined, undefined, 'Casual Worker', 'emp-1')
+
+    expect(taskRepository.getSupervisedCasualWorkersByEmployee).toHaveBeenCalledWith('emp-1', 'comp-1', 'dept-1')
+    expect(taskRepository.getEmployeesByDepartment).not.toHaveBeenCalled()
+    expect(suggestion.overloaded_user_id).toBe('cw-a')
+    expect(suggestion.recommended_user_id).toBe('cw-b')
+    expect(suggestion.suggested_task_id).toBe('task-c1')
+    expect(suggestion.score_gap_before).toBe(31)
+    expect(suggestion.score_gap_after).toBe(1)
+  })
+
+  // The Casual Worker pool is a supervisor + today pairing, so without a supervisor there is no
+  // pool to compare. Falling back to the department's whole roster would let an Employee rebalance
+  // across workers they don't supervise, which the one-level-down assignment rule forbids.
+  it('UC20-E-UT-A1: no suggestion when the Casual Worker pool has no supervisor to resolve it from', async () => {
+    const tasks = [
+      { ...baseTask, id: 'task-c1', title: 'Restock the front display', priority: 'Urgent', due_at: overdue(), assigned_user_id: 'cw-a' },
+      { ...baseTask, id: 'task-c2', title: 'Clear the loading bay', priority: 'Urgent', due_at: overdue(), assigned_user_id: 'cw-a' },
+      { ...baseTask, id: 'task-c3', title: 'Wipe down the back tables', priority: 'Low', due_at: plentyOfTime(), assigned_user_id: 'cw-b' },
+    ]
+    vi.mocked(taskRepository.getTasksByCompany).mockResolvedValue(tasks as never)
+
+    const suggestions = await taskService.getWorkloadRebalancingSuggestions('comp-1', 'dept-1', undefined, undefined, 'Casual Worker')
+
+    expect(suggestions).toEqual([])
+    expect(taskRepository.getSupervisedCasualWorkersByEmployee).not.toHaveBeenCalled()
   })
 })
