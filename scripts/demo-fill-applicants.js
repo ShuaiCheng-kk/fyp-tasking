@@ -133,6 +133,39 @@ async function ensureAccountExists(filler) {
   return row
 }
 
+// A second nudge from Sarah, once the postings are actually drawing applicants — separate from the
+// original "get some postings up" message from video-demo-seed.js, and never replacing it. This
+// script only ever inserts, and this specific check keeps it that way even though the script runs
+// once per job: whichever run gets here first adds it, the other finds it already there and skips.
+async function ensureFollowUpMessage() {
+  const FOLLOW_UP_TEXT = "Hey, how's the recruitment going for those Operations roles?"
+  const [{ data: owner }, { data: manager }] = await Promise.all([
+    supabase.from('users').select('id').eq('email_address', 'owner@test.com').single(),
+    supabase.from('users').select('id, company_id').eq('email_address', 'manager1@test.com').single(),
+  ])
+  if (!owner || !manager) return
+
+  const { data: already } = await supabase
+    .from('messages')
+    .select('id')
+    .eq('from_user_id', owner.id)
+    .eq('to_user_id', manager.id)
+    .eq('content', FOLLOW_UP_TEXT)
+    .maybeSingle()
+  if (already) return
+
+  const { error } = await supabase.from('messages').insert({
+    from_user_id: owner.id,
+    to_user_id: manager.id,
+    company_id: manager.company_id,
+    sender_name: 'Sarah Mitchell',
+    content: FOLLOW_UP_TEXT,
+    is_read: false,
+  })
+  if (error) { console.warn(`  ⚠ follow-up message: ${error.message}`); return }
+  console.log(`Chat: Sarah Mitchell -> David Lim, unread — "${FOLLOW_UP_TEXT}"\n`)
+}
+
 async function main() {
   console.log('\n═══ Demo: fill a freshly posted job with applicants ═══\n')
 
@@ -225,6 +258,9 @@ async function main() {
   const acceptCount = fillers.filter(f => f.accept).length
   console.log(`\n${added} applicant(s) added. With the hero applying live, the panel will show ${added + 1}.`)
   console.log(`Intended outcome: hero + ${acceptCount} filler(s) accepted, ${fillers.length - acceptCount} passed over.`)
+
+  await ensureFollowUpMessage()
+
   console.log('\nNext on camera:')
   console.log(`  1. ${HERO_EMAIL} applies for "${job.title}" with the matching note`)
   console.log('  2. Manager opens the applicant panel, now a real shortlist')
