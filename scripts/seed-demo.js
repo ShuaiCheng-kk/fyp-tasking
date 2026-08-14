@@ -1,36 +1,56 @@
 /**
- * scripts/seed-demo.js — 22 Aug 演示专用种子脚本
+ * scripts/seed-demo.js — 演示专用种子脚本（16-17 分钟纯操作，中途零脚本）
  *
  * 设计原则：**不复制 seed.js**。本脚本先原样跑一遍 `node scripts/seed.js` 建立完整基础数据，
  * 再在其之上打演示专用的补丁。这样 seed.js 永远是唯一的数据源真相，以后 seed.js 改了这里
  * 自动跟着改，不会出现两份 4000 行脚本互相漂移。
  *
- * 与 seed.js 的差异（也就是本脚本做的全部事情）：
- *   D1  Off Day 提交截止改成「周日 17:00」，并把待审批的 Off Day 全部对齐到当前开放的提交周
- *       （22 号周六跑 = 8/24–8/30 那一周），这样 demo 当天既能处理 Off Day 又能排那一周的班。
- *   D2  Ben Seah（employee1）和 David Lim（manager1）今天 08:00–18:00 排班，并且**已打卡、
- *       未下班**。这一步是硬性的：getClockLockStatus 只看「最近一条打卡记录有没有下班时间」，
- *       seed.js 种的历史打卡全都有下班时间，所以不补这条记录的话，Ben Seah 一登录整个 Tasks
- *       页就是只读——AI Assign 按钮不渲染、不能通过/驳回任务、不能放行下班。
- *   D3  Marcus Lee（casual1）清空从今天起的所有在手工作，让他今天是干净的，才能申请当场发布的
- *       「22 Aug Demo」一次性工作（one-off 会占住 11:30 到当天 23:59，身上有别的班就会被自己挡）。
- *   D4  新建第二家公司，并给 Marcus 在**明天**排一个已确认的班——演示 eligibility 拦截用的
- *       「他在另一家公司已经有活了」就是这条。
- *   D5  在本公司发一个**明天**的公开岗位，时间与 D4 那个班重叠，Marcus 申请它必被拒。
- *   D6  Recruitment 的 Active Jobs 只留一个带红点的岗位（红点 = pending_count > 0），挂 5 个
- *       资料齐全的待处理申请人，专门给 AI Assessment 演示用；其余岗位的 pending 申请全部清掉。
- *   D7  Operations / Marketing 两个部门制造工作量失衡，让 Workload Suggestion 必定触发
- *       （Reassign All 才有东西可点），并补几条明显超时的任务给 Task Delay Alert。
+ * ## 这个脚本要解决的问题
  *
- * 演示账号（只用 1 结尾的）：
- *   Owner        owner@test.com      Sarah Mitchell（公司 plan 已是 Paid，seed.js 就设好了）
- *   Manager      manager1@test.com   David Lim（Operations）
- *   Employee     employee1@test.com  Ben Seah（Operations，Marcus 的主管）
- *   Casual Worker casual1@test.com   Marcus Lee
- *   密码统一 111111
+ * 演示只有 16-17 分钟，而且**中途不能停下来跑脚本、不能等时间**。系统里有三类"必须等"的门槛，
+ * 全部要在演示开始前就变成既定事实：
  *
- * 使用方法（演示当天早上跑一次）：
+ *   1. 打卡窗口   —— Clock In 只在开工前 30 分钟才解锁
+ *   2. 只读锁     —— 任何人一旦 clock out，他的页面立刻变只读（getClockLockStatus 只看最近
+ *                    一条打卡记录有没有下班时间）
+ *   3. 招聘周期   —— 岗位要有人申请、AI 才有得排名；工人要先完工才会进 Worker Pool
+ *
+ * 所以本脚本把"过去"和"未来"都铺好，现场只做**有看头的动作**：跑 AI Assessment、跑 AI Assign、
+ * 拖任务、打回重做、从 Pool 邀请。
+ *
+ * ## 补丁清单
+ *
+ *   D1  Off Day 提交截止改成「周日 17:00」，并把待审批的 Off Day 全部对齐到当前开放的提交周，
+ *       这样演示当天既能处理 Off Day 又能排那一周的班（可选段落，不演也不碍事）。
+ *   D2  Ben Seah（employee1）和 David Lim（manager1）今天已打卡、**未下班**。硬性要求：不补
+ *       这条记录的话 Ben 一登录整个 Tasks 页就是只读，AI Assign 按钮根本不渲染。
+ *   D3  今天的班组：4 个 Casual Worker 在今天的 Operations 班上，**主管是 Ben、且已打卡**。
+ *       这是 AI Assign 多人分派的前提 —— Employee 那一层的候选人池来自
+ *       taskRepository.getSupervisedCasualWorkersByEmployee，它只认「今天同一个班、
+ *       supervisor_employee_id 是我」的人。
+ *   D4  Hero（guest1 Wei Jie Lim）清干净在途申请，并在**第三天**给他在第二家公司排一个已确认的
+ *       班 —— 这就是跨公司冲突拦截演示的那条。
+ *   D5  **明天**的招聘岗位，open，主管挂 Ben，已经躺着 5 个待处理申请人。
+ *       ⚠️ 为什么是明天不是今天：respondToInvitation 会调 invitationHasExpired 直接拦截，
+ *          一旦岗位开工时间已经过去，offer 就**确认不了**。放今天的话演示时早就过点了，
+ *          Hero 接受 offer 那一步会直接失败。
+ *   D6  第三天的岗位，时间与 D4 那个班重叠 —— Hero 申请它必被拦。
+ *   D7  Worker Pool 预置 6 个已验证工人（含历史完工记录，completed_shifts 不是 0）。
+ *       结尾「Invite from Pool」直接就有人可邀，不用现场挣。
+ *   D8  制造工作量失衡（Workload Suggestion 必定触发）+ 几条超期任务（Task Delay Alert 有内容）。
+ *
+ * ## 演示账号（密码统一 111111）
+ *
+ *   Owner         owner@test.com      Sarah Mitchell
+ *   Manager       manager1@test.com   David Lim（Operations，已打卡未下班）
+ *   Employee      employee1@test.com  Ben Seah（Operations，今天班组的主管，已打卡未下班）
+ *   Guest         guest1@test.com     Wei Jie Lim（现场申请岗位的那个人）
+ *
+ * ## 使用方法（演示开始前跑一次）
+ *
  *   node scripts/seed-demo.js
+ *
+ * 幂等，可以反复跑。跑完最后会打印一份"现场可以做什么"的清单。
  */
 
 const { createClient } = require('@supabase/supabase-js')
@@ -62,8 +82,16 @@ const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
 // 第二家公司的 Owner —— 只为了让 companies.owner_id 有个合法的人，演示时不会登录它。
 const SECOND_OWNER_EMAIL = 'owner2@demo.test'
 
-// AI Assessment 演示用的岗位（seed.js 里已有的 open 岗位，本脚本只往上挂申请人）。
-const ASSESSMENT_JOB_TITLE = 'Weekend Event Crew'
+const HERO_EMAIL = 'guest1@test.com'          // 现场申请岗位的人
+const HIRING_JOB_TITLE = 'Event Crew — Grand Opening'   // AI Assessment 演示用
+const CONFLICT_JOB_TITLE = 'Sunday Banquet Service Crew' // 冲突拦截演示用
+
+// 今天在 Ben 手下干活的班组 —— AI Assign 的候选人就是这几个。
+const CREW_EMAILS = ['casual3@test.com', 'casual4@test.com', 'casual5@test.com', 'casual6@test.com']
+// Worker Pool 里的人（班组 + 两个只有历史记录的）。
+const POOL_EMAILS = [...CREW_EMAILS, 'casual7@test.com', 'casual8@test.com']
+// 招聘岗位上预置的待处理申请人 —— Hero 现场再申请一个，AI Assessment 一共排 6 个。
+const APPLICANT_EMAILS = ['guest2@test.com', 'guest3@test.com', 'guest4@test.com', 'guest5@test.com', 'casual7@test.com']
 
 // ─── 日期 / 时间工具（口径与 seed.js 一致：班次时间是新加坡名义时间 +08:00）──────
 
@@ -102,9 +130,13 @@ function activeSubmissionWeekStart(today, deadlineWeekday, deadlineTime) {
 
 const TODAY = new Date()
 TODAY.setHours(0, 0, 0, 0)
-const TOMORROW = addDays(TODAY, 1)
 const TODAY_KEY = dateKey(TODAY)
-const TOMORROW_KEY = dateKey(TOMORROW)
+const TOMORROW_KEY = dateKey(addDays(TODAY, 1))
+const DAY3_KEY = dateKey(addDays(TODAY, 2))
+
+// 班组今天的开工时间。必须是**已经过去**的钟点，Clock In 窗口（开工前 30 分钟才解锁）才一定
+// 是开着的，不管演示实际几点开始。
+const CREW_START = '08:00'
 
 function ok(msg) { console.log(`  ✓ ${msg}`) }
 function warn(msg) { console.warn(`  ⚠ ${msg}`) }
@@ -127,11 +159,11 @@ function runBaseSeed() {
 
 // ─── 查询小工具 ────────────────────────────────────────────────────────────────
 
-async function getUserByEmail(email) {
+async function getUserByEmail(email, { optional = false } = {}) {
   const { data, error } = await supabase
-    .from('users').select('id, full_name, company_id').eq('email_address', email).maybeSingle()
+    .from('users').select('id, full_name, company_id, role').eq('email_address', email).maybeSingle()
   if (error) throw new Error(`查询 ${email} 失败: ${error.message}`)
-  if (!data) throw new Error(`找不到用户 ${email}，seed.js 是不是没跑成功？`)
+  if (!data && !optional) throw new Error(`找不到用户 ${email}，seed.js 是不是没跑成功？`)
   return data
 }
 
@@ -177,6 +209,42 @@ async function createTask(fields) {
   return data
 }
 
+// 删掉某人从某天起的所有排班（含挂在上面的任务和打卡记录），外键顺序安全。
+async function wipeShiftsFrom(userId, fromDateKey) {
+  const { data: assignments, error } = await supabase
+    .from('shift_assignments')
+    .select('id, shift_id, shifts!inner(id, shift_date)')
+    .eq('user_id', userId)
+    .gte('shifts.shift_date', fromDateKey)
+  if (error) { warn(`查询未来班次失败: ${error.message}`); return 0 }
+
+  const rows = assignments ?? []
+  const shiftIds = [...new Set(rows.map(r => r.shift_id))]
+  const assignmentIds = rows.map(r => r.id)
+
+  if (assignmentIds.length > 0) {
+    await supabase.from('attendance_records').delete().in('shift_assignment_id', assignmentIds)
+  }
+  if (shiftIds.length > 0) {
+    // 挂在这些班次上的任务要先清掉，否则 shifts 删不动（tasks.shift_id 外键）。
+    const { data: shiftTasks } = await supabase.from('tasks').select('id').in('shift_id', shiftIds)
+    const taskIds = (shiftTasks ?? []).map(t => t.id)
+    if (taskIds.length > 0) {
+      await supabase.from('task_assignments').delete().in('task_id', taskIds)
+      await supabase.from('tasks').delete().in('parent_task_id', taskIds)
+      await supabase.from('tasks').delete().in('id', taskIds)
+    }
+  }
+  if (assignmentIds.length > 0) {
+    await supabase.from('shift_assignments').delete().in('id', assignmentIds)
+  }
+  if (shiftIds.length > 0) {
+    const { error: sErr } = await supabase.from('shifts').delete().in('id', shiftIds)
+    if (sErr) warn(`删除班次失败: ${sErr.message}`)
+  }
+  return shiftIds.length
+}
+
 // ─── D1: Off Day 截止时间 + 待审批周对齐 ───────────────────────────────────────
 
 async function applyOffDayDeadline(companyId) {
@@ -190,8 +258,6 @@ async function applyOffDayDeadline(companyId) {
   if (error) { warn(`更新 off_day_submission_deadline 失败: ${error.message}`); return }
   ok('Off Day submission deadline: Sunday 17:00')
 
-  // 演示当天（周六）这个截止还没到，所以开放提交的是下一周 = 8/24–8/30。把所有 pending 的
-  // 申请强制对齐到这一周，Owner 才能在 demo 里处理它们、并接着排那一周的班。
   const activeWeek = activeSubmissionWeekStart(TODAY, 0, '17:00')
   const activeWeekKey = dateKey(activeWeek)
 
@@ -217,16 +283,15 @@ async function applyOffDayDeadline(companyId) {
     if (upErr) warn(`平移 off_day_request ${row.id} 失败: ${upErr.message}`)
     else moved++
   }
-  ok(`${moved} 条待审批 Off Day 已对齐到 ${activeWeekKey} 那一周（demo 要排的就是这一周）`)
+  ok(`${moved} 条待审批 Off Day 已对齐到 ${activeWeekKey} 那一周`)
 }
 
 // ─── D2: Ben Seah / David Lim 今天已打卡未下班 ─────────────────────────────────
 
 async function applyClockedInSupervisors(companyId, ownerId, users) {
-  console.log('\nD2: Ben Seah / David Lim 今天 08:00-18:00 排班且已打卡...')
+  console.log('\nD2: Ben Seah / David Lim 今天已打卡、未下班...')
 
   for (const [label, user] of [['Ben Seah (employee1)', users.employee1], ['David Lim (manager1)', users.manager1]]) {
-    // 先找 seed.js 已经给他种的今天的班——直接改时间，不删，避免动到挂在这个 shift 上的任务。
     const { data: assignments, error: aErr } = await supabase
       .from('shift_assignments')
       .select('id, shift_id, shifts!inner(id, shift_date)')
@@ -239,91 +304,132 @@ async function applyClockedInSupervisors(companyId, ownerId, users) {
     if (assignment) {
       const { error: sErr } = await supabase
         .from('shifts')
-        .update({ start_time: '08:00', end_time: '18:00', is_open_ended: false })
+        .update({ start_time: CREW_START, end_time: '18:00', is_open_ended: false })
         .eq('id', assignment.shift_id)
       if (sErr) warn(`更新 ${label} 今天班次时间失败: ${sErr.message}`)
     } else {
       const shift = await createShift({
         company_id: companyId, department_id: users.opsDeptId, shift_date: TODAY_KEY,
-        start_time: '08:00', end_time: '18:00', is_open_ended: false,
+        start_time: CREW_START, end_time: '18:00', is_open_ended: false,
         created_by: ownerId, publication_status: 'published',
       })
       assignment = await assignShift(shift?.id, user.id, ownerId)
       if (!assignment) { warn(`${label} 今天的班没建成，跳过打卡记录`); continue }
     }
 
-    // 关键的一步：08:00 打卡、**不写 clock_out_time**。
+    // 关键的一步：已打卡、**不写 clock_out_time**。
     // getClockLockStatus 取 clock_in_time 最新的一条记录，只要它没有下班时间就解锁。
     await supabase.from('attendance_records').delete().eq('shift_assignment_id', assignment.id)
     const { error: recErr } = await supabase.from('attendance_records').insert({
       shift_assignment_id: assignment.id,
       user_id: user.id,
-      clock_in_time: sgt(TODAY_KEY, '08:00').toISOString(),
+      clock_in_time: sgt(TODAY_KEY, CREW_START).toISOString(),
       clock_out_time: null,
       break_in_time: null,
       break_out_time: null,
     })
     if (recErr) warn(`${label} 打卡记录写入失败: ${recErr.message}`)
-    else ok(`${label} 今天 08:00 已打卡、未下班（Tasks 页可写，AI Assign 按钮会渲染）`)
+    else ok(`${label} 今天 ${CREW_START} 已打卡、未下班（Tasks 页可写，AI Assign 按钮会渲染）`)
   }
 }
 
-// ─── D3: 清空 Marcus Lee 今天起的所有在手工作 ──────────────────────────────────
+// ─── D3: 今天的班组（AI Assign 多人分派的候选人池）────────────────────────────
 
-async function clearCasualUpcomingWork(marcusId) {
-  console.log('\nD3: 清空 Marcus Lee 从今天起的所有班次与在途申请...')
+async function seedTodayCrew(companyId, ownerId, opsDeptId, benId) {
+  console.log('\nD3: 今天的班组 —— 4 个 Casual Worker，主管 Ben，已打卡...')
 
-  const { data: assignments, error: aErr } = await supabase
+  // Employee 那一层 AI Assign 的候选人来自 getSupervisedCasualWorkersByEmployee，条件是：
+  //   shift_assignments.supervisor_employee_id = Ben
+  //   AND shifts.shift_date = 今天 AND shifts.department_id = Operations
+  // 三个条件缺一个人就不会出现在候选名单里。
+  //
+  // 先把今天挂在 Ben 名下的**所有**班次清掉：seed.js 自己也会给别的 Casual Worker（Marcus Lee、
+  // Hana Bakri）排今天的班并挂 Ben 当主管，不清的话候选名单会混进不属于班组的人，现场
+  // 讲解跟画面对不上。清完再种，班组人数就是确定的 4 个。
+  const { data: preexisting } = await supabase
     .from('shift_assignments')
-    .select('id, shift_id, shifts!inner(id, shift_date, source_job_posting_id)')
-    .eq('user_id', marcusId)
-    .gte('shifts.shift_date', TODAY_KEY)
-  if (aErr) { warn(`查询 Marcus 未来班次失败: ${aErr.message}`); return }
+    .select('user_id, shifts!inner(shift_date)')
+    .eq('supervisor_employee_id', benId)
+    .eq('shifts.shift_date', TODAY_KEY)
+  const strayIds = [...new Set((preexisting ?? []).map(r => r.user_id))]
+  for (const uid of strayIds) await wipeShiftsFrom(uid, TODAY_KEY)
+  if (strayIds.length > 0) ok(`清掉 ${strayIds.length} 个 seed.js 自带的今日在管工人，班组只留下面这几个`)
 
-  const rows = assignments ?? []
-  const shiftIds = [...new Set(rows.map(r => r.shift_id))]
-  const assignmentIds = rows.map(r => r.id)
+  const crew = []
+  for (const email of CREW_EMAILS) {
+    const user = await getUserByEmail(email, { optional: true })
+    if (!user) { warn(`找不到 ${email}，跳过`); continue }
 
-  if (assignmentIds.length > 0) {
-    await supabase.from('attendance_records').delete().in('shift_assignment_id', assignmentIds)
+    // 先清掉他今天起的其它班，避免同一天两个班把画面搞乱、或撞到自己。
+    await wipeShiftsFrom(user.id, TODAY_KEY)
+
+    const shift = await createShift({
+      company_id: companyId, department_id: opsDeptId, shift_date: TODAY_KEY,
+      start_time: CREW_START, end_time: '20:00',
+      // 开放式班次：下班要主管放行（release），这正是演示最后「主管放行 → 工人下班」那一步。
+      is_open_ended: true,
+      created_by: ownerId, publication_status: 'published', hourly_rate: 14,
+    })
+    const assignment = await assignShift(shift?.id, user.id, ownerId, benId)
+    if (!assignment) { warn(`${user.full_name} 排班失败，跳过`); continue }
+
+    // 已打卡未下班。错开几分钟，看起来像真的陆续到场，而不是同一秒批量写进去的。
+    const minute = String(3 + crew.length * 4).padStart(2, '0')
+    const { error: recErr } = await supabase.from('attendance_records').insert({
+      shift_assignment_id: assignment.id,
+      user_id: user.id,
+      clock_in_time: sgt(TODAY_KEY, `${CREW_START.slice(0, 2)}:${minute}`).toISOString(),
+      clock_out_time: null,
+    })
+    if (recErr) { warn(`${user.full_name} 打卡记录失败: ${recErr.message}`); continue }
+
+    crew.push(user)
+    ok(`${user.full_name}：今天 ${CREW_START} 开工，${CREW_START.slice(0, 2)}:${minute} 已打卡，主管 Ben`)
   }
-  if (shiftIds.length > 0) {
-    // 挂在这些班次上的任务要先清掉，否则 shifts 删不动（tasks.shift_id 外键）。
-    const { data: shiftTasks } = await supabase.from('tasks').select('id').in('shift_id', shiftIds)
-    const taskIds = (shiftTasks ?? []).map(t => t.id)
-    if (taskIds.length > 0) {
-      await supabase.from('task_assignments').delete().in('task_id', taskIds)
-      await supabase.from('tasks').delete().in('parent_task_id', taskIds)
-      await supabase.from('tasks').delete().in('id', taskIds)
-    }
+
+  if (crew.length < 2) {
+    warn('班组不足 2 人，AI Assign 的多人分派会退化成单人推荐 —— 检查上面的报错')
+  } else {
+    ok(`班组共 ${crew.length} 人，Ben 的 AI Assign 候选名单就是这几个`)
   }
-  if (assignmentIds.length > 0) {
-    await supabase.from('shift_assignments').delete().in('id', assignmentIds)
-  }
-  if (shiftIds.length > 0) {
-    const { error: sErr } = await supabase.from('shifts').delete().in('id', shiftIds)
-    if (sErr) warn(`删除 Marcus 未来班次失败: ${sErr.message}`)
-  }
-  ok(`清掉 ${shiftIds.length} 个从今天起的班次`)
+  return crew
+}
+
+// ─── D4: Hero 清干净 + 第二家公司的既有承诺（冲突拦截用）──────────────────────
+
+async function prepareHeroAndSecondCompany(heroId) {
+  console.log('\nD4: Hero（Wei Jie Lim）清干净在途工作，并在第二家公司排一个已确认的班...')
+
+  const wiped = await wipeShiftsFrom(heroId, TODAY_KEY)
+  ok(`清掉 Hero ${wiped} 个从今天起的班次`)
 
   // 在途申请同样算「已占用时段」（workerEligibility.getActiveApplicationJobs），一并清掉，
-  // 否则他申请「22 Aug Demo」时可能被自己的旧申请挡住。
+  // 否则他现场申请新岗位时可能被自己的旧申请挡住。
   const { data: apps } = await supabase
-    .from('job_applicants').select('id').eq('user_id', marcusId).in('status', ['pending', 'accepted'])
+    .from('job_applicants').select('id').eq('user_id', heroId).in('status', ['pending', 'accepted'])
   const appIds = (apps ?? []).map(a => a.id)
   if (appIds.length > 0) {
     await supabase.from('job_invitations').delete().in('applicant_id', appIds)
     await supabase.from('job_applicants').delete().in('id', appIds)
   }
-  ok(`清掉 ${appIds.length} 条在途申请`)
-}
+  ok(`清掉 Hero ${appIds.length} 条在途申请（现在他是干净的，可以现场申请）`)
 
-// ─── D4: 第二家公司 + Marcus 明天在那边的已确认班次 ────────────────────────────
+  // Hero 的 worker profile —— 没有这行，Apply 会直接报 "Worker profile not found"。
+  // seed.js 正常会建，这里兜底一次，重跑也安全。
+  const { data: profile } = await supabase
+    .from('casual_worker_profiles').select('user_id').eq('user_id', heroId).maybeSingle()
+  if (!profile) {
+    await supabase.from('casual_worker_profiles').insert({
+      user_id: heroId,
+      skills: 'Forklift operation, Inventory management, Heavy lifting',
+      resume_url: 'https://example.com/demo-resumes/guest1-resume.pdf',
+    })
+    ok('补上了 Hero 的 worker profile')
+  } else {
+    ok('Hero 的 worker profile 已存在')
+  }
 
-async function createSecondCompanyCommitment(marcusId) {
-  console.log('\nD4: 建第二家公司，并让 Marcus 明天在那边已经有班...')
-
-  // 重跑时先清掉上一次留下的账号，否则 auth 建号会撞邮箱。
+  // ── 第二家公司 ──
   const { data: authList } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 })
   const stale = (authList?.users ?? []).find(u => u.email === SECOND_OWNER_EMAIL)
   if (stale) await supabase.auth.admin.deleteUser(stale.id)
@@ -364,38 +470,138 @@ async function createSecondCompanyCommitment(marcusId) {
   }).select().single()
   if (dErr) { warn(`第二家公司部门创建失败: ${dErr.message}`); return null }
 
-  // 明天 15:00–21:00 的已确认班次 —— 这就是演示里「他在另一家公司已经有活了」的那条。
+  // 第三天 15:00-21:00 的已确认班次 —— 演示里「他在另一家公司已经有活了」就是这条。
   const shift = await createShift({
-    company_id: company2.id, department_id: dept2.id, shift_date: TOMORROW_KEY,
+    company_id: company2.id, department_id: dept2.id, shift_date: DAY3_KEY,
     start_time: '15:00', end_time: '21:00', is_open_ended: false,
     created_by: owner2.id, publication_status: 'published', hourly_rate: 15,
   })
-  await assignShift(shift?.id, marcusId, owner2.id)
+  await assignShift(shift?.id, heroId, owner2.id)
 
   await supabase.from('casualworker_departments').upsert({
-    casual_worker_id: marcusId, department_id: dept2.id, company_id: company2.id,
+    casual_worker_id: heroId, department_id: dept2.id, company_id: company2.id,
     verified_at: new Date().toISOString(),
   }, { onConflict: 'casual_worker_id,department_id' })
 
-  ok(`Harbourfront Events：Marcus 明天 ${TOMORROW_KEY} 15:00-21:00 已确认排班`)
+  ok(`Harbourfront Events：Hero 第三天 ${DAY3_KEY} 15:00-21:00 已确认排班`)
   return company2
 }
 
-// ─── D5: 本公司明天的岗位（申请它必然撞车） ────────────────────────────────────
+// ─── D5: 明天的招聘岗位 + 5 个待处理申请人（AI Assessment 用）─────────────────
 
-async function createConflictJob(companyId, ownerId, opsDeptId) {
-  console.log('\nD5: 建一个明天的公开岗位，用来演示资格冲突拦截...')
+async function seedHiringJob(companyId, ownerId, opsDeptId, benId) {
+  console.log('\nD5: 明天的招聘岗位 + 预置申请人（AI Assessment 用）...')
+
+  // 先把本公司其它岗位的 pending 申请压掉，保证红点只有这一个，现场不会点错。
+  const { data: postings } = await supabase
+    .from('job_postings').select('id, title').eq('company_id', companyId)
+  const otherIds = (postings ?? []).filter(p => p.title !== HIRING_JOB_TITLE).map(p => p.id)
+  if (otherIds.length > 0) {
+    await supabase.from('job_applicants').update({ status: 'rejected' }).in('job_id', otherIds).eq('status', 'pending')
+  }
+
+  // 重跑时先删掉上一次建的，避免同名岗位堆积。
+  const existing = (postings ?? []).find(p => p.title === HIRING_JOB_TITLE)
+  if (existing) {
+    const { data: oldApps } = await supabase.from('job_applicants').select('id').eq('job_id', existing.id)
+    const oldAppIds = (oldApps ?? []).map(a => a.id)
+    if (oldAppIds.length > 0) {
+      await supabase.from('job_invitations').delete().in('applicant_id', oldAppIds)
+      await supabase.from('job_applicants').delete().in('id', oldAppIds)
+    }
+    await supabase.from('job_postings').delete().eq('id', existing.id)
+  }
 
   const { data: job, error } = await supabase.from('job_postings').insert({
     company_id: companyId, department_id: opsDeptId, created_by: ownerId,
-    title: 'Sunday Banquet Service Crew',
+    // 这个字段就是新工人被录用后 shift_assignments.supervisor_employee_id 的来源
+    // （workerApplicationService 第 256 行）。挂 Ben，新人才归 Ben 管。
+    assigned_employee_id: benId,
+    title: HIRING_JOB_TITLE,
+    responsibilities: 'Set up the venue before doors open, run the floor during the event, and clear down afterwards. Includes moving tables and chairs, guiding guests, and keeping service areas tidy.',
+    skills: 'Comfortable lifting and carrying event equipment, follows a floor plan accurately, stays calm and quick under time pressure, works well in a team.',
+    status: 'open',
+    job_type: 'oneoff',
+    urgency: 'urgent',
+    job_date: TOMORROW_KEY,
+    job_start_time: '10:00',
+    estimated_hours: '8',
+    openings: 3,
+    experience_required: 'Not Required',
+    minimum_age: 16,
+    salary_amount: 120,
+    no_deadline: true,
+  }).select().single()
+  if (error) { warn(`招聘岗位创建失败: ${error.message}`); return null }
+
+  // 5 个待处理申请人，资料直接取自各自的 worker profile（跟真人自己填的一致）。
+  // 留言故意写成强弱分明，AI Assessment 排出来的名次才讲得通。
+  const notes = {
+    'guest2@test.com': 'Mostly social media and copywriting so far, but I pick things up fast and I am free all weekend.',
+    'guest3@test.com': 'Two seasons of event crew work, stage rigging and sound setup. Used to long pack-down nights.',
+    'guest4@test.com': 'Retail and promo experience, comfortable talking to guests all day. Weekends fully free.',
+    'guest5@test.com': 'My background is IT support rather than events, but I am reliable and happy to do the heavy lifting.',
+    'casual7@test.com': 'Worked several banquet turnovers here before. Know the floor plan and the pack-down routine already.',
+  }
+
+  let created = 0
+  for (const email of APPLICANT_EMAILS) {
+    const user = await getUserByEmail(email, { optional: true })
+    if (!user) { warn(`找不到 ${email}，跳过`); continue }
+
+    const { data: profile } = await supabase
+      .from('casual_worker_profiles').select('skills, resume_url').eq('user_id', user.id).maybeSingle()
+    const { data: certs } = await supabase
+      .from('user_certificates').select('name, certificate_url').eq('user_id', user.id)
+
+    const { error: appErr } = await supabase.from('job_applicants').insert({
+      job_id: job.id,
+      user_id: user.id,
+      status: 'pending',
+      resume: profile?.resume_url ?? null,
+      skills: profile?.skills ?? null,
+      certificates: certs ?? [],
+      additional_note: notes[email] ?? null,
+      // 错开申请时间，列表看起来像陆续收到的。
+      applied_at: new Date(Date.now() - (created + 1) * 37 * 60000).toISOString(),
+    })
+    if (appErr) warn(`挂申请人 ${email} 失败: ${appErr.message}`)
+    else created++
+  }
+
+  ok(`「${job.title}」明天 10:00 开工，${created} 个待处理申请人，主管挂 Ben`)
+  ok(`openings = 3，Hero 现场再申请一个就是 ${created + 1} 个人排名`)
+  return job
+}
+
+// ─── D6: 第三天的岗位（Hero 申请它必然撞车）────────────────────────────────────
+
+async function seedConflictJob(companyId, ownerId, opsDeptId) {
+  console.log('\nD6: 第三天的岗位，用来演示跨公司资格冲突拦截...')
+
+  const { data: existing } = await supabase
+    .from('job_postings').select('id').eq('company_id', companyId).eq('title', CONFLICT_JOB_TITLE).maybeSingle()
+  if (existing) {
+    const { data: oldApps } = await supabase.from('job_applicants').select('id').eq('job_id', existing.id)
+    const oldAppIds = (oldApps ?? []).map(a => a.id)
+    if (oldAppIds.length > 0) {
+      await supabase.from('job_invitations').delete().in('applicant_id', oldAppIds)
+      await supabase.from('job_applicants').delete().in('id', oldAppIds)
+    }
+    await supabase.from('job_postings').delete().eq('id', existing.id)
+  }
+
+  const { data: job, error } = await supabase.from('job_postings').insert({
+    company_id: companyId, department_id: opsDeptId, created_by: ownerId,
+    title: CONFLICT_JOB_TITLE,
     responsibilities: 'Serve a full-house banquet: plate service, drinks top-up, and floor reset between courses.',
     skills: 'Comfortable on your feet for long stretches, tidy presentation, works well in a team.',
     status: 'open',
     job_type: 'oneoff',
     urgency: 'normal',
-    job_date: TOMORROW_KEY,
+    job_date: DAY3_KEY,
     job_start_time: '16:00',
+    estimated_hours: '6',
     openings: 4,
     experience_required: 'Not Required',
     minimum_age: 16,
@@ -404,72 +610,61 @@ async function createConflictJob(companyId, ownerId, opsDeptId) {
   }).select().single()
   if (error) { warn(`冲突演示岗位创建失败: ${error.message}`); return }
 
-  ok(`「${job.title}」明天 16:00 开工 —— Marcus 申请它会撞上 Harbourfront 15:00-21:00 的班`)
-  ok('提示：拦截文案只说「和你已有的班冲突」，不会写公司名，跨公司这一点要靠讲解点出来')
+  ok(`「${job.title}」第三天 ${DAY3_KEY} 16:00 开工`)
+  ok('Hero 申请它会撞上 Harbourfront 那天 15:00-21:00 的班 → 被拦下')
+  ok('注意：拦截文案只说「和你已有的班冲突」，不写公司名，跨公司这点要靠讲解点出来')
 }
 
-// ─── D6: Active Jobs 只留一个红点 ──────────────────────────────────────────────
+// ─── D7: Worker Pool 预置（Invite from Pool 直接有人可邀）──────────────────────
 
-async function focusAssessmentJob(companyId) {
-  console.log('\nD6: Recruitment 只留一个带红点的岗位（给 AI Assessment 用）...')
+async function seedWorkerPool(companyId, ownerId, opsDeptId, benId) {
+  console.log('\nD7: Worker Pool 预置已验证工人 + 历史完工记录...')
 
-  const { data: postings, error: pErr } = await supabase
-    .from('job_postings').select('id, title, status').eq('company_id', companyId)
-  if (pErr) { warn(`查询岗位失败: ${pErr.message}`); return }
+  // getVerifiedPoolWorkers 的条件：casualworker_departments.verified_at 非空、inactive_at 为空。
+  // completed_shifts 是从 attendance_records 里有 clock_out_time 的记录数出来的，所以要补历史
+  // 完工记录，否则池子里每个人都是 0 场，看着像假数据。
+  let pooled = 0
+  for (const email of POOL_EMAILS) {
+    const user = await getUserByEmail(email, { optional: true })
+    if (!user) { warn(`找不到 ${email}，跳过`); continue }
 
-  const target = (postings ?? []).find(p => p.title === ASSESSMENT_JOB_TITLE)
-  if (!target) { warn(`找不到岗位「${ASSESSMENT_JOB_TITLE}」，D6 跳过`); return }
+    const { error: cwdErr } = await supabase.from('casualworker_departments').upsert({
+      casual_worker_id: user.id,
+      department_id: opsDeptId,
+      company_id: companyId,
+      verified_at: new Date().toISOString(),
+      inactive_at: null,
+    }, { onConflict: 'casual_worker_id,department_id' })
+    if (cwdErr) { warn(`${user.full_name} 入池失败: ${cwdErr.message}`); continue }
 
-  // 红点 = pending_count > 0。先把本公司所有 pending 申请压掉，保证只有目标岗位亮红点。
-  const otherIds = (postings ?? []).filter(p => p.id !== target.id).map(p => p.id)
-  if (otherIds.length > 0) {
-    const { error: clrErr } = await supabase
-      .from('job_applicants').update({ status: 'rejected' }).in('job_id', otherIds).eq('status', 'pending')
-    if (clrErr) warn(`清理其它岗位的 pending 申请失败: ${clrErr.message}`)
+    // 过去两周补 2-3 场已完工的班。天数按人错开，Last Worked 那一列才不会所有人同一天。
+    const pastCount = 2 + (pooled % 2)
+    for (let i = 0; i < pastCount; i++) {
+      const dayBack = 3 + i * 4 + (pooled % 3)
+      const pastKey = dateKey(addDays(TODAY, -dayBack))
+      const shift = await createShift({
+        company_id: companyId, department_id: opsDeptId, shift_date: pastKey,
+        start_time: '09:00', end_time: '17:00', is_open_ended: false,
+        created_by: ownerId, publication_status: 'published', hourly_rate: 14,
+      })
+      const assignment = await assignShift(shift?.id, user.id, ownerId, benId)
+      if (!assignment) continue
+      await supabase.from('attendance_records').insert({
+        shift_assignment_id: assignment.id,
+        user_id: user.id,
+        clock_in_time: sgt(pastKey, '08:56').toISOString(),
+        clock_out_time: sgt(pastKey, '17:04').toISOString(),
+      })
+    }
+
+    pooled++
+    ok(`${user.full_name}：已验证入池，${pastCount} 场历史完工记录`)
   }
-  ok('其它岗位的 pending 申请已清空（红点只剩一个）')
 
-  // 目标岗位挂 5 个资料齐全的待处理申请人 —— AI Assessment 才有得排名。
-  // 资料直接取自各自的 worker profile，跟真人自己填的一致。
-  const applicantEmails = ['guest1@test.com', 'guest2@test.com', 'guest3@test.com', 'guest4@test.com', 'guest5@test.com']
-  const notes = [
-    'Ran the beverage station at two corporate galas last year. Comfortable with high-volume service.',
-    'Two seasons of event crew work, mostly front-of-house. Happy to take late finishes.',
-    'Stage and AV setup background. Strong on heavy lifting and pack-down.',
-    'Retail and promo experience, used to talking to guests all day. Weekends fully free.',
-    'First large event, but reliable and quick to pick things up. Available for the whole weekend.',
-  ]
-
-  await supabase.from('job_applicants').delete().eq('job_id', target.id)
-
-  let created = 0
-  for (let i = 0; i < applicantEmails.length; i++) {
-    const email = applicantEmails[i]
-    const { data: applicant } = await supabase
-      .from('users').select('id').eq('email_address', email).maybeSingle()
-    if (!applicant) { warn(`找不到 ${email}，跳过`); continue }
-
-    const { data: profile } = await supabase
-      .from('casual_worker_profiles').select('skills, resume_url').eq('user_id', applicant.id).maybeSingle()
-    const { data: certs } = await supabase
-      .from('user_certificates').select('name, certificate_url').eq('user_id', applicant.id)
-
-    const { error: appErr } = await supabase.from('job_applicants').insert({
-      job_id: target.id,
-      user_id: applicant.id,
-      status: 'pending',
-      resume: profile?.resume_url ?? null,
-      skills: profile?.skills ?? null,
-      certificates: certs ?? [],
-      additional_note: notes[i],
-    })
-    if (appErr) warn(`挂申请人 ${email} 失败: ${appErr.message}`)
-    else created++
-  }
-  ok(`「${target.title}」现在有 ${created} 个待处理申请人，红点独一份`)
+  ok(`Worker Pool 共 ${pooled} 人，结尾「Invite from Pool」直接有人可邀`)
 }
 
-// ─── D7: 工作量失衡 + 超时任务 ─────────────────────────────────────────────────
+// ─── D8: 工作量失衡 + 超时任务 ─────────────────────────────────────────────────
 
 // taskService.taskWorkloadWeight 的复刻：优先级权重 x 截止紧迫度。
 const PRIORITY_WEIGHT = { Urgent: 4, High: 3, Medium: 2, Low: 1 }
@@ -486,7 +681,7 @@ function taskWorkloadWeight(task) {
 }
 
 async function seedWorkloadImbalance(companyId, ownerId, depts) {
-  console.log('\nD7: 制造工作量失衡（Workload Suggestion）+ 超时任务（Delay Alert）...')
+  console.log('\nD8: 制造工作量失衡（Workload Suggestion）+ 超时任务（Delay Alert）...')
 
   // ── 先种 Delay Alert 用的超期任务（它们也会计入下面的工作量分数，所以必须排在前面）──
   const opsDept = depts.find(d => d.name === 'Operations')
@@ -512,12 +707,11 @@ async function seedWorkloadImbalance(companyId, ownerId, depts) {
   // ── 工作量失衡 ──
   // 触发条件（taskService.getWorkloadRebalancingSuggestions）：
   //   最重的人分数 > 最轻候选人分数 x 2，且最重的人至少有 2 条活跃主任务。
-  // 直接照抄 seed.js 的任务量去猜要堆多少条是猜不准的（seed 本身给每个 Manager 的负载就不低），
-  // 所以这里**先按线上真实数据算一遍分数，再算出还差几条**，避免以后 seed.js 改了这里就失效。
+  // 直接照抄 seed.js 的任务量去猜要堆多少条是猜不准的，所以这里**先按线上真实数据算一遍分数，
+  // 再算出还差几条**，避免以后 seed.js 改了这里就失效。
   //
   // 「重」的一方固定放在各部门的第二个 Manager（Wendy Ho / Kelvin Ang），「轻」的一方留给
-  // David Lim / Rachel Koh —— 演示第 27 步要 AI Assign 派给 David Lim，而 AI Assign 推荐的是
-  // **最闲**的人，两边必须对得上，否则画面自相矛盾。
+  // David Lim / Rachel Koh —— AI Assign 推荐的是**最闲**的人，两边必须对得上，否则画面自相矛盾。
   const partner = await getUserByEmail('partner1@test.com')
   const peerTier = [ownerId, partner.id]
 
@@ -551,7 +745,6 @@ async function seedWorkloadImbalance(companyId, ownerId, depts) {
       .from('users').select('id, full_name').eq('email_address', plan.overloadedEmail).maybeSingle()
     if (!overloaded) { warn(`找不到 ${plan.overloadedEmail}，跳过`); continue }
 
-    // 该部门的 Manager 候选池（服务层就是这么取的：部门内的 Manager，起步分 0）。
     const { data: memberships } = await supabase
       .from('manager_departments').select('manager_id').eq('department_id', dept.id)
     const candidateIds = (memberships ?? []).map(m => m.manager_id)
@@ -619,7 +812,7 @@ async function main() {
   const owner = await getUserByEmail('owner@test.com')
   const manager1 = await getUserByEmail('manager1@test.com')
   const employee1 = await getUserByEmail('employee1@test.com')
-  const marcus = await getUserByEmail('casual1@test.com')
+  const hero = await getUserByEmail(HERO_EMAIL)
 
   const company = await getCompanyByName('Sunrise Hospitality Group')
   if (!company) { console.error('✗ 找不到主公司，中止'); process.exit(1) }
@@ -632,33 +825,42 @@ async function main() {
 
   await applyOffDayDeadline(company.id)
   await applyClockedInSupervisors(company.id, owner.id, users)
-  await clearCasualUpcomingWork(marcus.id)
-  await createSecondCompanyCommitment(marcus.id)
-  await createConflictJob(company.id, owner.id, opsDept.id)
-  await focusAssessmentJob(company.id)
+  const crew = await seedTodayCrew(company.id, owner.id, opsDept.id, employee1.id)
+  await prepareHeroAndSecondCompany(hero.id)
+  await seedHiringJob(company.id, owner.id, opsDept.id, employee1.id)
+  await seedConflictJob(company.id, owner.id, opsDept.id)
+  await seedWorkerPool(company.id, owner.id, opsDept.id, employee1.id)
   await seedWorkloadImbalance(company.id, owner.id, depts)
+
+  const activeWeek = activeSubmissionWeekStart(TODAY, 0, '17:00')
 
   console.log('\n═══════════════════════════════════════════')
   console.log(' 演示数据就绪')
   console.log('═══════════════════════════════════════════')
-  console.log(`  演示日期：${TODAY_KEY}（冲突岗位与第二家公司的班都落在 ${TOMORROW_KEY}）`)
+  console.log(`  今天 ${TODAY_KEY} ｜ 招聘岗位 ${TOMORROW_KEY} ｜ 冲突岗位 ${DAY3_KEY}`)
+  console.log('')
   console.log('  账号（密码 111111）：')
-  console.log('    Owner         owner@test.com      Sarah Mitchell')
-  console.log('    Manager       manager1@test.com   David Lim（Operations，AI Assign 应推荐他）')
-  console.log('    Employee      employee1@test.com  Ben Seah（已打卡未下班，Tasks 页可写）')
-  console.log('    Casual Worker casual1@test.com    Marcus Lee（今天全空）')
+  console.log('    Owner     owner@test.com      Sarah Mitchell')
+  console.log('    Manager   manager1@test.com   David Lim      已打卡未下班')
+  console.log('    Employee  employee1@test.com  Ben Seah       已打卡未下班，今天班组的主管')
+  console.log(`    Guest     ${HERO_EMAIL}     Wei Jie Lim    干净，可现场申请`)
   console.log('')
-  console.log('  演示当天现场要做的：')
-  console.log('    1. Owner 用 AI Job Builder 发「22 Aug Demo」One-Off，开始时间设 11:30，')
-  console.log('       supervisor 选 Ben Seah，截止主动选 "No Deadline"')
-  console.log('    2. Marcus 先申请「Sunday Banquet Service Crew」→ 被资格检查拦下')
-  console.log('    3. Marcus 再申请「22 Aug Demo」→ 成功')
-  console.log(`    4. AI Assessment 在「${ASSESSMENT_JOB_TITLE}」上跑（5 个待处理申请人，唯一红点）`)
-  const activeWeek = activeSubmissionWeekStart(TODAY, 0, '17:00')
-  console.log(`    5. Off Day 与 AI Schedule 都排 ${dateKey(activeWeek)} – ${dateKey(addDays(activeWeek, 6))} 那一周`)
+  console.log('  现场可以做的（顺序自己排）：')
+  console.log(`    · Guest 申请「${CONFLICT_JOB_TITLE}」→ 被跨公司冲突拦下`)
+  console.log(`    · Guest 申请「${HIRING_JOB_TITLE}」→ 成功`)
+  console.log(`    · Manager 在「${HIRING_JOB_TITLE}」跑 AI Assessment（连 Hero 一共 6 人排名）`)
+  console.log('    · Guest 接受 offer → 变成 Casual Worker → 看到明天的班')
+  console.log(`    · Employee 跑 AI Assign，候选人就是今天的班组 ${crew.length} 人（多人分派 + 子任务）`)
+  console.log('    · 分屏：Casual Worker 拖卡片 / Employee 打回重做 / 再通过')
+  console.log('    · Owner 或 Manager 看 Workload Suggestion + Task Delay Alert')
+  console.log('    · Owner 发新岗位 → Invite from Pool（池子里已有 6 人）')
+  console.log(`    · （可选）Off Day 与 AI Schedule 都排 ${dateKey(activeWeek)} 那一周`)
   console.log('')
-  console.log('  注：上面 seed.js 自己打印的「Same-Day Café Cover Shift 可直接 Clock In」已被 D3 清掉，')
-  console.log('      Marcus 今天是空的，这是演示需要的状态。')
+  console.log('  已经替你拆掉的雷：')
+  console.log('    · 没有人处于 clocked out 状态 —— 不会有页面变只读')
+  console.log(`    · 班组今天 ${CREW_START} 开工且已打卡 —— Clock In 窗口早就开了，不用等`)
+  console.log('    · 招聘岗位放在明天 —— offer 不会因为开工时间已过而拒绝确认')
+  console.log('    · 红点只有招聘岗位一个 —— 现场不会点错')
   console.log('═══════════════════════════════════════════')
 }
 

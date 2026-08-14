@@ -52,9 +52,20 @@ export const employeeDashboardService = {
     const workers = await employeeDashboardRepository.getSupervisedWorkersToday(employee_id, company_id)
     // A worker who already clocked out today is off duty and can't take on a new task — same rule
     // as the Member panel / New-Edit Task pickers in TasksView.tsx (2026-07-31).
+    //
+    // Deduped by user id: getSupervisedWorkersToday returns one row per shift ASSIGNMENT (the
+    // Dashboard's worker cards need that — one card per shift, each with its own clock times), so
+    // a worker covering two shifts today under the same supervisor came back twice and showed up
+    // as a duplicate name in the AI Assign candidate list. Filtering before deduping is deliberate:
+    // someone who clocked out of an earlier shift but is still on a later one stays available.
+    const available = new Map<string, { id: string; full_name: string }>()
+    for (const w of workers) {
+      if (w.clock_out_time) continue
+      if (!available.has(w.id)) available.set(w.id, { id: w.id, full_name: w.full_name })
+    }
     return {
       department_id: dashboard?.department_id ?? '',
-      candidates: workers.filter(w => !w.clock_out_time).map(w => ({ id: w.id, full_name: w.full_name })),
+      candidates: [...available.values()],
     }
   },
 }
