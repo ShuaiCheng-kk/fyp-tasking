@@ -43,8 +43,15 @@ const HERO_EMAIL = arg('--hero', 'guest1@test.com')
 // Two real postings this demo uses, each with its own applicant pool sized to how the Owner will
 // actually decide: Event Setup & Breakdown posts 5 openings, so 4 fillers plus the hero fill every
 // slot (all genuinely accept-worthy) while 2 more sit there specifically to be passed over on
-// camera. Room Cleaning posts only 1 opening, so 2 fillers are enough to make the shortlist real
-// without anyone else being a plausible pick over the hero's hotel-specific note.
+// camera.
+//
+// Room Cleaning posts only 1 opening, but the recording still runs AI Assessment as "accept top
+// 2" — an offer is not a booking (see workerApplicationService.respondToInvitation), so accepting
+// more applicants than openings is exactly how this app's first-come-first-served hiring is meant
+// to work. That second accepted slot is what lets someone else step in once the hero declines this
+// job later in the flow. Wei Ling Tan's skills read closer to actual hotel room turnover than
+// Farah Aziz's front-desk background, so she is the natural #2 behind the hero — and is who
+// demo-fillers-confirm.js pushes through afterward, so the two scripts have to agree on which one.
 const JOB_FILLER_SETS = [
   {
     match: title => /event setup/i.test(title),
@@ -72,7 +79,7 @@ const JOB_FILLER_SETS = [
   {
     match: title => /room cleaning/i.test(title),
     fillers: [
-      { email: 'guest8@test.com', full_name: 'Wei Ling Tan', accept: false,
+      { email: 'guest8@test.com', full_name: 'Wei Ling Tan', accept: true,
         skills: 'General housekeeping experience, comfortable with repetitive cleaning tasks and standing for long periods.',
         certificates: [], note: 'Done home cleaning services before, new to hotel-standard turnover work.' },
       { email: 'guest9@test.com', full_name: 'Farah Aziz', accept: false,
@@ -204,21 +211,38 @@ async function main() {
     process.exit(1)
   }
 
-  // Mirror the posting's own requirements onto the hero's LIVE profile. AI Assessment scores the
-  // job_applicants.skills snapshot captured at apply time, not this live value, so this only
-  // matters for whichever application happens next through the UI — re-run this before applying
-  // to the other job, or the second application carries the first job's mirrored text.
+  // AI Assessment scores job_applicants.skills, a snapshot captured at apply time — not the live
+  // profile. The recording flow has the hero apply to BOTH jobs first, back to back, then runs
+  // this script once per job afterward, so by the time this runs the snapshot already exists and
+  // was written before either job's text could matter. Patch that snapshot directly rather than
+  // the live profile, so it's correct regardless of what the hero's profile happened to hold at
+  // apply time. Falls back to mirroring the live profile only if no application exists yet, which
+  // keeps this usable standalone (e.g. testing a single job in isolation).
   const heroSkills = (job.skills || job.responsibilities || '').trim()
-  if (heroSkills) {
+  const { data: heroApplication } = await supabase
+    .from('job_applicants')
+    .select('id')
+    .eq('job_id', job.id)
+    .eq('user_id', hero.id)
+    .maybeSingle()
+
+  if (heroSkills && heroApplication) {
+    const { error: appErr } = await supabase
+      .from('job_applicants')
+      .update({ skills: heroSkills.slice(0, 500) })
+      .eq('id', heroApplication.id)
+    if (appErr) console.warn(`  ⚠ could not update hero's application snapshot: ${appErr.message}`)
+    else console.log(`Hero: ${hero.full_name} (${HERO_EMAIL}), already applied — application snapshot matched to this job`)
+  } else if (heroSkills) {
     const { error: profErr } = await supabase
       .from('casual_worker_profiles')
       .upsert({ user_id: hero.id, skills: heroSkills.slice(0, 500) }, { onConflict: 'user_id' })
     if (profErr) console.warn(`  ⚠ could not update hero profile: ${profErr.message}`)
-    else console.log(`Hero: ${hero.full_name} (${HERO_EMAIL}), profile matched to this job`)
+    else console.log(`Hero: ${hero.full_name} (${HERO_EMAIL}), not yet applied — profile matched to this job instead`)
   } else {
-    console.log(`Hero: ${hero.full_name} (${HERO_EMAIL}), job has no skills text, profile left as is`)
+    console.log(`Hero: ${hero.full_name} (${HERO_EMAIL}), job has no skills text, left as is`)
   }
-  console.log('      NOT pre-applied. Apply through the UI on camera, with the notes already written for this job.\n')
+  console.log()
 
   // ── The fillers ────────────────────────────────────────────────────────────
   const { data: existing } = await supabase
@@ -256,16 +280,17 @@ async function main() {
   }
 
   const acceptCount = fillers.filter(f => f.accept).length
-  console.log(`\n${added} applicant(s) added. With the hero applying live, the panel will show ${added + 1}.`)
+  const panelCount = added + (heroApplication ? 1 : 0)
+  console.log(`\n${added} applicant(s) added. The panel now shows ${panelCount}${heroApplication ? '' : ' — plus the hero once they apply live'}.`)
   console.log(`Intended outcome: hero + ${acceptCount} filler(s) accepted, ${fillers.length - acceptCount} passed over.`)
 
   await ensureFollowUpMessage()
 
   console.log('\nNext on camera:')
-  console.log(`  1. ${HERO_EMAIL} applies for "${job.title}" with the matching note`)
-  console.log('  2. Manager opens the applicant panel, now a real shortlist')
-  console.log('  3. Run AI Assessment; the hero should rank at the top')
-  console.log('  4. Accept the hero and the marked filler(s), pass over the rest\n')
+  if (!heroApplication) console.log(`  1. ${HERO_EMAIL} applies for "${job.title}" with the matching note`)
+  console.log(`  ${heroApplication ? '1' : '2'}. Manager opens the applicant panel, now a real shortlist`)
+  console.log(`  ${heroApplication ? '2' : '3'}. Run AI Assessment; the hero should rank at the top`)
+  console.log(`  ${heroApplication ? '3' : '4'}. Accept the hero and the marked filler(s), pass over the rest\n`)
 }
 
 main().catch(err => { console.error(err.message); process.exit(1) })
