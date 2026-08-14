@@ -791,6 +791,39 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
       return pruned
     })
   }, [livePostings, approvedJobsSeenKey])
+  // Manager's own "your submission was rejected" sidebar dot — mirrors seenApprovedJobIds exactly,
+  // except pruned on 'rejected' rather than 'open' (a resubmitted/edited posting leaves 'rejected'
+  // status entirely, so there's nothing left to have "seen"). Without this the sidebar dot has no
+  // way to ever clear — OwnerSidebar's reviewCount is a bare status==='rejected' count with no
+  // acknowledgment concept of its own, so this localStorage key is that missing acknowledgment.
+  const [seenRejectedJobIds, setSeenRejectedJobIds] = useState<Set<string>>(new Set())
+  const rejectedJobsSeenKey = companyId && internalUserId ? `manager_rejected_jobs_seen_${companyId}_${internalUserId}` : null
+  useEffect(() => {
+    if (!rejectedJobsSeenKey) return
+    try {
+      const raw = localStorage.getItem(rejectedJobsSeenKey)
+      if (raw) setSeenRejectedJobIds(new Set(JSON.parse(raw)))
+    } catch {}
+  }, [rejectedJobsSeenKey])
+  const markRejectedJobSeen = useCallback((jobId: string) => {
+    if (!rejectedJobsSeenKey) return
+    setSeenRejectedJobIds(prev => {
+      if (prev.has(jobId)) return prev
+      const next = new Set(prev); next.add(jobId)
+      try { localStorage.setItem(rejectedJobsSeenKey, JSON.stringify([...next])) } catch {}
+      return next
+    })
+  }, [rejectedJobsSeenKey])
+  useEffect(() => {
+    if (!rejectedJobsSeenKey || !hasFetchedLivePostingsRef.current) return
+    const stillRejectedIds = new Set(livePostings.filter(p => p.status === 'rejected').map(p => p.id))
+    setSeenRejectedJobIds(prev => {
+      const pruned = new Set([...prev].filter(id => stillRejectedIds.has(id)))
+      if (pruned.size === prev.size) return prev
+      try { localStorage.setItem(rejectedJobsSeenKey, JSON.stringify([...pruned])) } catch {}
+      return pruned
+    })
+  }, [livePostings, rejectedJobsSeenKey])
   const [drafts, setDrafts] = useState<JobPostingSummary[]>([])
   const [pendingPostings, setPendingPostings] = useState<JobPostingPendingApproval[]>([])
   const [selectedLiveId, setSelectedLiveId] = useState('')
@@ -1982,27 +2015,6 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'Failed to update posting')
 
-      // notify Manager who submitted the posting
-      const posting = pendingPostings.find(p => p.id === jobId)
-      if (posting?.created_by) {
-        try {
-          const jobTitle = posting.title ?? 'your job posting'
-          const content = decision === 'approve_posting'
-            ? `Your job posting "${jobTitle}" has been approved and is now live.`
-            : `Your job posting "${jobTitle}" has been rejected${rejection_reason ? `: ${rejection_reason}` : '.'}`
-          await fetch('/api/inbox/messages', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              from_user_id: internalUserId,
-              to_user_id: posting.created_by,
-              company_id: companyId,
-              content,
-            }),
-          })
-        } catch { /* notification failure is non-fatal */ }
-      }
-
       setSelectedPendingId('')
       setPostView('none')
       setRejectModalOpen(false); setRejectReason(''); setPendingRejectId('')
@@ -2378,7 +2390,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                       />
                     )}
                     <article
-                      onClick={() => { setSelectedLiveId(p.id); if (isNewlyApprovedUnseen) markApprovedJobSeen(p.id) }}
+                      onClick={() => { setSelectedLiveId(p.id); if (isNewlyApprovedUnseen) markApprovedJobSeen(p.id); if (p.status === 'rejected') markRejectedJobSeen(p.id) }}
                       style={{
                         display: 'flex', flexDirection: 'column', gap: 10,
                         marginLeft: needsAttention ? 18 : 0,
@@ -2968,7 +2980,7 @@ export default function RecruitmentView({ sidebar, canApprovePostings = true, ca
                               </div>
                               <button
                                 type="button"
-                                onClick={() => { setPostView('pending'); setSelectedPendingId(p.id) }}
+                                onClick={() => { setPostView('pending'); setSelectedPendingId(p.id); if (isRejected) markRejectedJobSeen(p.id) }}
                                 title="Review posting"
                                 style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 700, color: selectedPendingId === p.id && postView === 'pending' ? '#F97316' : '#0F172A', minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', border: 'none', background: 'transparent', padding: 0, textAlign: 'left', cursor: 'pointer' }}
                                 onMouseEnter={e => { e.currentTarget.style.color = '#F97316' }}
