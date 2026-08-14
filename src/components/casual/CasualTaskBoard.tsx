@@ -116,12 +116,16 @@ export default function CasualTaskBoard({ companyId, shiftId, userId, readOnly =
   const lastLoadedAtRef = useRef(0)
   const load = async () => {
     lastLoadedAtRef.current = Date.now()
-    const res = await fetch(`/api/task?company_id=${companyId}&shift_id=${shiftId}`)
+    const res = await fetch(`/api/task?company_id=${companyId}&shift_id=${shiftId}&assigned_user_id=${userId}`)
     const data = await res.json()
     if (data.success) {
-      const mine = (data.tasks as Task[]).filter(t =>
-        t.assigned_user_id === userId || (t.assigned_user_ids ?? []).includes(userId)
-      )
+      const allTasks = data.tasks as Task[]
+      const isMine = (t: Task) => t.assigned_user_id === userId || (t.assigned_user_ids ?? []).includes(userId)
+      // A sub-task inherits only its PRIMARY assignee, so a non-primary co-assignee needs their
+      // parent's other sub-tasks pulled in too — otherwise the one unfinished sub-task actually
+      // blocking Review is invisible to them, and dragging the parent bounces straight back once
+      // the server-side gate (taskService.updateTaskStatus) rejects it.
+      const mine = allTasks.filter(t => isMine(t) || (t.parent_task_id && allTasks.find(p => p.id === t.parent_task_id && isMine(p))))
       setTasks(mine)
     }
     setLoading(false)
@@ -154,7 +158,14 @@ export default function CasualTaskBoard({ companyId, shiftId, userId, readOnly =
     if (!canDragTask(task)) return false
     const currentIdx = COLUMNS.indexOf(task.status)
     const targetIdx = COLUMNS.indexOf(targetStatus)
-    return targetIdx === currentIdx + 1
+    if (targetIdx !== currentIdx + 1) return false
+    // Review means "ready for the assigner to check" — an unticked sub-task means the checklist
+    // itself says the work isn't actually done yet, so the card can't skip ahead of it.
+    if (targetStatus === 'Review') {
+      const subTasks = tasks.filter(t => t.parent_task_id === task.id)
+      if (subTasks.some(s => !s.is_completed)) return false
+    }
+    return true
   }
 
   const handleDrop = async (task: Task, targetStatus: Task['status']) => {

@@ -45,7 +45,12 @@ export async function GET(req: NextRequest) {
 
   const session = await getServerSessionUser()
   if (!session) return NextResponse.json({ success: false, message: 'Not authenticated' }, { status: 401 })
-  if (session.user.company_id !== company_id) {
+  // A Casual Worker's own company_id column is always null (see CLAUDE.md's data model notes —
+  // they can work across companies, so "which company" is decided by their actual shift/task
+  // assignments, not a fixed home company). Exempting the role here, not skipping company scoping
+  // outright: every branch below still narrows the result set to this caller's own assignments via
+  // assigned_user_id/shift_id, which the Casual Worker UI always supplies.
+  if (session.user.role !== 'Casual Worker' && session.user.company_id !== company_id) {
     return NextResponse.json({ success: false, message: 'You can only view your own company\'s tasks' }, { status: 403 })
   }
 
@@ -113,7 +118,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: true, settings })
     }
     if (shift_id) {
-      const tasks = await taskService.getTasksByCompanyShift(company_id, shift_id)
+      const tasks = await taskService.getTasksByCompanyShift(company_id, shift_id, assigned_user_id)
       return NextResponse.json({ success: true, tasks })
     }
     const tasks = await taskService.getFilteredTasks(company_id, { status, department_id })

@@ -717,6 +717,18 @@ function DeadlinePicker({ dateValue, timeValue, onChange, minDate }: {
   const availableTimes = earliestTimeForSelectedDate
     ? times.filter(t => t.value >= earliestTimeForSelectedDate)
     : times
+  const amAvailable = !earliestTimeForSelectedDate || earliestTimeForSelectedDate < '12:00'
+  const pmAvailable = !earliestTimeForSelectedDate || earliestTimeForSelectedDate <= '23:30'
+
+  // Today's deadline can roll past noon (or past 23:30) while this is open — meridiem defaults to
+  // 'AM' and nothing else ever corrected it, so a viewer opening this in the afternoon landed on
+  // an AM tab that had already filtered itself down to zero times. Only steps in before a time is
+  // actually picked; once timeValue exists, the user's own choice of half is never overridden.
+  useEffect(() => {
+    if (timeValue) return
+    if (meridiem === 'AM' && !amAvailable && pmAvailable) setMeridiem('PM')
+    else if (meridiem === 'PM' && !pmAvailable && amAvailable) setMeridiem('AM')
+  }, [dateValue, earliestTimeForSelectedDate])
   const minMonth = minDate.slice(0, 7)
   const [cy, cm] = viewMonth.split('-').map(Number)
   const firstDay = new Date(cy, cm - 1, 1).getDay()
@@ -810,11 +822,11 @@ function DeadlinePicker({ dateValue, timeValue, onChange, minDate }: {
           )}
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 6, padding: 8, borderLeft: '1px solid #E2E8F0' }}>
-          {(['AM', 'PM'] as const).map(mp => (
+          {/* A half with zero available times today doesn't get a disabled-looking button — it
+              just isn't offered, same as any other date wouldn't offer hours before it starts. */}
+          {(['AM', 'PM'] as const).filter(mp => mp === 'AM' ? amAvailable : pmAvailable).map(mp => (
             <button key={mp} type="button"
               onClick={() => {
-                const periodAvailable = !earliestTimeForSelectedDate || (mp === 'AM' ? earliestTimeForSelectedDate < '12:00' : earliestTimeForSelectedDate <= '23:30')
-                if (!periodAvailable) return
                 if (!timeValue) { setMeridiem(mp); return }
                 const [ch, cm] = timeValue.split(':').map(Number)
                 let newH = ch
@@ -833,9 +845,8 @@ function DeadlinePicker({ dateValue, timeValue, onChange, minDate }: {
                 fontWeight: 600,
                 fontSize: 12,
                 padding: '7px 10px',
-                cursor: (!earliestTimeForSelectedDate || (mp === 'AM' ? earliestTimeForSelectedDate < '12:00' : earliestTimeForSelectedDate <= '23:30')) ? 'pointer' : 'not-allowed',
+                cursor: 'pointer',
                 lineHeight: 1,
-                opacity: (!earliestTimeForSelectedDate || (mp === 'AM' ? earliestTimeForSelectedDate < '12:00' : earliestTimeForSelectedDate <= '23:30')) ? 1 : 0.45,
               }}
             >{mp}</button>
           ))}
@@ -1424,6 +1435,10 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
   const [editDueAt,          setEditDueAt]          = useState('')
   const [editDeadlineTime,   setEditDeadlineTime]   = useState('')
   const [editAssigneeIds,    setEditAssigneeIds]    = useState<string[]>([])
+  // Same collapsed-to-selection / expand-to-edit pattern as the AI Assign modal's own Assignee
+  // picker (see aiAssigneePickerOpen) — a department can run long enough that showing every
+  // candidate by default would swamp this panel.
+  const [editAssigneePickerOpen, setEditAssigneePickerOpen] = useState(false)
   const [editShiftId,        setEditShiftId]        = useState('')
   const [editStatus,      setEditStatus]      = useState<Task['status']>('Assigned')
   const [deleteConfirm,   setDeleteConfirm]   = useState(false)
@@ -1660,6 +1675,11 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
   // than one, pre-checked to whatever the AI's headcount suggestion recommended — see the
   // Assignee section below for the two different pickers this one array drives.
   const [aiManagerIds,     setAiManagerIds]     = useState<string[]>([])
+  // Manager/Employee's Assignee picker starts collapsed to just the checked names — a department
+  // or supervised-CW pool can run to a couple dozen people, so showing every candidate by default
+  // would make this one field dwarf the rest of the modal. Opening it reveals the full checkbox
+  // list to change the selection; closing it collapses back down to whoever's checked.
+  const [aiAssigneePickerOpen, setAiAssigneePickerOpen] = useState(false)
   const [aiSubTaskDrafts,  setAiSubTaskDrafts]  = useState<{ id: string; title: string }[]>([])
   const [aiSubTaskCollapsed, setAiSubTaskCollapsed] = useState(true)
   const [aiSubTaskDraft, setAiSubTaskDraft] = useState('')
@@ -2132,8 +2152,8 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
     setEditPriority(task.priority ?? '')
     setEditDueAt(task.due_at ? formatDateKey(new Date(task.due_at)) : '')
     setEditDeadlineTime(task.due_at ? new Date(task.due_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '')
-    // One Manager per task — a legacy multi-assignee task collapses to its primary on edit.
-    setEditAssigneeIds(task.assigned_user_id ? [task.assigned_user_id] : [])
+    setEditAssigneeIds(task.assigned_user_ids ?? (task.assigned_user_id ? [task.assigned_user_id] : []))
+    setEditAssigneePickerOpen(false)
     setEditShiftId(task.shift_id ?? '')
     setEditStatus(task.status)
     setPanelError('')
@@ -2166,7 +2186,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
       setPanelError('Title, department, start date, priority, and deadline are required')
       return
     }
-    if (!editAssigneeIds[0]) { setPanelError('Please select an assignee'); return }
+    if (editAssigneeIds.length === 0) { setPanelError('Please select an assignee'); return }
     setEditLoading(true); setPanelError('')
     try {
       const due_at = new Date(`${editDueAt}T${editDeadlineTime}:00`).toISOString()
@@ -2489,7 +2509,16 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
     if (!canDragMyTask(task)) return false
     const currentIdx = COLUMNS.indexOf(task.status)
     const targetIdx = COLUMNS.indexOf(targetStatus)
-    return targetIdx === currentIdx + 1
+    if (targetIdx !== currentIdx + 1) return false
+    // Review means "ready for the assigner to check" — an unticked sub-task means the checklist
+    // itself says the work isn't actually done yet, so the card can't skip ahead of it (same rule
+    // as CasualTaskBoard.tsx).
+    if (targetStatus === 'Review') {
+      const allTasks = COLUMNS.flatMap(col => myTasksKanban?.[col] ?? [])
+      const subTasks = allTasks.filter(t => t.parent_task_id === task.id)
+      if (subTasks.some(s => !s.is_completed)) return false
+    }
+    return true
   }
 
   const handleDropMyTask = async (task: Task, targetStatus: Task['status']) => {
@@ -3035,6 +3064,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
     setAiSuggestion(null)
     setAiDeptId(selectedDeptId || '')
     setAiManagerIds([])
+    setAiAssigneePickerOpen(false)
     setAiSubTaskDrafts([])
     setAiSubTaskCollapsed(true)
     setAiSubTaskDraft('')
@@ -5598,13 +5628,77 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                   </div>
                 )}
                 <div>
-                  <label style={modalLabelStyle}>Assign To</label>
-                  <DropdownField
-                    value={editAssigneeIds[0] ?? ''}
-                    options={editAssigneeDropdownOptions}
-                    onChange={v => { setEditAssigneeIds(v ? [v] : []); setEditShiftId('') }}
-                    placeholder="Select assignee"
-                  />
+                  {(scopeToManagerDepartments || scopeToEmployeeSupervised) ? (
+                    <>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                        <label style={{ ...modalLabelStyle, marginBottom: 0 }}>
+                          Assign To{editAssigneeIds.length !== 1 ? ' (Assignees)' : ''}
+                        </label>
+                        {editAssigneeDropdownOptions.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setEditAssigneePickerOpen(v => !v)}
+                            style={{ border: 'none', background: 'transparent', color: TASK_ORANGE, fontSize: 11.5, fontWeight: 700, cursor: 'pointer', padding: 0 }}
+                          >
+                            {editAssigneePickerOpen ? 'Done' : editAssigneeIds.length > 0 ? 'Edit' : '+ Add'}
+                          </button>
+                        )}
+                      </div>
+                      {editAssigneeDropdownOptions.length === 0 ? (
+                        <p style={{ margin: '4px 0 0', fontSize: 12, color: '#9CA3AF' }}>
+                          No {scopeToManagerDepartments ? 'employees' : 'casual workers'} available
+                        </p>
+                      ) : editAssigneePickerOpen ? (
+                        <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 200, overflowY: 'auto' }}>
+                          {editAssigneeDropdownOptions.map(opt => {
+                            const checked = editAssigneeIds.includes(opt.value)
+                            return (
+                              <label
+                                key={opt.value}
+                                style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', border: '1.5px solid #E5E7EB', borderRadius: 9, background: '#FFFFFF', cursor: 'pointer' }}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() => { setEditAssigneeIds(prev => checked ? prev.filter(id => id !== opt.value) : [...prev, opt.value]); setEditShiftId('') }}
+                                  style={{ width: 14, height: 14, accentColor: TASK_ORANGE, cursor: 'pointer', flexShrink: 0 }}
+                                />
+                                <span style={{ fontSize: 13, fontWeight: 700, color: '#111827' }}>{opt.label}</span>
+                              </label>
+                            )
+                          })}
+                        </div>
+                      ) : editAssigneeIds.length === 0 ? (
+                        <p style={{ margin: '4px 0 0', fontSize: 12, color: '#9CA3AF' }}>No one selected yet</p>
+                      ) : (
+                        <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 200, overflowY: 'auto' }}>
+                          {editAssigneeDropdownOptions.filter(opt => editAssigneeIds.includes(opt.value)).map(opt => (
+                            <div key={opt.value} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '8px 10px', border: '1.5px solid #E5E7EB', borderRadius: 9, background: '#FFFFFF' }}>
+                              <span style={{ fontSize: 13, fontWeight: 700, color: '#111827' }}>{opt.label}</span>
+                              <button
+                                type="button"
+                                onClick={() => { setEditAssigneeIds(prev => prev.filter(id => id !== opt.value)); setEditShiftId('') }}
+                                title="Remove"
+                                style={{ border: 'none', background: 'transparent', color: '#9CA3AF', cursor: 'pointer', display: 'flex', padding: 2, flexShrink: 0 }}
+                              >
+                                <X size={13} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <label style={modalLabelStyle}>Assign To</label>
+                      <DropdownField
+                        value={editAssigneeIds[0] ?? ''}
+                        options={editAssigneeDropdownOptions}
+                        onChange={v => { setEditAssigneeIds(v ? [v] : []); setEditShiftId('') }}
+                        placeholder="Select assignee"
+                      />
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -7188,6 +7282,13 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
         const aiAssignDate = boardViewMode === 'kanban' && taskDate > todayTaskDate ? taskDate : todayTaskDate
         const aiDeptManagers = members.filter(m => m.role === assigneeRole && m.department_id === aiDeptId && !m.clockedOut)
         const aiManagerDropdownOptions = aiDeptManagers.map(m => ({ value: m.id, label: m.full_name }))
+        // Mirrors the New Task modal's newShiftId auto-resolution (primary assignee's shift on the
+        // task's own date) — without this, a Casual Worker's shift-scoped Task Board (CasualTaskBoard,
+        // which only ever queries shift_id) never shows a task created here, since AI Assign had no
+        // shift concept of its own and always sent shift_id: null.
+        const aiShiftId = shiftOptions
+          .filter(s => s.user_id === aiManagerIds[0] && s.shift_date === aiAssignDate)
+          .sort((a, b) => a.start_time.localeCompare(b.start_time))[0]?.id ?? null
 
         const handleGenerate = async () => {
           if (!aiTitle.trim()) { setAiError('Please enter a task title'); return }
@@ -7248,6 +7349,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                 description: aiDescription.trim() || null,
                 priority: aiPriority,
                 due_at,
+                shift_id: aiShiftId,
                 assigned_user_id: aiManagerIds[0] ?? null,
                 assigned_user_ids: aiManagerIds,
                 assigned_by: internalUserId || null,
@@ -7412,55 +7514,70 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                             suggested". */}
                         {(scopeToManagerDepartments || scopeToEmployeeSupervised) ? (
                           <div style={aiReviewFieldStyle}>
-                            <label style={{ ...modalLabelStyle, marginBottom: 0 }}>
-                              Assignee{aiManagerIds.length !== 1 ? 's' : ''}
-                            </label>
-                            {aiSuggestion.headcount_reason && (
-                              <p style={{ margin: '2px 0 6px', fontSize: 11.5, color: '#7C3AED', fontWeight: 600, lineHeight: 1.4 }}>
-                                <Sparkles size={11} strokeWidth={2.5} style={{ verticalAlign: -1, marginRight: 3 }} />
-                                AI suggests {aiSuggestion.suggested_headcount} {aiSuggestion.suggested_headcount === 1 ? 'person' : 'people'} — {aiSuggestion.headcount_reason}
-                              </p>
-                            )}
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                              <label style={{ ...modalLabelStyle, marginBottom: 0 }}>
+                                Assignee{aiManagerIds.length !== 1 ? 's' : ''}
+                              </label>
+                              {aiSuggestion.candidates.length > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() => setAiAssigneePickerOpen(v => !v)}
+                                  style={{ border: 'none', background: 'transparent', color: '#7C3AED', fontSize: 11.5, fontWeight: 700, cursor: 'pointer', padding: 0 }}
+                                >
+                                  {aiAssigneePickerOpen ? 'Done' : aiManagerIds.length > 0 ? 'Edit' : '+ Add'}
+                                </button>
+                              )}
+                            </div>
                             {aiSuggestion.candidates.length === 0 ? (
                               <p style={{ margin: 0, fontSize: 12, color: '#9CA3AF' }}>
                                 No {scopeToManagerDepartments ? 'employees' : 'casual workers'} available
                               </p>
-                            ) : (
+                            ) : aiAssigneePickerOpen ? (
                               <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 220, overflowY: 'auto' }}>
                                 {aiSuggestion.candidates.map(c => {
                                   const checked = aiManagerIds.includes(c.id)
-                                  const isAiPick = aiSuggestion.recommended_ids.includes(c.id)
                                   return (
                                     <label
                                       key={c.id}
+                                      title={c.reason ?? undefined}
                                       style={{
-                                        display: 'flex', alignItems: 'flex-start', gap: 8, padding: '8px 10px',
-                                        border: `1.5px solid ${checked ? '#7C3AED' : '#E5E7EB'}`, borderRadius: 9,
-                                        background: checked ? '#F5F3FF' : '#FFFFFF', cursor: 'pointer',
+                                        display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px',
+                                        border: '1.5px solid #E5E7EB', borderRadius: 9,
+                                        background: '#FFFFFF', cursor: 'pointer',
                                       }}
                                     >
                                       <input
                                         type="checkbox"
                                         checked={checked}
                                         onChange={() => setAiManagerIds(prev => checked ? prev.filter(id => id !== c.id) : [...prev, c.id])}
-                                        style={{ marginTop: 2, width: 14, height: 14, accentColor: '#7C3AED', cursor: 'pointer', flexShrink: 0 }}
+                                        style={{ width: 14, height: 14, accentColor: '#7C3AED', cursor: 'pointer', flexShrink: 0 }}
                                       />
-                                      <div style={{ flex: 1, minWidth: 0 }}>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                                          <span style={{ fontSize: 13, fontWeight: 700, color: '#111827' }}>{c.full_name}</span>
-                                          {isAiPick && (
-                                            <span style={{ fontSize: 10, fontWeight: 800, color: '#7C3AED', background: '#F3E8FF', padding: '1px 6px', borderRadius: 99, flexShrink: 0 }}>
-                                              AI Pick
-                                            </span>
-                                          )}
-                                        </div>
-                                        {c.reason && (
-                                          <p style={{ margin: '2px 0 0', fontSize: 11.5, color: '#6B7280', lineHeight: 1.4 }}>{c.reason}</p>
-                                        )}
-                                      </div>
+                                      <span style={{ fontSize: 13, fontWeight: 700, color: '#111827' }}>{c.full_name}</span>
                                     </label>
                                   )
                                 })}
+                              </div>
+                            ) : aiManagerIds.length === 0 ? (
+                              <p style={{ margin: 0, fontSize: 12, color: '#9CA3AF' }}>No one selected yet</p>
+                            ) : (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 220, overflowY: 'auto' }}>
+                                {aiSuggestion.candidates.filter(c => aiManagerIds.includes(c.id)).map(c => (
+                                  <div
+                                    key={c.id}
+                                    title={c.reason ?? undefined}
+                                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '8px 10px', border: '1.5px solid #E5E7EB', borderRadius: 9, background: '#FFFFFF' }}
+                                  >
+                                    <span style={{ fontSize: 13, fontWeight: 700, color: '#111827' }}>{c.full_name}</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => setAiManagerIds(prev => prev.filter(id => id !== c.id))}
+                                      title="Remove"
+                                      style={{ border: 'none', background: 'transparent', color: '#9CA3AF', cursor: 'pointer', display: 'flex', padding: 2, flexShrink: 0 }}
+                                    >
+                                      <X size={13} />
+                                    </button>
+                                  </div>
+                                ))}
                               </div>
                             )}
                           </div>
