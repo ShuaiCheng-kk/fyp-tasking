@@ -35,12 +35,15 @@ export const taskRepository = {
       .select()
       .single()
     if (error) throw new Error(error.message)
-    // Keeps task_assignments in sync with the primary assignee for every call site (sub-tasks,
-    // duplicates, recurring occurrences) without any of them needing to know task_assignments exists.
-    if (input.assigned_user_id) {
+    // Keeps task_assignments in sync with every assignee for every call site (sub-tasks,
+    // duplicates, recurring occurrences) without any of them needing to know task_assignments
+    // exists. assigned_user_ids is the full set (1+); every other caller only ever sets
+    // assigned_user_id, which this treats as that same set with one entry.
+    const assigneeIds = input.assigned_user_ids?.length ? input.assigned_user_ids : (input.assigned_user_id ? [input.assigned_user_id] : [])
+    if (assigneeIds.length > 0) {
       const { error: assignError } = await supabase
         .from('task_assignments')
-        .insert({ task_id: data.id, user_id: input.assigned_user_id, assigned_by: input.assigned_by ?? null })
+        .insert(assigneeIds.map(user_id => ({ task_id: data.id, user_id, assigned_by: input.assigned_by ?? null })))
       if (assignError) throw new Error(assignError.message)
     }
     return data as Task
@@ -83,8 +86,8 @@ export const taskRepository = {
   // department_ids is a security-scoping filter (e.g. a Manager's own departments), distinct from
   // any single department_id a caller applies afterwards as a UI-level "show just this one" filter.
   // assigned_user_id is the inverse of assigned_by — "tasks assigned TO this person" (Manager Tasks
-  // page's My Tasks tab) rather than "tasks assigned BY this person" — the two are never combined
-  // by any current caller, but nothing here prevents it.
+  // page's My Tasks tab, Employee's own My Tasks board) rather than "tasks assigned BY this
+  // person" — the two are never combined by any current caller, but nothing here prevents it.
   async getTasksByCompany(company_id: string, assigned_by?: string | string[], department_ids?: string[], assigned_user_id?: string): Promise<Task[]> {
     let query = supabase
       .from('tasks')
@@ -102,7 +105,17 @@ export const taskRepository = {
       query = query.in('department_id', department_ids)
     }
     if (assigned_user_id) {
-      query = query.eq('assigned_user_id', assigned_user_id)
+      // A multi-assignee task's OTHER assignees never appear in tasks.assigned_user_id (that
+      // column only ever holds the first/primary one) — matching on it alone silently hid this
+      // person's own "My Tasks" board entries for anything they were the 2nd/3rd assignee on.
+      const { data: memberOf, error: memberErr } = await supabase
+        .from('task_assignments')
+        .select('task_id')
+        .eq('user_id', assigned_user_id)
+      if (memberErr) throw new Error(memberErr.message)
+      const taskIds = [...new Set((memberOf ?? []).map(r => r.task_id as string))]
+      if (taskIds.length === 0) return []
+      query = query.in('id', taskIds)
     }
     const { data, error } = await query.order('created_at', { ascending: false })
     if (error) throw new Error(error.message)

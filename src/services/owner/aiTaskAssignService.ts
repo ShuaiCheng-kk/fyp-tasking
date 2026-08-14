@@ -149,6 +149,27 @@ async function generateDraft(input: {
   return draft
 }
 
+// How many people this task probably needs — a suggestion the user can freely override at
+// assignment time, never a requirement. Sub-tasks already encode "this splits into N
+// deliverables", so when there are 2+, that count IS the headcount signal (one person per
+// deliverable) and takes priority over the priority/deadline heuristic below. Capped by 3 (the
+// review UI only ever surfaces the top 3 candidates) and by however many real candidates exist.
+const HEADCOUNT_URGENT_WINDOW_HOURS = 48
+function suggestHeadcount(input: { priority: string; due_at?: string | null; subTaskCount: number; poolSize: number }): { headcount: number; reason: string } {
+  const cap = Math.max(1, Math.min(3, input.poolSize || 1))
+  if (input.subTaskCount >= 2) {
+    return {
+      headcount: Math.min(input.subTaskCount, cap),
+      reason: `Split into ${input.subTaskCount} deliverables, so ${Math.min(input.subTaskCount, cap)} people can each own one.`,
+    }
+  }
+  const hoursLeft = input.due_at ? (new Date(input.due_at).getTime() - Date.now()) / (1000 * 60 * 60) : Infinity
+  if (input.priority === 'Urgent' && hoursLeft <= HEADCOUNT_URGENT_WINDOW_HOURS && cap >= 2) {
+    return { headcount: 2, reason: 'Urgent and due soon — a second pair of hands helps it land on time.' }
+  }
+  return { headcount: 1, reason: 'A single deliverable with no tight deadline pressure — one person is enough.' }
+}
+
 function buildFallbackDraft(input: {
   title: string
   description: string
@@ -173,6 +194,9 @@ export const aiTaskAssignService = {
     priority: string
     want_sub_tasks: boolean
     task_date?: string
+    // Known at generate time (the New Task modal collects it before Generate is clickable) — the
+    // headcount suggestion's "due soon" signal needs it; nothing else here does.
+    due_at?: string
     // Manager viewer (resolved server-side from manager_scope_id in the route): their own
     // department(s), forced — skips the AI's department guess entirely, since there's nothing to
     // guess between. Omitted for Owner/Partner, who pick from every company department.
@@ -237,6 +261,14 @@ export const aiTaskAssignService = {
           : `${draft.reason} ${recommended.full_name} currently has the lightest workload among ${roleLabel} in this department.`)
       : (input.department_ids ? `No ${roleLabel} available in this department yet.` : draft.reason)
 
+    const { headcount, reason: headcountReason } = suggestHeadcount({
+      priority: input.priority,
+      due_at: input.due_at,
+      subTaskCount: draft.steps.length,
+      poolSize: candidates.length,
+    })
+    const recommendedIds = candidates.slice(0, headcount).map(c => c.id)
+
     return {
       department_id: department.id,
       department_name: department.name,
@@ -244,6 +276,9 @@ export const aiTaskAssignService = {
       recommended_manager_id: recommended?.id ?? null,
       reason,
       candidates,
+      recommended_ids: recommendedIds,
+      suggested_headcount: recommendedIds.length,
+      headcount_reason: headcountReason,
       sub_tasks: draft.steps,
     }
   },

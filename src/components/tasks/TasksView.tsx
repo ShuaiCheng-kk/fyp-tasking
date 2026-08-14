@@ -1656,7 +1656,10 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
   const [aiError,          setAiError]          = useState('')
   const [aiSuggestion,     setAiSuggestion]     = useState<AiAssignSuggestion | null>(null)
   const [aiDeptId,         setAiDeptId]         = useState('')
-  const [aiManagerId,      setAiManagerId]      = useState('')
+  // Owner/Partner keep picking exactly one (this array's [0]); Manager/Employee can check more
+  // than one, pre-checked to whatever the AI's headcount suggestion recommended — see the
+  // Assignee section below for the two different pickers this one array drives.
+  const [aiManagerIds,     setAiManagerIds]     = useState<string[]>([])
   const [aiSubTaskDrafts,  setAiSubTaskDrafts]  = useState<{ id: string; title: string }[]>([])
   const [aiSubTaskCollapsed, setAiSubTaskCollapsed] = useState(true)
   const [aiSubTaskDraft, setAiSubTaskDraft] = useState('')
@@ -3031,7 +3034,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
     setAiSubTaskEnabled(false)
     setAiSuggestion(null)
     setAiDeptId(selectedDeptId || '')
-    setAiManagerId('')
+    setAiManagerIds([])
     setAiSubTaskDrafts([])
     setAiSubTaskCollapsed(true)
     setAiSubTaskDraft('')
@@ -7203,6 +7206,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                 priority: aiPriority,
                 want_sub_tasks: aiSubTaskEnabled,
                 task_date: aiAssignDate,
+                due_at: new Date(`${aiDueDate}T${aiDueTime}:00`).toISOString(),
                 manager_scope_id: scopeToManagerDepartments ? internalUserId : undefined,
                 employee_scope_id: scopeToEmployeeSupervised ? internalUserId : undefined,
               }),
@@ -7213,7 +7217,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
             setAiSuggestion(suggestion)
             setAiDescription(suggestion.description)
             setAiDeptId(suggestion.department_id)
-            setAiManagerId(suggestion.recommended_manager_id ?? '')
+            setAiManagerIds(suggestion.recommended_ids?.length ? suggestion.recommended_ids : (suggestion.recommended_manager_id ? [suggestion.recommended_manager_id] : []))
             setAiSubTaskDrafts(suggestion.sub_tasks.map(s => ({ id: crypto.randomUUID(), title: s.title })))
             setAiSubTaskCollapsed(true)
             setAiStep('review')
@@ -7225,7 +7229,7 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
         }
 
         const handleCreate = async () => {
-          if (!aiSuggestion || !aiDeptId || !aiManagerId || !aiDueDate || !aiDueTime) return
+          if (!aiSuggestion || !aiDeptId || aiManagerIds.length === 0 || !aiDueDate || !aiDueTime) return
           setAiCreateLoading(true); setAiError('')
           try {
             const due_at = new Date(`${aiDueDate}T${aiDueTime}:00`).toISOString()
@@ -7244,7 +7248,8 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                 description: aiDescription.trim() || null,
                 priority: aiPriority,
                 due_at,
-                assigned_user_id: aiManagerId || null,
+                assigned_user_id: aiManagerIds[0] ?? null,
+                assigned_user_ids: aiManagerIds,
                 assigned_by: internalUserId || null,
                 status: 'Assigned',
                 task_date: aiAssignDate,
@@ -7392,23 +7397,85 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
                             <DropdownField
                               value={aiDeptId}
                               options={deptDropdownOptions}
-                              onChange={v => { setAiDeptId(v); setAiManagerId('') }}
+                              onChange={v => { setAiDeptId(v); setAiManagerIds([]) }}
                               placeholder="Select department"
                             />
                           </div>
                         )}
 
-                        {/* Assignee */}
-                        <div style={aiReviewFieldStyle}>
-                          <label style={{ ...modalLabelStyle, marginBottom: 0 }}>Assignee</label>
-                          <DropdownField
-                            value={aiManagerId}
-                            options={aiManagerDropdownOptions}
-                            onChange={setAiManagerId}
-                            placeholder={aiManagerDropdownOptions.length === 0 ? `No ${scopeToManagerDepartments ? 'employees' : scopeToEmployeeSupervised ? 'casual workers' : 'managers'} available` : 'Select assignee'}
-                            disabled={aiManagerDropdownOptions.length === 0}
-                          />
-                        </div>
+                        {/* Assignee — Owner/Partner still pick exactly one from a dropdown
+                            (there's no department-mate crowd to weigh, so nothing to gain from a
+                            picker). Manager/Employee get the full ranked candidate list instead,
+                            each with its own workload reason, checkable independently — the AI
+                            pre-checks its top pick(s) per suggested_headcount, but any combination
+                            the user actually wants is one click away, not just "fewer than the AI
+                            suggested". */}
+                        {(scopeToManagerDepartments || scopeToEmployeeSupervised) ? (
+                          <div style={aiReviewFieldStyle}>
+                            <label style={{ ...modalLabelStyle, marginBottom: 0 }}>
+                              Assignee{aiManagerIds.length !== 1 ? 's' : ''}
+                            </label>
+                            {aiSuggestion.headcount_reason && (
+                              <p style={{ margin: '2px 0 6px', fontSize: 11.5, color: '#7C3AED', fontWeight: 600, lineHeight: 1.4 }}>
+                                <Sparkles size={11} strokeWidth={2.5} style={{ verticalAlign: -1, marginRight: 3 }} />
+                                AI suggests {aiSuggestion.suggested_headcount} {aiSuggestion.suggested_headcount === 1 ? 'person' : 'people'} — {aiSuggestion.headcount_reason}
+                              </p>
+                            )}
+                            {aiSuggestion.candidates.length === 0 ? (
+                              <p style={{ margin: 0, fontSize: 12, color: '#9CA3AF' }}>
+                                No {scopeToManagerDepartments ? 'employees' : 'casual workers'} available
+                              </p>
+                            ) : (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 220, overflowY: 'auto' }}>
+                                {aiSuggestion.candidates.map(c => {
+                                  const checked = aiManagerIds.includes(c.id)
+                                  const isAiPick = aiSuggestion.recommended_ids.includes(c.id)
+                                  return (
+                                    <label
+                                      key={c.id}
+                                      style={{
+                                        display: 'flex', alignItems: 'flex-start', gap: 8, padding: '8px 10px',
+                                        border: `1.5px solid ${checked ? '#7C3AED' : '#E5E7EB'}`, borderRadius: 9,
+                                        background: checked ? '#F5F3FF' : '#FFFFFF', cursor: 'pointer',
+                                      }}
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={checked}
+                                        onChange={() => setAiManagerIds(prev => checked ? prev.filter(id => id !== c.id) : [...prev, c.id])}
+                                        style={{ marginTop: 2, width: 14, height: 14, accentColor: '#7C3AED', cursor: 'pointer', flexShrink: 0 }}
+                                      />
+                                      <div style={{ flex: 1, minWidth: 0 }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                          <span style={{ fontSize: 13, fontWeight: 700, color: '#111827' }}>{c.full_name}</span>
+                                          {isAiPick && (
+                                            <span style={{ fontSize: 10, fontWeight: 800, color: '#7C3AED', background: '#F3E8FF', padding: '1px 6px', borderRadius: 99, flexShrink: 0 }}>
+                                              AI Pick
+                                            </span>
+                                          )}
+                                        </div>
+                                        {c.reason && (
+                                          <p style={{ margin: '2px 0 0', fontSize: 11.5, color: '#6B7280', lineHeight: 1.4 }}>{c.reason}</p>
+                                        )}
+                                      </div>
+                                    </label>
+                                  )
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <div style={aiReviewFieldStyle}>
+                            <label style={{ ...modalLabelStyle, marginBottom: 0 }}>Assignee</label>
+                            <DropdownField
+                              value={aiManagerIds[0] ?? ''}
+                              options={aiManagerDropdownOptions}
+                              onChange={v => setAiManagerIds(v ? [v] : [])}
+                              placeholder={aiManagerDropdownOptions.length === 0 ? 'No managers available' : 'Select assignee'}
+                              disabled={aiManagerDropdownOptions.length === 0}
+                            />
+                          </div>
+                        )}
                       </div>
                     </div>
 

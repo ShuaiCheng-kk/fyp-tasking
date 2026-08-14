@@ -36,17 +36,19 @@ export const taskService = {
     if (!input.company_id || !input.department_id || !input.title?.trim()) {
       throw new Error('company_id, department_id, and title are required')
     }
-    // A task belongs to exactly one assignee. assigned_user_ids is still accepted as a
-    // single-element alias for assigned_user_id, but 2+ ids are rejected here so the rule holds
-    // even for callers that bypass the UI and hit the API directly.
-    const assigneeIds = input.assigned_user_ids?.filter(Boolean) ?? []
-    if (assigneeIds.length > 1) {
-      throw new Error('A task can only be assigned to one person')
+    // A top-level task can go to more than one person (UC19/UC20's AI headcount suggestion) — a
+    // sub-task stays single-assignee, inherited from its parent below, since "who does this one
+    // deliverable" doesn't benefit from a crowd the way the parent's overall body of work might.
+    // assigned_user_id is kept as the first id, the "primary" assignee existing single-assignee
+    // logic elsewhere (assigner permission checks, delay-alert scoring, etc.) still reads.
+    const assigneeIds = [...new Set((input.assigned_user_ids ?? (input.assigned_user_id ? [input.assigned_user_id] : [])).filter(Boolean))]
+    if (assigneeIds.length > 1 && input.parent_task_id) {
+      throw new Error('A sub-task can only be assigned to one person')
     }
-    if (assigneeIds.length === 1) {
-      input = { ...input, assigned_user_id: assigneeIds[0] }
+    if (assigneeIds.length > 0) {
+      input = { ...input, assigned_user_id: assigneeIds[0], assigned_user_ids: assigneeIds }
     }
-    if (!input.assigned_user_id && !input.parent_task_id) {
+    if (assigneeIds.length === 0 && !input.parent_task_id) {
       throw new Error('A task must be assigned to a user')
     }
     await validateTaskAssignment(input)
@@ -962,7 +964,15 @@ function computeDeadlineFromRule(taskDate: string, rule: TaskDeadlineRule): stri
 async function validateAssignee(creator: User | null, assigneeId: string, input: TaskInput): Promise<void> {
   const assignee = await taskRepository.getUserById(assigneeId)
   if (!assignee) throw new Error('Selected assignee not found')
-  if (assignee.company_id !== input.company_id) throw new Error('Selected assignee does not belong to this company')
+  // A Casual Worker's users.company_id is always null — they can work for more than one company,
+  // so there's no single row to match against (see casualworker_departments, the real record of
+  // which companies they've worked for). Checking it here the same way as every other role would
+  // reject every Casual Worker assignee outright; their real company gate is the candidate pool
+  // itself (getSupervisedCasualWorkerIds only returns someone this Employee actually supervises
+  // TODAY, via a real shift in this company).
+  if (assignee.role !== 'Casual Worker' && assignee.company_id !== input.company_id) {
+    throw new Error('Selected assignee does not belong to this company')
+  }
 
   if (!creator || creator.role === 'Owner' || creator.role === 'Partner') {
     if (assignee.role !== 'Manager') {
@@ -1008,8 +1018,13 @@ async function validateAssignee(creator: User | null, assigneeId: string, input:
 async function validateTaskAssignment(input: TaskInput): Promise<void> {
   const creator = input.assigned_by ? await taskRepository.getUserById(input.assigned_by) : null
 
-  if (input.assigned_user_id) {
-    await validateAssignee(creator, input.assigned_user_id, input)
+  // Every candidate is a real assignment, not just the primary — each must independently clear
+  // the same role/department/company gates (a Manager can't slip a second assignee in from
+  // outside their own department just because the first one validated). Almost always one id;
+  // 2+ only ever comes from assignTask's own multi-assignee path.
+  const assigneeIds = input.assigned_user_ids?.length ? input.assigned_user_ids : (input.assigned_user_id ? [input.assigned_user_id] : [])
+  for (const assigneeId of assigneeIds) {
+    await validateAssignee(creator, assigneeId, input)
   }
 
   if (input.shift_id) {
