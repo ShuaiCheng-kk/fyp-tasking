@@ -33,6 +33,31 @@ export const workerApplicationRepository = {
     return data
   },
 
+  // Bulk version of checkExistingApplication for a whole job-board page load — which of these
+  // job ids has this worker already applied to (same 'withdrawn' exemption: they walked away on
+  // their own, so that one must not count as "already applied"). Accepts either an internal
+  // users.id or a supabase_auth_id, same as getBlockingCompanyIds below — the public board only
+  // has the raw auth id from localStorage on hand.
+  async getAppliedJobIds(userId: string, jobIds: string[]): Promise<Set<string>> {
+    if (!userId || jobIds.length === 0) return new Set()
+    const { data: user, error: userErr } = await supabase
+      .from('users')
+      .select('id')
+      .or(`id.eq.${userId},supabase_auth_id.eq.${userId}`)
+      .maybeSingle()
+    if (userErr) throw new Error(userErr.message)
+    if (!user) return new Set()
+
+    const { data, error } = await supabase
+      .from('job_applicants')
+      .select('job_id')
+      .eq('user_id', user.id)
+      .in('job_id', jobIds)
+      .neq('status', 'withdrawn')
+    if (error) throw new Error(error.message)
+    return new Set((data ?? []).map(row => row.job_id as string))
+  },
+
   // The profile fields that get snapshotted onto an application, keyed by internal user id.
   // role comes along so the service can reject company staff trying to apply for casual jobs.
   async getApplicantProfile(userId: string): Promise<{

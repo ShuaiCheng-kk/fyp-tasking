@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
-import { Search, Briefcase, ChevronDown, LogIn, UserPlus } from 'lucide-react';
+import { Search, Briefcase, ChevronDown, LogIn, UserPlus, CheckCircle2 } from 'lucide-react';
 import { createBrowserClient } from '@supabase/ssr';
 import { hero, search, listings } from './content';
 import { JobPosting as BaseJobPosting } from '@/types/Recruitment';
@@ -23,7 +23,7 @@ import {
 // The public jobs API joins the department name onto each posting (see
 // src/app/api/jobs/public/route.ts) — not part of the base JobPosting shape.
 // job_type is a real job_postings column that the shared type doesn't declare yet.
-type JobPosting = BaseJobPosting & { department_name: string | null; job_type: string | null };
+type JobPosting = BaseJobPosting & { department_name: string | null; job_type: string | null; already_applied?: boolean };
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 
@@ -163,6 +163,14 @@ export default function JobBoardPage() {
   }, []);
 
   const canApply = !viewerRole || viewerRole === 'Guest User' || viewerRole === 'Casual Worker';
+  // A worker who already applied gets a status line instead of a second "Apply Now" — the modal
+  // itself would refuse a duplicate application anyway (checkEligibility), so inviting the click
+  // at all is misleading rather than just redundant.
+  const alreadyAppliedSlot = (
+    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '9px 16px', borderRadius: 10, background: '#DCFCE7', color: '#15803D', fontFamily: fB, fontWeight: 700, fontSize: '0.875rem' }}>
+      <CheckCircle2 size={15} /> Already Applied
+    </div>
+  );
 
   const showToast = (msg: string) => {
     if (toastTimer.current) clearTimeout(toastTimer.current);
@@ -440,7 +448,8 @@ export default function JobBoardPage() {
                   job={selectedJob}
                   onClose={() => setSelectedJob(null)}
                   onApply={(j) => handleApply(j as JobPosting)}
-                  canApply={authChecked && canApply}
+                  canApply={authChecked && canApply && !selectedJob.already_applied}
+                  actionSlot={selectedJob.already_applied ? alreadyAppliedSlot : undefined}
                 />
               )}
             </div>
@@ -460,7 +469,8 @@ export default function JobBoardPage() {
               job={selectedJob}
               onClose={() => setSelectedJob(null)}
               onApply={(j) => handleApply(j as JobPosting)}
-              canApply={authChecked && canApply}
+              canApply={authChecked && canApply && !selectedJob.already_applied}
+              actionSlot={selectedJob.already_applied ? alreadyAppliedSlot : undefined}
               variant="modal"
             />
           </div>
