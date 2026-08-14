@@ -22,8 +22,9 @@
  *
  *   D1  Off Day 提交截止改成「周日 17:00」，并把待审批的 Off Day 全部对齐到当前开放的提交周，
  *       这样演示当天既能处理 Off Day 又能排那一周的班（可选段落，不演也不碍事）。
- *   D2  Ben Seah（employee1）和 David Lim（manager1）今天已打卡、**未下班**。硬性要求：不补
- *       这条记录的话 Ben 一登录整个 Tasks 页就是只读，AI Assign 按钮根本不渲染。
+ *   D2  排班：Ben Seah 今天有班但**故意不打卡** —— 他要在镜头前按 Clock In，那一下正好把
+ *       Tasks 页从只读解锁（seed.js 给的历史打卡都带下班时间，页面默认是锁的）。
+ *       David Lim 则预先打好卡，万一临时点进 Manager 页面不会撞上只读锁。
  *   D3  清掉 seed.js 自己塞在 Ben 名下的今日在管工人，班组人数才是确定的。
  *   D4  Hero（guest1 Wei Jie Lim）清干净在途申请，并在**第三天**给他在第二家公司排一个已确认的
  *       班 —— 这就是跨公司冲突拦截演示的那条。
@@ -48,7 +49,7 @@
  *
  *   Owner         owner@test.com      Sarah Mitchell
  *   Manager       manager1@test.com   David Lim（Operations，已打卡未下班）
- *   Employee      employee1@test.com  Ben Seah（Operations，今天班组的主管，已打卡未下班）
+ *   Employee      employee1@test.com  Ben Seah（Operations，班组主管，有班未打卡）
  *   Guest         guest1@test.com     Wei Jie Lim（现场申请岗位的那个人）
  *
  * ## 使用方法（演示开始前跑一次）
@@ -362,9 +363,17 @@ async function applyClockedInSupervisors(companyId, ownerId, users) {
       if (!assignment) { warn(`${label} 今天的班没建成，跳过打卡记录`); continue }
     }
 
-    // 关键的一步：已打卡、**不写 clock_out_time**。
-    // getClockLockStatus 取 clock_in_time 最新的一条记录，只要它没有下班时间就解锁。
     await supabase.from('attendance_records').delete().eq('shift_assignment_id', assignment.id)
+
+    // Ben 故意**不预先打卡** —— 演示里他要在镜头前按 Clock In，那一下也正好把 Tasks 页从只读
+    // 解锁（seed.js 给他的历史打卡都带下班时间，getClockLockStatus 只看最近一条，所以在他打卡
+    // 之前页面是锁的）。班次留在今天 08:00，窗口早就开了，随时能按。
+    if (user.id === users.employee1.id) {
+      ok(`${label} 今天 08:00 有班但**未打卡** —— 留给镜头前手动 Clock In（按下即解锁 Tasks 页）`)
+      continue
+    }
+
+    // 其余的（David Lim）预先打好卡：万一临时点进 Manager 页面，不会撞上只读锁。
     const { error: recErr } = await supabase.from('attendance_records').insert({
       shift_assignment_id: assignment.id,
       user_id: user.id,
@@ -374,7 +383,7 @@ async function applyClockedInSupervisors(companyId, ownerId, users) {
       break_out_time: null,
     })
     if (recErr) warn(`${label} 打卡记录写入失败: ${recErr.message}`)
-    else ok(`${label} 今天 08:00 已打卡、未下班（Tasks 页可写，AI Assign 按钮会渲染）`)
+    else ok(`${label} 今天 08:00 已打卡、未下班`)
   }
 }
 
@@ -1038,7 +1047,7 @@ async function main() {
   console.log(`    · Off Day 与 AI Schedule 都排 ${dateKey(activeWeek)} 那一周`)
   console.log('')
   console.log('  已经替你拆掉的雷：')
-  console.log('    · 没有人处于 clocked out 状态 —— 不会有页面变只读')
+  console.log('    · 没有人处于 clocked out 状态；Ben 一按 Clock In，Tasks 页立刻可写')
   console.log(`    · 岗位 ${JOB_START} 开工 —— Clock In 窗口现在就是开的，Hero 确认完立刻能打卡`)
   console.log('    · 班组已在岗但**还没进 Pool** —— 第 6 步「做完一次工就进人才库」是真的当场发生')
   console.log('    · 红点只有招聘岗位一个 —— 现场不会点错')
