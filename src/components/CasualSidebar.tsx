@@ -7,7 +7,7 @@
 import { useState } from 'react'
 import { usePathname } from 'next/navigation'
 import Link from 'next/link'
-import { LayoutDashboard, Clock, ClipboardList, User, LogOut } from 'lucide-react'
+import { LayoutDashboard, Clock, ClipboardList, Briefcase, User, LogOut } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 import { useIsCompactViewport } from '@/hooks/useIsCompactViewport'
 import { useRealtimeNotifications } from '@/components/realtime/RealtimeNotificationsProvider'
@@ -20,6 +20,8 @@ const NAV_ITEMS = [
   { label: 'Dashboard',     Icon: LayoutDashboard, href: '/casual/dashboard' },
   { label: 'Attendance',    Icon: Clock,            href: '/casual/attendance' },
   { label: 'Applications',  Icon: ClipboardList,    href: '/casual/applications' },
+  // Public job board on the marketing site — same page a Guest User browses before signing up.
+  { label: 'Job Board',     Icon: Briefcase,        href: '/job-board' },
   { label: 'Profile',       Icon: User,             href: '/casual/profile' },
 ]
 

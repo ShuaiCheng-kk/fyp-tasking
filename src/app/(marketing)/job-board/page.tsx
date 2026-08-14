@@ -9,6 +9,7 @@ import { JobPosting as BaseJobPosting } from '@/types/Recruitment';
 import ApplyJobModal from '@/components/guest/ApplyJobModal';
 import Toast from '@/components/Toast';
 import { JobCard, JobDetailPanel, resolveJobType } from '@/components/jobs/JobPresentation';
+import { useIsCompactViewport } from '@/hooks/useIsCompactViewport';
 
 const supabase = createBrowserClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -111,6 +112,10 @@ function DropdownField({ value, options, onChange }: {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function JobBoardPage() {
+  // Phone: there's no room for the list + sticky detail split (its 360px minimum column alone
+  // overflows the viewport and drags the whole page sideways), so the detail opens as a
+  // full-screen sheet over a single-column list instead.
+  const isPhone = useIsCompactViewport(640);
   const [jobs, setJobs] = useState<JobPosting[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -245,7 +250,8 @@ export default function JobBoardPage() {
   const listRef = useRef<HTMLDivElement | null>(null);
   const [listMaxHeight, setListMaxHeight] = useState<number | null>(null);
   useEffect(() => {
-    if (!selectedJob) { setListMaxHeight(null); return; }
+    // On phone the list never becomes a side column — it stays a plain full-width list.
+    if (!selectedJob || isPhone) { setListMaxHeight(null); return; }
     const measure = () => {
       const el = listRef.current;
       if (!el) return;
@@ -266,7 +272,7 @@ export default function JobBoardPage() {
     measure();
     window.addEventListener('resize', measure);
     return () => window.removeEventListener('resize', measure);
-  }, [selectedJob]);
+  }, [selectedJob, isPhone]);
 
   // ── Filter logic ─────────────────────────────────────────────────────────
   const filtered = jobs.filter(job => {
@@ -410,13 +416,14 @@ export default function JobBoardPage() {
                collapses to a single column of cards at the same one-third width they have in the
                closed grid, and the detail panel takes the remaining two thirds — the reader's
                attention is on the detail, not the list. */
-            <div style={{ display: 'grid', gridTemplateColumns: selectedJob ? 'minmax(360px, 1fr) minmax(0, 1.6fr)' : '1fr', gap: '24px', alignItems: 'flex-start' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: selectedJob && !isPhone ? 'minmax(360px, 1fr) minmax(0, 1.6fr)' : '1fr', gap: '24px', alignItems: 'flex-start' }}>
 
               {/* Card list — with a job open it becomes its own scroll container (like JobStreet):
-                  at most 4 full cards tall, scrolling the list never moves the detail panel. */}
-              <div ref={listRef} style={selectedJob
+                  at most 4 full cards tall, scrolling the list never moves the detail panel.
+                  On phone it stays a plain single-column list; the detail is a sheet on top. */}
+              <div ref={listRef} style={selectedJob && !isPhone
                 ? { display: 'grid', gridTemplateColumns: '1fr', gap: '16px', alignContent: 'start', position: 'sticky', top: '24px', maxHeight: listMaxHeight != null ? `${listMaxHeight}px` : 'calc(100vh - 48px)', overflowY: 'auto', overscrollBehavior: 'contain', paddingRight: '6px', paddingLeft: '4px', paddingTop: '4px', paddingBottom: '4px' }
-                : { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
+                : { display: 'grid', gridTemplateColumns: isPhone ? '1fr' : 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
                 {filtered.map(job => (
                   <JobCard
                     key={job.id}
@@ -427,8 +434,8 @@ export default function JobBoardPage() {
                 ))}
               </div>
 
-              {/* Sticky detail panel */}
-              {selectedJob && (
+              {/* Sticky detail panel — desktop/tablet only; see the phone sheet below. */}
+              {selectedJob && !isPhone && (
                 <JobDetailPanel
                   job={selectedJob}
                   onClose={() => setSelectedJob(null)}
@@ -440,6 +447,25 @@ export default function JobBoardPage() {
           )}
         </div>
       </section>
+
+      {/* Phone detail sheet — the same JobDetailPanel, as a full-screen overlay instead of a side
+          column, so a 430px-wide screen shows the job at full width rather than a sliver. */}
+      {selectedJob && isPhone && (
+        <div
+          onClick={() => setSelectedJob(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 12, zIndex: 9998 }}
+        >
+          <div style={{ width: '100%' }} onClick={e => e.stopPropagation()}>
+            <JobDetailPanel
+              job={selectedJob}
+              onClose={() => setSelectedJob(null)}
+              onApply={(j) => handleApply(j as JobPosting)}
+              canApply={authChecked && canApply}
+              variant="modal"
+            />
+          </div>
+        </div>
+      )}
 
       {/* Account fork — shown when a signed-out visitor clicks Apply. Existing accounts (Guest
           User or Casual Worker) go to the shared sign-in; new applicants go straight to the

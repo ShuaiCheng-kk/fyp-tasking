@@ -140,6 +140,10 @@ type RawApplication = {
 function ApplicationsContent() {
   const searchParams = useSearchParams()
   const isCompact = useIsCompactViewport(1366)
+  // True phone width (isPhone implies isCompact, 640 < 1366): the 3-step pipeline can't be three
+  // side-by-side columns here — it turns into one stacked column per step, with the arrows
+  // pointing down instead of right, and the whole pipeline scrolls inside the page's fixed shell.
+  const isPhone = useIsCompactViewport(640)
   // guest/layout.tsx already fetches the full WorkerProfile for its own role-guard check —
   // reuse it instead of this page redoing the same `/api/guest/profile` round trip a second
   // time right after the layout's own "Loading…" gate clears (2026-07-31).
@@ -422,6 +426,20 @@ function ApplicationsContent() {
   // since the job then moves out of step 2 — no separate seen-tracking needed (2026-07-31).
   const hasPendingOffer = (ongoingByStep[2]?.length ?? 0) > 0
 
+  // Phone flips the pipeline from three side-by-side columns to one stacked column: the ROW
+  // scrolls (instead of each panel scrolling inside a fixed-height column), and each panel sizes
+  // to its own content — `flex: 1` there would resolve to a 0-height basis in a column and
+  // collapse every panel to just its header.
+  const stepsRow: React.CSSProperties = isPhone
+    ? { ...stepsRowStyle, flexDirection: 'column', overflowY: 'auto', paddingBottom: 4 }
+    : stepsRowStyle
+  const stepPanel: React.CSSProperties = isPhone
+    ? { ...stepPanelStyle, flex: '0 0 auto' }
+    : stepPanelStyle
+  const stepArrowSlot: React.CSSProperties = isPhone
+    ? { width: '100%', height: 34, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }
+    : stepArrowSlotStyle
+
   const markHistorySeen = () => {
     if (!profile?.id) return
     const signatures = [...currentApplicationSignatures.values()]
@@ -433,15 +451,15 @@ function ApplicationsContent() {
     <>
       <style>{pageKeyframes}</style>
 
-      <main style={pageStyle}>
+      <main style={isPhone ? { ...pageStyle, height: '100%', padding: '12px 12px 12px' } : pageStyle}>
         {/* Page header — title left, matching the Owner pages */}
-        <div style={{ marginBottom: 20, flexShrink: 0 }}>
+        <div style={{ marginBottom: isPhone ? 14 : 20, flexShrink: 0 }}>
           <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
             Applications
           </h1>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start', gap: 12, marginBottom: 20, flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start', gap: 12, marginBottom: isPhone ? 14 : 20, flexShrink: 0, flexWrap: 'wrap' }}>
           <div style={pillTabBarStyle}>
             {(['ongoing', 'closed'] as const).map(tab => {
               const active = viewTab === tab
@@ -482,10 +500,10 @@ function ApplicationsContent() {
             fully settled, well before the real cards show up. */}
         <section key={loading ? 'loading' : viewTab} style={{ ...sectionStyle, animation: 'blockSlideUp 0.28s ease-out both' }}>
           {loading ? (
-            <div style={stepsRowStyle}>
+            <div style={stepsRow}>
               <style>{DASHBOARD_SKELETON_KEYFRAMES}</style>
               {FLOW_STEPS.map(label => (
-                <div key={label} style={{ ...stepPanelStyle, padding: 14, gap: 10 }}>
+                <div key={label} style={{ ...stepPanel, padding: 14, gap: 10 }}>
                   <SkeletonLine width="50%" height={14} />
                   <SkeletonLine height={70} radius={12} />
                   <SkeletonLine height={70} radius={12} />
@@ -498,14 +516,14 @@ function ApplicationsContent() {
             // Each step IS a block — no separate stepper widget above them. A job's card lives
             // in whichever block matches its current step, so moving through the flow means
             // literally seeing the card move one block to the right.
-            <div style={stepsRowStyle}>
+            <div style={stepsRow}>
               {FLOW_STEPS.map((label, idx) => {
                 const step = idx + 1
                 const StepIcon = STEP_ICONS[idx]
                 const cards = ongoingByStep[step] ?? []
                 return (
                   <Fragment key={label}>
-                    <div style={stepPanelStyle}>
+                    <div style={stepPanel}>
                       <div style={stepPanelHeaderStyle}>
                         <div style={stepIconBadgeStyle}>
                           <StepIcon size={15} style={{ color: '#F97316' }} />
@@ -514,7 +532,7 @@ function ApplicationsContent() {
                       </div>
                       {/* One card per row on compact laptops — two 140px-wide cards side by side
                           would be unreadable once the three panels split ~1070px between them. */}
-                      <div style={{ ...stepPanelBodyStyle, gridTemplateColumns: isCompact ? 'minmax(0, 1fr)' : 'repeat(2, minmax(0, 1fr))' }}>
+                      <div style={{ ...stepPanelBodyStyle, gridTemplateColumns: isCompact ? 'minmax(0, 1fr)' : 'repeat(2, minmax(0, 1fr))', ...(isPhone ? { padding: 12, minHeight: 72 } : null) }}>
                         {cards.map(app => (
                           <JobCard
                             key={app.id}
@@ -534,9 +552,11 @@ function ApplicationsContent() {
                       </div>
                     </div>
                     {step < FLOW_STEPS.length && (
-                      <div style={stepArrowSlotStyle}>
+                      <div style={stepArrowSlot}>
                         <div style={stepArrowCircleStyle}>
-                          <ArrowRight size={15} strokeWidth={2.5} />
+                          {/* Stacked pipeline on phone — the flow reads top-to-bottom, so the
+                              arrow points down. */}
+                          <ArrowRight size={15} strokeWidth={2.5} style={isPhone ? { transform: 'rotate(90deg)' } : undefined} />
                         </div>
                       </div>
                     )}
@@ -545,7 +565,7 @@ function ApplicationsContent() {
               })}
             </div>
           ) : closedApplications.length === 0 ? null : (
-            <div style={{ ...applicationsGridStyle, gridTemplateColumns: isCompact ? 'repeat(3, minmax(0, 1fr))' : 'repeat(4, minmax(0, 1fr))' }}>
+            <div style={{ ...applicationsGridStyle, gridTemplateColumns: isPhone ? 'minmax(0, 1fr)' : isCompact ? 'repeat(3, minmax(0, 1fr))' : 'repeat(4, minmax(0, 1fr))' }}>
               {closedApplications.map((app) => {
                 const state = getApplicationFlowState(app)
                 return (
@@ -575,8 +595,8 @@ function ApplicationsContent() {
       </main>
 
       {selectedApplication && (
-        <div style={detailOverlayStyle} onClick={() => setSelectedApplication(null)}>
-          <div style={{ width: 'min(680px, calc(100% - 32px))' }} onClick={e => e.stopPropagation()}>
+        <div style={isPhone ? { ...detailOverlayStyle, padding: 12 } : detailOverlayStyle} onClick={() => setSelectedApplication(null)}>
+          <div style={{ width: isPhone ? '100%' : 'min(680px, calc(100% - 32px))' }} onClick={e => e.stopPropagation()}>
             <JobDetailPanel
               job={toJobView(selectedApplication)}
               onClose={() => setSelectedApplication(null)}
@@ -636,10 +656,11 @@ function ApplicationsContent() {
 
       {toast && (
         <div style={{
-          position: 'fixed', bottom: 28, left: '50%', transform: 'translateX(-50%)',
+          // Phone: clear the 64px bottom tab bar instead of sitting on top of it.
+          position: 'fixed', bottom: isPhone ? 76 : 28, left: '50%', transform: 'translateX(-50%)',
           background: '#0F172A', color: '#FFFFFF', borderRadius: 14, padding: '10px 18px',
           display: 'flex', alignItems: 'flex-start', gap: 8,
-          fontSize: 13, fontWeight: 600, whiteSpace: 'normal', maxWidth: 420, textAlign: 'left',
+          fontSize: 13, fontWeight: 600, whiteSpace: 'normal', maxWidth: isPhone ? 'calc(100vw - 32px)' : 420, textAlign: 'left',
           zIndex: 9999,
           animation: 'fadeSlideUpToast 0.22s ease',
           boxShadow: '0 4px 20px rgba(0,0,0,0.25)',
@@ -747,9 +768,13 @@ function CardTimeline({ app }: { app: Application }) {
 // was making this page's pill tabs render in a visibly different typeface than Owner's).
 // The guest layout's <main> is locked to one viewport (100vh, overflow hidden) — this page fills
 // it as a flex column; header/tabs stay fixed and the section below scrolls internally.
+// `height` matters for the Casual Worker's copy of this page (src/app/casual/applications), whose
+// layout renders a plain block <main> rather than a flex column — without it, `flex: 1` has nothing
+// to grow against there and every step panel collapses to its header.
 const pageStyle: React.CSSProperties = {
   flex: 1,
   minHeight: 0,
+  height: '100vh',
   display: 'flex',
   flexDirection: 'column',
   overflow: 'hidden',

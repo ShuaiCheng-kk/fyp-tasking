@@ -548,8 +548,11 @@ export default function CasualDashboardPage() {
     <TitledBlock
       icon={<UserCheck size={15} color="#F97316" />}
       title="Supervisor"
-      containerStyle={{ height: '100%', boxSizing: 'border-box', display: 'flex', flexDirection: 'column' }}
-      bodyStyle={{ flex: 1, minHeight: 0 }}
+      // Compact stacks these blocks into an auto-height column, where a `height:100%` shell with a
+      // `flex:1` body resolves to zero and the block renders as a header with nothing under it —
+      // let the block size to its own content there instead (same treatment as Upcoming Jobs).
+      containerStyle={isCompact ? undefined : { height: '100%', boxSizing: 'border-box', display: 'flex', flexDirection: 'column' }}
+      bodyStyle={isCompact ? undefined : { flex: 1, minHeight: 0 }}
     >
       <div style={{ display: 'flex', flexDirection: isCompact ? 'column' : 'row', alignItems: 'stretch', gap: 14 }}>
         {selectedJob.supervisor && (
@@ -578,12 +581,15 @@ export default function CasualDashboardPage() {
     /* Locked — future/other job: narrow Job Detail with the full posting shown inline (same
        JobDetailPanel UI as the Job Board), beside Supervisor + half-width Job Location. */
     <div style={{ display: 'flex', flexDirection: isCompact ? 'column' : 'row', gap: 16, alignItems: 'stretch', height: isCompact ? undefined : '100%' }}>
-      <div style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
+      {/* Compact: an auto-height column, so these wrappers must size to their content — `flex: 1`
+          + `minHeight: 0` resolves to a zero-height basis here and collapses each block to just
+          its header (the page's own scroll container handles the overflow instead). */}
+      <div style={isCompact ? { minWidth: 0 } : { flex: 1, minWidth: 0, minHeight: 0 }}>
         <TitledBlock
           icon={<Briefcase size={15} color="#F97316" />}
           title="Job Detail"
-          containerStyle={{ height: '100%', boxSizing: 'border-box', display: 'flex', flexDirection: 'column' }}
-          bodyStyle={{ flex: 1, minHeight: 0, overflowY: 'auto' }}
+          containerStyle={isCompact ? undefined : { height: '100%', boxSizing: 'border-box', display: 'flex', flexDirection: 'column' }}
+          bodyStyle={isCompact ? undefined : { flex: 1, minHeight: 0, overflowY: 'auto' }}
           headerRight={!selClockedIn ? (
             <button
               type="button"
@@ -617,15 +623,17 @@ export default function CasualDashboardPage() {
         </TitledBlock>
       </div>
 
-      <div style={{ flex: 1.35, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={isCompact
+        ? { minWidth: 0, display: 'flex', flexDirection: 'column', gap: 16 }
+        : { flex: 1.35, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 16 }}>
         {supervisorBlock && <div style={{ flexShrink: 0 }}>{supervisorBlock}</div>}
         {selectedJob.location && (
-          <div style={{ flex: 1, minHeight: isCompact ? undefined : 0 }}>
+          <div style={isCompact ? { flexShrink: 0 } : { flex: 1, minHeight: 0 }}>
             <TitledBlock
               icon={<MapPin size={15} color="#F97316" />}
               title="Job Location"
-              containerStyle={{ height: '100%', boxSizing: 'border-box', display: 'flex', flexDirection: 'column' }}
-              bodyStyle={{ flex: 1, minHeight: 0, padding: 14, display: 'flex', flexDirection: 'column' }}
+              containerStyle={isCompact ? undefined : { height: '100%', boxSizing: 'border-box', display: 'flex', flexDirection: 'column' }}
+              bodyStyle={isCompact ? { padding: 14, display: 'flex', flexDirection: 'column' } : { flex: 1, minHeight: 0, padding: 14, display: 'flex', flexDirection: 'column' }}
               headerRight={
                 <a
                   href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(selectedJob.location)}`}
@@ -658,8 +666,8 @@ export default function CasualDashboardPage() {
           <TitledBlock
             icon={<Briefcase size={15} color="#F97316" />}
             title="Job Detail"
-            containerStyle={{ height: '100%', boxSizing: 'border-box', display: 'flex', flexDirection: 'column' }}
-            bodyStyle={{ flex: 1, minHeight: 0, padding: isCompact ? undefined : '0 20px' }}
+            containerStyle={isCompact ? undefined : { height: '100%', boxSizing: 'border-box', display: 'flex', flexDirection: 'column' }}
+            bodyStyle={isCompact ? undefined : { flex: 1, minHeight: 0, padding: '0 20px' }}
           >
             <div style={{ display: 'flex', flexDirection: isCompact ? 'column' : 'row', gap: isCompact ? 16 : 6, alignItems: isCompact ? 'stretch' : 'center', justifyContent: isCompact ? undefined : 'space-between', flexWrap: 'wrap' }}>
               {/* Job info — the title re-opens the full posting detail (pay, description,
@@ -844,7 +852,10 @@ export default function CasualDashboardPage() {
       {/* Row 2 — Assigned Tasks (Kanban) beside Job Location + Message; the row fills the rest
           of the viewport so all three blocks reach the bottom of the page. */}
       <div style={{ display: 'flex', flexDirection: isCompact ? 'column' : 'row', gap: 16, alignItems: 'stretch', flex: isCompact ? undefined : 1, minHeight: 0 }}>
-        <div style={{ flex: isCompact ? undefined : '6 1 520px', minWidth: isCompact ? 0 : 460, minHeight: 0, width: isCompact ? '100%' : undefined }}>
+        {/* Compact: the Kanban's own shell is a height:100% flex column, which needs a definite
+            height to size against — in an auto-height stacked column it would otherwise collapse
+            to its header. Give it a fixed block of the page's own scroll instead. */}
+        <div style={{ flex: isCompact ? undefined : '6 1 520px', minWidth: isCompact ? 0 : 460, minHeight: 0, width: isCompact ? '100%' : undefined, height: isCompact ? 460 : undefined }}>
           {showWorkPanels && selectedJob ? (
             <CasualTaskBoard companyId={selectedJob.company_id} shiftId={selectedJob.shift_id} userId={internalUserId} readOnly={!!selectedJob.clock_out_time} />
           ) : (
@@ -877,7 +888,7 @@ export default function CasualDashboardPage() {
         >
           {/* Job Location is only useful before the worker is on-site — once Clock In has
               unlocked, this space goes to messaging with the supervisor instead. */}
-          <div style={{ flex: 1, minHeight: isCompact ? 200 : 0 }}>
+          <div style={{ flex: 1, minHeight: isCompact ? 380 : 0 }}>
             {showWorkPanels && selectedJob?.supervisor ? (
               <CasualMessagePanel
                 authId={authId}

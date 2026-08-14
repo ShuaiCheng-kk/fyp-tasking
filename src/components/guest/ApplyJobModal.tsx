@@ -13,6 +13,7 @@ import {
   ModalOverlay, ModalBox, ModalHeader,
   modalErrorBoxStyle, modalGhostButtonStyle, modalLabelStyle, modalPrimaryButtonStyle,
 } from '@/components/modal'
+import { useIsCompactViewport } from '@/hooks/useIsCompactViewport'
 
 type Props = {
   jobId: string
@@ -87,6 +88,9 @@ export default function ApplyJobModal({ jobId, onClose, onApplied }: Props) {
   // Side card with the full job details — toggled by clicking the job title, so the
   // worker can read the posting while filling in the application (the modal stays open).
   const [showJobInfo, setShowJobInfo] = useState(false)
+  // Phone: there's no space beside the modal to dock the job-details card into, so it becomes a
+  // centered full-width sheet over the form instead of a side card.
+  const isPhone = useIsCompactViewport(640)
   const [titleHovered, setTitleHovered] = useState(false)
   // The overlay flex-centers the modal, so its top edge moves with content height — measure it
   // via a marker at the top of the ModalBox so the side card always sits on the same line.
@@ -316,9 +320,13 @@ export default function ApplyJobModal({ jobId, onClose, onApplied }: Props) {
         return (
           <div style={{
             // Docked just to the right of the 520px-wide centered modal, top-aligned with it.
-            position: 'fixed', left: 'min(calc(50% + 276px), calc(100vw - 424px))', top: sideCardTop ?? 96,
-            width: 'min(400px, calc(100vw - 48px))', maxHeight: `calc(100vh - ${(sideCardTop ?? 96) + 24}px)`, overflowY: 'auto',
-            background: '#FFFFFF', border: '1px solid #EDE9E3', borderRadius: 20, padding: 28,
+            position: 'fixed',
+            left: isPhone ? 12 : 'min(calc(50% + 276px), calc(100vw - 424px))',
+            top: isPhone ? 16 : (sideCardTop ?? 96),
+            width: isPhone ? 'calc(100vw - 24px)' : 'min(400px, calc(100vw - 48px))',
+            maxHeight: isPhone ? 'calc(100vh - 32px)' : `calc(100vh - ${(sideCardTop ?? 96) + 24}px)`,
+            overflowY: 'auto',
+            background: '#FFFFFF', border: '1px solid #EDE9E3', borderRadius: 20, padding: isPhone ? 18 : 28,
             display: 'flex', flexDirection: 'column', gap: 20, boxShadow: '0 8px 28px rgba(0,0,0,0.12)',
             animation: 'tabFadeIn 0.18s ease-out',
           }}>

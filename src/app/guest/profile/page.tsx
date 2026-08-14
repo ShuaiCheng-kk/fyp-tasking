@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Check } from 'lucide-react'
 import GuestPersonalInfoCard from '@/components/guest/GuestPersonalInfoCard'
 import { SkillsCard, CertificatesCard, ResumeCard, ProfileCardSkeleton } from '@/components/worker/WorkerProfileSections'
+import { useIsCompactViewport } from '@/hooks/useIsCompactViewport'
 import { useLayoutWorkerProfile } from '@/app/guest/layout'
 import type { WorkerProfile } from '@/types/WorkerProfile'
 
@@ -24,6 +25,8 @@ export default function GuestWorkerProfilePage() {
   // own request happened to resolve; loading it once and handing every card its slice as a prop
   // makes them render together, same as the Owner pages' single-`loading`-gate skeleton pattern.
   const layoutProfile = useLayoutWorkerProfile()
+  // Single column on phone; the section below still scrolls internally, same as desktop.
+  const isPhone = useIsCompactViewport(640)
   const [profile, setProfile] = useState<WorkerProfile | null>(layoutProfile)
   const [toast, setToast] = useState('')
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -55,9 +58,9 @@ export default function GuestWorkerProfilePage() {
     <>
       <style>{pageKeyframes}</style>
 
-      <main style={pageStyle}>
+      <main style={isPhone ? { ...pageStyle, padding: '12px 12px 12px' } : pageStyle}>
         {/* Page header — title left, matching the Owner pages */}
-        <div style={{ marginBottom: 20, flexShrink: 0 }}>
+        <div style={{ marginBottom: isPhone ? 14 : 20, flexShrink: 0 }}>
           <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
             My Profile
           </h1>
@@ -68,7 +71,7 @@ export default function GuestWorkerProfilePage() {
             single fetch above has landed, so the real cards mount fresh (and replay the entrance
             animation) right when they're ready instead of an already-settled shell sitting there
             from first paint. */}
-        <section key={profile ? 'ready' : 'loading'} style={{ maxWidth: 1080, margin: '0 auto', width: '100%', flex: '1 1 auto', minHeight: 0, overflowY: 'auto', display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 16, alignItems: 'start', animation: 'blockSlideUp 0.38s ease both' }}>
+        <section key={profile ? 'ready' : 'loading'} style={{ maxWidth: 1080, margin: '0 auto', width: '100%', flex: '1 1 auto', minHeight: 0, overflowY: 'auto', display: 'grid', gridTemplateColumns: isPhone ? '1fr' : 'repeat(2, minmax(0, 1fr))', gap: 16, alignItems: 'start', animation: 'blockSlideUp 0.38s ease both' }}>
           {profile ? (
             <>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -97,7 +100,8 @@ export default function GuestWorkerProfilePage() {
 
       {toast && (
         <div style={{
-          position: 'fixed', bottom: 28, left: '50%', transform: 'translateX(-50%)',
+          // Phone: clear the 64px bottom tab bar instead of sitting on top of it.
+          position: 'fixed', bottom: isPhone ? 76 : 28, left: '50%', transform: 'translateX(-50%)',
           background: '#0F172A', color: '#FFFFFF', borderRadius: 999, padding: '10px 18px',
           display: 'flex', alignItems: 'center', gap: 8,
           fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', zIndex: 9999,
