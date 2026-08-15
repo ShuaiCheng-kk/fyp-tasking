@@ -27,6 +27,26 @@ export const casualInboxRepository = {
     return data ?? []
   },
 
+  // Unread count per sender, WITHOUT marking anything read — the panel needs to know a thread it
+  // isn't currently showing has something new, and reading getMessagesBetweenUsers for that would
+  // mark those messages read as a side effect (markMessagesAsRead runs right after it), silently
+  // clearing the very badge we're trying to raise.
+  async countUnreadFromSenders(userId: string, senderIds: string[]): Promise<Record<string, number>> {
+    if (senderIds.length === 0) return {}
+    const { data, error } = await supabase
+      .from('messages')
+      .select('from_user_id')
+      .eq('to_user_id', userId)
+      .eq('is_read', false)
+      .in('from_user_id', senderIds)
+    if (error) throw error
+    const counts: Record<string, number> = {}
+    for (const row of (data ?? []) as { from_user_id: string }[]) {
+      counts[row.from_user_id] = (counts[row.from_user_id] ?? 0) + 1
+    }
+    return counts
+  },
+
   async markMessagesAsRead(userId: string, otherUserId: string) {
     const { error } = await supabase
       .from('messages')

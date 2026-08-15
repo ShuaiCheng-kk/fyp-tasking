@@ -74,6 +74,18 @@ export default function CasualMessagePanel({ authId, companyId, supervisorId, su
   const photoInputRef = useRef<HTMLInputElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
+  // Unread per contact. Only one thread is on screen at a time, so without this a message sent to
+  // the contact the worker isn't currently viewing left no trace anywhere — it read as "the
+  // supervisor never messaged me" when in fact it was sitting one dropdown away (2026-08-15).
+  const [unreadByContact, setUnreadByContact] = useState<Record<string, number>>({})
+  const loadUnread = async () => {
+    const ids = [supervisorId, hasBackupContact ? backupContactId! : null].filter(Boolean) as string[]
+    if (ids.length === 0) return
+    const res = await fetch(`/api/casual/messages?resource=unread&user_id=${authId}&from_ids=${ids.join(',')}`)
+    const data = await res.json()
+    if (data.success) setUnreadByContact(data.counts ?? {})
+  }
+
   const lastLoadedAtRef = useRef(0)
   const load = async () => {
     lastLoadedAtRef.current = Date.now()
@@ -84,6 +96,8 @@ export default function CasualMessagePanel({ authId, companyId, supervisorId, su
       setSelfId(data.self_id)
     }
     setLoading(false)
+    // Opening a thread marks it read server-side, so refresh the badges right after.
+    await loadUnread()
   }
 
   useEffect(() => {
@@ -198,6 +212,13 @@ export default function CasualMessagePanel({ authId, companyId, supervisorId, su
             }}
           >
             Switch <ChevronDown size={13} style={{ transform: contactMenuOpen ? 'rotate(180deg)' : undefined, transition: 'transform 0.15s ease' }} />
+            {/* Unread waiting in the thread that ISN'T open — the whole point of the badge. */}
+            {Object.entries(unreadByContact).some(([id, n]) => n > 0 && id !== otherUserId) && (
+              <span style={{
+                width: 7, height: 7, borderRadius: '50%', background: '#EF4444', flexShrink: 0,
+                boxShadow: '0 0 0 2px #FFFFFF',
+              }} />
+            )}
           </button>
           {contactMenuOpen && (
             <div style={{
@@ -208,6 +229,8 @@ export default function CasualMessagePanel({ authId, companyId, supervisorId, su
               {(['supervisor', 'backup'] as const).map(tab => {
                 const active = activeContact === tab
                 const label = tab === 'supervisor' ? supervisorName : (backupContactName ?? 'Backup Contact')
+                const contactId = tab === 'supervisor' ? supervisorId : backupContactId
+                const unread = contactId ? (unreadByContact[contactId] ?? 0) : 0
                 return (
                   <button
                     key={tab}
@@ -222,7 +245,18 @@ export default function CasualMessagePanel({ authId, companyId, supervisorId, su
                     onMouseEnter={e => { if (!active) e.currentTarget.style.background = '#F9FAFB' }}
                     onMouseLeave={e => { if (!active) e.currentTarget.style.background = 'transparent' }}
                   >
-                    {label}
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
+                      {unread > 0 && (
+                        <span style={{
+                          flexShrink: 0, minWidth: 17, height: 17, padding: '0 5px', borderRadius: 999,
+                          background: '#EF4444', color: '#FFFFFF', fontSize: 10, fontWeight: 800,
+                          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                        }}>
+                          {unread > 9 ? '9+' : unread}
+                        </span>
+                      )}
+                    </span>
                     {active && <Check size={14} />}
                   </button>
                 )

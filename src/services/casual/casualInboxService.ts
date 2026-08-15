@@ -33,6 +33,17 @@ export const casualInboxService = {
     return { messages, self_id: user.id }
   },
 
+  // A Casual Worker has two people they can message (supervisor + backup contact) but only one
+  // thread on screen at a time. Without this the panel had no way to show that the OTHER thread
+  // had something new, so a message sent to the one not currently open simply never surfaced —
+  // it looked to the worker like it was never sent at all.
+  async getUnreadCounts(authId: string, senderIds: string[]) {
+    const user = await casualInboxRepository.getUserByAuthId(authId)
+    if (!user) throw new Error('Casual worker not found')
+    const counts = await casualInboxRepository.countUnreadFromSenders(user.id, senderIds.filter(Boolean))
+    return { counts, self_id: user.id }
+  },
+
   // Sending is a work action: it only exists from the moment the Clock In window opens
   // (30 minutes before the scheduled start) until the worker clocks out — the same availability
   // rule as Clock In and the task board. Once clocked out, the next chronological job becomes
