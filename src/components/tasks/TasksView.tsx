@@ -7318,7 +7318,16 @@ export default function TasksView({ sidebar, assigneeRole = 'Manager', scopeToMa
             setAiSuggestion(suggestion)
             setAiDescription(suggestion.description)
             setAiDeptId(suggestion.department_id)
-            setAiManagerIds(suggestion.recommended_ids?.length ? suggestion.recommended_ids : (suggestion.recommended_manager_id ? [suggestion.recommended_manager_id] : []))
+            // Owner/Partner pick exactly one assignee from a dropdown; only Manager/Employee get the
+            // multi-select candidate list (see the Assignee block in the review step). The service's
+            // suggested_headcount can be >1 (one person per sub-task), so without clamping here the
+            // dropdown showed a single name while assigned_user_ids silently submitted the rest —
+            // a two-sub-task suggestion created a task assigned to two managers.
+            const recommendedIds = suggestion.recommended_ids?.length
+              ? suggestion.recommended_ids
+              : (suggestion.recommended_manager_id ? [suggestion.recommended_manager_id] : [])
+            const usesMultiPicker = scopeToManagerDepartments || scopeToEmployeeSupervised
+            setAiManagerIds(usesMultiPicker ? recommendedIds : recommendedIds.slice(0, 1))
             setAiSubTaskDrafts(suggestion.sub_tasks.map(s => ({ id: crypto.randomUUID(), title: s.title })))
             setAiSubTaskCollapsed(true)
             setAiStep('review')
