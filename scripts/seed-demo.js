@@ -1075,6 +1075,36 @@ async function alignManagerJobTemplate(companyId, managerId, opsDeptId) {
   }
 }
 
+// ─── D17: 清掉 Ben 派给「今天不归他带」的人的任务 ──────────────────────────────
+//
+// seed.js 会让 Ben 给 Nadia Osman 这类工人派活，但 Employee 的看板只能从「我今天带的班组」
+// 里解析负责人姓名（一人一天一个主管的配对关系），解析不到就渲染成 "No assignee" ——
+// 卡片上明明有任务却写着没人负责，看起来像脏数据。
+//
+// 这些任务本身是有 assigned_user_id 的，不是空指针，所以按「负责人是否在今天的班组里」清，
+// 不能按 assigned_user_id 为空清。D9 派给班组的那些（Delay Alert / Workload Suggestion 用）
+// 负责人都在班组里，不受影响。
+async function pruneOrphanCrewTasks(companyId, benId, crew) {
+  console.log('\nD17: 清掉 Ben 派给「今天不归他带」的人的任务...')
+
+  const crewIds = new Set(crew.map(c => c.id))
+  const { data: tasks, error } = await supabase
+    .from('tasks').select('id, title, assigned_user_id')
+    .eq('company_id', companyId).eq('assigned_by', benId)
+  if (error) { warn(`读取 Ben 派出的任务失败: ${error.message}`); return }
+
+  const orphans = (tasks ?? []).filter(t => !t.assigned_user_id || !crewIds.has(t.assigned_user_id))
+  if (orphans.length === 0) { ok('没有孤儿任务，看板是干净的'); return }
+
+  const ids = orphans.map(t => t.id)
+  await supabase.from('task_assignments').delete().in('task_id', ids)
+  await supabase.from('tasks').delete().in('parent_task_id', ids)
+  const { error: delErr } = await supabase.from('tasks').delete().in('id', ids)
+  if (delErr) { warn(`清理失败: ${delErr.message}`); return }
+  ok(`清掉 ${orphans.length} 条：${orphans.map(t => t.title).join('、')}`)
+  ok('Ben 的看板上每一条任务的负责人现在都解析得出姓名')
+}
+
 // ─── D16: 预写陪跑申请人的 AI 评估缓存 ─────────────────────────────────────────
 //
 // candidateRecommendationService 有缓存：申请人只要 ai_computed_at 和 ai_summary 都有值，
@@ -1421,6 +1451,7 @@ async function main() {
   await handHiringJobToManager(company.id, manager1.id)
   const manager5 = await getUserByEmail('manager5@test.com', { optional: true })
   await rebuildTeamTaskBoard(company.id, opsDept.id, [manager1.id, manager5?.id].filter(Boolean), manager1.id)
+  await pruneOrphanCrewTasks(company.id, employee1.id, crew)
   await seedChaperoneAssessments(HIRING_JOB_TITLE)
   // 最后跑：前面每一步都可能新建公告/申请，红点清零必须垫底。
   await clearNotificationDots(company.id, [owner.id, manager1.id, employee1.id])
