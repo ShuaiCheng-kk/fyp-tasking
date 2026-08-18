@@ -64,3 +64,6 @@ next-env.d.ts
 # Video production assets — decks, recordings, edits. Kept local; recordings in
 # particular would bloat the repo.
 /video/
+
+# 演示用的真人照片，不进仓库
+/demo-avatars/
