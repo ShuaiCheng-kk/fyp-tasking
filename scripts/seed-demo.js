@@ -66,6 +66,7 @@
 
 const { createClient } = require('@supabase/supabase-js')
 const { spawnSync } = require('child_process')
+const fs = require('fs')
 const path = require('path')
 
 // Node does not read .env.local on its own — without this the service-role key is
@@ -108,6 +109,11 @@ const INCLUDE_CONFLICT_JOB = false
 // Off Day 与 Shift Swap 不在这次的六段动线里，但它们的 pending 申请会点亮 Owner 的 Attendance
 // 红点和 Manager 的 Shifts 红点。默认清空，让开场时侧边栏是干净的；要演这两个功能就改成 true。
 const INCLUDE_OFFDAY_SWAP_DEMO = false
+
+// D9 会给班组预先派 7 条任务，用来撑起 Employee 页的 Workload Suggestion 和 Task Delay Alert。
+// 但那样 Ben 的看板一开场就是满的，而第 4 段要讲的正是「他当场把任务派出去」，预置任务会抢镜。
+// 默认关掉，代价见 seedEmployeeSideInsights 里的注释。
+const INCLUDE_EMPLOYEE_INSIGHTS = false
 
 // 通过招聘岗位**已经录用并确认**的 4 个人 —— 演示开始时他们已经在岗打卡。
 // 岗位要 5 个人，这 4 个已确认，Owner 打开时就是「还差最后一个」，Hero 现场补位。
@@ -218,6 +224,19 @@ function runBaseSeed() {
     console.error('\n✗ seed.js 执行失败，演示补丁不会继续。')
     process.exit(1)
   }
+}
+
+// seed.js 会把每个人的 profile_photo_url 重置回那张共用的生成头像，所以自定义头像必须在
+// 所有补丁跑完之后重新贴一次，否则每跑一次 seed 就白换一次。demo-avatars/ 不存在就静默跳过。
+function reapplyDemoAvatars() {
+  const avatarDir = path.join(__dirname, '..', 'demo-avatars')
+  if (!fs.existsSync(avatarDir)) return
+  console.log('')
+  const result = spawnSync(process.execPath, [path.join(__dirname, 'set-demo-avatars.js')], {
+    stdio: 'inherit',
+    env: process.env,
+  })
+  if (result.status !== 0) console.warn('  ⚠ 补头像失败，跑一次 node scripts/set-demo-avatars.js 看具体报错')
 }
 
 // ─── 查询小工具 ────────────────────────────────────────────────────────────────
@@ -805,6 +824,16 @@ async function seedWorkerPool(companyId, ownerId, opsDeptId, benId) {
 async function seedEmployeeSideInsights(companyId, benId, opsDeptId, crew) {
   console.log('\nD9: Employee 页面的 Workload Suggestion + Task Delay Alert...')
 
+  // 关掉时整段跳过，Ben 的看板保持全空，他派出去的第一条任务就是现场派的那条。
+  // ⚠️ 两个功能会跟着消失：
+  //   · Workload Suggestion —— 现场仍然演得出来，连着给同一个人派 2 条以上就会触发
+  //   · Task Delay Alert   —— 演不出来。它认的是「已用掉 50% 以上时间还停在 Assigned」，
+  //     必须有几小时前就派下去的任务，15 分钟的演示里造不出来
+  if (!INCLUDE_EMPLOYEE_INSIGHTS) {
+    ok('INCLUDE_EMPLOYEE_INSIGHTS = false，跳过 → Ben 的看板开场为空，两个提示都没有内容')
+    return
+  }
+
   if (crew.length < 2) { warn('班组不足 2 人，这两个提示都出不来，跳过'); return }
 
   const overloaded = crew[0]
@@ -889,51 +918,18 @@ async function seedEmployeeSideInsights(companyId, benId, opsDeptId, crew) {
 // 只删 assigned_by ∈ {Owner, Partner} 的任务。Ben 派给班组的那些（D9）是 Employee 层的，
 // 不在 Owner 看板上，必须原样保留。
 
-const OWNER_BOARD_PLAN = [
-  // Operations 刻意只有 1 条，而且不在 David 名下 —— 这是整条演示动线经过的部门，必须最干净：
-  //   · David 名下 0 条 → 他的 Tasks 侧边栏红点为 0（红点算的是「未读的 My Task」），
-  //     演示时 Owner 派下来的那条是他今天收到的第一条，红点是当场亮起来的
-  //   · Wendy 只有 1 条 → Workload Suggestion 要求「最重的人至少 2 条主任务」才成立，
-  //     1 条不触发，Manager 的 Tasks 红点因此保持干净
-  //   · AI Assign 仍然必定选 David：他 0 分，Wendy 2 分，最闲的就是他
-  // 想把工作量失衡的画面加回来就给 Wendy 再补 2 条 Urgent，代价是 Manager 一进来就有红点。
-  {
-    dept: 'Operations',
-    tasks: [
-      { email: 'manager5@test.com', title: 'Rebuild the weekend floor rota', priority: 'Medium', status: 'In Progress', dueInDays: 5 },
-    ],
-  },
-  {
-    dept: 'Marketing',
-    tasks: [
-      { email: 'manager2@test.com', title: 'Refresh the promo landing copy',          priority: 'High',   status: 'Assigned',    dueInDays: 5 },
-      { email: 'manager2@test.com', title: 'Review the Q3 campaign budget',           priority: 'Medium', status: 'In Progress', dueInDays: 6 },
-      { email: 'manager6@test.com', title: 'Collect the partner co-marketing assets', priority: 'High',   status: 'Assigned',    dueInDays: 5 },
-      { email: 'manager6@test.com', title: 'Rework the Q4 campaign brief',            priority: 'Medium', status: 'In Progress', dueInDays: 6 },
-    ],
-  },
-  {
-    dept: 'Engineering',
-    tasks: [
-      { email: 'manager3@test.com', title: 'Sign off the warehouse safety audit',     priority: 'High',   status: 'Assigned',    dueInDays: 5 },
-      { email: 'manager3@test.com', title: 'Close the outstanding incident actions',  priority: 'Medium', status: 'In Progress', dueInDays: 6 },
-      { email: 'manager7@test.com', title: 'Patch the stock sync integration',        priority: 'High',   status: 'Assigned',    dueInDays: 5 },
-      { email: 'manager7@test.com', title: 'Document the rollout checklist',          priority: 'Medium', status: 'In Progress', dueInDays: 6 },
-    ],
-  },
-  {
-    dept: 'Customer Support',
-    tasks: [
-      { email: 'manager4@test.com', title: 'Submit the monthly support metrics',      priority: 'High',   status: 'Assigned',    dueInDays: 5 },
-      { email: 'manager4@test.com', title: 'Complete the customer escalation review', priority: 'Medium', status: 'In Progress', dueInDays: 6 },
-      { email: 'manager8@test.com', title: 'Refresh the response-time playbook',      priority: 'High',   status: 'Assigned',    dueInDays: 5 },
-      { email: 'manager8@test.com', title: 'Close the outstanding refund disputes',   priority: 'Medium', status: 'In Progress', dueInDays: 6 },
-    ],
-  },
-]
+// 空数组 = Owner 的 Tasks 看板开场一条都没有。演示时 Owner 用 AI Assign 派下去的那一条
+// 是屏幕上唯一的卡片，从 Assigned 一路走到 Complete，动线完全没有干扰。
+//
+// ⚠️ 代价：所有 Manager 工作量都是 0 分，rankManagers 只按分数排、没有并列时的次级排序，
+// 谁排第一取决于数据库返回行的顺序。实测每次都是 David Lim 在前（他的 manager_departments
+// 行先插入，之后没有任何更新去动它），但这是 Postgres 的物理顺序，不是保证。
+// 万一现场推荐成了 Wendy Ho，Assignee 是单选下拉，改一下就行。
+// 想要百分百确定，就在这里给 Wendy Ho 加一条任务，代价是看板不再是空的。
+const OWNER_BOARD_PLAN = []
 
 async function rebuildOwnerTaskBoard(companyId, ownerId, depts) {
-  console.log('\nD8: 重建 Owner 层任务看板（Operations 留空给演示，其余每部门 4 条）...')
+  console.log('\nD8: 清空 Owner 层任务看板（现场派下去的那一条是唯一一张卡）...')
 
   const partner = await getUserByEmail('partner1@test.com', { optional: true })
   const peerTier = [ownerId, partner?.id].filter(Boolean)
@@ -996,32 +992,56 @@ async function rebuildOwnerTaskBoard(companyId, ownerId, depts) {
 //   · Active Jobs 只剩预置的那一个（AI Assessment 用）
 //   · Pending Approval 清空 —— 当天 Manager 现场发的那条才会出现在里面，红点是现场产生的
 // 归档而不是删除：这些岗位挂着申请人、邀请和班次，直接删会被外键挡住。
-async function pruneJobBoard(companyId, keepTitles) {
-  console.log('\nD10: 招聘看板瘦身（Active Jobs 只留演示岗位，Pending Approval 清空）...')
+async function pruneJobBoard(companyId, keepTitles, ownerId) {
+  console.log('\nD10: 招聘页清空（只留演示岗位，Create Job 页四个分区全空）...')
 
+  // 归档过一次就够了 —— 归档只是换个状态，岗位仍然挂在 Create Job 页的 Archived 分区里，
+  // 一长列跟演示无关的历史岗位。这里改成**彻底删除**，四个分区（Pending Approval / Drafts /
+  // Archived / Templates）开场全是空的，现场发出去的那一个才是页面上唯一的东西。
   const { data: postings, error } = await supabase
-    .from('job_postings')
-    .select('id, title, status')
-    .eq('company_id', companyId)
-    .in('status', ['open', 'pending_approval'])
+    .from('job_postings').select('id, title, status').eq('company_id', companyId)
   if (error) { warn(`读取 job_postings 失败: ${error.message}`); return }
 
+  // closed 的也一起删。它们在 Closed Jobs 那个 Tab 里堆了十几条历史岗位，同样是跟演示
+  // 无关的噪音。⚠️ 代价：Report 页的招聘相关图表（录用成功率、平均填补时长）会因此没有数据，
+  // 那些指标是从 closed / archived 岗位算出来的。六段动线不经过 Report，所以按干净优先处理。
   const doomed = (postings ?? []).filter(p => !keepTitles.includes(p.title))
-  if (doomed.length === 0) { ok('没有多余岗位，看板已经是干净的'); return }
 
-  const now = new Date().toISOString()
-  let archived = 0
-  for (const posting of doomed) {
-    const { error: updErr } = await supabase
-      .from('job_postings')
-      .update({ status: 'archived', archived_at: now, archived_from_status: posting.status })
-      .eq('id', posting.id)
-    if (updErr) { warn(`归档「${posting.title}」失败: ${updErr.message}`); continue }
-    archived++
+  if (doomed.length > 0) {
+    const ids = doomed.map(p => p.id)
+
+    // 外键顺序：邀请 → 申请 → 取消记录 → 岗位本身。
+    // shifts.source_job_posting_id 只是溯源用的引用，置空即可，不能连班次一起删。
+    await supabase.from('shifts').update({ source_job_posting_id: null }).in('source_job_posting_id', ids)
+    const { data: apps } = await supabase.from('job_applicants').select('id').in('job_id', ids)
+    const appIds = (apps ?? []).map(a => a.id)
+    if (appIds.length > 0) await supabase.from('job_invitations').delete().in('applicant_id', appIds)
+    await supabase.from('job_invitations').delete().in('job_id', ids)
+    await supabase.from('job_applicants').delete().in('job_id', ids)
+    await supabase.from('job_cancellations').delete().in('job_id', ids)
+
+    const { error: delErr } = await supabase.from('job_postings').delete().in('id', ids)
+    if (delErr) { warn(`删除岗位失败: ${delErr.message}`); return }
+
+    const byStatus = {}
+    for (const p of doomed) byStatus[p.status] = (byStatus[p.status] ?? 0) + 1
+    ok(`删掉 ${doomed.length} 个岗位（${Object.entries(byStatus).map(([s, n]) => `${s} ${n}`).join('、')}）`)
   }
-  const pendingCount = doomed.filter(p => p.status === 'pending_approval').length
-  ok(`归档 ${archived} 个岗位（其中 ${pendingCount} 个原本挂在 Pending Approval）`)
-  ok(`Active Jobs 只剩：${keepTitles.join('、')}`)
+
+  // Owner 自己的 Job Template 也清掉：新动线里发岗位的是 Manager，用的是他自己的模板，
+  // Owner 根本不会打开模板列表。David 的那一个是 Manager 建的，不在这里删的范围内
+  // （Job Template 的可见范围本来就是 Owner/Partner 一池、Manager 一池，互不相见）。
+  if (ownerId) {
+    const { data: tpl } = await supabase
+      .from('job_templates').select('id, title').eq('company_id', companyId).eq('created_by', ownerId)
+    if ((tpl ?? []).length > 0) {
+      const { error: tErr } = await supabase.from('job_templates').delete().in('id', tpl.map(t => t.id))
+      if (tErr) warn(`删除 Owner 模板失败: ${tErr.message}`)
+      else ok(`删掉 Owner 名下 ${tpl.length} 个 Job Template（David 的那个保留）`)
+    }
+  }
+
+  ok(`Active Jobs 只剩：${keepTitles.join('、')}；Pending Approval / Drafts / Archived / Templates 全空`)
 }
 
 // ─── D11: David Lim 的 Job Template 对齐 Owner 派下来的任务 ────────────────────
@@ -1073,6 +1093,123 @@ async function alignManagerJobTemplate(companyId, managerId, opsDeptId) {
     if (insErr) { warn(`创建模板失败: ${insErr.message}`); return }
     ok(`新建模板「${MANAGER_TEMPLATE.title}」（Operations，One-Off）`)
   }
+}
+
+// ─── D19: 今天只让演示会讲到的部门有内部员工上班 ───────────────────────────────
+//
+// Owner Dashboard 的 Internal Attendance 面板按「今天有班的 Manager / Employee」分部门统计。
+// seed.js 四个部门都排了班，于是面板上四张卡，其中三张跟演示无关，而且因为那些人不会打卡，
+// 显示出来全是 0/4、0/3 这种数字，看起来像大面积缺勤。
+//
+// 只保留演示会讲到的两个部门，其余部门今天的内部排班整段删掉。
+// 不动部门本身，只动今天的班次 —— 删部门会连带管理层、成员归属、历史数据一起塌。
+const ATTENDANCE_DEPARTMENTS = ['Operations', 'Marketing']
+
+async function trimInternalAttendanceToday(companyId) {
+  console.log('\nD19: 今天只留演示部门的内部排班...')
+
+  const { data: depts } = await supabase
+    .from('departments').select('id, name').eq('company_id', companyId)
+  const doomedDeptIds = (depts ?? [])
+    .filter(d => !ATTENDANCE_DEPARTMENTS.includes(d.name))
+    .map(d => d.id)
+  if (doomedDeptIds.length === 0) { ok('没有多余部门'); return }
+
+  const { data: rows, error } = await supabase
+    .from('shift_assignments')
+    .select('id, shift_id, user_id, shifts!inner(shift_date, company_id, department_id)')
+    .eq('shifts.company_id', companyId)
+    .eq('shifts.shift_date', TODAY_KEY)
+    .in('shifts.department_id', doomedDeptIds)
+  if (error) { warn(`读取今天的排班失败: ${error.message}`); return }
+  if ((rows ?? []).length === 0) { ok('这些部门今天本来就没有排班'); return }
+
+  // 只删内部员工（Manager / Employee）。临时工由 D18 按班组规则处理，两边不重叠。
+  const userIds = [...new Set(rows.map(r => r.user_id))]
+  const { data: people } = await supabase.from('users').select('id, role').in('id', userIds)
+  const internalIds = new Set((people ?? []).filter(p => p.role === 'Manager' || p.role === 'Employee').map(p => p.id))
+  const doomed = rows.filter(r => internalIds.has(r.user_id))
+  if (doomed.length === 0) { ok('这些部门今天没有内部员工排班'); return }
+
+  const assignmentIds = doomed.map(r => r.id)
+  const shiftIds = [...new Set(doomed.map(r => r.shift_id))]
+
+  await supabase.from('attendance_records').delete().in('shift_assignment_id', assignmentIds)
+  const { data: shiftTasks } = await supabase.from('tasks').select('id').in('shift_id', shiftIds)
+  const taskIds = (shiftTasks ?? []).map(t => t.id)
+  if (taskIds.length > 0) {
+    await supabase.from('task_assignments').delete().in('task_id', taskIds)
+    await supabase.from('tasks').delete().in('parent_task_id', taskIds)
+    await supabase.from('tasks').delete().in('id', taskIds)
+  }
+  await supabase.from('shift_assignments').delete().in('id', assignmentIds)
+
+  const { data: survivors } = await supabase
+    .from('shift_assignments').select('shift_id').in('shift_id', shiftIds)
+  const stillUsed = new Set((survivors ?? []).map(r => r.shift_id))
+  const emptyIds = shiftIds.filter(id => !stillUsed.has(id))
+  if (emptyIds.length > 0) await supabase.from('shifts').delete().in('id', emptyIds)
+
+  ok(`清掉 ${doomed.length} 条排班，Internal Attendance 现在只剩 ${ATTENDANCE_DEPARTMENTS.join(' 和 ')}`)
+}
+
+// ─── D18: 清掉今天不属于演示班组的 Casual Worker 排班 ──────────────────────────
+//
+// seed.js 会给别的部门的临时工也排今天的班（比如 Marketing 的 Farah Aziz），他们既不打卡
+// 也跟演示无关，但会出现在 Owner Dashboard 的 Casual Worker Attendance 面板里，占掉一格、
+// 还会因为没打卡显示成迟到或缺勤。删掉之后那个面板就只剩演示班组，每一个人评委都知道是谁。
+//
+// 班组本人不动：他们今天在岗是 D5 刻意种的，岗位 5 个名额已确认 4 个靠的就是他们。
+// 过去日期的班次也不动 —— Worker Pool 的「完成过几个班」是从那些历史打卡记录数出来的。
+async function pruneNonCrewCasualShiftsToday(companyId, crew) {
+  console.log('\nD18: 清掉今天不属于演示班组的 Casual Worker 排班...')
+
+  const crewIds = new Set(crew.map(c => c.id))
+
+  // shift_assignments 有三个外键指向 users（user_id / assigned_by / supervisor_employee_id），
+  // 直接 join 会因为关系不唯一而报错，所以角色单独查一次再自己对起来。
+  const { data: rows, error } = await supabase
+    .from('shift_assignments')
+    .select('id, shift_id, user_id, shifts!inner(shift_date, company_id)')
+    .eq('shifts.company_id', companyId)
+    .eq('shifts.shift_date', TODAY_KEY)
+  if (error) { warn(`读取今天的排班失败: ${error.message}`); return }
+
+  const userIds = [...new Set((rows ?? []).map(r => r.user_id))]
+  if (userIds.length === 0) { ok('今天没有排班'); return }
+  const { data: people } = await supabase
+    .from('users').select('id, full_name, role').in('id', userIds)
+  const byId = new Map((people ?? []).map(p => [p.id, p]))
+
+  const doomed = (rows ?? []).filter(r => {
+    const person = byId.get(r.user_id)
+    return person?.role === 'Casual Worker' && !crewIds.has(r.user_id)
+  })
+  if (doomed.length === 0) { ok('今天在岗的 Casual Worker 就是演示班组，没有杂数据'); return }
+
+  const assignmentIds = doomed.map(r => r.id)
+  const shiftIds = [...new Set(doomed.map(r => r.shift_id))]
+
+  await supabase.from('attendance_records').delete().in('shift_assignment_id', assignmentIds)
+  const { data: shiftTasks } = await supabase.from('tasks').select('id').in('shift_id', shiftIds)
+  const taskIds = (shiftTasks ?? []).map(t => t.id)
+  if (taskIds.length > 0) {
+    await supabase.from('task_assignments').delete().in('task_id', taskIds)
+    await supabase.from('tasks').delete().in('parent_task_id', taskIds)
+    await supabase.from('tasks').delete().in('id', taskIds)
+  }
+  await supabase.from('shift_assignments').delete().in('id', assignmentIds)
+
+  // 一个班次可能还挂着别人，只删已经没人的那些。
+  const { data: survivors } = await supabase
+    .from('shift_assignments').select('shift_id').in('shift_id', shiftIds)
+  const stillUsed = new Set((survivors ?? []).map(r => r.shift_id))
+  const emptyIds = shiftIds.filter(id => !stillUsed.has(id))
+  if (emptyIds.length > 0) await supabase.from('shifts').delete().in('id', emptyIds)
+
+  const names = [...new Set(doomed.map(r => byId.get(r.user_id)?.full_name ?? r.user_id))]
+  ok(`清掉 ${names.join('、')} 今天的班`)
+  ok('Owner Dashboard 的 Casual Worker Attendance 现在只剩演示班组')
 }
 
 // ─── D17: 清掉 Ben 派给「今天不归他带」的人的任务 ──────────────────────────────
@@ -1195,16 +1332,16 @@ async function seedChaperoneAssessments(jobTitle) {
 // 整层清掉重建成 2:2 均衡、无 Review、无超期，三个来源一次性归零。
 // 只删 assigned_by 是 David / Wendy 的：Ben 派给班组 Casual Worker 的（D9）是再下一层，
 // 演示第 4、5 段要用，必须原样保留。
-// Ben Seah（employee1）刻意一条都没有：演示第 4、5 段讲的是「Employee 把任务派给 Casual
-// Worker」，他自己的 My Tasks 看板必须是空的，Owner/Manager 派给他的任务会抢镜。
-// Grace Lim 只留 1 条：Workload Suggestion 要求「最重的人至少 2 条主任务」，给她 2 条就会
-// 触发建议、点亮 David 的 Tasks 红点；1 条既保证看板不是空白，又不会触发。
-const TEAM_TASK_PLAN = [
-  { email: 'employee5@test.com', title: 'Prepare the loading dock for restock', priority: 'Medium', status: 'In Progress', dueInDays: 4 },
-]
+// 空数组 = David 的 Team Tasks 看板开场也是空的，跟 Owner 那块一个思路：演示时他从 Owner
+// 那里收到的任务是屏幕上唯一一张卡。Ben Seah 的 My Tasks 因此同样是空的，第 4、5 段讲的是
+// 「Employee 把任务派给 Casual Worker」，上级派给他的任务只会抢镜。
+//
+// 三个红点来源同时归零：Review 列没有内容（task_review = 0）、没有超期任务（Delay Alert = 0）、
+// 所有 Employee 都是 0 分（Workload Suggestion 要求最重的人至少 2 条主任务才成立）。
+const TEAM_TASK_PLAN = []
 
 async function rebuildTeamTaskBoard(companyId, opsDeptId, managerIds, assignerId) {
-  console.log('\nD15: 重建 Operations 的 Team Tasks（Ben 名下留空，无 Review、无超期）...')
+  console.log('\nD15: 清空 Operations 的 Team Tasks（David 和 Ben 的看板都留给现场）...')
 
   const { data: doomed, error } = await supabase
     .from('tasks').select('id')
@@ -1236,8 +1373,9 @@ async function rebuildTeamTaskBoard(companyId, opsDeptId, managerIds, assignerId
     if (!row) continue
     perAssignee.set(assignee.full_name, (perAssignee.get(assignee.full_name) ?? 0) + 1)
   }
-  ok(`重建 ${TEAM_TASK_PLAN.length} 条（${[...perAssignee.entries()].map(([n, c]) => `${n} ${c}`).join(' / ')}）`)
-  ok('Review 列为空、无超期任务、Ben 名下 0 条 → David 的 Tasks 红点为 0，Ben 的 My Tasks 也是空的')
+  if (TEAM_TASK_PLAN.length === 0) ok('不重建任何任务，看板留空')
+  else ok(`重建 ${TEAM_TASK_PLAN.length} 条（${[...perAssignee.entries()].map(([n, c]) => `${n} ${c}`).join(' / ')}）`)
+  ok('David 的 Team Tasks 与 Ben 的 My Tasks 都为空 → 两边的 Tasks 红点都是 0')
 }
 
 // ─── D13: 预置招聘岗位改挂在 David Lim 名下 ────────────────────────────────────
@@ -1451,6 +1589,8 @@ async function main() {
   await handHiringJobToManager(company.id, manager1.id)
   const manager5 = await getUserByEmail('manager5@test.com', { optional: true })
   await rebuildTeamTaskBoard(company.id, opsDept.id, [manager1.id, manager5?.id].filter(Boolean), manager1.id)
+  await trimInternalAttendanceToday(company.id)
+  await pruneNonCrewCasualShiftsToday(company.id, crew)
   await pruneOrphanCrewTasks(company.id, employee1.id, crew)
   await seedChaperoneAssessments(HIRING_JOB_TITLE)
   // 最后跑：前面每一步都可能新建公告/申请，红点清零必须垫底。
@@ -1459,7 +1599,7 @@ async function main() {
   await pruneJobBoard(company.id, [
     HIRING_JOB_TITLE,
     ...(INCLUDE_CONFLICT_JOB ? [CONFLICT_JOB_TITLE] : []),
-  ])
+  ], owner.id)
 
   const activeWeek = activeSubmissionWeekStart(TODAY, 0, '17:00')
 
@@ -1514,6 +1654,8 @@ async function main() {
   console.log('    · 班组已在岗但**还没进 Pool** —— 第 6 步「做完一次工就进人才库」是真的当场发生')
   console.log('    · 红点只有招聘岗位一个 —— 现场不会点错')
   console.log('═══════════════════════════════════════════')
+
+  reapplyDemoAvatars()
 }
 
 main().catch(err => {
