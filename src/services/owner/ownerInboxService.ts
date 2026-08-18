@@ -94,7 +94,17 @@ export const ownerInboxService = {
     // just the route's companyId === session company check) because that alone doesn't verify the
     // RECIPIENT is actually in that company too.
     const recipient = await ownerInboxRepository.findUserById(toUserId)
-    if (!recipient || (recipient as any).company_id !== companyId) {
+    if (!recipient) throw new Error('You can only message members of your own company')
+    // A Casual Worker can be hired by several companies, so their membership is a row per
+    // department in casualworker_departments and users.company_id is left empty by the hiring
+    // flow. Reading company_id off the user row therefore rejects every message to a worker who
+    // joined through the real recruitment path, which is exactly the person a supervisor most
+    // needs to reach on the day. Seeded workers happened to have it filled in, which is why this
+    // only surfaced once a worker was hired live.
+    const recipientInCompany = (recipient as any).role === 'Casual Worker'
+      ? await ownerInboxRepository.isCasualWorkerInCompany(toUserId, companyId)
+      : (recipient as any).company_id === companyId
+    if (!recipientInCompany) {
       throw new Error('You can only message members of your own company')
     }
     // Managers may only message the Owner, Partner, or Managers/Employees in their own department.

@@ -162,4 +162,47 @@ describe('UC49 Recommend Candidates via AI', () => {
     expect(result).toEqual([])
     expect(openAIService.generateStructuredJson).not.toHaveBeenCalled()
   })
+
+  // BUG-090: the model echoes applicant_id back from the input and occasionally corrupts it.
+  // A real run returned "02b1487a-...-99134f-b68f-99134f8229d3" for an id ending "...-99134f8229d3",
+  // which reached Postgres as a uuid and failed the entire assessment.
+  it('UC49-BR-UT-O-3: A corrupted applicant_id from the model is resolved back to the real applicant instead of reaching the database', async () => {
+    const realApplicant = { ...withSignalApplicant, id: '02b1487a-5548-462f-b68f-99134f8229d3' }
+    vi.mocked(recruitmentRepository.getApplicantsByJob).mockResolvedValue([realApplicant] as never)
+    vi.mocked(openAIService.generateStructuredJson).mockResolvedValue({
+      recommendations: [{
+        applicant_id: '02b1487a-5548-462f-b68f-99134f-b68f-99134f8229d3',
+        applicant_name: 'Alex Applicant', score: 88, recommendation: 'strong',
+        reasons: ['Directly relevant experience'], risks: [], suggested_next_step: 'Accept',
+      }],
+    } as never)
+
+    const result = await candidateRecommendationService.recommendCandidates('job-1')
+
+    expect(result[0].applicant_id).toBe('02b1487a-5548-462f-b68f-99134f8229d3')
+    expect(recruitmentRepository.updateApplicantAI).toHaveBeenCalledWith(
+      '02b1487a-5548-462f-b68f-99134f8229d3', expect.any(String),
+    )
+  })
+
+  it('UC49-BR-UT-O-4: A recommendation that matches no applicant at all is dropped rather than written under an unknown id', async () => {
+    vi.mocked(recruitmentRepository.getApplicantsByJob).mockResolvedValue([
+      withSignalApplicant,
+      { ...withSignalApplicant, id: 'app-9', full_name: 'Bea Applicant' },
+    ] as never)
+    vi.mocked(openAIService.generateStructuredJson).mockResolvedValue({
+      recommendations: [
+        { applicant_id: 'app-1', applicant_name: 'Alex Applicant', score: 70, recommendation: 'review', reasons: [], risks: [], suggested_next_step: 'Call' },
+        { applicant_id: 'ghost', applicant_name: 'Nobody At All', score: 90, recommendation: 'strong', reasons: [], risks: [], suggested_next_step: 'Accept' },
+        { applicant_id: 'ghost-2', applicant_name: 'Also Nobody', score: 95, recommendation: 'strong', reasons: [], risks: [], suggested_next_step: 'Accept' },
+      ],
+    } as never)
+
+    const result = await candidateRecommendationService.recommendCandidates('job-1')
+
+    // 'ghost' takes the one remaining unclaimed applicant (app-9); 'ghost-2' has nobody left and is dropped.
+    expect(result).toHaveLength(2)
+    expect(result.map(r => r.applicant_id).sort()).toEqual(['app-1', 'app-9'])
+    expect(recruitmentRepository.updateApplicantAI).not.toHaveBeenCalledWith('ghost-2', expect.anything())
+  })
 })

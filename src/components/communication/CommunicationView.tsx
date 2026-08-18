@@ -907,6 +907,16 @@ export default function CommunicationView({ renderSidebar, basePath }: {
           [partnerId]: (prev[partnerId] ?? []).map(m => m.id === optimistic.id ? data.message : m),
         }))
         fetchConversations()
+      } else {
+        // Without this the optimistic bubble just sits there looking sent: the message was never
+        // written, so it vanishes on the next refresh and the recipient never sees it. Roll it
+        // back and say why instead of failing silently.
+        setPanelMessages(prev => ({
+          ...prev,
+          [partnerId]: (prev[partnerId] ?? []).filter(m => m.id !== optimistic.id),
+        }))
+        setPanelInputs(prev => ({ ...prev, [partnerId]: content }))
+        showErrorToast(data.error ?? 'Failed to send message')
       }
     } finally { setPanelSending(prev => ({ ...prev, [partnerId]: false })) }
   }

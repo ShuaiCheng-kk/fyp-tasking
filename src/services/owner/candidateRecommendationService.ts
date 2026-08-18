@@ -126,9 +126,19 @@ export const candidateRecommendationService = {
         },
       })
 
+      // Never trust the id the model echoes back — see resolveApplicant below.
+      const claimed = new Set<string>()
       for (const rec of result.recommendations) {
-        await recruitmentRepository.updateApplicantAI(rec.applicant_id, JSON.stringify(rec))
-        results.push(rec)
+        const applicant = resolveApplicant(rec, toCompute, claimed)
+        if (!applicant) continue
+        claimed.add(applicant.id)
+        const resolved: CandidateRecommendation = {
+          ...rec,
+          applicant_id: applicant.id,
+          applicant_name: applicant.full_name,
+        }
+        await recruitmentRepository.updateApplicantAI(applicant.id, JSON.stringify(resolved))
+        results.push(resolved)
       }
     }
 
@@ -138,6 +148,37 @@ export const candidateRecommendationService = {
       return b.score - a.score
     })
   },
+}
+
+// The model echoes applicant_id back from the input, and it does sometimes corrupt a raw UUID.
+// Observed in a demo run: "02b1487a-5548-462f-b68f-99134f-b68f-99134f8229d3" — the real id
+// "02b1487a-5548-462f-b68f-99134f8229d3" with a middle segment duplicated. Passing that straight
+// to Postgres kills the whole assessment with `invalid input syntax for type uuid`, so every
+// recommendation is tied back to a real applicant first: exact id, then name, then a UUID-prefix
+// match, then the only remaining unclaimed applicant. One that still can't be matched is dropped
+// rather than written under an id nobody owns.
+function resolveApplicant(
+  rec: CandidateRecommendation,
+  pending: JobApplicant[],
+  claimed: Set<string>,
+): JobApplicant | null {
+  const unclaimed = pending.filter(applicant => !claimed.has(applicant.id))
+  if (unclaimed.length === 0) return null
+
+  const byId = unclaimed.find(applicant => applicant.id === rec.applicant_id)
+  if (byId) return byId
+
+  const name = (rec.applicant_name ?? '').trim().toLowerCase()
+  const byName = name ? unclaimed.find(applicant => applicant.full_name.trim().toLowerCase() === name) : undefined
+  if (byName) return byName
+
+  const returned = (rec.applicant_id ?? '').toLowerCase()
+  const byPrefix = returned.length >= 8
+    ? unclaimed.find(applicant => returned.startsWith(applicant.id.slice(0, 8).toLowerCase()))
+    : undefined
+  if (byPrefix) return byPrefix
+
+  return unclaimed.length === 1 ? unclaimed[0] : null
 }
 
 function hasSignal(applicant: JobApplicant): boolean {

@@ -89,6 +89,21 @@ export const ownerInboxRepository = {
     return data ?? null
   },
 
+  // A Casual Worker's company membership lives in casualworker_departments, one row per
+  // department, because the same worker can be hired by several companies. users.company_id is
+  // not filled in for them by the hiring flow, so it must never be used to decide whether a
+  // Casual Worker belongs to a company.
+  async isCasualWorkerInCompany(userId: string, companyId: string): Promise<boolean> {
+    const { data, error } = await supabase
+      .from('casualworker_departments')
+      .select('casual_worker_id')
+      .eq('casual_worker_id', userId)
+      .eq('company_id', companyId)
+      .limit(1)
+    if (error) throw new Error(error.message)
+    return (data ?? []).length > 0
+  },
+
   async findCompanyById(id: string) {
     const { data } = await supabase
       .from('companies')
